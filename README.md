@@ -10,7 +10,13 @@ This project implements a plugin which maps NCCLs connection-oriented transport 
 
 ## Requirements
 
-The plugin currently supports Ubuntu and Redhat-based operating systems, Libfabric v1.6 and NCCL v2.0.
+The plugin currently supports the following distributions:
+* Amazon Linux AMI release 2018.03
+* Redhat Enterprise Linux 7
+* Ubuntu 16.04 LTS
+* CentOS 7
+
+It also requires [Libfabric v1.6.2](https://github.com/ofiwg/libfabric/commit/f45da6eb75331bc3177cebc512ce4fae622946df) and [NCCL v2.3.8](link-to-be-inserted).
 
 Libfabric API implementation supports various providers. The plugin can choose only those which support the following features  as defined in the [libfabric API documentation](https://ofiwg.github.io/libfabric/v1.6.1/man/).
 
