@@ -1,24 +1,24 @@
 # AWS OFI NCCL
 
-AWS OFI NCCL is a plugin which lets EC2 customers use [libfabric](https://github.com/ofiwg/libfabric) as a network provider while running [NCCL](https://github.com/NVIDIA/nccl) based applications.
+AWS OFI NCCL is a plug-in which enables EC2 developers use [libfabric](https://github.com/ofiwg/libfabric) as a network provider while running [NVIDIA's NCCL](https://github.com/NVIDIA/nccl) based applications.
 
 ## Overview
 
 Machine learning frameworks running on top of NVIDIA GPUs use a library called [NCCL](https://developer.nvidia.com/nccl) which provides standard collective communication routines for an arbitrary number of GPUs installed across single or multiple nodes. Currently, NCCL uses InfiniBand Verbs or TCP/IP sockets for transport layer communication.
 
-This project implements a plugin which maps NCCLs connection-oriented transport APIs to [libfabric's](https://ofiwg.github.io/libfabric/) connection-less reliable interface. This allows NCCL applications to take benefit of libfabric's transport layer services like RDMA or reliable message support, and directly access network resources without operating system interventions.
+This project implements a plug-in which maps NCCLs connection-oriented transport APIs to [libfabric's](https://ofiwg.github.io/libfabric/) connection-less reliable interface. This allows NCCL applications to take benefit of libfabric's transport layer services like reliable message support and operating system bypass.
 
 ## Requirements
 
-The plugin currently supports the following distributions:
+The plug-in currently supports the following distributions:
 * Amazon Linux AMI release 2018.03
 * Redhat Enterprise Linux 7
 * Ubuntu 16.04 LTS
 * CentOS 7
 
-It also requires [Libfabric v1.6.2](https://github.com/ofiwg/libfabric/commit/f45da6eb75331bc3177cebc512ce4fae622946df) and [NCCL v2.3.8](link-to-be-inserted).
+It also requires [Libfabric v1.6.2 or newer](https://github.com/ofiwg/libfabric/tree/master) and [NCCL v2.3.8](link-to-be-inserted).
 
-Libfabric API implementation supports various providers. The plugin can choose only those which support the following features  as defined in the [libfabric API documentation](https://ofiwg.github.io/libfabric/v1.6.1/man/).
+Libfabric supports various providers. The plug-in can choose only those which support the following features as defined in the [libfabric API documentation](https://github.com/ofiwg/libfabric/tree/master/man/).
 
 * Tagged messaging (`FI_TAGGED`, `FI_MSG`)
 * Source address availability in completions (`FI_SOURCE`)
@@ -42,7 +42,7 @@ Libfabric API implementation supports various providers. The plugin can choose o
 git clone git@github.com:aws/aws-ofi-nccl.git
 ```
 
-2. Then, compile the plugin by running
+2. Then, compile the plug-in by running
 ```
 cd aws-ofi-nccl
 make
