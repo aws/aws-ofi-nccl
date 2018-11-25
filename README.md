@@ -11,12 +11,13 @@ This project implements a plug-in which maps NCCLs connection-oriented transport
 ## Requirements
 
 The plug-in currently supports the following distributions:
-* Amazon Linux AMI release 2018.03
+* Amazon Linux
+* Amazon Linux 2
 * Redhat Enterprise Linux 7
 * Ubuntu 16.04 LTS
 * CentOS 7
 
-It also requires [Libfabric v1.6.2 or newer](https://github.com/ofiwg/libfabric/tree/master) and [NCCL v2.3.8](link-to-be-inserted).
+It also requires [Libfabric v1.6.2 or later](https://github.com/ofiwg/libfabric/tree/master) and supports [NCCL v2.3.8 or later](link-to-be-inserted).
 
 Libfabric supports various providers. The plug-in can choose only those which support the following features as defined in the [libfabric API documentation](https://github.com/ofiwg/libfabric/tree/master/man/).
 
