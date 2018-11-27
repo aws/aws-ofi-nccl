@@ -17,7 +17,7 @@ The plug-in currently supports the following distributions:
 * Ubuntu 16.04 LTS
 * CentOS 7
 
-It also requires [Libfabric v1.6.2 or later](https://github.com/ofiwg/libfabric/tree/master) and supports [NCCL v2.3.8 or later](link-to-be-inserted).
+It also requires [Libfabric v1.6.x+](https://github.com/ofiwg/libfabric/tree/master) and supports [NCCL v2.3.7+](https://github.com/NVIDIA/nccl/tree/master). Please note that [current master](https://github.com/ofiwg/libfabric/commit/d32e95db02967c61eff47fc57591804769fc7dfc) of libfabric is broken for rxm providers and would require [PR-4641](https://github.com/ofiwg/libfabric/pull/4641).
 
 Libfabric supports various providers. The plug-in can choose only those which support the following features as defined in the [libfabric API documentation](https://github.com/ofiwg/libfabric/tree/master/man/).
 
@@ -69,7 +69,7 @@ Running unit tests requires a working MPI installation and a [MPI setup](https:/
 mpirun -n 2 --host <host-1>,<host-2> -tag-output ./tests/nccl_message_transfer
 ```
 
-**Note:** All tests require 2 hosts to run except [ring_c.c](path_to_ring_c.c) which requires atleast 3 hosts.
+**Note:** All tests require 2 hosts to run except [ring.c](tests/ring.c) which requires atleast 3 hosts.
 
 ### Running nccl-perf tests
 
