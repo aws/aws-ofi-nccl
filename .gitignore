@@ -1,0 +1,7 @@
+src/*.o
+tests/*
+!tests/*.c
+!tests/*.h
+!tests/Makefile.objs
+libnccl-net.so
+tags
