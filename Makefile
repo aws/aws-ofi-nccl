@@ -35,7 +35,7 @@ $(PLUGIN_SO): src/nccl_ofi_net.c include/nccl_ofi.h include/nccl_ofi_log.h $(OFI
 # Build tests by linking the shared library $(NCCL_OFI_LIB)
 %: %.c
 	$(MPICC) $(INC) -o $@ -L$(PLUGIN_HOME) -lnccl-net 		\
-	-L$(OFI_HOME)/lib -lfabric -L/usr/local/cuda/lib64 -lcudart 	\
+	-L$(OFI_HOME)/lib -lfabric -L$(CUDA_HOME)/lib64 -lcudart 	\
 	$< -ldl
 
 clean:
