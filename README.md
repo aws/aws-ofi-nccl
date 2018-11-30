@@ -17,7 +17,7 @@ The plug-in currently supports the following distributions:
 * Ubuntu 16.04 LTS
 * CentOS 7
 
-It also requires [Libfabric v1.6.x+](https://github.com/ofiwg/libfabric/tree/master) and supports [NCCL v2.3.7+](https://github.com/NVIDIA/nccl/tree/master).
+It also requires [Libfabric v1.6.x+](https://github.com/ofiwg/libfabric/commit/158af1edf3340b538de65eb6af71aac3715bfe3b) and supports [NCCL v2.3.7+](https://github.com/NVIDIA/nccl/tree/master).
 
 Libfabric supports various providers. The plug-in can choose only those which support the following features as defined in the [libfabric API documentation](https://github.com/ofiwg/libfabric/tree/master/man/).
 
@@ -93,8 +93,7 @@ NCCL_DEBUG=INFO LD_LIBRARY_PATH=/path/to/libfabric:/path/to/libfabric/lib:/path/
 
 ## Known Issues
 
-* The plugin returns only 1 NIC device even if the system supports multiple NICs.
-* The [current master](https://github.com/ofiwg/libfabric/commit/d32e95db02967c61eff47fc57591804769fc7dfc) of libfabric is broken for rxm providers and would require [PR-4641](https://github.com/ofiwg/libfabric/pull/4641).
+The plugin returns only 1 NIC device even if the system supports multiple NICs.
 
 ## Getting Help
 
