@@ -1,0 +1,79 @@
+#
+# Copyright (c) 2018-2019, Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+AC_PREREQ([2.69])
+AC_INIT([aws-ofi-nccl], [0.9], [rashika@amazon.com])
+AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
+AC_CONFIG_AUX_DIR([build-aux])
+AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_MACRO_DIRS([m4])
+AM_SILENT_RULES([yes])
+
+# Checks for programs.
+AC_PROG_CC
+AC_PROG_MAKE_SET
+AM_PROG_AR
+
+# Checks for typedefs, structures, and compiler characteristics.
+AC_CHECK_HEADER_STDBOOL
+AC_C_INLINE
+AC_TYPE_SIZE_T
+AC_TYPE_SSIZE_T
+AC_TYPE_UINT64_T
+AC_FUNC_MALLOC
+AC_CHECK_FUNCS([memset realpath])
+
+# Checks for libraries.
+AC_ARG_WITH([libfabric],
+            AC_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation]),
+            [AS_IF([test -d $withval/lib64], [ofi_libdir="lib64"], [ofi_libdir="lib"])
+             CFLAGS="-I$withval/include $CFLAGS"
+             LDFLAGS="-L$withval/$ofi_libdir $LDFLAGS"],
+            [])
+
+AC_ARG_WITH([cuda],
+            AC_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation]),
+            [AS_IF([test -d $withval/lib64], [cuda_libdir="lib64"], [cuda_libdir="lib"])
+             CFLAGS="-I$withval/include $CFLAGS"
+             LDFLAGS="-L$withval/$cuda_libdir $LDFLAGS"],
+            [])
+
+AC_ARG_WITH([nccl],
+            AC_HELP_STRING([--with-nccl=PATH], [Path to non-standard NCCL installation]),
+            [AS_IF([test -d $withval/lib64], [nccl_libdir="lib64"], [nccl_libdir="lib"])
+             CFLAGS="-I$withval/include $CFLAGS"
+             LDFLAGS="-L$withval/$nccl_libdir $LDFLAGS"],
+            [])
+
+AC_ARG_WITH([mpi],
+            AC_HELP_STRING([--with-mpi=PATH], [Path to non-standard MPI installation]),
+            [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
+             CFLAGS="-I$withval/include $CFLAGS"
+             LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
+            [])
+
+
+# Checks for header files.
+AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h cuda_runtime.h], [],[
+	AC_MSG_ERROR([unable to find required headers])
+])
+
+AC_SEARCH_LIBS([dlopen], [dl], [], [
+  AC_MSG_ERROR([unable to find libdl])
+])
+AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
+  AC_MSG_ERROR([unable to find libfabric])
+])
+
+AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
+AC_CONFIG_FILES([Makefile
+                 src/Makefile
+                 tests/Makefile])
+LT_INIT([shared disable-static])
+AC_OUTPUT
+echo "*"
+echo "* AWS OFI NCCL plugin has been configured."
+echo "*"

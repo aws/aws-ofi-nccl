@@ -1,3 +1,0 @@
-test-y += ring.c
-test-y += nccl_connection.c
-test-y += nccl_message_transfer.c
