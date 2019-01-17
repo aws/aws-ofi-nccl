@@ -674,15 +674,8 @@ exit:
 
 static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 {
-	ncclResult_t ret = ncclSuccess;
-
 	/* Read completion queue entries */
-	ret = ofi_process_cq(nccl_ofi_comp);
-	if (OFI_UNLIKELY(ret != 0))
-		goto exit;
-
-exit:
-	return ret;
+	return ofi_process_cq(nccl_ofi_comp);
 }
 
 static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
@@ -1093,8 +1086,6 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	}
 
 	*recvComm = rComm;
-
-	goto exit;
 
 exit:
 	if (req)
