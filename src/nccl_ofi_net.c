@@ -560,10 +560,6 @@ static inline ncclResult_t process_completions(
 
 		comp_flags = cq_entry[comp_idx].flags;
 
-		/* This accounts for connect message send in ofi_connect() */
-		if (OFI_UNLIKELY(cq_entry[comp_idx].op_context == NULL))
-			continue;
-
 		req = container_of(cq_entry[comp_idx].op_context,
 				   nccl_ofi_req_t, ctx);
 		if (OFI_UNLIKELY(req == NULL)) {
@@ -575,10 +571,9 @@ static inline ncclResult_t process_completions(
 		req->state = NCCL_OFI_REQ_COMPLETED;
 		req->size = cq_entry[comp_idx].len;
 
-		/* Identify receive using completion flags */
-		if (comp_flags & FI_RECV) {
-			/* Determine if this is control message */
-			if (cq_entry[comp_idx].tag & control_bit_mask) {
+		/* Determine if this is control message */
+		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {
+			if (comp_flags & FI_RECV) {
 				/* Mark listenComm to accepted state */
 				req->lComm->accepted = true;
 
@@ -593,6 +588,10 @@ static inline ncclResult_t process_completions(
 				}
 				req->src_addr = src_addrs[comp_idx];
 			}
+			else
+				free_nccl_ofi_req(req, false);
+
+			continue;
 		}
 	}
 
@@ -878,6 +877,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	fi_addr_t remote_addr;
 	sendComm_t *sComm = NULL;
 	uint64_t max_tag = 0;
+	nccl_ofi_req_t *req = NULL;
 	size_t req_size = sizeof(nccl_ofi_req_t);
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
@@ -948,10 +948,22 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		goto error;
 	}
 
+	req = allocate_nccl_ofi_request(sComm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+				      sComm->dev);
+			goto error;
+	}
+
+	req->sComm = sComm;
+	req->dev = sComm->dev;
+	req->direction = NCCL_OFI_SEND;
+
 	/* Send "connect" message to remote EP */
 	do {
 		rc = fi_tsend(sComm->local_ep, NULL, 0, NULL, sComm->remote_ep,
-			      sComm->tag | ~max_tag, NULL);
+			      sComm->tag | ~max_tag, &req->ctx);
 		if (rc == 0)
 			break;
 		else if (rc == -FI_EAGAIN) {
@@ -980,6 +992,8 @@ unlock:
 error:
 	if (sComm)
 		free(sComm);
+	if (req)
+		free_nccl_ofi_req(req, false);
 exit:
 	return ret;
 }
