@@ -1217,7 +1217,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int size, int type, vo
 
 	/* Try posting buffer to local EP */
 	rc = fi_trecv(rComm->local_ep, data, size, NULL,
-		      rComm->remote_ep, rComm->tag, 0, &req->ctx);
+		      FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/* Return NULL request */
 		*request = NULL;
