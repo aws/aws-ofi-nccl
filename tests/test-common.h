@@ -20,7 +20,7 @@
 #define STR2(v)		#v
 #define STR(v)		STR2(v)
 
-#define NUM_REQUESTS	(256)
+#define NUM_REQUESTS	(255)
 #define SEND_SIZE	(5000)
 #define RECV_SIZE	(5200)
 
