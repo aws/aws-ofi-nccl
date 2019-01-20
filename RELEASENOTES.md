@@ -7,6 +7,29 @@
 * Ubuntu 16.04 LTS
 * CentOS 7
 
+# v0.9.1 release notes
+
+This release makes improvements to the building and CI infrastructure. It also
+includes several bug fixes. Details below:
+
+New Features:
+* Change build system to use autoconf, automake and libtool
+* Add support for continuous integration using Travis CI
+* Add official support for [libfabric v1.7.x](https://github.com/ofiwg/libfabric/tree/v1.7.x)
+
+Bug Fixes:
+* Remove hard-coded CUDA path when linking test binaries.
+* Provide request contexts to all libfabric send/recv calls
+* Readme updates and other minor fixes
+
+Testing:
+The plugin has been tested with following libfabric providers:
+* tcp;ofi_rxm
+* sockets
+* verbs;ofi_rxm
+* psm2
+* efa;ofi_rxr
+
 # v0.9 release notes
 
 First public commit as part of preview announcement
