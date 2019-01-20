@@ -27,7 +27,7 @@ The plug-in currently supports the following distributions:
 * CentOS 7
 
 It also requires
-[Libfabric v1.6.x+](https://github.com/ofiwg/libfabric/commit/158af1edf3340b538de65eb6af71aac3715bfe3b)
+[Libfabric v1.7.x](https://github.com/ofiwg/libfabric/tree/v1.7.x)
 and supports [NCCL v2.3.7+](https://github.com/NVIDIA/nccl/tree/master).
 
 Libfabric supports various providers. The plug-in can choose only those which
