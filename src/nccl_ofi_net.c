@@ -139,7 +139,6 @@ exit:
  */
 static inline void zero_nccl_ofi_req(nccl_ofi_req_t *req)
 {
-	req->src_addr = FI_ADDR_NOTAVAIL;
 	req->lComm = NULL;
 	req->sComm = NULL;
 	req->rComm = NULL;
@@ -292,7 +291,7 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	}
 
 	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG | FI_SOURCE;
+	hints->caps = FI_TAGGED | FI_MSG;
 	hints->mode = FI_CONTEXT;
 
 	hints->ep_attr->type = FI_EP_RDM;
@@ -549,7 +548,6 @@ exit:
  */
 static inline ncclResult_t process_completions(
 				struct fi_cq_tagged_entry *cq_entry,
-				fi_addr_t *src_addrs,
 				uint64_t num_cqes, uint64_t control_bit_mask)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -576,20 +574,12 @@ static inline ncclResult_t process_completions(
 			if (comp_flags & FI_RECV) {
 				/* Mark listenComm to accepted state */
 				req->lComm->accepted = true;
-
-				/* Retrieve source information */
-				if (OFI_UNLIKELY(src_addrs[comp_idx]) ==
-						 FI_ADDR_NOTAVAIL) {
-					NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-						       "Source address for device %d and ring %ld is not set",
-						       req->dev,
-						       cq_entry[comp_idx].tag &
-						       ~(control_bit_mask));
-				}
-				req->src_addr = src_addrs[comp_idx];
 			}
-			else
+			else {
+				free(req->sComm->local_ep_name);
+				req->sComm->local_ep_name = NULL;
 				free_nccl_ofi_req(req, false);
+			}
 
 			continue;
 		}
@@ -613,7 +603,6 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 	struct fi_cq_err_entry err_buffer = { 0 };
 	uint64_t cqe_burst = nccl_ofi_comp->num_cqes;
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cqe_burst];
-	fi_addr_t src_addrs[cqe_burst];
 	nccl_ofi_req_t *req = NULL;
 	struct fid_cq *cq = nccl_ofi_comp->cq;
 	uint64_t control_bit_mask = ~(nccl_ofi_comp->max_tag);
@@ -622,19 +611,12 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 
 		/* Zero-out buffers */
 		memset(&cqe_tagged_buffers, 0, sizeof(cqe_tagged_buffers));
-		memset(&src_addrs, 0, sizeof(src_addrs));
 
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_readfrom(cq,
-				    &cqe_tagged_buffers[0],
-				    cqe_burst,
-				    &src_addrs[0]);
-
+		rc = fi_cq_read(cq, cqe_tagged_buffers, cqe_burst);
 		if (rc > 0) {
-			ret = process_completions(
-					&cqe_tagged_buffers[0],
-					&src_addrs[0], rc,
-					control_bit_mask);
+			ret = process_completions(cqe_tagged_buffers, rc,
+						  control_bit_mask);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		}
@@ -943,11 +925,19 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 
 	req = allocate_nccl_ofi_request(sComm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
-				      sComm->dev);
-			goto error;
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+			      sComm->dev);
+		goto error;
 	}
+
+	sComm->local_ep_name = calloc(1, MAX_EP_ADDR);
+	if (OFI_UNLIKELY(sComm->local_ep_name == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Couldn't allocate sendComm for local EP name");
+		goto error;
+	}
+	memcpy(sComm->local_ep_name, remote_ep_addr, MAX_EP_ADDR);
 
 	req->sComm = sComm;
 	req->dev = sComm->dev;
@@ -955,7 +945,8 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 
 	/* Send "connect" message to remote EP */
 	do {
-		rc = fi_tsend(sComm->local_ep, NULL, 0, NULL, sComm->remote_ep,
+		rc = fi_tsend(sComm->local_ep, sComm->local_ep_name,
+			      MAX_EP_ADDR, NULL, sComm->remote_ep,
 			      sComm->tag | ~max_tag, &req->ctx);
 		if (rc == 0)
 			break;
@@ -983,8 +974,11 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 unlock:
 	pthread_mutex_unlock(&nccl_ofi_lock);
 error:
-	if (sComm)
+	if (sComm) {
+		if (sComm->local_ep_name)
+			free(sComm->local_ep_name);
 		free(sComm);
+	}
 	if (req)
 		free_nccl_ofi_req(req, false);
 exit:
@@ -1002,6 +996,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	nccl_ofi_req_t *req = NULL;
 	uint64_t max_tag = nccl_ofi_comp->max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
+	void *remote_ep_name = NULL;
 
 	if (nccl_ofi_comp == NULL) {
 		ret = ncclSystemError;
@@ -1031,10 +1026,17 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	req->lComm = lComm;
 	req->dev = dev;
 
+	remote_ep_name = calloc(1, MAX_EP_ADDR);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to allocate remote_ep_name");
+		ret = ncclSystemError;
+		goto exit;
+	}
+
 	/* Post a buffer for receiving connection requests */
 	do {
-		rc = fi_trecv(lComm->local_ep, NULL, 0, NULL, FI_ADDR_UNSPEC,
-			      lComm->tag | ~max_tag, 0, &req->ctx);
+		rc = fi_trecv(lComm->local_ep, remote_ep_name, MAX_EP_ADDR, NULL,
+			      FI_ADDR_UNSPEC, lComm->tag | ~max_tag, 0, &req->ctx);
 		if (rc == 0)
 			break;
 		else if (rc == -FI_EAGAIN) {
@@ -1065,16 +1067,25 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm = (recvComm_t *)calloc(1, sizeof(recvComm_t));
 	if (rComm == NULL) {
 		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
-			     dev);
+			      dev);
 		ret = ncclSystemError;
 		goto exit;
 	}
 
 	rComm->tag = lComm->tag;
 	rComm->local_ep = lComm->local_ep;
-	/* This is populated while processing completion */
-	rComm->remote_ep = req->src_addr;
 	rComm->dev = dev;
+
+       /* Insert remote address into AV */
+	ret = fi_av_insert(nccl_ofi_comp->av,
+			   remote_ep_name, 1,
+			   &rComm->remote_ep, 0, NULL);
+	if (OFI_UNLIKELY(ret != 1)) {
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+			      dev, ret);
+		ret = ncclSystemError;
+		goto exit;
+	}
 
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
@@ -1088,6 +1099,8 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	*recvComm = rComm;
 
 exit:
+	if (remote_ep_name)
+		free(remote_ep_name);
 	if (req)
 		free(req);
 	return ret;

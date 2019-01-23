@@ -103,6 +103,7 @@ typedef struct sendComm {
 	uint64_t num_inflight_reqs;
 	fi_addr_t remote_ep;
 	struct fid_ep *local_ep;
+	void *lcoal_ep_name;
 	free_list_t *nccl_ofi_reqs_fl;
 	free_list_t *pending_reqs_fl;
 	int dev;
@@ -118,9 +119,6 @@ typedef struct recvComm {
 } recvComm_t;
 
 typedef struct nccl_ofi_req {
-	/* Source address */
-	fi_addr_t src_addr;
-
 	/* Associated Comm object */
 	union {
 		listenComm_t *lComm;
