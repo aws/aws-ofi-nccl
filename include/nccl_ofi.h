@@ -103,7 +103,7 @@ typedef struct sendComm {
 	uint64_t num_inflight_reqs;
 	fi_addr_t remote_ep;
 	struct fid_ep *local_ep;
-	void *lcoal_ep_name;
+	void *local_ep_name;
 	free_list_t *nccl_ofi_reqs_fl;
 	free_list_t *pending_reqs_fl;
 	int dev;

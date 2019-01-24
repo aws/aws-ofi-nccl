@@ -291,7 +291,7 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	}
 
 	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG;
+	hints->caps = FI_TAGGED;
 	hints->mode = FI_CONTEXT;
 
 	hints->ep_attr->type = FI_EP_RDM;
