@@ -99,22 +99,22 @@ typedef struct listenComm {
 } listenComm_t;
 
 typedef struct sendComm {
+	int dev;
 	uint64_t tag;
 	uint64_t num_inflight_reqs;
 	fi_addr_t remote_ep;
 	struct fid_ep *local_ep;
 	free_list_t *nccl_ofi_reqs_fl;
 	free_list_t *pending_reqs_fl;
-	int dev;
 } sendComm_t;
 
 typedef struct recvComm {
+	int dev;
 	uint64_t tag;
 	uint64_t num_inflight_reqs;
 	fi_addr_t remote_ep;
 	struct fid_ep *local_ep;
 	free_list_t *nccl_ofi_reqs_fl;
-	int dev;
 } recvComm_t;
 
 typedef struct nccl_ofi_req {
