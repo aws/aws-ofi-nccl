@@ -16,6 +16,8 @@ struct fi_info* ofi_info_list = NULL;
 int ofi_ndevices = -1;
 /* NCCL OFI component array for all NICs */
 nccl_ofi_t **nccl_ofi_component = NULL;
+/* Indicates if memory registration of local buffers is required */
+bool local_mr = false;
 
 /*
  * @brief	Allocates free list
@@ -41,7 +43,7 @@ exit:
  * @brief	Allocates free list for NCCL OFI requests
  */
 static ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_size,
-			   size_t buffer_size)
+				    size_t buffer_size)
 {
 	ncclResult_t ret = ncclSuccess, idx;
 	free_list_t *fl = NULL;
@@ -300,6 +302,8 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	hints->domain_attr->av_type = FI_AV_TABLE;
 	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+	/* Indicate that the application support local memory registration */
+	hints->domain_attr->mr_mode = FI_MR_LOCAL;
 
 	hints->tx_attr->msg_order = FI_ORDER_SAS;
 	hints->rx_attr->msg_order = FI_ORDER_SAS;
@@ -703,6 +707,13 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
 		      ofi_info_list->fabric_attr->prov_name);
 
+	/* Check if provider requires local memory registration */
+	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s required registration of local memory buffers",
+			       ofi_info_list->fabric_attr->prov_name);
+		local_mr = true;
+	}
+
 	/*
 	 * Allocate NCCL OFI component array. Individual components are
 	 * allocated as we use them.
@@ -1093,8 +1104,83 @@ exit:
 	return ret;
 }
 
+static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
+			      void **mhandle)
+{
+	struct fid_mr *mr_handle = NULL;
+	ncclResult_t ret = ncclSuccess;
+
+	/*
+	 * Let's assume the given Comm structure is for sendComm.
+	 * It doesn't matter as we will extract only dev from it
+	 */
+	sendComm_t *sComm = (sendComm_t *)comm;
+
+	/* Validate Comm */
+	if (OFI_UNLIKELY(sComm == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Invalid Comm object provided");
+		goto exit;
+	}
+
+	/* Validate type to be NCCL_PTR_HOST */
+	if (OFI_UNLIKELY(type != NCCL_PTR_HOST)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Plugin supports registration of host buffers only");
+		goto exit;
+	}
+
+	/* Check if we do registration of local buffers */
+	if (!local_mr) {
+		goto exit;
+	}
+
+	ret = fi_mr_reg(nccl_ofi_component[sComm->dev]->domain, data, size,
+			FI_SEND | FI_RECV, 0, 0, 0, &mr_handle, NULL);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to register memory for device %d. RC: %d, Error: %s",
+			      sComm->dev, fi_strerror(-ret));
+		ret = ncclSystemError;
+	}
+
+exit:
+	if (mr_handle == NULL)
+		*mhandle = mr_handle;
+	else
+		*mhandle = fi_mr_desc(mr_handle);
+	return ret;
+}
+
+static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
+{
+	ncclResult_t ret = ncclSuccess;
+	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
+
+	/* Validate Comm */
+	if (OFI_UNLIKELY(comm == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Invalid Comm object provided");
+		goto exit;
+	}
+
+	/* Check if we do registration of local buffers */
+	if (!local_mr) {
+		goto exit;
+	}
+
+	ret = fi_close((fid_t)mr_handle);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+			      fi_strerror(-ret));
+		ret = ncclSystemError;
+	}
+
+exit:
+	return ret;
+}
+
 static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
-			      int type, void** request)
+			      void *mhandle, void** request)
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
@@ -1147,7 +1233,7 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	 * Try sending data to remote EP; Return NULL request
 	 * if not able to send.
 	 */
-	rc = fi_tsend(sComm->local_ep, data, size, NULL,
+	rc = fi_tsend(sComm->local_ep, data, size, mhandle,
 		      sComm->remote_ep, sComm->tag, &req->ctx);
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Return NULL */
@@ -1175,7 +1261,8 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_irecv(void* recvComm, void* data, int size, int type, void** request)
+static ncclResult_t ofi_irecv(void* recvComm, void* data, int size,
+			      void *mhandle, void** request)
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
@@ -1216,7 +1303,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int size, int type, vo
 	req->direction = NCCL_OFI_RECV;
 
 	/* Try posting buffer to local EP */
-	rc = fi_trecv(rComm->local_ep, data, size, NULL,
+	rc = fi_trecv(rComm->local_ep, data, size, mhandle,
 		      FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/* Return NULL request */
@@ -1244,7 +1331,8 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_flush(void* recvComm, void* data, int size)
+static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
+			      void *mhandle)
 {
 	/* NO-OP until we support NCCL_PTR_CUDA */
 	return ncclSuccess;
@@ -1364,6 +1452,8 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.listen = ofi_listen,
 	.connect = ofi_connect,
 	.accept = ofi_accept,
+	.regMr = ofi_regMr,
+	.deregMr = ofi_deregMr,
 	.isend = ofi_isend,
 	.irecv = ofi_irecv,
 	.flush = ofi_flush,
