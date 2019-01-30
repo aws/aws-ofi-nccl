@@ -28,7 +28,7 @@ The plug-in currently supports the following distributions:
 
 It also requires
 [Libfabric v1.7.x](https://github.com/ofiwg/libfabric/tree/v1.7.x)
-and supports [NCCL v2.3.7+](https://github.com/NVIDIA/nccl/tree/master).
+and supports [NCCL v2.4.2](https://github.com/NVIDIA/nccl/releases/tag/v2.4.2-1).
 
 Libfabric supports various providers. The plug-in can choose only those which
 support the following features as defined in the
