@@ -1,8 +1,26 @@
 language: c
-dist: xenial
 sudo: true
+dist: xenial
+
+env:
+  global:
+    - PATH=/usr/local/cuda/bin:${PATH}
+    - LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
+
+addons:
+ apt:
+   packages:
+     - openmpi-bin
+     - openmpi-common
+     - libopenmpi-dev
+     - gcc
+     - automake
+     - autoconf
+     - libtool
+     - flex
 
 before_install:
+
  # Install CUDA
  - wget https://developer.nvidia.com/compute/cuda/10.0/Prod/local_installers/cuda-repo-ubuntu1604-10-0-local-10.0.130-410.48_1.0-1_amd64
  - sudo dpkg -i cuda-repo-ubuntu1604-10-0-local-10.0.130-410.48_1.0-1_amd64
@@ -10,8 +28,6 @@ before_install:
  - sudo apt-get -y update
  - rm -f cuda-repo-ubuntu1604-10-0-local-10.0.130-410.48_1.0-1_amd64
  - sudo apt-get install -y cuda
- - export LD_LIBRARY_PATH=/usr/local/cuda/lib64:${LD_LIBRARY_PATH}
- - export PATH=/usr/local/cuda/bin:${PATH}
 
 install:
  # Install libfabric
@@ -22,20 +38,10 @@ install:
  - ./configure --enable-debug; make -j8; sudo make install
  - popd
 
- # Install OMPI
- - git clone https://github.com/open-mpi/ompi.git
- - pushd ompi
- - git checkout v4.0.x
- - ./autogen.pl
- - ./configure --with-ofi --enable-debug
- - make -j8 > /dev/null 2>&1
- - sudo make install > /dev/null 2>&1
- - popd
-
  # Install NCCL
  - git clone https://github.com/NVIDIA/nccl.git
  - pushd nccl
- - make -j src.build
+ - make src.build NVCC_GENCODE="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60"
  - popd
 
 before_script: sudo ldconfig
