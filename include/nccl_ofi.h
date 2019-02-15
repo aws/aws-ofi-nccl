@@ -118,9 +118,6 @@ typedef struct recvComm {
 } recvComm_t;
 
 typedef struct nccl_ofi_req {
-	/* Source address */
-	fi_addr_t src_addr;
-
 	/* Associated Comm object */
 	union {
 		listenComm_t *lComm;
