@@ -141,7 +141,6 @@ exit:
  */
 static inline void zero_nccl_ofi_req(nccl_ofi_req_t *req)
 {
-	req->src_addr = FI_ADDR_NOTAVAIL;
 	req->lComm = NULL;
 	req->sComm = NULL;
 	req->rComm = NULL;
@@ -294,7 +293,7 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	}
 
 	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG | FI_SOURCE;
+	hints->caps = FI_TAGGED | FI_MSG;
 	hints->mode = FI_CONTEXT;
 
 	hints->ep_attr->type = FI_EP_RDM;
@@ -553,7 +552,6 @@ exit:
  */
 static inline ncclResult_t process_completions(
 				struct fi_cq_tagged_entry *cq_entry,
-				fi_addr_t *src_addrs,
 				uint64_t num_cqes, uint64_t control_bit_mask)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -580,17 +578,6 @@ static inline ncclResult_t process_completions(
 			if (comp_flags & FI_RECV) {
 				/* Mark listenComm to accepted state */
 				req->lComm->accepted = true;
-
-				/* Retrieve source information */
-				if (OFI_UNLIKELY(src_addrs[comp_idx]) ==
-						 FI_ADDR_NOTAVAIL) {
-					NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-						       "Source address for device %d and ring %ld is not set",
-						       req->dev,
-						       cq_entry[comp_idx].tag &
-						       ~(control_bit_mask));
-				}
-				req->src_addr = src_addrs[comp_idx];
 			}
 			else
 				free_nccl_ofi_req(req, false);
@@ -617,7 +604,6 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 	struct fi_cq_err_entry err_buffer = { 0 };
 	uint64_t cqe_burst = nccl_ofi_comp->num_cqes;
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cqe_burst];
-	fi_addr_t src_addrs[cqe_burst];
 	nccl_ofi_req_t *req = NULL;
 	struct fid_cq *cq = nccl_ofi_comp->cq;
 	uint64_t control_bit_mask = ~(nccl_ofi_comp->max_tag);
@@ -626,18 +612,12 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 
 		/* Zero-out buffers */
 		memset(&cqe_tagged_buffers, 0, sizeof(cqe_tagged_buffers));
-		memset(&src_addrs, 0, sizeof(src_addrs));
 
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_readfrom(cq,
-				    &cqe_tagged_buffers[0],
-				    cqe_burst,
-				    &src_addrs[0]);
-
+		rc = fi_cq_read(cq, &cqe_tagged_buffers[0], cqe_burst);
 		if (rc > 0) {
 			ret = process_completions(
-					&cqe_tagged_buffers[0],
-					&src_addrs[0], rc,
+					&cqe_tagged_buffers[0], rc,
 					control_bit_mask);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
@@ -878,6 +858,8 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	ssize_t rc = 0;
 	uint64_t tag = 0ULL;
 	char remote_ep_addr[MAX_EP_ADDR] = {0};
+	char local_ep_addr[MAX_EP_ADDR] = {0};
+	size_t namelen = sizeof(local_ep_addr);
 	fi_addr_t remote_addr;
 	sendComm_t *sComm = NULL;
 	uint64_t max_tag = 0;
@@ -964,9 +946,21 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
+	/* Get local EP address to transfer in the connect message */
+	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+			 (void *)&local_ep_addr,
+			 &namelen);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto error;
+	}
+
 	/* Send "connect" message to remote EP */
 	do {
-		rc = fi_tsend(sComm->local_ep, NULL, 0, NULL, sComm->remote_ep,
+		rc = fi_tsend(sComm->local_ep, (void *)&local_ep_addr,
+			      MAX_EP_ADDR, NULL, sComm->remote_ep,
 			      sComm->tag | ~max_tag, &req->ctx);
 		if (rc == 0)
 			break;
@@ -1011,6 +1005,8 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	int dev = lComm->dev;
 	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
 	nccl_ofi_req_t *req = NULL;
+	char remote_ep_addr[MAX_EP_ADDR] = {0};
+	fi_addr_t remote_ep;
 	uint64_t max_tag = nccl_ofi_comp->max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
 
@@ -1044,8 +1040,9 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 	/* Post a buffer for receiving connection requests */
 	do {
-		rc = fi_trecv(lComm->local_ep, NULL, 0, NULL, FI_ADDR_UNSPEC,
-			      lComm->tag | ~max_tag, 0, &req->ctx);
+		rc = fi_trecv(lComm->local_ep, (void *)&remote_ep_addr, MAX_EP_ADDR,
+			      NULL, FI_ADDR_UNSPEC, lComm->tag | ~max_tag,
+			      0, &req->ctx);
 		if (rc == 0)
 			break;
 		else if (rc == -FI_EAGAIN) {
@@ -1072,6 +1069,16 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 			goto exit;
 	}
 
+	/* Insert remote EP address to AV */
+	ret = fi_av_insert(nccl_ofi_comp->av, (void *)remote_ep_addr, 1,
+			   &remote_ep, 0, NULL);
+	if (OFI_UNLIKELY(ret != 1)) {
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+			      dev, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto exit;
+	}
+
 	/* Build recvComm */
 	rComm = (recvComm_t *)calloc(1, sizeof(recvComm_t));
 	if (rComm == NULL) {
@@ -1083,8 +1090,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 	rComm->tag = lComm->tag;
 	rComm->local_ep = lComm->local_ep;
-	/* This is populated while processing completion */
-	rComm->remote_ep = req->src_addr;
+	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
 	/* Pre-allocated buffers for data path */
