@@ -2,6 +2,11 @@ language: c
 sudo: true
 dist: xenial
 
+matrix:
+  include:
+    - env: PROVIDER=tcp
+    - env: PROVIDER=sockets
+
 env:
   global:
     - PATH=/usr/local/cuda/bin:${PATH}
@@ -10,8 +15,6 @@ env:
 addons:
  apt:
    packages:
-     - openmpi-bin
-     - openmpi-common
      - libopenmpi-dev
      - gcc
      - automake
@@ -20,7 +23,6 @@ addons:
      - flex
 
 before_install:
-
  # Install CUDA
  - wget https://developer.nvidia.com/compute/cuda/10.0/Prod/local_installers/cuda-repo-ubuntu1604-10-0-local-10.0.130-410.48_1.0-1_amd64
  - sudo dpkg -i cuda-repo-ubuntu1604-10-0-local-10.0.130-410.48_1.0-1_amd64
@@ -38,16 +40,32 @@ install:
  - ./configure --enable-debug; make -j8; sudo make install
  - popd
 
+ # Install OMPI
+ - git clone https://github.com/open-mpi/ompi.git
+ - pushd ompi
+ - git checkout v3.1.x
+ - ./autogen.pl
+ - ./configure --with-ofi --enable-debug
+ - make -j8 > /dev/null 2>&1
+ - sudo make install > /dev/null 2>&1
+ - popd
+
  # Install NCCL
  - git clone https://github.com/NVIDIA/nccl.git
  - pushd nccl
  - make src.build NVCC_GENCODE="-gencode=arch=compute_70,code=sm_70 -gencode=arch=compute_60,code=sm_60"
  - popd
 
-before_script: sudo ldconfig
+ # Configure dynamic linker
+ - sudo ldconfig
+
+ # Build aws-ofi-nccl plugin
+ - mkdir install
+ - ./autogen.sh
+ - ./configure --with-nccl=${PWD}/nccl/build --with-cuda=/usr/local/cuda --prefix=${PWD}/install
+ - make && make install
 
 script:
- # Build aws-ofi-nccl plugin
- - ./autogen.sh
- - ./configure --with-nccl=${PWD}/nccl/build --with-cuda=/usr/local/cuda
- - make && sudo make install
+ - mpirun -np 2 --oversubscribe -x FI_PROVIDER=${PROVIDER} --tag-output ./install/bin/nccl_connection
+ - mpirun -np 2 --oversubscribe -x FI_PROVIDER=${PROVIDER} --tag-output ./install/bin/nccl_message_transfer
+ - mpirun -np 2 --oversubscribe -x FI_PROVIDER=${PROVIDER} --tag-output ./install/bin/ring
