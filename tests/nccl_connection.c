@@ -10,7 +10,7 @@
 
 int main(int argc, char* argv[])
 {
-	int rank, len, proc_name;
+	int rank, proc_name;
 	char name[MPI_MAX_PROCESSOR_NAME];
 
 	/* Plugin defines */
