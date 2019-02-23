@@ -7,6 +7,24 @@
 * Ubuntu 16.04 LTS
 * CentOS 7
 
+# v0.9.2 release notes
+
+This release introduces changes required to support NCCLv2.4 and fixes race
+condition during connection establishment by removing FI_SOURCE requirement.
+
+New Features:
+* Support NCCL provided MR register/deregister APIs.
+
+Bug Fixes:
+* Remove FI_SOURCE requirement for providers.
+* Fix travis CI to build with NCCLv2.4.
+
+Testing:
+The plugin has been tested with following libfabric providers:
+* tcp;ofi_rxm
+* sockets
+* verbs;ofi_rxm
+
 # v0.9.1 release notes
 
 This release makes improvements to the building and CI infrastructure. It also
