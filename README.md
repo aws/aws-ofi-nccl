@@ -1,3 +1,6 @@
+*NOTE: This is an experimental branch specifically targeted for testing on AWS.
+Therefore, This branch is not supported.*
+
 # AWS OFI NCCL
 
 AWS OFI NCCL is a plug-in which enables EC2 developers to use
