@@ -1,3 +1,6 @@
+/* Instead of declaring one single NIC, declare one NIC close to each GPU */
+#define EFA_NIC_DUP
+
 /*
  * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
@@ -9,6 +12,12 @@
 #include <string.h>
 #include <unistd.h>
 #include <stack.h>
+#ifdef EFA_NIC_DUP
+#define EFA_PROVIDER_NAME "efa;ofi_rxr"
+#define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
+#include <ctype.h>
+#include <cuda_runtime.h>
+#endif
 
 /* NICs info list for a provider */
 struct fi_info* ofi_info_list = NULL;
@@ -677,6 +686,22 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		goto exit;
 	}
 
+#ifdef EFA_NIC_DUP
+	/*
+	 * If we detect the Amazon EFA provider, emulate a NIC per GPU
+	 * so that NCCL will build more rings and achieve better peak BW
+	*/
+	if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
+		if (cudaGetDeviceCount(&ofi_ndevices) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting CUDA device count\n");
+			return ncclUnhandledCudaError;
+		}
+		ofi_ndevices /= 2;
+		// Make the list cyclic to emulate having multiple devices
+		ofi_info_list->next = ofi_info_list;
+		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
+	}
+#else
 	/*
 	 * TODO: Find way to identify unique structures and remove lo.
 	 * For P3 platform, topology is known. Therefore, we return
@@ -684,6 +709,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	 */
 	ofi_ndevices = 1;
 	ofi_info_list->next = NULL;
+#endif
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
 		      ofi_info_list->fabric_attr->prov_name);
 
@@ -720,8 +746,59 @@ static ncclResult_t ofi_devices(int *ndev)
 	return ncclSuccess;
 }
 
+#ifdef EFA_NIC_DUP
+// Macro to check CUDA calls
+#define CUDACHECK(cmd) do {                 			        	\
+	cudaError_t e = cmd;                                   			\
+	if( e != cudaSuccess ) {                                		\
+		NCCL_OFI_WARN("Cuda failure '%s'", cudaGetErrorString(e));	\
+		return ncclUnhandledCudaError;                      		\
+	}                                                       		\
+} while(false)
+
+#define BUSID_SIZE (sizeof("0000:00:00.0"))
+#define BUSID_REDUCED_SIZE (sizeof("0000:00"))
+
+static ncclResult_t getCudaPath(int dev, char** path)
+{
+	int i,c,cudaDev;
+	char busId[BUSID_SIZE];
+	CUDACHECK(cudaDeviceGetPCIBusId(busId, BUSID_SIZE, dev));
+
+	for (i=0; i<BUSID_SIZE; i++) busId[i] = tolower(busId[i]);
+	char busPath[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.0";
+	memcpy(busPath+sizeof("/sys/class/pci_bus/")-1, busId, BUSID_REDUCED_SIZE-1);
+	memcpy(busPath+sizeof("/sys/class/pci_bus/0000:00/../../")-1, busId, BUSID_SIZE-1);
+	*path = realpath(busPath, NULL);
+	if (*path == NULL) {
+		NCCL_OFI_WARN("Could not find real path of %s", busPath);
+		return ncclSystemError;
+	}
+	// Trim the end of the path to mimic a device on the same PCI switch
+	for (c=strlen(*path); c && (*path)[c] != '/'; c--) (*path)[c] = '\0';
+
+	// Query the current CUDA device
+	CUDACHECK(cudaGetDevice(&cudaDev));
+
+	/* If the current CUDA device isn't the requested device make the NCCL
+	 * distance detection algorithm think this device is further away
+	 * i.e. NODE verses PHB
+	 */
+	if (cudaDev/2 != dev) (*path)[c] = '\0';
+
+	NCCL_OFI_INFO(NCCL_INIT, "[%d] getCudaPath dev %d busId %s path %s", cudaDev, dev, busId, *path);
+	return ncclSuccess;
+}
+#endif
+
 static ncclResult_t ofi_pciPath(int dev, char** path)
 {
+#ifdef EFA_NIC_DUP
+	if (ofi_info_list != NULL && IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
+		// Return a fake NIC PCI path based on the CUDA device path
+		return getCudaPath(dev, path);
+	}
+#endif
 	ncclResult_t ret = ncclSuccess;
 	struct fi_info* prov = NULL;
 	struct fid_nic *nic_info = NULL;
