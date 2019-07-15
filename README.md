@@ -38,7 +38,6 @@ support the following features as defined in the
 * Data transfer context structures (`FI_CONTEXT`)
 * Reliable datagram endpoints (`FI_EP_RDM`)
 * Send after Send ordering semantics (`FI_ORDER_SAS`)
-* Index-based addressing in address vectors (`FI_AV_TABLE`)
 * Automatic control and data progress model (`FI_PROGRESS_AUTO`)
 
 ## Getting Started
