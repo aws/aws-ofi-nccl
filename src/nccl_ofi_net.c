@@ -298,7 +298,6 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
-	hints->domain_attr->av_type = FI_AV_TABLE;
 	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
 	/* Indicate that the application support local memory registration */
@@ -454,7 +453,6 @@ static ncclResult_t create_nccl_ofi_component(struct fi_info *prov,
 		goto error;
 	}
 
-	av_attr.type = FI_AV_TABLE;
 	ret = fi_av_open(nccl_ofi_comp->domain, &av_attr, &nccl_ofi_comp->av, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open AV. RC: %d, ERROR: %s",
