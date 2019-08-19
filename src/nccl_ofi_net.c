@@ -13,7 +13,7 @@
 #include <unistd.h>
 #include <stack.h>
 #ifdef EFA_NIC_DUP
-#define EFA_PROVIDER_NAME "efa;ofi_rxr"
+#define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 #include <ctype.h>
 #include <cuda_runtime.h>
