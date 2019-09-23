@@ -700,6 +700,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
+	} else {
+		NCCL_OFI_WARN("Only EFA provider is supported");
+		return ncclSystemError;
 	}
 #else
 	/*
