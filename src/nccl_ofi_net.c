@@ -953,6 +953,11 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 
 	/* Send "connect" message to remote EP */
 	do {
+		/*
+		 * TODO: replace it with API of FI_INJECT type when most of
+		 * providers can support it, so that need for completion check
+		 * below can be lifted.
+		 */
 		rc = fi_tsend(sComm->local_ep, (void *)&local_ep_addr,
 			      MAX_EP_ADDR, NULL, sComm->remote_ep,
 			      sComm->tag | ~max_tag, &req->ctx);
@@ -975,6 +980,13 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		}
 	} while (true);
 
+	/* Ensure the message is sent. */
+	do {
+		ret = nccl_ofi_progress(nccl_ofi_component[dev]);
+		if (OFI_UNLIKELY(ret != 0))
+			goto error;
+	} while (req->state != NCCL_OFI_REQ_COMPLETED);
+
 	*sendComm = sComm;
 
 	goto exit;
@@ -984,9 +996,9 @@ unlock:
 error:
 	if (sComm)
 		free(sComm);
+exit:
 	if (req)
 		free_nccl_ofi_req(req, false);
-exit:
 	return ret;
 }
 
