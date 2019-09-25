@@ -588,10 +588,6 @@ static inline ncclResult_t process_completions(
 				/* Mark listenComm to accepted state */
 				req->lComm->accepted = true;
 			}
-			else
-				free_nccl_ofi_req(req, false);
-
-			continue;
 		}
 	}
 
