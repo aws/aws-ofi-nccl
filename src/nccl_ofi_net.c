@@ -19,6 +19,8 @@ int ofi_ndevices = -1;
 nccl_ofi_t **nccl_ofi_component = NULL;
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
+/* Indicates if memory registration of device buffers is required */
+bool hmem_mr = false;
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -355,6 +357,107 @@ static void filter_tcp_info_list()
 	}
 }
 
+/*
+ * @brief	Gets the CUDA device associated with the buffer
+ *
+ * @param	data
+ *		Pointer to CUDA buffer.
+ *
+ * @return	Valid CUDA device ID on success
+ *		-1 on error
+ * @return	0 on success
+ *		non-zero on error
+ */
+static ncclResult_t get_cuda_device(void *data, int *device)
+{
+	ncclResult_t ret = ncclSuccess;
+	int cuda_device = -1;
+	struct cudaPointerAttributes attr;
+	cudaError_t cuda_ret = cudaPointerGetAttributes(&attr, data);
+
+	if (cuda_ret != cudaSuccess) {
+		ret = ncclUnhandledCudaError;
+		NCCL_OFI_WARN("Invalid buffer pointer provided");
+		goto exit;
+	}
+
+	if (attr.type == cudaMemoryTypeDevice) {
+		cuda_device = attr.device;
+	}
+	else {
+		ret = ncclInvalidArgument;
+		NCCL_OFI_WARN("Invalid type of buffer provided. Only device memory is expected for NCCL_PTR_CUDA type");
+	}
+
+exit:
+	*device = cuda_device;
+	return ret;
+}
+
+/*
+ * @brief	Registers memory region (both HOST and CUDA)
+ *
+ *
+ * @return	OFI memory handle for data transfer operations
+ * @return	0 on success
+ *		non-zero on error
+ */
+static ncclResult_t register_mr_buffers(sendComm_t *sComm, void *data,
+					int size, int type,
+					struct fid_mr **mr_handle)
+{
+	ncclResult_t ret = ncclSuccess;
+	int rc;
+	struct fi_mr_attr mr_attr = {0};
+	struct iovec iov = {0};
+
+	/* Check if provider requires registration of local buffers */
+	if ((local_mr != true) && (type == NCCL_PTR_HOST)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			"Skip registering host buffer. local_mr: %d", local_mr);
+		goto exit;
+	}
+
+	/* Check if provider requires registration of cuda device buffers */
+	if ((hmem_mr != true) && (type == NCCL_PTR_CUDA)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			"Skip registering CUDA buffer. hmem_mr: %d", hmem_mr);
+		goto exit;
+	}
+
+	/* Populate IOV vector for memory registration */
+	iov.iov_base = data;
+	iov.iov_len = size;
+
+	/* Initialize MR attributes */
+	mr_attr.mr_iov = &iov;
+	mr_attr.iov_count = 1;
+	mr_attr.access = FI_SEND | FI_RECV;
+
+	if (type == NCCL_PTR_HOST) {
+		mr_attr.iface = FI_HMEM_SYSTEM;
+	} else {
+		mr_attr.iface = FI_HMEM_CUDA;
+
+		/* Get CUDA device ID */
+		ret = get_cuda_device(data, &mr_attr.device.cuda);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			goto exit;
+		}
+	}
+
+
+	rc = fi_mr_regattr(nccl_ofi_component[rComm->dev]->domain,
+			    &mr_attr, 0, mr_handle);
+	if (OFI_UNLIKELY(rc != 0)) {
+		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
+			       type, rComm->dev, fi_strerror(-rc));
+		ret = ncclSystemError;
+	}
+
+exit:
+	return ret;
+}
 
 /*
  * @brief	Calls fi_getinfo() to find a list of usable providers for RDM
@@ -382,15 +485,16 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	}
 
 	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG;
+	hints->caps = FI_TAGGED | FI_MSG | FI_HMEM;
 	hints->mode = FI_CONTEXT;
 
 	hints->ep_attr->type = FI_EP_RDM;
 
 	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
-	/* Indicate that the application support local memory registration */
-	hints->domain_attr->mr_mode = FI_MR_LOCAL;
+	/* Indicate that the application support both local
+	 * and device memory registration */
+	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM;
 
 	hints->tx_attr->msg_order = FI_ORDER_SAS;
 	hints->rx_attr->msg_order = FI_ORDER_SAS;
@@ -872,9 +976,16 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	/* Check if provider requires local memory registration */
 	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s required registration of local memory buffers",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
 			       ofi_info_list->fabric_attr->prov_name);
 		local_mr = true;
+	}
+
+	/* Check if provider requires heterogeneous memory registration */
+	if (ofi_info_list->domain_attr->mr_mode & FI_MR_HMEM) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of device buffers",
+			       ofi_info_list->fabric_attr->prov_name);
+		hmem_mr = true;
 	}
 
 	/*
@@ -954,7 +1065,8 @@ exit:
 
 static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 {
-	*supportedTypes = NCCL_PTR_HOST;
+	/* Supports message transfer from both CUDA and HOST buffers */
+	*supportedTypes = NCCL_PTR_HOST | NCCL_PTR_CUDA;
 	return ncclSuccess;
 }
 
@@ -1404,25 +1516,14 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 		goto exit;
 	}
 
-	/* Validate type to be NCCL_PTR_HOST */
-	if (OFI_UNLIKELY(type != NCCL_PTR_HOST)) {
+	/* Validate type of buffer */
+	if ((type != NCCL_PTR_HOST) && (type != NCCL_PTR_CUDA)) {
 		ret = ncclSystemError;
-		NCCL_OFI_WARN("Plugin supports registration of host buffers only");
+		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
 		goto exit;
 	}
 
-	/* Check if we do registration of local buffers */
-	if (!local_mr) {
-		goto exit;
-	}
-
-	ret = fi_mr_reg(nccl_ofi_component[sComm->dev]->domain, data, size,
-			FI_SEND | FI_RECV, 0, 0, 0, &mr_handle, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to register memory for device %d. RC: %d, Error: %s",
-			      sComm->dev, fi_strerror(-ret));
-		ret = ncclSystemError;
-	}
+	ret = register_mr_buffers(sComm, data, size, type, &mr_handle);
 
 exit:
 	*mhandle = (void *)mr_handle;
@@ -1432,6 +1533,7 @@ exit:
 static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 {
 	ncclResult_t ret = ncclSuccess;
+	int rc;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 
 	/* Validate Comm */
@@ -1441,16 +1543,16 @@ static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 		goto exit;
 	}
 
-	/* Check if we do registration of local buffers */
-	if (!local_mr) {
+	if (OFI_LIKELY(mr_handle == NULL)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
 		goto exit;
 	}
 
-	ret = fi_close((fid_t)mr_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-			      fi_strerror(-ret));
+	rc = fi_close((fid_t)mr_handle);
+	if (OFI_UNLIKELY(rc != 0)) {
 		ret = ncclSystemError;
+		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+			      fi_strerror(-rc));
 	}
 
 exit:
