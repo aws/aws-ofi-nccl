@@ -6,6 +6,7 @@
 
 AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
 AM_CFLAGS += -I$(top_srcdir)/include
+AM_LDFLAGS = -lcudart
 
 lib_LTLIBRARIES = libnccl-net.la
 libnccl_net_la_SOURCES = nccl_ofi_net.c
