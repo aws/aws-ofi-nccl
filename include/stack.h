@@ -21,26 +21,15 @@ static stack_t *allocate_stack(size_t num_elems)
 {
 	stack_t *stack = NULL;
 
-	stack = (stack_t *)malloc(sizeof(stack_t));
+	stack = (stack_t *)malloc(sizeof(stack_t) + num_elems * sizeof(int));
 	if (stack == NULL) {
-		NCCL_OFI_WARN("Unable to allocate stack structure");
+		NCCL_OFI_WARN("Unable to allocate stack");
 		goto exit;
 	}
 
 	stack->size = num_elems;
 	stack->top = -1;
-	stack->array = (int *)malloc(stack->size * sizeof(int));
-	if (stack->array == NULL) {
-		NCCL_OFI_WARN("Could not allocate stack array");
-		goto error;
-	}
 
-	goto exit;
-
-error:
-	if (stack)
-		free(stack);
-	stack = NULL;
 exit:
 	return stack;
 }
@@ -51,12 +40,10 @@ exit:
 
 void free_stack(stack_t *stack)
 {
-	if (stack)
-	{
-		if(stack->array)
-			free(stack->array);
-		free(stack);
-	}
+	if (!stack)
+		return;
+
+	free(stack);
 }
 
 /*
