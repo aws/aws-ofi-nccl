@@ -800,7 +800,7 @@ static ncclResult_t ofi_pciPath(int dev, char** path)
 	struct fi_info* prov = NULL;
 	struct fid_nic *nic_info = NULL;
 	struct fi_pci_attr *pci = NULL;
-	char device_path[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.0";
+	char device_path[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.00";
 
 	prov = get_nic_info(dev, ofi_info_list);
 	if (prov == NULL) {
