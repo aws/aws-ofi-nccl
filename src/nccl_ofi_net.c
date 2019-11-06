@@ -19,25 +19,6 @@ nccl_ofi_t **nccl_ofi_component = NULL;
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
 
-/*
- * @brief	Allocates free list
- */
-static free_list_t *allocate_free_list(void)
-{
-	free_list_t *fl = NULL;
-
-	fl = (free_list_t *)malloc(sizeof(free_list_t));
-	if (fl == NULL) {
-		NCCL_OFI_WARN("Unable to allocate free list structure");
-		goto exit;
-	}
-
-	fl->buffers = NULL;
-	fl->free_index = NULL;
-
-exit:
-	return fl;
-}
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -47,6 +28,7 @@ static ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_siz
 {
 	ncclResult_t ret = ncclSuccess, idx;
 	free_list_t *fl = NULL;
+	size_t alloc_size = sizeof(free_list_t) + fl_size * buffer_size;
 
 	/* Validate free list size and buffer size */
 	if (fl_size < 1 || buffer_size < 1) {
@@ -57,20 +39,15 @@ static ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_siz
 	}
 
 	/* Allocate free list structure */
-	fl = allocate_free_list();
+	fl = (free_list_t *)malloc(alloc_size);
 	if (fl == NULL) {
+		NCCL_OFI_WARN("Unable to allocate free list");
 		ret = ncclSystemError;
 		goto error;
 	}
-	fl->size = fl_size;
+	memset(fl, 0, alloc_size);
 
-	/* Allocate buffers */
-	fl->buffers = calloc(fl->size, buffer_size);
-	if (fl->buffers == NULL) {
-		NCCL_OFI_WARN("Unable to allocate NCCL OFI free list buffers");
-		ret = ncclSystemError;
-		goto error;
-	}
+	fl->size = fl_size;
 
 	/* Allocate stack of free indexes */
 	fl->free_index = allocate_stack(fl->size);
@@ -92,14 +69,26 @@ static ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_siz
 	goto exit;
 
 error:
-	if (fl->buffers)
-		free(fl->buffers);
 	if (fl->free_index)
 		free_stack(fl->free_index);
 	if (fl)
 		free(fl);
 exit:
 	return ret;
+}
+
+/*
+ * @brief	Release free list for NCCL OFI requests
+ */
+void free_ofi_fl(free_list_t *nccl_ofi_req_fl)
+{
+	if (!nccl_ofi_req_fl)
+		return;
+
+	if (nccl_ofi_req_fl->free_index)
+		free_stack(nccl_ofi_req_fl->free_index);
+
+	free(nccl_ofi_req_fl);
 }
 
 /*
@@ -1397,6 +1386,7 @@ exit:
 
 static ncclResult_t ofi_closeSend(void *sendComm)
 {
+	sendComm_t *sComm = (sendComm_t *)sendComm;
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(sendComm == NULL)) {
@@ -1408,8 +1398,9 @@ static ncclResult_t ofi_closeSend(void *sendComm)
 	 * We do not want to free EP associated with the comm
 	 * object as it my be used by other rings
 	 */
-	((sendComm_t *)sendComm)->local_ep = NULL;
+	sComm->local_ep = NULL;
 
+	free_ofi_fl(sComm->nccl_ofi_reqs_fl);
 	free(sendComm);
 exit:
 	return ret;
@@ -1417,6 +1408,7 @@ exit:
 
 static ncclResult_t ofi_closeRecv(void *recvComm)
 {
+	recvComm_t *rComm = (recvComm_t *)recvComm;
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(recvComm == NULL)) {
@@ -1428,8 +1420,9 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	 * We do not want to free EP associated with the comm
 	 * object as it may be used by other rings
 	 */
-	((recvComm_t *)recvComm)->local_ep = NULL;
+	rComm->local_ep = NULL;
 
+	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
 	free(recvComm);
 exit:
 	return ret;

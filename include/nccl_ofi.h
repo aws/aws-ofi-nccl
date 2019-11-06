@@ -75,20 +75,29 @@ typedef enum nccl_ofi_req_direction {
 } nccl_ofi_req_direction_t;
 
 typedef struct stack {
-	int *array;
 	int top;
 	int size;
+
+	/*
+	 * Array of stack entries comes after stack structure. size field
+	 * indicates the size of the array.
+	 * NOTE: no more field is allowed beyond this point.
+	 */
+	int array[];
 } stack_t;
 
 typedef struct free_list {
-	/* Array of free buffers */
-	void *buffers;
-
 	/* Stack of free buffer indexes */
 	stack_t *free_index;
 
 	/* Size of buffers array */
 	uint64_t size;
+
+	/*
+	 * Array of free buffers comes after list head.
+	 * NOTE: no more field is allowed beyond this point.
+	 */
+	void *buffers[];
 } free_list_t;
 
 typedef struct listenComm {
