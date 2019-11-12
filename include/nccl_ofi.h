@@ -178,7 +178,20 @@ typedef struct pending_reqs_q {
 	pending_reqs_q_elem_t *tail;
 } pending_reqs_q_t;
 
+/*
+ * Structure for an OFI network device.
+ *
+ * As this can be shared by multiple entities, it must be protected by
+ * nccl_ofi_lock. Also, for resource management, refcnt is maintained internally
+ * and get/put_nccl_ofi_comp() must be called in pair when an object is acquired
+ * to use and released. get_nccl_ofi_comp() allocates a new object when it is
+ * called for the first time and put_nccl_ofi_comp() releases the object if
+ * refcnt is decreased down to zero.
+ */
 typedef struct nccl_ofi {
+	/* Reference counter of the object */
+	int refcnt;
+
 	/* Current available tag ID */
 	uint64_t tag;
 
