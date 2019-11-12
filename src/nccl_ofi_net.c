@@ -532,12 +532,69 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 	if (ret != 0)
 		goto exit;
 
+	NCCL_OFI_TRACE(NCCL_NET, "OFI component #%d is created", dev);
+
 	return ret;
 
 exit:
 	if (nccl_ofi_component[dev] != NULL)
 		free(nccl_ofi_component[dev]);
 	return ret;
+}
+
+/*
+ * @brief	Release various libfabric resources.
+ */
+void release_nccl_ofi_component(int dev)
+{
+	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
+
+	if (!nccl_ofi_comp)
+		return;
+
+	if (nccl_ofi_comp->ep)
+		fi_close((fid_t)nccl_ofi_comp->ep);
+	if (nccl_ofi_comp->av)
+		fi_close((fid_t)nccl_ofi_comp->av);
+	if (nccl_ofi_comp->cq)
+		fi_close((fid_t)nccl_ofi_comp->cq);
+	if (nccl_ofi_comp->domain)
+		fi_close((fid_t)nccl_ofi_comp->domain);
+	if (nccl_ofi_comp->fabric)
+		fi_close((fid_t)nccl_ofi_comp->fabric);
+
+	free(nccl_ofi_comp);
+	nccl_ofi_component[dev] = NULL;
+
+	NCCL_OFI_TRACE(NCCL_NET, "OFI component #%d is released", dev);
+}
+
+/*
+ * @brief	Get nccl_ofi_component for given device ID.
+ * 		Create if it does not exist. Increase refernce counter. Must be
+ * 		protected by nccl_ofi_lock.
+ */
+static ncclResult_t get_nccl_ofi_comp(int dev)
+{
+	ncclResult_t ret = ncclSuccess;
+
+	if (!nccl_ofi_component[dev])
+		ret = create_nccl_ofi_comp_for_dev(dev, ofi_info_list);
+
+	++nccl_ofi_component[dev]->refcnt;
+
+	return ret;
+}
+
+/*
+ * @brief	Release nccl_ofi_component for given device ID.
+ *		Decrease refernce counter. Release resources if reference
+ *		counter becomes zero. Must be protected by nccl_ofi_lock.
+ */
+static void put_nccl_ofi_comp(int dev)
+{
+	if (--nccl_ofi_component[dev]->refcnt == 0)
+		release_nccl_ofi_component(dev);
 }
 
 /*
@@ -864,11 +921,9 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	 * already created, else increase tag ID.
 	 */
 	pthread_mutex_lock(&nccl_ofi_lock);
-	if (OFI_UNLIKELY(nccl_ofi_component[dev] == NULL)) {
-		ret = create_nccl_ofi_comp_for_dev(dev, ofi_info_list);
-		if (ret != 0)
-			goto unlock;
-	}
+	ret = get_nccl_ofi_comp(dev);
+	if (ret)
+		goto unlock;
 
 	if (nccl_ofi_component[dev]->tag + 1 >=
 	    nccl_ofi_component[dev]->max_tag) {
@@ -946,11 +1001,9 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	 * already created.
 	 */
 	pthread_mutex_lock(&nccl_ofi_lock);
-	if (OFI_UNLIKELY(nccl_ofi_component[dev] == NULL)) {
-		ret = create_nccl_ofi_comp_for_dev(dev, ofi_info_list);
-		if (ret != 0)
-			goto unlock;
-	}
+	ret = get_nccl_ofi_comp(dev);
+	if (ret)
+		goto unlock;
 	pthread_mutex_unlock(&nccl_ofi_lock);
 	max_tag = nccl_ofi_component[dev]->max_tag;
 
@@ -1081,15 +1134,23 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	nccl_ofi_req_t *req = NULL;
 	char remote_ep_addr[MAX_EP_ADDR] = {0};
 	fi_addr_t remote_ep;
-	uint64_t max_tag = nccl_ofi_comp->max_tag;
+	uint64_t max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
 
+	pthread_mutex_lock(&nccl_ofi_lock);
 	if (nccl_ofi_comp == NULL) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
 			     dev);
-		goto exit;
+		goto unlock;
 	}
+
+	ret = get_nccl_ofi_comp(dev);
+	if (ret)
+		goto unlock;
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
+	max_tag = nccl_ofi_comp->max_tag;
 
 	if (lComm->accepted == true) {
 		ret = ncclSystemError;
@@ -1178,6 +1239,8 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 	*recvComm = rComm;
 
+unlock:
+	pthread_mutex_unlock(&nccl_ofi_lock);
 exit:
 	if (req)
 		free(req);
@@ -1466,6 +1529,7 @@ exit:
 static ncclResult_t ofi_closeSend(void *sendComm)
 {
 	sendComm_t *sComm = (sendComm_t *)sendComm;
+	int dev;
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(sendComm == NULL)) {
@@ -1473,14 +1537,15 @@ static ncclResult_t ofi_closeSend(void *sendComm)
 		goto exit;
 	}
 
-	/*
-	 * We do not want to free EP associated with the comm
-	 * object as it my be used by other rings
-	 */
-	sComm->local_ep = NULL;
+	dev = sComm->dev;
 
 	free_ofi_fl(sComm->nccl_ofi_reqs_fl);
 	free(sendComm);
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+	put_nccl_ofi_comp(dev);
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
 exit:
 	return ret;
 }
@@ -1488,6 +1553,7 @@ exit:
 static ncclResult_t ofi_closeRecv(void *recvComm)
 {
 	recvComm_t *rComm = (recvComm_t *)recvComm;
+	int dev;
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(recvComm == NULL)) {
@@ -1495,20 +1561,23 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 		goto exit;
 	}
 
-	/*
-	 * We do not want to free EP associated with the comm
-	 * object as it may be used by other rings
-	 */
-	rComm->local_ep = NULL;
+	dev = rComm->dev;
 
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
 	free(recvComm);
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+	put_nccl_ofi_comp(dev);
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
 exit:
 	return ret;
 }
 
 static ncclResult_t ofi_closeListen(void *listenComm)
 {
+	listenComm_t *lComm = (listenComm_t *)listenComm;
+	int dev;
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(listenComm == NULL)) {
@@ -1516,13 +1585,14 @@ static ncclResult_t ofi_closeListen(void *listenComm)
 		goto exit;
 	}
 
-	/*
-	 * We do not want to free EP associated with the comm
-	 * object as it may be used by other rings
-	 */
-	((listenComm_t *)listenComm)->local_ep = NULL;
+	dev = lComm->dev;
 
 	free(listenComm);
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+	put_nccl_ofi_comp(dev);
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
 exit:
 	return ret;
 }
