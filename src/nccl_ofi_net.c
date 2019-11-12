@@ -515,7 +515,7 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 	}
 
 	/* Initialise tag and num_cqes */
-	nccl_ofi_component[dev]->tag = 1;
+	nccl_ofi_component[dev]->tag = 0;
 	nccl_ofi_component[dev]->num_cqes = NCCL_OFI_MAX_REQUESTS;
 	nccl_ofi_component[dev]->prov_name = prov->fabric_attr->prov_name;
 
@@ -789,17 +789,16 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 		if (ret != 0)
 			goto unlock;
 	}
-	else {
-		nccl_ofi_component[dev]->tag++;
-		if (nccl_ofi_component[dev]->tag ==
-		    nccl_ofi_component[dev]->max_tag) {
-			NCCL_OFI_WARN("Cannot open more connection for the device ID %d. Maximum is %ld",
-				     dev, nccl_ofi_component[dev]->max_tag);
-			ret = ncclSystemError;
-			goto unlock;
-		}
+
+	if (nccl_ofi_component[dev]->tag + 1 >=
+	    nccl_ofi_component[dev]->max_tag) {
+		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
+			      " Maximum is %ld",
+			      dev, nccl_ofi_component[dev]->max_tag);
+		ret = ncclSystemError;
+		goto unlock;
 	}
-	tag = nccl_ofi_component[dev]->tag;
+	tag = ++nccl_ofi_component[dev]->tag;
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	/* Build handle */
