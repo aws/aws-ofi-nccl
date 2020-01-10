@@ -7,6 +7,29 @@
 * Ubuntu 16.04 LTS
 * CentOS 7
 
+# v1.0.0 release notes
+
+This release requires [Libfabric v1.9.x](https://github.com/ofiwg/libfabric/tree/v1.9.x)
+and supports [NCCL v2.5.6](https://github.com/NVIDIA/nccl/releases/tag/v2.5.6-2)
+It introduces changes to remove `FI_AV_TABLE` requirement from libfabric providers
+and provide several bug fixes including fixing overflow issues, memory leaks and
+adding completion checks for connection establishment APIs.
+
+New Features:
+* Support NCCL v2.5.6 and require Libfabric v1.9.x
+
+Bug Fixes:
+* Remove FI_AV_TABLE requirement.
+* Fix missing completion check for connect API.
+* Fix resource and memory leaks.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
 # v0.9.2 release notes
 
 This release introduces changes required to support NCCLv2.4 and fixes race
