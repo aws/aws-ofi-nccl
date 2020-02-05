@@ -402,7 +402,7 @@ exit:
  * @return	0 on success
  *		non-zero on error
  */
-static ncclResult_t register_mr_buffers(sendComm_t *sComm, void *data,
+static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 					int size, int type,
 					struct fid_mr **mr_handle)
 {
@@ -446,12 +446,11 @@ static ncclResult_t register_mr_buffers(sendComm_t *sComm, void *data,
 		}
 	}
 
-
-	rc = fi_mr_regattr(nccl_ofi_component[rComm->dev]->domain,
+	rc = fi_mr_regattr(nccl_ofi_component[comm->dev]->domain,
 			    &mr_attr, 0, mr_handle);
 	if (OFI_UNLIKELY(rc != 0)) {
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
-			       type, rComm->dev, fi_strerror(-rc));
+			       type, comm->dev, fi_strerror(-rc));
 		ret = ncclSystemError;
 	}
 
@@ -485,16 +484,18 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	}
 
 	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG | FI_HMEM;
+	hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_RMA | FI_READ | FI_REMOTE_COMM;
 	hints->mode = FI_CONTEXT;
 
 	hints->ep_attr->type = FI_EP_RDM;
 
 	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
 	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
-	/* Indicate that the application support both local
-	 * and device memory registration */
-	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM;
+	/* Set MR mode bits to indicate FI_MR_BASIC registration */
+	hints->domain_attr->mr_mode = FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+	/* Set MR mode bits to indicate that application allows
+	 * registration of both local and device memory buffers */
+	hints->domain_attr->mr_mode |= FI_MR_LOCAL | FI_MR_HMEM;
 
 	hints->tx_attr->msg_order = FI_ORDER_SAS;
 	hints->rx_attr->msg_order = FI_ORDER_SAS;
@@ -1401,6 +1402,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	fi_addr_t remote_ep;
 	uint64_t max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
+	struct fid_mr *mr_handle = NULL;
 
 	pthread_mutex_lock(&nccl_ofi_lock);
 	if (nccl_ofi_comp == NULL) {
@@ -1430,11 +1432,8 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		ret = ncclSystemError;
 		goto exit;
 	}
+
 	req->state = NCCL_OFI_REQ_CREATED;
-
-	if (OFI_UNLIKELY(ret != 0))
-		goto exit;
-
 	req->lComm = lComm;
 	req->dev = dev;
 
@@ -1494,19 +1493,39 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
+	rComm->flush_buff.size = sizeof(rComm->flush_buff.host_buffer);
+
+	/* Register flush dummy buffer for provider access */
+	ret = register_mr_buffers(rComm, &rComm->flush_buff.host_buffer,
+				  rComm->flush_buff.size, NCCL_PTR_HOST,
+				  &mr_handle);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev:  %d",
+			      dev);
+		goto error;
+	}
+	rComm->flush_buff.mr_handle = mr_handle;
+
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
 			      req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			     dev);
-		goto exit;
+		goto error;
 	}
 
 	*recvComm = rComm;
 
+	goto exit;
+
 unlock:
 	pthread_mutex_unlock(&nccl_ofi_lock);
+error:
+	if (mr_handle)
+		fi_close((fid_t)mr_handle);
+	if (rComm)
+		free(rComm);
 exit:
 	if (req)
 		free(req);
@@ -1519,14 +1538,10 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 	struct fid_mr *mr_handle = NULL;
 	ncclResult_t ret = ncclSuccess;
 
-	/*
-	 * Let's assume the given Comm structure is for sendComm.
-	 * It doesn't matter as we will extract only dev from it
-	 */
-	sendComm_t *sComm = (sendComm_t *)comm;
+	ofiComm_t *ofi_comm = (ofiComm_t *)comm;
 
 	/* Validate Comm */
-	if (OFI_UNLIKELY(sComm == NULL)) {
+	if (OFI_UNLIKELY(ofi_comm == NULL)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Invalid Comm object provided");
 		goto exit;
@@ -1539,7 +1554,7 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 		goto exit;
 	}
 
-	ret = register_mr_buffers(sComm, data, size, type, &mr_handle);
+	ret = register_mr_buffers(ofi_comm, data, size, type, &mr_handle);
 
 exit:
 	*mhandle = (void *)mr_handle;
@@ -1734,13 +1749,6 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
-			      void *mhandle)
-{
-	/* NO-OP until we support NCCL_PTR_CUDA */
-	return ncclSuccess;
-}
-
 static ncclResult_t ofi_test(void* request, int* done, int* size)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -1786,6 +1794,119 @@ exit:
 	return ret;
 }
 
+static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
+			      void *mhandle)
+{
+	ncclResult_t ret = ncclSuccess;
+	recvComm_t *rComm = (recvComm_t *)recvComm;
+	nccl_ofi_req_t *req = NULL;
+	ssize_t rc = 0;
+	int done = 0;
+	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
+	uint64_t cuda_key;
+
+	/* Validate recvComm */
+	if (OFI_UNLIKELY(rComm == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Invalid recvComm provided");
+		goto exit;
+	}
+
+	if (OFI_UNLIKELY(mr_handle == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Invalid memory registration handle provided");
+		goto exit;
+	}
+
+	if (size == 0) {
+		/*
+		 * Flush is an expensive operation. So, don't send fi_read for
+		 * 0-sized messages. Since, NCCL issues flush for every irecv(),
+		 * we guarantee to sync data to GPU even without it.
+		 */
+		goto exit;
+	}
+
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(rComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			     NCCL_OFI_MAX_REQUESTS);
+		goto exit;
+	}
+
+	/* Allocate NCCL OFI request */
+	req = allocate_nccl_ofi_request(rComm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+			     rComm->dev);
+		goto exit;
+	}
+
+	req->rComm = rComm;
+	req->dev = rComm->dev;
+	req->direction = NCCL_OFI_RECV;
+
+	/* Extract remote key */
+	cuda_key = fi_mr_key(mr_handle);
+	if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Memory registration may not have completed.");
+		goto error;
+	}
+
+	/* Issue RDMA read */
+	do {
+		rc = fi_read(rComm->local_ep, &rComm->flush_buff.host_buffer,
+			     rComm->flush_buff.size,
+			     fi_mr_desc(rComm->flush_buff.mr_handle),
+			     rComm->local_ep_addr, (uint64_t)data,
+			     cuda_key, &req->ctx);
+		if (rc == 0) {
+			break;
+		}
+		else if (rc == -FI_EAGAIN) {
+			/*
+			 * Process completions so that you have enough
+			 * resources for issuing fi_read
+			 */
+			ret = nccl_ofi_progress(nccl_ofi_component[rComm->dev]);
+			if (OFI_UNLIKELY(ret != ncclSuccess))
+				goto error;
+		}
+		else {
+			NCCL_OFI_WARN("Unable to issue read operation for dev %d. RC: %zd, ERROR: %s",
+				     rComm->dev, rc, fi_strerror(-rc));
+			ret = ncclSystemError;
+			goto error;
+		}
+	} while (true);
+
+	rComm->num_inflight_reqs++;
+
+	/* Ensure that the request completes */
+	while (done == 0) {
+		ret = ofi_test(req, &done, NULL);
+		/*
+		 * If testing request completion fails and returns
+		 * not completed, reduce number of inflight requests.
+		 */
+		if (OFI_UNLIKELY((ret != ncclSuccess) && (done == 0))) {
+			rComm->num_inflight_reqs--;
+			goto error;
+		}
+	}
+
+	return ret;
+
+error:
+	if (req)
+		free_nccl_ofi_req(req, false);
+exit:
+	return ret;
+}
+
 static ncclResult_t ofi_closeSend(void *sendComm)
 {
 	sendComm_t *sComm = (sendComm_t *)sendComm;
@@ -1813,8 +1934,9 @@ exit:
 static ncclResult_t ofi_closeRecv(void *recvComm)
 {
 	recvComm_t *rComm = (recvComm_t *)recvComm;
-	int dev;
+	int dev, rc;
 	ncclResult_t ret = ncclSuccess;
+	struct fid_mr *mr_handle = NULL;
 
 	if (OFI_UNLIKELY(recvComm == NULL)) {
 		ret = ncclSystemError;
@@ -1822,6 +1944,16 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	}
 
 	dev = rComm->dev;
+
+	/* Deregister Flush buffer memory region */
+	mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
+	rc = fi_close((fid_t)mr_handle);
+	if (OFI_UNLIKELY(rc != 0)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+			      fi_strerror(-rc));
+		goto exit;
+	}
 
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
 	free(recvComm);

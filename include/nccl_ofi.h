@@ -16,6 +16,7 @@ extern "C" {
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
+#include <rdma/fi_rma.h>
 #include <nccl.h>
 #include <nccl_net.h>
 
@@ -100,6 +101,14 @@ typedef struct free_list {
 	void *buffers[];
 } free_list_t;
 
+/* Metadata about dummy flush buffer */
+typedef struct flush_buffer {
+	int host_buffer;
+	size_t size;
+	/* Memory registration handle of the local buffer */
+	struct fid_mr *mr_handle;
+} flush_buffer_t;
+
 typedef struct listenComm {
 	uint64_t tag;
 	struct fid_ep *local_ep;
@@ -108,25 +117,24 @@ typedef struct listenComm {
 	bool accepted;
 } listenComm_t;
 
-typedef struct sendComm {
-	int dev;
-	uint64_t tag;
-	uint64_t num_inflight_reqs;
-	fi_addr_t remote_ep;
-	struct fid_ep *local_ep;
-	free_list_t *nccl_ofi_reqs_fl;
-	free_list_t *pending_reqs_fl;
-} sendComm_t;
+typedef struct comm {
+    int dev;
+    uint64_t tag;
+    uint64_t num_inflight_reqs;
+    fi_addr_t remote_ep;
+    fi_addr_t local_ep_addr;
+    struct fid_ep *local_ep;
+    free_list_t *nccl_ofi_reqs_fl;
 
-typedef struct recvComm {
-	int dev;
-	uint64_t tag;
-	uint64_t num_inflight_reqs;
-	fi_addr_t remote_ep;
-	fi_addr_t local_ep_addr;
-	struct fid_ep *local_ep;
-	free_list_t *nccl_ofi_reqs_fl;
-} recvComm_t;
+    union {
+        struct {
+            free_list_t *pending_reqs_fl;
+        }; // sendComm_t
+        struct {
+            flush_buffer_t flush_buff;
+        }; // recvComm_t
+    };
+} ofiComm_t, recvComm_t, sendComm_t;
 
 typedef struct nccl_ofi_req {
 	/* Associated Comm object */
