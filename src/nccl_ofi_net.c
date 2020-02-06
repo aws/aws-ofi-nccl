@@ -1150,8 +1150,10 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	ncclResult_t ret = ncclSuccess;
 	char ep_name[MAX_EP_ADDR] = {0};
 	size_t namelen = sizeof(ep_name);
+	fi_addr_t local_ep_addr;
 	listenComm_t *lComm = NULL;
 	uint64_t tag;
+	int num_addrs;
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
@@ -1199,12 +1201,25 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	memcpy(handle, ep_name, MAX_EP_ADDR);
 	memcpy(handle + MAX_EP_ADDR, &tag, sizeof(tag));
 
+	/* Insert local EP address to AV. This will be used to issue local read operations */
+	num_addrs = fi_av_insert(nccl_ofi_component[dev]->av, (void *)ep_name, 1,
+				 &local_ep_addr, 0, NULL);
+	if (OFI_UNLIKELY(num_addrs != 1)) {	/* Only 1 address should be inserted into the AV */
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+			      dev, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto exit;
+	} else {
+		ret = ncclSuccess;
+	}
+
 	/* Build listenComm */
 	lComm = (listenComm_t *)calloc(1, sizeof(listenComm_t));
 	lComm->tag = tag;
 	lComm->local_ep = nccl_ofi_component[dev]->ep;
 	lComm->accepted = false;
 	lComm->dev = dev;
+	lComm->local_ep_addr = local_ep_addr;
 
 	*listenComm = lComm;
 
@@ -1475,6 +1490,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 	rComm->tag = lComm->tag;
 	rComm->local_ep = lComm->local_ep;
+	rComm->local_ep_addr = lComm->local_ep_addr;
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 

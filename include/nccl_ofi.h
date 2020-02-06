@@ -103,6 +103,7 @@ typedef struct free_list {
 typedef struct listenComm {
 	uint64_t tag;
 	struct fid_ep *local_ep;
+	fi_addr_t local_ep_addr;
 	int dev;
 	bool accepted;
 } listenComm_t;
@@ -122,6 +123,7 @@ typedef struct recvComm {
 	uint64_t tag;
 	uint64_t num_inflight_reqs;
 	fi_addr_t remote_ep;
+	fi_addr_t local_ep_addr;
 	struct fid_ep *local_ep;
 	free_list_t *nccl_ofi_reqs_fl;
 } recvComm_t;
