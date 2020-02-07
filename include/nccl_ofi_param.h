@@ -83,6 +83,15 @@ OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
  */
 OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
 
+/*
+ * Disable flush operation when using GPUDirect. Flush commands
+ * are used to enforce data consistency at the receiving GPU. It should
+ * only be disabled when underlying libfabric provider or hardware
+ * ensures data consistency.
+ * By default, plugin issues flush commands.
+ */
+OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif

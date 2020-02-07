@@ -1905,6 +1905,9 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 	uint64_t cuda_key;
 
+	if (ofi_nccl_gdr_flush_disable())
+		goto exit;
+
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
 		ret = ncclSystemError;
