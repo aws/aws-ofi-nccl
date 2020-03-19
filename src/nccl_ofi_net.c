@@ -1207,10 +1207,7 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 	}
 
 exit:
-	if (mr_handle == NULL)
-		*mhandle = mr_handle;
-	else
-		*mhandle = fi_mr_desc(mr_handle);
+	*mhandle = (void *)mr_handle;
 	return ret;
 }
 
@@ -1250,6 +1247,7 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	nccl_ofi_req_t *req = NULL;
 	sendComm_t *sComm = (sendComm_t *)sendComm;
 	nccl_ofi_t *nccl_ofi_comp = NULL;
+	void *desc = NULL;
 
 	/* Validate sendComm */
 	if (OFI_UNLIKELY(sComm == NULL)) {
@@ -1292,11 +1290,13 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
+	if (mhandle != NULL)
+		desc = fi_mr_desc(mhandle);
 	/*
 	 * Try sending data to remote EP; Return NULL request
 	 * if not able to send.
 	 */
-	rc = fi_tsend(sComm->local_ep, data, size, mhandle,
+	rc = fi_tsend(sComm->local_ep, data, size, desc,
 		      sComm->remote_ep, sComm->tag, &req->ctx);
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Return NULL */
@@ -1331,6 +1331,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int size,
 	ssize_t rc = 0;
 	nccl_ofi_req_t *req = NULL;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
+	void *desc = NULL;
 
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
@@ -1365,8 +1366,11 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int size,
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
+	if (mhandle != NULL)
+		desc = fi_mr_desc(mhandle);
+
 	/* Try posting buffer to local EP */
-	rc = fi_trecv(rComm->local_ep, data, size, mhandle,
+	rc = fi_trecv(rComm->local_ep, data, size, desc,
 		      FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/* Return NULL request */
