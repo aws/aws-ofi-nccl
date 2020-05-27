@@ -51,19 +51,18 @@ int main(int argc, char *argv[])
 	if (extNet == NULL)
 		return -1;
 
-	/* TODO: Check return codes for transport layer APIs */
 	/* Init API */
-	extNet->init(&logger);
+	OFINCCLCHECK(extNet->init(&logger));
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
 		      rank, name, extNet->name);
 
 	/* Devices API */
-	extNet->devices(&ndev);
+	OFINCCLCHECK(extNet->devices(&ndev));
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
 	/* Listen API */
 	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device 0");
-	extNet->listen(0, (void *)&handle, (void **)&lComm);
+	OFINCCLCHECK(extNet->listen(0, (void *)&handle, (void **)&lComm));
 
 	/* MPI send: Distribute handle to prev and next ranks */
 	MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE,
@@ -79,33 +78,33 @@ int main(int argc, char *argv[])
 
 	/* Connect to next and prev ranks */
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", prev);
-	extNet->connect(0, (void *)src_handle_prev, (void **)&sComm_prev);
+	OFINCCLCHECK(extNet->connect(0, (void *)src_handle_prev, (void **)&sComm_prev));
 
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
-	extNet->connect(0, (void *)src_handle_next, (void **)&sComm_next);
+	OFINCCLCHECK(extNet->connect(0, (void *)src_handle_next, (void **)&sComm_next));
 
 	/*
 	 * Accept API: accept connection from prev rank as the data flow is
 	 * clockwise
 	 */
 	NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-	extNet->accept((void *)lComm, (void **)&rComm);
+	OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 	NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
 
 	/* Send NUM_REQUESTS to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Sending %d requests to rank %d", NUM_REQUESTS, next);
 	for (idx = 0; idx < NUM_REQUESTS; idx++) {
 		send_buf = calloc(SEND_SIZE, sizeof(int));
-		extNet->isend((void *)sComm_next, (void *)send_buf, SEND_SIZE,
-				0, (void **)&send_req[idx]);
+		OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf, SEND_SIZE,
+			     0, (void **)&send_req[idx]));
 	}
 
 	/* Receive NUM_REQUESTS from prev rank */
 	NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
 	for (idx = 0; idx < NUM_REQUESTS; idx++) {
 		recv_buf = calloc(RECV_SIZE, sizeof(int));
-		extNet->irecv((void *)rComm, (void *)recv_buf,
-				RECV_SIZE, 0, (void **)&recv_req[idx]);
+		OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf,
+			     RECV_SIZE, 0, (void **)&recv_req[idx]));
 	}
 
 	/* Test all completions */
@@ -115,7 +114,7 @@ int main(int argc, char *argv[])
 			if (req_completed_send[idx])
 				continue;
 
-			extNet->test((void *)send_req[idx], &done, &received_size);
+			OFINCCLCHECK(extNet->test((void *)send_req[idx], &done, &received_size));
 			if (done) {
 				inflight_reqs--;
 				req_completed_send[idx] = 1;
@@ -127,7 +126,7 @@ int main(int argc, char *argv[])
 			if (req_completed_recv[idx])
 				continue;
 
-			extNet->test((void *)recv_req[idx], &done, &received_size);
+			OFINCCLCHECK(extNet->test((void *)recv_req[idx], &done, &received_size));
 			if (done) {
 				inflight_reqs--;
 				req_completed_recv[idx] = 1;
@@ -139,10 +138,10 @@ int main(int argc, char *argv[])
 	}
 
 	/* Close all Comm objects */
-	extNet->closeSend((void *)sComm_prev);
-	extNet->closeSend((void *)sComm_next);
-	extNet->closeRecv((void *)rComm);
-	extNet->closeListen((void *)lComm);
+	OFINCCLCHECK(extNet->closeSend((void *)sComm_prev));
+	OFINCCLCHECK(extNet->closeSend((void *)sComm_next));
+	OFINCCLCHECK(extNet->closeRecv((void *)rComm));
+	OFINCCLCHECK(extNet->closeListen((void *)lComm));
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
