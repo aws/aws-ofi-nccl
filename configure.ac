@@ -55,6 +55,14 @@ AC_ARG_WITH([mpi],
              LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
             [])
 
+AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
+AC_MSG_CHECKING([whether to enable trace messages])
+AS_IF([test "x${enable_trace}" = "xyes" ],
+      [trace=1
+       AC_MSG_RESULT(yes)],
+       [trace=0
+       AC_MSG_RESULT(no)])
+AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 if aws-ofi-nccl was configured with --enable-debug, 0 otherwise])
 
 # Checks for header files.
 AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h cuda_runtime.h], [],[
