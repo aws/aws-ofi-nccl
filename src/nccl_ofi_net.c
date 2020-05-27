@@ -815,6 +815,81 @@ static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 	return ncclSuccess;
 }
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4)) /* Support NCCL v2.6 */
+static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
+					  ncclNetProperties_v3_t *props)
+{
+	ncclResult_t ret = ncclSuccess;
+
+	props->name = strdup(nic_prov->domain_attr->name);
+
+	/*
+	 * Currently, libfabric providers provide multiple `fi_info`
+	 * objects for devices with multiple ports. So, safely assume port number
+	 * to be always 1.
+	 */
+	props->port = 1;
+	props->maxComms = nic_prov->domain_attr->ep_cnt;
+	props->guid = dev;
+
+	ret = ofi_pciPath(dev, &props->pciPath);
+	if (ret != ncclSuccess)
+		props->pciPath = NULL;
+
+	ret = ofi_ptrSupport(dev, &props->ptrSupport);
+
+	/* Should be successful for ptrSupport invocation */
+	return ret;
+}
+
+static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_v3_t *props)
+{
+	ncclResult_t ret = ncclSuccess;
+	ncclNetProperties_v3_t dev_props = {0};
+	struct fi_info *nic_prov = NULL;
+	struct fid_nic *nic_info = NULL;
+
+	if (dev < 0 || dev >= ofi_ndevices) {
+		NCCL_OFI_WARN("Incorrect dev %d provided", dev);
+		ret = ncclSystemError;
+		goto error;
+	}
+
+	nic_prov = get_nic_info(dev, ofi_info_list);
+	if (nic_prov == NULL) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Unable to find provider for dev %d", dev);
+		ret = ncclSystemError;
+		goto error;
+	}
+
+	ret = set_nic_props_default(dev, nic_prov, &dev_props);
+	if (ret != ncclSuccess)
+		goto error;
+
+	/* Change default values as set by NIC attributes */
+	nic_info = (struct fid_nic *)nic_prov->nic;
+	if (nic_info == NULL) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "No NIC info for dev %d. Supplying default values for NIC properties.",
+			      dev);
+		goto exit;
+	}
+
+	dev_props.name = strdup(nic_info->device_attr->name);
+	/* Speed reported in Mbps */
+	dev_props.speed = nic_info->link_attr->speed / (1e6);
+
+	goto exit;
+
+error:
+	props = NULL;
+exit:
+	*props = dev_props;
+	return ret;
+}
+#endif
+
 static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -1525,8 +1600,12 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.name = "AWS Libfabric",
 	.init = ofi_init,
 	.devices = ofi_devices,
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4)) /* Support NCCL v2.6 */
+	.getProperties = ofi_getProperties,
+#else /* Support NCCL version >= v2.4.x and < v2.6.x */
 	.pciPath = ofi_pciPath,
 	.ptrSupport = ofi_ptrSupport,
+#endif
 	.listen = ofi_listen,
 	.connect = ofi_connect,
 	.accept = ofi_accept,
