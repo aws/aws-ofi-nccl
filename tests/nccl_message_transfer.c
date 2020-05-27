@@ -15,14 +15,13 @@ int main(int argc, char* argv[])
 	char name[MPI_MAX_PROCESSOR_NAME];
 
 	/* Plugin defines */
-	int ndev;
+	int ndev, dev;
 	sendComm_t *sComm = NULL;
 	listenComm_t *lComm = NULL;
 	recvComm_t *rComm = NULL;
 	ncclNet_t *extNet = NULL;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 
-	ncclDebugLogger_t ofi_log_function;
 	ofi_log_function = logger;
 
 	/* Initialisation for data transfer */
@@ -51,6 +50,24 @@ int main(int argc, char* argv[])
 	/* Devices API */
 	OFINCCLCHECK(extNet->devices(&ndev));
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
+
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
+        /* Get Properties for the device */
+        for (dev = 0; dev < ndev; dev++) {
+                ncclNetProperties_v3_t props = {0};
+                OFINCCLCHECK(extNet->getProperties(dev, &props));
+                print_dev_props(dev, &props);
+        }
+#else
+        /* Get PCIe path and plugin memory pointer support */
+        for (dev = 0; dev < ndev; dev++) {
+                char *path = NULL;
+                int supported_types = 0;
+                extNet->pciPath(dev, &path);
+                OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
+                NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
+        }
+#endif
 
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];

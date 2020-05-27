@@ -62,6 +62,19 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	va_end(vargs);
 }
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
+void print_dev_props(int dev, ncclNetProperties_v3_t *props)
+{
+        NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: PCIe Path: %s", props->name, props->pciPath);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Plugin Support: %d", props->name, props->ptrSupport);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device GUID: %d", props->name, props->guid);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device Speed: %d", props->name, props->speed);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device Port: %d", props->name, props->port);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);
+}
+#endif
+
 ncclNet_t *get_extNet(void)
 {
 	void *netPluginLib = NULL;
