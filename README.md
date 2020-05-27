@@ -31,7 +31,10 @@ The plug-in currently supports the following distributions:
 
 It also requires
 [Libfabric v1.9.x](https://github.com/ofiwg/libfabric/tree/v1.9.x)
-and supports [NCCL v2.5.6](https://github.com/NVIDIA/nccl/releases/tag/v2.5.6-2).
+and supports [NCCL v2.6.4](https://github.com/NVIDIA/nccl/releases/tag/v2.6.4-1).
+The plug-in also maintains backward compatibility with older NCCL versions
+[NCCL v2.4.x](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and
+[NCCL v2.5.x](https://github.com/NVIDIA/nccl/releases/tag/v2.5.7-1)
 
 Libfabric supports various providers. The plug-in can choose only those which
 support the following features as defined in the
@@ -72,6 +75,13 @@ dependencies with the following flags:
   --with-cuda=PATH        Path to non-standard CUDA installation
   --with-nccl=PATH        Path to non-standard NCCL installation
   --with-mpi=PATH         Path to non-standard MPI installation
+```
+
+To enable trace messages for debugging (disabled by default), use the
+following config option:
+
+```
+   --enable-trace         Enable printing trace messages
 ```
 
 ### Running Unit Tests
