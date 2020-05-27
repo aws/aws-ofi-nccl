@@ -12,6 +12,7 @@
 #include <nccl_ofi.h>
 #include <nccl_ofi_log.h>
 #include "mpi.h"
+#include "config.h"
 #include <unistd.h>
 #include <nccl.h>
 #include <dlfcn.h>
@@ -45,8 +46,12 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 			printf("INFO: Function: %s Line: %d: ", filefunc, line);
 			break;
 		case NCCL_LOG_TRACE:
+#if OFI_NCCL_TRACE
 			printf("TRACE: Function: %s Line: %d: ", filefunc, line);
 			break;
+#else
+			return;
+#endif
 		default:
 			break;
 	};
