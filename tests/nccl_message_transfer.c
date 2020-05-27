@@ -27,6 +27,7 @@ int main(int argc, char* argv[])
 
 	/* Initialisation for data transfer */
 	nccl_ofi_req_t *req[NUM_REQUESTS] = {NULL};
+	void *mhandle[NUM_REQUESTS];
 	int req_completed[NUM_REQUESTS] = {0};
 	int inflight_reqs = NUM_REQUESTS;
 	int *send_buf = NULL;
@@ -79,8 +80,11 @@ int main(int argc, char* argv[])
 			      rank + 1);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
 			send_buf = calloc(SEND_SIZE, sizeof(int));
+			OFINCCLCHECK(extNet->regMr((void *)sComm, (void *)send_buf, SEND_SIZE,
+				     NCCL_PTR_HOST, &mhandle[idx]));
+			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered send memory for request %d of rank %d", idx, rank);
 			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf, SEND_SIZE,
-				     0, (void **)&req[idx]));
+				     mhandle[idx], (void **)&req[idx]));
 		}
 	}
 	else if (rank == 1) {
@@ -106,8 +110,11 @@ int main(int argc, char* argv[])
 			      NUM_REQUESTS);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
 			recv_buf = calloc(RECV_SIZE, sizeof(int));
+			OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf, RECV_SIZE,
+				     NCCL_PTR_HOST, &mhandle[idx]));
+			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf,
-				     RECV_SIZE, 0, (void **)&req[idx]));
+				     RECV_SIZE, mhandle[idx], (void **)&req[idx]));
 		}
 	}
 
@@ -121,6 +128,8 @@ int main(int argc, char* argv[])
 			if (done) {
 				inflight_reqs--;
 				req_completed[idx] = 1;
+				/* Unregister memory handle */
+				OFINCCLCHECK(extNet->deregMr((void *)sComm, mhandle[idx]));
 			}
 		}
 		if (inflight_reqs == 0)
