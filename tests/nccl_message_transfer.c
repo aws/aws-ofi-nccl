@@ -42,20 +42,19 @@ int main(int argc, char* argv[])
 	if (extNet == NULL)
 		return -1;
 
-	/* TODO: Check return codes for transport layer APIs */
 	/* Init API */
-	extNet->init(&logger);
+	OFINCCLCHECK(extNet->init(&logger));
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
 		      rank, name, extNet->name);
 
 	/* Devices API */
-	extNet->devices(&ndev);
+	OFINCCLCHECK(extNet->devices(&ndev));
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
 	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on dev 0");
-	extNet->listen(0, (void *)&handle, (void **)&lComm);
+	OFINCCLCHECK(extNet->listen(0, (void *)&handle, (void **)&lComm));
 
 	if (rank == 0) {
 
@@ -67,11 +66,11 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank + 1);
-		extNet->connect(0, (void *)src_handle, (void **)&sComm);
+		OFINCCLCHECK(extNet->connect(0, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		extNet->accept((void *)lComm, (void **)&rComm);
+		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 			      rank + 1);
 
@@ -80,8 +79,8 @@ int main(int argc, char* argv[])
 			      rank + 1);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
 			send_buf = calloc(SEND_SIZE, sizeof(int));
-			extNet->isend((void *)sComm, (void *)send_buf, SEND_SIZE,
-				       0, (void **)&req[idx]);
+			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf, SEND_SIZE,
+				     0, (void **)&req[idx]));
 		}
 	}
 	else if (rank == 1) {
@@ -94,11 +93,11 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank - 1);
-		extNet->connect(0, (void *)src_handle, (void **)&sComm);
+		OFINCCLCHECK(extNet->connect(0, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		extNet->accept((void *)lComm, (void **)&rComm);
+		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 			      rank - 1);
 
@@ -107,8 +106,8 @@ int main(int argc, char* argv[])
 			      NUM_REQUESTS);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
 			recv_buf = calloc(RECV_SIZE, sizeof(int));
-			extNet->irecv((void *)rComm, (void *)recv_buf,
-					RECV_SIZE, 0, (void **)&req[idx]);
+			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf,
+				     RECV_SIZE, 0, (void **)&req[idx]));
 		}
 	}
 
@@ -118,7 +117,7 @@ int main(int argc, char* argv[])
 			if (req_completed[idx])
 				continue;
 
-			extNet->test((void *)req[idx], &done, &received_size);
+			OFINCCLCHECK(extNet->test((void *)req[idx], &done, &received_size));
 			if (done) {
 				inflight_reqs--;
 				req_completed[idx] = 1;
@@ -130,9 +129,9 @@ int main(int argc, char* argv[])
 	NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
 		      NUM_REQUESTS, rank);
 
-	extNet->closeListen((void *)lComm);
-	extNet->closeSend((void *)sComm);
-	extNet->closeRecv((void *)rComm);
+	OFINCCLCHECK(extNet->closeListen((void *)lComm));
+	OFINCCLCHECK(extNet->closeSend((void *)sComm));
+	OFINCCLCHECK(extNet->closeRecv((void *)rComm));
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();

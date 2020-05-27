@@ -24,6 +24,14 @@
 #define SEND_SIZE	(5000)
 #define RECV_SIZE	(5200)
 
+#define OFINCCLCHECK(call) do { \
+  ncclResult_t res = call; \
+  if (res != ncclSuccess) { \
+    NCCL_OFI_WARN("OFI NCCL failure: %d", res);    \
+    return res; \
+  } \
+} while (false);
+
 void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	    int line, const char *fmt, ...)
 {
