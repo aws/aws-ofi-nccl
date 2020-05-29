@@ -7,6 +7,29 @@
 * Ubuntu 16.04 LTS
 * CentOS 7
 
+# v1.0.1 release notes
+
+This release supports [NCCL v2.6.4](https://github.com/NVIDIA/nccl/releases/tag/v2.6.4-1)
+while maintaining backward compatibility with older NCCL versions (upto
+[NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+
+It also includes bug fixes and testing enhancements.
+
+New Features:
+* Support NCCL v2.6.4
+* Add validation of memory registration APIs and getProperties API in tests.
+
+Bug Fixes:
+* Use fid_mr for memory handle
+* Support disabling trace messages
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
 # v1.0.0 release notes
 
 This release requires [Libfabric v1.9.x](https://github.com/ofiwg/libfabric/tree/v1.9.x)
