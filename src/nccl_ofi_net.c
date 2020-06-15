@@ -715,9 +715,34 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret = ncclSuccess;
 	char *prov_include = NULL;
-	int idx;
+	int idx, rc;
 
 	ofi_log_function = logFunction;
+
+	/*
+	 * RDMAV_FORK_SAFE environment variable makes the rdma-core
+	 * library fork-safe. This significantly increases cost of memory
+	 * registration when huge pages are enabled.
+	 *
+	 * To prevent data corruption, the EFA provider registers an atfork
+	 * handler which will abort the process whenever it believes
+	 * rdma-core is not fork-safe.
+	 *
+	 * NCCL applications heavily re-use the buffers for communication and
+	 * thus are not sensitive to increased memory registration costs.
+	 * To prevent NCCL based applications from getting aborted when using
+	 * fork(), plugin explicitly enables RDMAV_FORK_SAFE environment
+	 * variable.
+	 */
+	if (!getenv("RDMAV_FORK_SAFE")) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting RDMAV_FORK_SAFE environment variable to 1.");
+		rc = setenv("RDMAV_FORK_SAFE", "1", 1);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to set RDMAV_FORK_SAFE");
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
 
 	/* Get list of NICs fi_info structures for a single provider */
 	ret = get_ofi_provider(prov_include, &ofi_info_list);
