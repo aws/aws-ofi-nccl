@@ -30,6 +30,8 @@ nccl_ofi_t **nccl_ofi_component = NULL;
 bool local_mr = false;
 /* Indicates if memory registration of device buffers is required */
 bool hmem_mr = false;
+/* Indicates if GPUDirect is supported by libfabric provider */
+bool support_gdr = true;
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -468,6 +470,93 @@ exit:
 }
 
 /*
+ * @brief	Returns hints info structure depending on GPUDirect support requirement
+ */
+static void get_hints(struct fi_info *hints, int request_gdr)
+{
+	if (request_gdr) {
+		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_RMA | FI_READ | FI_REMOTE_COMM;
+		/*
+		 * Set MR mode bits to indicate that application allows
+		 * registration of both local and device memory buffers
+		 */
+		hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM;
+	}
+	else {
+		hints->caps = FI_TAGGED | FI_MSG | FI_REMOTE_COMM;
+		/*
+		 * Set MR mode bits to indicate that application allows
+		 * registration of both local memory buffers
+		 */
+		hints->domain_attr->mr_mode = FI_MR_LOCAL;
+	}
+
+	hints->mode = FI_CONTEXT;
+
+	hints->ep_attr->type = FI_EP_RDM;
+
+	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
+	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
+
+	/* Set MR mode bits to indicate FI_MR_BASIC registration */
+	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+
+	hints->tx_attr->msg_order = FI_ORDER_SAS;
+	hints->rx_attr->msg_order = FI_ORDER_SAS;
+}
+
+/*
+ * @brief	Returns provider info structure. It first tries to get providers
+ *		which supports GPUDirect. If not found, it re-tries to search for
+ *		provider supporting tagged messaging and RDM endpoints.
+ */
+static int find_ofi_provider(struct fi_info **providers)
+{
+	int rc = 0;
+	struct fi_info *gdr_hints, *hints;
+
+	gdr_hints = fi_allocinfo();
+	hints = fi_allocinfo();
+	if ((gdr_hints == NULL) || (hints == NULL)) {
+		NCCL_OFI_WARN("Unable to allocate hints fi_info structure");
+		rc = -FI_ENOMEM;
+		goto exit;
+	}
+
+	/* Get hints for GPUDirect capable provider */
+	get_hints(gdr_hints, true);
+
+	rc = fi_getinfo(ofi_version, NULL, NULL, 0ULL, gdr_hints, providers);
+	if (rc == -FI_ENODATA) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Could not find any optimal provider supporting GPUDirect RDMA");
+
+		/* Indicate that plugin doesn't support transfers using GPU buffers */
+		support_gdr = false;
+
+		/* Re-try finding non-GPUDirect capable provider */
+		get_hints(hints, false);
+
+		rc = fi_getinfo(ofi_version, NULL, NULL, 0ULL, hints, providers);
+		if (rc == -FI_ENODATA) {
+			NCCL_OFI_WARN("Couldn't find any optimal provider");
+		} else if (rc != 0) {
+			NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
+		}
+	}
+	else if (rc != 0) {
+		NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
+	}
+
+exit:
+	if (gdr_hints)
+		fi_freeinfo(gdr_hints);
+	if (hints)
+		fi_freeinfo(hints);
+	return rc;
+}
+
+/*
  * @brief	Calls fi_getinfo() to find a list of usable providers for RDM
  *		tagged endpoints.
  *
@@ -480,47 +569,18 @@ exit:
  */
 static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 {
-	int ret = ncclSuccess, idx = 0, prov_idx = 0, i;
-	struct fi_info *hints, *providers, *prov;
+	ncclResult_t ret = ncclSuccess;
+	int idx = 0, prov_idx = 0, i, rc = 0;
+	struct fi_info *providers, *prov;
 	struct fi_info *prov_info_vec[MAX_PROV_INFO] = {NULL};
 	int info_count[MAX_PROV_INFO] = {0};
 	char *prov_name;
 
-	hints = fi_allocinfo();
-	if (OFI_UNLIKELY(hints == NULL)) {
-		NCCL_OFI_WARN("Unable to allocate fi_info");
+	rc = find_ofi_provider(&providers);
+	if (rc != 0) {
+		ret = ncclSystemError;
 		goto error;
 	}
-
-	/* Hints to filter providers */
-	hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_RMA | FI_READ | FI_REMOTE_COMM;
-	hints->mode = FI_CONTEXT;
-
-	hints->ep_attr->type = FI_EP_RDM;
-
-	hints->domain_attr->control_progress = FI_PROGRESS_AUTO;
-	hints->domain_attr->data_progress = FI_PROGRESS_AUTO;
-	/* Set MR mode bits to indicate FI_MR_BASIC registration */
-	hints->domain_attr->mr_mode = FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
-	/* Set MR mode bits to indicate that application allows
-	 * registration of both local and device memory buffers */
-	hints->domain_attr->mr_mode |= FI_MR_LOCAL | FI_MR_HMEM;
-
-	hints->tx_attr->msg_order = FI_ORDER_SAS;
-	hints->rx_attr->msg_order = FI_ORDER_SAS;
-
-	ret = fi_getinfo(ofi_version, NULL, NULL, 0ULL, hints, &providers);
-	if (ret == -FI_ENODATA) {
-		NCCL_OFI_WARN("Could not find any optimal provider");
-		goto error;
-	}
-	else if (ret != 0) {
-		NCCL_OFI_WARN("OFI call failed with RC %d, %s", ret,
-			     fi_strerror(-ret));
-		goto error;
-	}
-
-	fi_freeinfo(hints);
 
 	/*
 	 * Create an array of providers where each index represents
@@ -576,8 +636,6 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	return ret;
 
 error:
-	if (hints)
-		fi_freeinfo(hints);
 	if (providers)
 		fi_freeinfo(providers);
 	return ncclSystemError;
@@ -1146,8 +1204,14 @@ exit:
 
 static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 {
-	/* Supports message transfer from both CUDA and HOST buffers */
-	*supportedTypes = NCCL_PTR_HOST | NCCL_PTR_CUDA;
+	if (support_gdr) {
+		/* Supports message transfer from both CUDA and HOST buffers */
+		*supportedTypes = NCCL_PTR_HOST | NCCL_PTR_CUDA;
+	} else {
+		/* Supports message transfer from both HOST buffers */
+		*supportedTypes = NCCL_PTR_HOST;
+	}
+
 	return ncclSuccess;
 }
 
@@ -1593,18 +1657,21 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
-	rComm->flush_buff.size = sizeof(rComm->flush_buff.host_buffer);
+	if (support_gdr) {
+		rComm->flush_buff.size = sizeof(rComm->flush_buff.host_buffer);
 
-	/* Register flush dummy buffer for provider access */
-	ret = register_mr_buffers(rComm, &rComm->flush_buff.host_buffer,
-				  rComm->flush_buff.size, NCCL_PTR_HOST,
-				  &mr_handle);
-	if (OFI_UNLIKELY(ret != ncclSuccess)) {
-		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev:  %d",
-			      dev);
-		goto error;
+
+		/* Register flush dummy buffer for provider access */
+		ret = register_mr_buffers(rComm, &rComm->flush_buff.host_buffer,
+					  rComm->flush_buff.size, NCCL_PTR_HOST,
+					  &mr_handle);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev:  %d",
+				      dev);
+			goto error;
+		}
+		rComm->flush_buff.mr_handle = mr_handle;
 	}
-	rComm->flush_buff.mr_handle = mr_handle;
 
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
@@ -1905,7 +1972,7 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 	uint64_t cuda_key;
 
-	if (ofi_nccl_gdr_flush_disable())
+	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
 
 	/* Validate recvComm */
@@ -2048,14 +2115,16 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 
 	dev = rComm->dev;
 
-	/* Deregister Flush buffer memory region */
-	mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
-	rc = fi_close((fid_t)mr_handle);
-	if (OFI_UNLIKELY(rc != 0)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-			      fi_strerror(-rc));
-		goto exit;
+	if (support_gdr) {
+		/* Deregister Flush buffer memory region */
+		mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
+		rc = fi_close((fid_t)mr_handle);
+		if (OFI_UNLIKELY(rc != 0)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+				      fi_strerror(-rc));
+			goto exit;
+		}
 	}
 
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
