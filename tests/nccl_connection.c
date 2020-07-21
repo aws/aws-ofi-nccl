@@ -59,10 +59,14 @@ int main(int argc, char* argv[])
 	}
 #endif
 
+	/* Choose specific device per rank for communication */
+	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
+	dev = rand() % ndev;
+
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
-	NCCL_OFI_INFO(NCCL_INIT, "Server: Listening on dev 0");
-	OFINCCLCHECK(extNet->listen(0, (void *)&handle, (void **)&lComm));
+	NCCL_OFI_INFO(NCCL_INIT, "Server: Listening on dev %d", dev);
+	OFINCCLCHECK(extNet->listen(dev, (void *)&handle, (void **)&lComm));
 
 	if (rank == 0) {
 
@@ -74,7 +78,7 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank + 1);
-		OFINCCLCHECK(extNet->connect(0, (void *)src_handle, (void **)&sComm));
+		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
@@ -92,7 +96,7 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank - 1);
-		OFINCCLCHECK(extNet->connect(0, (void *)src_handle, (void **)&sComm));
+		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
