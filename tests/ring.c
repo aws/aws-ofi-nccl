@@ -79,9 +79,13 @@ int main(int argc, char *argv[])
         }
 #endif
 
+	/* Choose specific device per rank for communication */
+	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
+	dev = rand() % ndev;
+
 	/* Listen API */
-	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device 0");
-	OFINCCLCHECK(extNet->listen(0, (void *)&handle, (void **)&lComm));
+	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device %d", dev);
+	OFINCCLCHECK(extNet->listen(dev, (void *)&handle, (void **)&lComm));
 
 	/* MPI send: Distribute handle to prev and next ranks */
 	MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE,
@@ -97,10 +101,10 @@ int main(int argc, char *argv[])
 
 	/* Connect to next and prev ranks */
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", prev);
-	OFINCCLCHECK(extNet->connect(0, (void *)src_handle_prev, (void **)&sComm_prev));
+	OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_prev, (void **)&sComm_prev));
 
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
-	OFINCCLCHECK(extNet->connect(0, (void *)src_handle_next, (void **)&sComm_next));
+	OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next));
 
 	/*
 	 * Accept API: accept connection from prev rank as the data flow is
