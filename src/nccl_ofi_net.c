@@ -234,22 +234,28 @@ exit:
 	return ret;
 }
 
-static int in_list(char *prov_name, char *prov_include)
+static int in_list(char *item, char *list)
 {
 	int ret = 0;
-	char *name = NULL;
+	char *token = NULL;
+	char *list_temp = strdup(list);
 
-	if (prov_include == NULL)
+	if (list_temp == NULL) {
+		if (list != NULL) {
+			NCCL_OFI_WARN("Unable to duplicate list.");
+			ret = ncclSystemError;
+		}
 		goto exit;
+	}
 
-	name = strtok((char *)prov_include, ",");
+	token = strtok((char *)list_temp, ",");
 
-	while (name) {
-		if (strcmp(prov_name, name) == 0) {
+	while (token) {
+		if (strcmp(item, token) == 0) {
 			ret = 1;
 			goto exit;
 		}
-		name = strtok(NULL, ",");
+		token = strtok(NULL, ",");
 	}
 
 exit:
