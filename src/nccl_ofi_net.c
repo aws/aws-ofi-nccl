@@ -341,9 +341,9 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 		*prov_info_list = prov_info_vec[0];
 	else {
 		for (prov_idx = 0; prov_idx < idx; prov_idx++) {
-			prov_name = prov_info_vec[idx]->fabric_attr->prov_name;
+			prov_name = prov_info_vec[prov_idx]->fabric_attr->prov_name;
 			if (in_list(prov_name, prov_include)) {
-				*prov_info_list = prov_info_vec[idx];
+				*prov_info_list = prov_info_vec[prov_idx];
 				break;
 			}
 		}
