@@ -275,16 +275,16 @@ exit:
  */
 static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 {
-	int ret = ncclSuccess, idx = 0, prov_idx;
+	int ret = ncclSuccess, idx = 0, prov_idx = 0, i;
 	struct fi_info *hints, *providers, *prov;
 	struct fi_info *prov_info_vec[MAX_PROV_INFO] = {NULL};
+	int info_count[MAX_PROV_INFO] = {0};
 	char *prov_name;
 
 	hints = fi_allocinfo();
 	if (OFI_UNLIKELY(hints == NULL)) {
 		NCCL_OFI_WARN("Unable to allocate fi_info");
-		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	/* Hints to filter providers */
@@ -304,13 +304,11 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	ret = fi_getinfo(ofi_version, NULL, NULL, 0ULL, hints, &providers);
 	if (ret == -FI_ENODATA) {
 		NCCL_OFI_WARN("Could not find any optimal provider");
-		ret = ncclSystemError;
 		goto error;
 	}
 	else if (ret != 0) {
 		NCCL_OFI_WARN("OFI call failed with RC %d, %s", ret,
 			     fi_strerror(-ret));
-		ret = ncclSystemError;
 		goto error;
 	}
 
@@ -325,6 +323,10 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	prov = providers;
 	prov_name = prov->fabric_attr->prov_name;
 	while (prov != NULL && prov->next != NULL) {
+
+		/* Increment number of devices found for the given provider */
+		info_count[idx]++;
+
 		char *name = prov->next->fabric_attr->prov_name;
 		if (strcmp(prov_name, name) != 0) {
 			prov_name = name;
@@ -337,15 +339,29 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 		}
 	}
 
-	if (prov_include == NULL)
+	/* To account for the last prov object */
+	if (prov != NULL)
+		info_count[idx]++;
+
+	if (prov_include == NULL) {
 		*prov_info_list = prov_info_vec[0];
+		ofi_ndevices = info_count[0];
+	}
 	else {
-		for (prov_idx = 0; prov_idx < idx; prov_idx++) {
+		for (prov_idx = 0; prov_idx <= idx; prov_idx++) {
 			prov_name = prov_info_vec[prov_idx]->fabric_attr->prov_name;
 			if (in_list(prov_name, prov_include)) {
 				*prov_info_list = prov_info_vec[prov_idx];
+				ofi_ndevices = info_count[prov_idx];
 				break;
 			}
+		}
+	}
+
+	/* Free unused fi_info objects */
+	for (i = 0; i <= idx; i++) {
+		if ((i != prov_idx) && prov_info_vec[i]) {
+			fi_freeinfo(prov_info_vec[i]);
 		}
 	}
 
@@ -356,8 +372,7 @@ error:
 		fi_freeinfo(hints);
 	if (providers)
 		fi_freeinfo(providers);
-exit:
-	return ret;
+	return ncclSystemError;
 }
 
 /*
@@ -749,12 +764,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 	/*
-	 * TODO: Find way to identify unique structures and remove lo.
-	 * For P3 platform, topology is known. Therefore, we return
-	 * the first NIC.
+	 * TODO: Find way to identify unique structures and remove lo for TCP provider.
 	 */
-	ofi_ndevices = 1;
-	ofi_info_list->next = NULL;
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
 		      ofi_info_list->fabric_attr->prov_name);
 
