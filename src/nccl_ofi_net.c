@@ -25,9 +25,18 @@ struct fi_info* ofi_info_list = NULL;
 int ofi_ndevices = -1;
 /* NCCL OFI component array for all NICs */
 nccl_ofi_t **nccl_ofi_component = NULL;
+/*
+ * List of interface names to be filtered out for TCP provider.
+ * Currently, it is set to default value as set by tcp_if_exclude_default.
+ */
+char *tcp_if_exclude_list = NULL;
+/* Configure using IPv6 interfaces for TCP provider. Default behaviour is
+ * to avoid using IPv6 interfaces.
+ * TODO: Allow users to configure at runtime.
+ */
+bool use_ipv6_tcp = false;
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
-
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -270,6 +279,98 @@ static int in_list(char *item, char *list)
 exit:
 	return ret;
 }
+
+/*
+ * @brief	Returns true if the given provider matches IPv6 addressing format
+ *		and interfaces from `tcp_if_exclude_list`
+ *
+ * @return 	true, if success
+ *		false, otherwise
+ */
+static bool match_prov_info(char *name, uint32_t addr_format,
+			    uint64_t mem_tag_format, uint64_t expected_mem_tag_format)
+{
+	if (in_list(name, tcp_if_exclude_list)) {
+		return true;
+	} else if (!use_ipv6_tcp && (addr_format == FI_SOCKADDR_IN6)) {
+		return true;
+	} else if (mem_tag_format != expected_mem_tag_format) {
+		/* TODO: Remove after https://github.com/ofiwg/libfabric/issues/6126 is fixed */
+		/* RxM utility provider adds `FI_COLLECTIVE` capability
+		 * which ends up duplicating the fi_info structures. That
+		 * is because the size of the supported tag changes when
+		 * `FI_COLLECTIVE` is enabled.
+		 * This happens even when applications do not request for
+		 * this capability in hints.
+		 * For now, we choose one tag format and use that to filter all
+		 * info objects.
+		 */
+		return true;
+	}
+
+	return false;
+}
+
+/*
+ * @brief	Removes info objects from global `ofi_info_list` matching
+ *		certain criteria for TCP provider.
+ */
+static void filter_tcp_info_list()
+{
+	struct fi_info *prev = NULL, *curr = NULL;
+	struct fi_info *delete_info = NULL;
+	bool delete_prov = false;
+	uint64_t expected_mem_tag_format = 0;
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Removing unnecessary interfaces and address formats for TCP provider");
+
+	curr = ofi_info_list;
+	expected_mem_tag_format = curr->ep_attr->mem_tag_format;
+
+	while (curr != NULL) {
+
+		/* Check if interface name and format matches deletion criteria */
+		delete_prov = match_prov_info(curr->domain_attr->name,
+					      curr->addr_format,
+					      curr->ep_attr->mem_tag_format,
+					      expected_mem_tag_format);
+		if (delete_prov) {
+
+			if (prev != NULL) {
+				prev->next = curr->next;
+			}
+			ofi_ndevices--;
+
+			delete_info = curr;
+			curr = curr->next;
+
+			/* Delete node matching criteria */
+			delete_info->next = NULL;
+			fi_freeinfo(delete_info);
+		}
+		else {
+			if (prev == NULL) {
+				/*
+				 * Update HEAD of ofi_info_list to point to first endpoint which
+				 * can be used for communication.
+				 */
+				ofi_info_list = curr;
+			}
+
+			prev = curr;
+			curr = curr->next;
+		}
+	}
+
+	/*
+	 * In case all info objects match the filter criteria,
+	 * update HEAD of ofi_info_list to point to NULL.
+	 */
+	if (prev == NULL) {
+		ofi_info_list = prev;
+	}
+}
+
 
 /*
  * @brief	Calls fi_getinfo() to find a list of usable providers for RDM
@@ -737,6 +838,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	ncclResult_t ret = ncclSuccess;
 	char *prov_include = NULL;
 	int idx, rc;
+	/* TODO: Remove lo after https://github.com/ofiwg/libfabric/issues/6127 is fixed */
+	char tcp_if_exclude_default[] = "lo,docker0";
 
 	ofi_log_function = logFunction;
 
@@ -765,6 +868,10 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		}
 	}
 
+	/* TODO: Allow configuring TCP interface exclude list at runtime */
+	/* Use default list of TCP interface names to exclude */
+	tcp_if_exclude_list = strdup(tcp_if_exclude_default);
+
 	/* Get list of NICs fi_info structures for a single provider */
 	ret = get_ofi_provider(prov_include, &ofi_info_list);
 	if (ret != 0 || ofi_info_list == NULL) {
@@ -791,10 +898,17 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		return ncclSystemError;
 	}
 #else
-	/*
-	 * TODO: Find way to identify unique structures and remove lo for TCP provider.
-	 */
+	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
+	if (strncmp("tcp", ofi_info_list->fabric_attr->prov_name, strlen("tcp")) == 0) {
+		filter_tcp_info_list();
+		if (OFI_UNLIKELY(ofi_info_list == NULL)) {
+			NCCL_OFI_WARN("No viable endpoint found for TCP provider.");
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
 #endif
+
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
 		      ofi_info_list->fabric_attr->prov_name);
 
