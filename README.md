@@ -84,6 +84,32 @@ following config option:
    --enable-trace         Enable printing trace messages
 ```
 
+### Plugin Configurations
+
+The plugin allows to configure the following variables at run-time according to your environment.
+
+<table>
+   <thead>
+      <th>Parameter</th>
+      <th>Description</th>
+      <th>Type</th>
+      <th>Accepted Value</th>
+   </thead>
+   <tr>
+      <td><code>OFI_NCCL_USE_IPV6_TCP</code></td>
+      <td>Allow using endpoints with IPv6 addressing format for TCP provider. Users can specify to use a preferred libfabric provider with `FI_PROVIDER` environment variable.</td>
+      <td>Boolean</td>
+      <td>0/1 (Default: 0)</td>
+   </tr>
+   <tr>
+      <td><code>OFI_NCCL_TCP_EXCLUDE_IF</code></td>
+      <td>List of interface names to be filtered out for TCP provider. Users can specify to use a preferred libfabric provider with `FI_PROVIDER` environment variable.</td>
+      <td>String</td>
+      <td>Comma-separated list of interface names (Default: "lo,docker0")</td>
+   </tr>
+</table>
+
+
 ### Running Unit Tests
 
 Running unit tests requires a working MPI installation and a
