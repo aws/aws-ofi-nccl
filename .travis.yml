@@ -33,7 +33,6 @@ install:
  # Install libfabric
  - git clone https://github.com/ofiwg/libfabric.git
  - pushd libfabric
- - git checkout v1.7.x
  - ./autogen.sh
  - ./configure --enable-debug; make -j8; sudo make install
  - popd
