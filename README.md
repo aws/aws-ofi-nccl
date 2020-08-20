@@ -23,7 +23,7 @@ The plug-in currently supports the following distributions:
 * Amazon Linux
 * Amazon Linux 2
 * Redhat Enterprise Linux 7
-* Ubuntu 16.04 LTS
+* Ubuntu 16.04, 18.04 and 20.04 LTS
 * CentOS 7
 
 It also requires
