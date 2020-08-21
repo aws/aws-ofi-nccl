@@ -26,12 +26,11 @@ The plug-in currently supports the following distributions:
 * Ubuntu 16.04, 18.04 and 20.04 LTS
 * CentOS 7
 
-It also requires
-[Libfabric v1.9.x](https://github.com/ofiwg/libfabric/tree/v1.9.x)
-and supports [NCCL v2.6.4](https://github.com/NVIDIA/nccl/releases/tag/v2.6.4-1).
-The plug-in also maintains backward compatibility with older NCCL versions
-[NCCL v2.4.x](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and
-[NCCL v2.5.x](https://github.com/NVIDIA/nccl/releases/tag/v2.5.7-1)
+It requires
+[Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+and supports [NCCL v2.7.8](https://github.com/NVIDIA/nccl/releases/tag/v2.7.8-1).
+The plug-in also maintains backward compatibility with older NCCL versions upto
+[NCCL v2.4.x](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1).
 
 Libfabric supports various providers. The plug-in can choose only those which
 support the following features as defined in the
@@ -42,6 +41,14 @@ support the following features as defined in the
 * Reliable datagram endpoints (`FI_EP_RDM`)
 * Send after Send ordering semantics (`FI_ORDER_SAS`)
 * Automatic control and data progress model (`FI_PROGRESS_AUTO`)
+* Communication with remote endpoints (`FI_REMOTE_COMM`)
+
+For GPUDirect RDMA support, it requires these additional features from libfabric
+providers. If these are not supported by any provider on system, plug-in turns off
+GPUDirect RDMA support.
+
+* Transfers to/from device memory (`FI_HMEM`)
+* Remote memory operations (`FI_RMA`, `FI_READ`)
 
 ## Getting Started
 
@@ -104,6 +111,12 @@ The plugin allows to configure the following variables at run-time according to 
       <td>String</td>
       <td>Comma-separated list of interface names (Default: "lo,docker0")</td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_GDR_FLUSH_DISABLE</code></td>
+      <td>Disable flush operation when using GPUDirect.</td>
+      <td>Boolean</td>
+      <td>0/1 (Default: 0)</td>
+   </tr>
 </table>
 
 
@@ -139,7 +152,6 @@ make NCCL_HOME=~/nccl/build/
 ```
 
 3. Run perf tests
-
 ```
 NCCL_DEBUG=INFO build/all_reduce_perf -b 8 -f 2 -e 32M -c 1
 ```
@@ -147,10 +159,6 @@ NCCL_DEBUG=INFO build/all_reduce_perf -b 8 -f 2 -e 32M -c 1
 If you installed the AWS libfabric plugin in a custom prefix, ensure
 `LD_LIBRARY_PATH` is set to include that prefix so the perf test binaries can
 find the plugin.
-
-## Known Issues
-
-The plugin returns only 1 NIC device even if the system supports multiple NICs.
 
 ## Getting Help
 
