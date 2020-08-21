@@ -41,12 +41,18 @@ int main(int argc, char* argv[])
 	OFINCCLCHECK(extNet->devices(&ndev));
 	NCCL_OFI_INFO(NCCL_INIT, "Received %d network devices", ndev);
 
+	/* Indicates if NICs support GPUDirect */
+	int support_gdr[ndev];
+
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
 		ncclNetProperties_v3_t props = {0};
 		OFINCCLCHECK(extNet->getProperties(dev, &props));
 		print_dev_props(dev, &props);
+
+		/* Set CUDA support */
+		support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 #else
 	/* Get PCIe path and plugin memory pointer support */
@@ -56,12 +62,20 @@ int main(int argc, char* argv[])
 		extNet->pciPath(dev, &path);
 		OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
 		NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
+
+		/* Set CUDA support */
+		support_gdr[dev] = is_gdr_supported_nic(supported_types);
 	}
 #endif
 
 	/* Choose specific device per rank for communication */
-	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
 	dev = rand() % ndev;
+	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
+
+	if (support_gdr[dev] == 1) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Network supports communication using CUDA buffers. Dev: %d", dev);
+	}
 
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];

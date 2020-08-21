@@ -6,7 +6,7 @@
 
 AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
 AM_CFLAGS += -I$(top_srcdir)/include
-AM_LDFLAGS = -lmpi
+AM_LDFLAGS = -lmpi -lcudart
 LDADD = ../src/libnccl-net.la
 CC=mpicc
 
