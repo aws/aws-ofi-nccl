@@ -11,11 +11,11 @@
 
 int main(int argc, char* argv[])
 {
-	int rank, proc_name;
-	char name[MPI_MAX_PROCESSOR_NAME];
+	int rank, proc_name_len, num_ranks, local_rank = 0;
+	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
-	int ndev, dev;
+	int ndev, dev, cuda_dev, i;
 	sendComm_t *sComm = NULL;
 	listenComm_t *lComm = NULL;
 	recvComm_t *rComm = NULL;
@@ -29,13 +29,33 @@ int main(int argc, char* argv[])
 	void *mhandle[NUM_REQUESTS];
 	int req_completed[NUM_REQUESTS] = {0};
 	int inflight_reqs = NUM_REQUESTS;
-	int *send_buf = NULL;
-	int *recv_buf = NULL;
+	char *send_buf[NUM_REQUESTS] = {NULL};
+	char *recv_buf[NUM_REQUESTS] = {NULL};
 	int done, received_size, idx;
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	MPI_Get_processor_name(name, &proc_name);
+	MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
+
+	char all_proc_name[num_ranks][MPI_MAX_PROCESSOR_NAME];
+
+	MPI_Get_processor_name(all_proc_name[rank], &proc_name_len);
+	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, all_proc_name,
+			MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
+
+	/* Determine local rank */
+	for (i = 0; i < num_ranks; i++) {
+		if (!strcmp(all_proc_name[rank], all_proc_name[i])) {
+			if (i < rank) {
+				++local_rank;
+			}
+		}
+	}
+
+	/* Set CUDA device for subsequent device memory allocation, in case GDR is used */
+	cuda_dev = local_rank;
+	NCCL_OFI_TRACE(NCCL_NET, "Using CUDA device %d for memory allocation", cuda_dev);
+	CUDACHECK(cudaSetDevice(cuda_dev));
 
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
@@ -45,33 +65,48 @@ int main(int argc, char* argv[])
 	/* Init API */
 	OFINCCLCHECK(extNet->init(&logger));
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
-		      rank, name, extNet->name);
+			rank, all_proc_name[rank], extNet->name);
 
 	/* Devices API */
 	OFINCCLCHECK(extNet->devices(&ndev));
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
+	/* Indicates if NICs support GPUDirect */
+	int support_gdr[ndev];
+
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
-        /* Get Properties for the device */
-        for (dev = 0; dev < ndev; dev++) {
-                ncclNetProperties_v3_t props = {0};
-                OFINCCLCHECK(extNet->getProperties(dev, &props));
-                print_dev_props(dev, &props);
-        }
+	/* Get Properties for the device */
+	for (dev = 0; dev < ndev; dev++) {
+		ncclNetProperties_v3_t props = {0};
+		OFINCCLCHECK(extNet->getProperties(dev, &props));
+		print_dev_props(dev, &props);
+
+		/* Set CUDA support */
+		support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
+	}
 #else
-        /* Get PCIe path and plugin memory pointer support */
-        for (dev = 0; dev < ndev; dev++) {
-                char *path = NULL;
-                int supported_types = 0;
-                extNet->pciPath(dev, &path);
-                OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
-                NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
-        }
+	/* Get PCIe path and plugin memory pointer support */
+	for (dev = 0; dev < ndev; dev++) {
+		char *path = NULL;
+		int supported_types = 0;
+		extNet->pciPath(dev, &path);
+		OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
+		NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
+
+		/* Set CUDA support */
+		support_gdr[dev] = is_gdr_supported_nic(supported_types);
+	}
 #endif
 
 	/* Choose specific device per rank for communication */
-	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
 	dev = rand() % ndev;
+	NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
+
+	if (support_gdr[dev] == 1) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				"Network supports communication using CUDA buffers. Dev: %d", dev);
+		buffer_type = NCCL_PTR_CUDA;
+	}
 
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
@@ -84,7 +119,8 @@ int main(int argc, char* argv[])
 		MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, (rank + 1), 0, MPI_COMM_WORLD);
 
 		/* MPI recv */
-		MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, (rank + 1), 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR,
+				(rank + 1), 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank + 1);
@@ -94,18 +130,22 @@ int main(int argc, char* argv[])
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
-			      rank + 1);
+				rank + 1);
 
 		/* Send NUM_REQUESTS to Rank 1 */
 		NCCL_OFI_INFO(NCCL_NET, "Sent %d requests to rank %d", NUM_REQUESTS,
-			      rank + 1);
+				rank + 1);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
-			send_buf = calloc(SEND_SIZE, sizeof(int));
-			OFINCCLCHECK(extNet->regMr((void *)sComm, (void *)send_buf, SEND_SIZE,
-				     NCCL_PTR_HOST, &mhandle[idx]));
-			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered send memory for request %d of rank %d", idx, rank);
-			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf, SEND_SIZE,
-				     mhandle[idx], (void **)&req[idx]));
+			OFINCCLCHECK(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type));
+			OFINCCLCHECK(initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type));
+
+			OFINCCLCHECK(extNet->regMr((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
+						buffer_type, &mhandle[idx]));
+			NCCL_OFI_TRACE(NCCL_NET,
+					"Successfully registered send memory for request %d of rank %d",
+					idx, rank);
+			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
+						mhandle[idx], (void **)&req[idx]));
 		}
 	}
 	else if (rank == 1) {
@@ -124,20 +164,25 @@ int main(int argc, char* argv[])
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
-			      rank - 1);
+				rank - 1);
 
 		/* Receive NUM_REQUESTS from Rank 0 */
 		NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
-			      NUM_REQUESTS);
+				NUM_REQUESTS);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
-			recv_buf = calloc(RECV_SIZE, sizeof(int));
-			OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf, RECV_SIZE,
-				     NCCL_PTR_HOST, &mhandle[idx]));
+			OFINCCLCHECK(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type));
+			OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
+						buffer_type, &mhandle[idx]));
 			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
-			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf,
-				     RECV_SIZE, mhandle[idx], (void **)&req[idx]));
+			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf[idx],
+						RECV_SIZE, mhandle[idx], (void **)&req[idx]));
 		}
 	}
+
+	/* Allocate and populate expected buffer */
+	char *expected_buf = NULL;
+	OFINCCLCHECK(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST));
+	OFINCCLCHECK(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST));
 
 	/* Test for completions */
 	while (true) {
@@ -149,15 +194,42 @@ int main(int argc, char* argv[])
 			if (done) {
 				inflight_reqs--;
 				req_completed[idx] = 1;
-				/* Unregister memory handle */
-				OFINCCLCHECK(extNet->deregMr((void *)sComm, mhandle[idx]));
+
+				if ((rank == 1) && (buffer_type == NCCL_PTR_CUDA)) {
+					NCCL_OFI_TRACE(NCCL_NET,
+						"Issue flush for data consistency. Request idx: %d",
+						idx);
+					OFINCCLCHECK(extNet->flush((void *)rComm,
+							(void *)recv_buf[idx],
+							RECV_SIZE, mhandle[idx]));
+				}
+
+				/* Deregister memory handle */
+				if (rank == 0) {
+					OFINCCLCHECK(extNet->deregMr((void *)sComm, mhandle[idx]));
+				}
+				else if (rank == 1) {
+					OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
+
+					OFINCCLCHECK(extNet->deregMr((void *)rComm, mhandle[idx]));
+				}
 			}
 		}
+
 		if (inflight_reqs == 0)
 			break;
 	}
 	NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
-		      NUM_REQUESTS, rank);
+			NUM_REQUESTS, rank);
+
+	/* Deallocate buffers */
+	OFINCCLCHECK(deallocate_buffer(expected_buf, NCCL_PTR_HOST));
+	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		if (send_buf[idx])
+			OFINCCLCHECK(deallocate_buffer(send_buf[idx], buffer_type));
+		if (recv_buf[idx])
+			OFINCCLCHECK(deallocate_buffer(recv_buf[idx], buffer_type));
+	}
 
 	OFINCCLCHECK(extNet->closeListen((void *)lComm));
 	OFINCCLCHECK(extNet->closeSend((void *)sComm));
