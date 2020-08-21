@@ -25,13 +25,21 @@
 #define SEND_SIZE	(5000)
 #define RECV_SIZE	(5200)
 
-#define OFINCCLCHECK(call) do { \
-  ncclResult_t res = call; \
-  if (res != ncclSuccess) { \
-    NCCL_OFI_WARN("OFI NCCL failure: %d", res);    \
-    return res; \
-  } \
+#define OFINCCLCHECK(call) do {					\
+	ncclResult_t res = call;				\
+	if (res != ncclSuccess) {				\
+		NCCL_OFI_WARN("OFI NCCL failure: %d", res);	\
+		return res;					\
+	}							\
 } while (false);
+
+#define CUDACHECK(call) do {							\
+        cudaError_t e = call;							\
+        if (e != cudaSuccess) {							\
+                NCCL_OFI_WARN("Cuda failure '%s'", cudaGetErrorString(e));	\
+                return ncclUnhandledCudaError;					\
+        }									\
+} while(false);
 
 void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	    int line, const char *fmt, ...)
@@ -74,6 +82,100 @@ void print_dev_props(int dev, ncclNetProperties_v3_t *props)
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);
 }
 #endif
+
+int is_gdr_supported_nic(uint64_t ptr_support)
+{
+	if (ptr_support & NCCL_PTR_CUDA)
+		return 1;
+
+	return 0;
+}
+
+ncclResult_t allocate_buff(void **buf, size_t size, int buffer_type)
+{
+	switch (buffer_type) {
+	case NCCL_PTR_CUDA:
+		NCCL_OFI_TRACE(NCCL_NET, "Allocating CUDA buffer");
+		CUDACHECK(cudaMalloc(buf, size));
+		break;
+	case NCCL_PTR_HOST:
+		NCCL_OFI_TRACE(NCCL_NET, "Allocating host buffer");
+		CUDACHECK(cudaHostAlloc((void **)buf, size, cudaHostAllocMapped));
+		break;
+	default:
+		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
+		return ncclInvalidArgument;
+	}
+
+	return ncclSuccess;
+}
+
+ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
+{
+	switch (buffer_type) {
+	case NCCL_PTR_CUDA:
+		CUDACHECK(cudaMemset(buf, '1', size));
+		break;
+	case NCCL_PTR_HOST:
+		memset(buf, '1', size);
+		break;
+	default:
+		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
+		return ncclInvalidArgument;
+	}
+
+	return ncclSuccess;
+}
+
+ncclResult_t deallocate_buffer(void *buf, int buffer_type)
+{
+	switch (buffer_type) {
+	case NCCL_PTR_CUDA:
+		CUDACHECK(cudaFree((void *)buf));
+		break;
+	case NCCL_PTR_HOST:
+		CUDACHECK(cudaFreeHost((void *)buf));
+		break;
+	default:
+		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
+		return cudaErrorInvalidValue;
+	}
+
+	return ncclSuccess;
+}
+
+ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int buffer_type)
+{
+	int ret = 0;
+	char *recv_buf_host = NULL;
+
+	switch (buffer_type) {
+	case NCCL_PTR_CUDA:
+		OFINCCLCHECK(allocate_buff((void **)&recv_buf_host, size, NCCL_PTR_HOST));
+		CUDACHECK(cudaMemcpy(recv_buf_host, recv_buf, size, cudaMemcpyDeviceToHost));
+
+		ret = memcmp(recv_buf_host, expected_buf, size);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Data validation check failed. RC: %d, Buffer Type: %d",
+				      ret, buffer_type);
+			return ncclSystemError;
+		}
+		break;
+	case NCCL_PTR_HOST:
+		ret = memcmp(recv_buf, expected_buf, size);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Data validation check failed. RC: %d, Buffer Type: %d",
+				      ret, buffer_type);
+			return ncclSystemError;
+		}
+		break;
+	default:
+		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
+		return -1;
+	}
+
+	return ncclSuccess;
+}
 
 ncclNet_t *get_extNet(void)
 {
