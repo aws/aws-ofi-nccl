@@ -58,6 +58,9 @@ extern "C" {
 /* This is twice the size of maximum inflight requests supported by NCCL */
 #define NCCL_OFI_MAX_REQUESTS	256
 
+/* Maximum length of directory path */
+#define PATH_MAX	4096
+
 /* NCCL OFI lock for concurrency */
 pthread_mutex_t nccl_ofi_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Logger Function */

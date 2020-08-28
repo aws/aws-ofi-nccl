@@ -989,6 +989,53 @@ static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 	return ofi_process_cq(nccl_ofi_comp);
 }
 
+/*
+ * @brief	Checks if the underlying hardware type matches the input platform type.
+ *
+ * @return	-1, on error
+ *		1, if it matches
+ *		0, if it does not match
+ */
+static int platform_type_matches(char *platform_type)
+{
+	char file[] = "/sys/devices/virtual/dmi/id/product_name";
+	FILE *fd = NULL;
+	int len = strlen(platform_type);
+	int idx = 0, ret = -1;
+	char ch;
+
+	fd = fopen(file, "r");
+	if (fd == NULL) {
+		NCCL_OFI_WARN("Error opening file: %s", file);
+		return -1;
+	}
+
+	/* Read first line of the file */
+	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
+
+		/* Report mismatch if characters read are more than string length */
+		if (idx == len) {
+			ret = 0;
+			goto exit;
+		}
+
+		/* Fail fast if there's a mismatch */
+		if (ch != platform_type[idx++]) {
+			ret = 0;
+			goto exit;
+		}
+	}
+
+	if (idx == len) {
+		ret = 1;
+	}
+
+exit:
+	if (fd)
+		fclose(fd);
+	return ret;
+}
+
 static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -996,6 +1043,47 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	int idx, rc;
 
 	ofi_log_function = logFunction;
+
+	/*
+	 * Use a static pre-configured topology for p4d.24xlarge platform type.
+	 *
+	 * While the actual physical topology is 2 GPUs and a NIC behind a PCIe
+	 * switch, the AWS hypervisor presents this as a separate PCI bus without
+	 * switch. To enable GPUDirect, plugin silently overrides the system topology
+	 * using `NCCL_TOPO_FILE` environment variable to inform NCCL of the
+	 * underlying hardware topology.
+	 *
+	 * This topology information helps NCCL to form optimal
+	 * graphs by using right GPU-NIC pairs for transfers through network.
+	 */
+	int is_p4 = platform_type_matches("p4d.24xlarge");
+
+	if (is_p4 < 0) {
+		ret = ncclSystemError;
+		goto exit;
+	} else if (is_p4) {
+		char p4d_topology[PATH_MAX];
+
+		rc = snprintf(p4d_topology, sizeof(p4d_topology), "%s/%s",
+			      XML_DIR, "p4d-24xl-topo.xml");
+		if (rc < 0 || rc >= PATH_MAX) {
+			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s",
+				rc, PATH_MAX, XML_DIR);
+			ret = ncclSystemError;
+			goto exit;
+		}
+
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Running on P4d platform, Setting NCCL_TOPO_FILE environment variable to %s",
+			      p4d_topology);
+
+		rc = setenv("NCCL_TOPO_FILE", p4d_topology, 1);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE");
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
 
 	/*
 	 * RDMAV_FORK_SAFE environment variable makes the rdma-core
@@ -1031,10 +1119,11 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 #ifdef EFA_NIC_DUP
 	/*
-	 * If we detect the Amazon EFA provider, emulate a NIC per GPU
-	 * so that NCCL will build more rings and achieve better peak BW
+	 * If we detect the Amazon EFA provider and we are not using GPUDirect RDMA,
+	 * emulate a NIC per GPU so that NCCL will build more rings and achieve
+	 * better peak BW.
 	*/
-	if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
+	if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) && !support_gdr) {
 		if (cudaGetDeviceCount(&ofi_ndevices) != cudaSuccess) {
 			NCCL_OFI_WARN("Error getting CUDA device count\n");
 			return ncclUnhandledCudaError;
@@ -1043,7 +1132,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
-	} else {
+	} else if (!IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
 		NCCL_OFI_WARN("Only EFA provider is supported");
 		return ncclSystemError;
 	}
@@ -1150,7 +1239,9 @@ static ncclResult_t getCudaPath(int dev, char** path)
 static ncclResult_t ofi_pciPath(int dev, char** path)
 {
 #ifdef EFA_NIC_DUP
-	if (ofi_info_list != NULL && IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
+	if (ofi_info_list != NULL &&
+	    IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) &&
+	    !support_gdr) {
 		// Return a fake NIC PCI path based on the CUDA device path
 		return getCudaPath(dev, path);
 	}
