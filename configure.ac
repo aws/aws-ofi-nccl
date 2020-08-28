@@ -5,7 +5,7 @@
 #
 
 AC_PREREQ([2.69])
-AC_INIT([aws-ofi-nccl], [0.9], [rashika@amazon.com])
+AC_INIT([aws-ofi-nccl], [1.1], [rashika@amazon.com])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
@@ -79,7 +79,8 @@ AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
 AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
-                 tests/Makefile])
+                 tests/Makefile
+                 topology/Makefile])
 LT_INIT([shared disable-static])
 AC_OUTPUT
 echo "*"

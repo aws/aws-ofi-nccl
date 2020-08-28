@@ -5,7 +5,7 @@
 #
 
 AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
-AM_CFLAGS += -I$(top_srcdir)/include
+AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
 AM_LDFLAGS = -lcudart
 
 lib_LTLIBRARIES = libnccl-net.la
