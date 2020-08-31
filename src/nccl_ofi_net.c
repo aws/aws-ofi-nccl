@@ -1280,23 +1280,13 @@ static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_v3_t *props)
 	/* Speed reported in Mbps */
 	dev_props.speed = nic_info->link_attr->speed / (1e6);
 
-        /*
-         * TODO: Current libfabric release doesn't report correct speed for
-         * EFA device which leads to slight performance drop. This is because
-         * NCCL reduces parallelism based on overall speed of topology.
-         *
-         * Fix it by explicitly setting the right speed and REMOVE this after
-         * libfabric release with the fix is available.
-         */
 #ifdef EFA_NIC_DUP
-        if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Correcting speed for EFA provider");
-		dev_props.speed = 1e5; /* 100 Gb/s */
+        if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name) && !support_gdr) {
 		/* Make a unique device name for each EFA device */
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Correcting device names");
 		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s%x", nic_info->device_attr->name, dev);
         }
-        else
+        else if (!IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name))
                 NCCL_OFI_WARN("Only EFA provider is supported");
 #endif
 
