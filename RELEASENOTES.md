@@ -7,6 +7,24 @@
 * Ubuntu 16.04, 18.04 and 20.04 LTS
 * CentOS 7
 
+# v1.1.1 release notes
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)and supports [NCCL v2.7.8](https://github.com/NVIDIA/nccl/releases/tag/v2.7.8-1)
+while maintaining backward compatibility with older NCCL versions (upto
+[NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+
+It introduces the following new features and bug fixes.
+
+New Features:
+* Injects a static topology into NCCL for P4d hardware
+* Use EFA provider supplied speed for EFA hardware.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
 # v1.1.0 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)and supports [NCCL v2.7.8](https://github.com/NVIDIA/nccl/releases/tag/v2.7.8-1)
