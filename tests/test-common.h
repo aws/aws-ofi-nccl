@@ -71,7 +71,7 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 }
 
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
-void print_dev_props(int dev, ncclNetProperties_v3_t *props)
+void print_dev_props(int dev, ncclNetProperties_t *props)
 {
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
         NCCL_OFI_TRACE(NCCL_NET, "%s: PCIe Path: %s", props->name, props->pciPath);
