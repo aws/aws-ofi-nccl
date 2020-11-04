@@ -1137,7 +1137,7 @@ static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4)) /* Support NCCL v2.6 */
 static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
-					  ncclNetProperties_v3_t *props)
+					  ncclNetProperties_t *props)
 {
 	ncclResult_t ret = ncclSuccess;
 
@@ -1162,10 +1162,10 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	return ret;
 }
 
-static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_v3_t *props)
+static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_t *props)
 {
 	ncclResult_t ret = ncclSuccess;
-	ncclNetProperties_v3_t dev_props = {0};
+	ncclNetProperties_t dev_props = {0};
 	struct fi_info *nic_prov = NULL;
 	struct fid_nic *nic_info = NULL;
 
@@ -1861,14 +1861,13 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
-			      void *mhandle)
+static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
+			       void *mhandle, void **request)
 {
 	ncclResult_t ret = ncclSuccess;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
 	nccl_ofi_req_t *req = NULL;
 	ssize_t rc = 0;
-	int done = 0;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 	uint64_t cuda_key;
 
@@ -1955,6 +1954,31 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 
 	rComm->num_inflight_reqs++;
 
+	*request = req;
+
+	return ret;
+
+error:
+	if (req)
+		free_nccl_ofi_req(req, false);
+exit:
+	return ret;
+}
+
+#if (NCCL_VERSION_CODE < NCCL_VERSION(2, 8, 0))
+static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
+			      void *mhandle)
+{
+	ncclResult_t ret;
+	recvComm_t *rComm = (recvComm_t *)recvComm;
+	nccl_ofi_req_t *req = NULL;
+	int done = 0;
+
+	ret = OFI_UNLIKELY(ofi_iflush(recvComm, data, size, mhandle, (void **)&req));
+	if (ret != ncclSuccess) {
+		goto exit;
+	}
+
 	/* Ensure that the request completes */
 	while (done == 0) {
 		ret = ofi_test(req, &done, NULL);
@@ -1976,6 +2000,7 @@ error:
 exit:
 	return ret;
 }
+#endif
 
 static ncclResult_t ofi_closeSend(void *sendComm)
 {
@@ -2078,7 +2103,11 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.deregMr = ofi_deregMr,
 	.isend = ofi_isend,
 	.irecv = ofi_irecv,
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 8, 0)) /* Support NCCL v2.8 */
+	.iflush = ofi_iflush,
+#else
 	.flush = ofi_flush,
+#endif
 	.test = ofi_test,
 	.closeSend = ofi_closeSend,
 	.closeRecv = ofi_closeRecv,
