@@ -47,7 +47,7 @@ int main(int argc, char* argv[])
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
-		ncclNetProperties_v3_t props = {0};
+		ncclNetProperties_t props = {0};
 		OFINCCLCHECK(extNet->getProperties(dev, &props));
 		print_dev_props(dev, &props);
 
