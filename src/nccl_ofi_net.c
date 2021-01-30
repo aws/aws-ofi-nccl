@@ -1969,10 +1969,19 @@ exit:
 static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 			      void *mhandle)
 {
-	ncclResult_t ret;
+	ncclResult_t ret = ncclSuccess;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
 	nccl_ofi_req_t *req = NULL;
 	int done = 0;
+
+	if (size == 0) {
+		/*
+		 * Flush is an expensive operation. So, don't send fi_read for
+		 * 0-sized messages. Since, NCCL issues flush for every irecv(),
+		 * we guarantee to sync data to GPU even without it.
+		 */
+		goto exit;
+	}
 
 	ret = OFI_UNLIKELY(ofi_iflush(recvComm, data, size, mhandle, (void **)&req));
 	if (ret != ncclSuccess) {
