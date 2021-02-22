@@ -34,7 +34,7 @@ install:
  - git clone https://github.com/ofiwg/libfabric.git
  - pushd libfabric
  - ./autogen.sh
- - ./configure --enable-debug; make -j8; sudo make install
+ - ./configure --enable-debug --disable-psm3; make -j8; sudo make install
  - popd
 
  # Install NCCL
