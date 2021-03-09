@@ -2143,6 +2143,7 @@ error:
 	if (req)
 		free_nccl_ofi_req(req, false);
 exit:
+	*request = NULL;
 	return ret;
 }
 
@@ -2163,6 +2164,9 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 		 */
 		goto exit;
 	}
+
+	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
+		goto exit;
 
 	ret = OFI_UNLIKELY(ofi_iflush(recvComm, data, size, mhandle, (void **)&req));
 	if (ret != ncclSuccess) {
