@@ -562,7 +562,7 @@ exit:
 static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 {
 	int idx = 0, prov_idx = 0, i, rc = 0;
-	struct fi_info *providers, *prov;
+	struct fi_info *providers = NULL, *prov = NULL;
 	struct fi_info *prov_info_vec[MAX_PROV_INFO] = {NULL};
 	int info_count[MAX_PROV_INFO] = {0};
 	char *prov_name;
