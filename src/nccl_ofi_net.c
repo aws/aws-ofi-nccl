@@ -569,7 +569,6 @@ exit:
  */
 static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 {
-	ncclResult_t ret = ncclSuccess;
 	int idx = 0, prov_idx = 0, i, rc = 0;
 	struct fi_info *providers, *prov;
 	struct fi_info *prov_info_vec[MAX_PROV_INFO] = {NULL};
@@ -577,10 +576,8 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 	char *prov_name;
 
 	rc = find_ofi_provider(&providers);
-	if (rc != 0) {
-		ret = ncclSystemError;
+	if (rc != 0)
 		goto error;
-	}
 
 	/*
 	 * Create an array of providers where each index represents
@@ -633,7 +630,7 @@ static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
 		}
 	}
 
-	return ret;
+	return ncclSuccess;
 
 error:
 	if (providers)
