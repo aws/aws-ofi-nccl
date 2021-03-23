@@ -272,6 +272,7 @@ static int in_list(char *item, char *list)
 	}
 
 exit:
+	free(list_temp);
 	return ret;
 }
 
