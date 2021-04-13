@@ -25,13 +25,13 @@ and operating system bypass.
 The plug-in currently supports the following distributions:
 * Amazon Linux
 * Amazon Linux 2
-* Redhat Enterprise Linux 7
+* Redhat Enterprise Linux 7 and 8
 * Ubuntu 16.04, 18.04 and 20.04 LTS
-* CentOS 7
+* CentOS 7 and 8
 
 It requires
 [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
-and supports [NCCL v2.8.3](https://github.com/NVIDIA/nccl/releases/tag/v2.8.3-1).
+and supports [NCCL v2.8.4](https://github.com/NVIDIA/nccl/releases/tag/v2.8.4-1).
 The plug-in also maintains backward compatibility with older NCCL versions upto
 [NCCL v2.4.x](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1).
 
