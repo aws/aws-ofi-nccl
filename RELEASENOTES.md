@@ -10,7 +10,7 @@
 # v1.1.3 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
-or later and supports [NCCL v2.9.9](https://github.com/NVIDIA/nccl/releases/tag/v2.9.8-1) while
+or later and supports [NCCL v2.9.9](https://github.com/NVIDIA/nccl/releases/tag/v2.9.9-1) while
 maintaining backward compatibility with older NCCL versions (up to [NCCL
 v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).  It was tested with Libfabric
 versions up to [Libfabric v1.12.1](https://github.com/ofiwg/libfabric/releases/tag/v1.12.1).
