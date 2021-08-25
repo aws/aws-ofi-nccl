@@ -453,7 +453,7 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 			    &mr_attr, 0, mr_handle);
 	if (OFI_UNLIKELY(rc != 0)) {
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
-			       type, comm->dev, fi_strerror(-rc));
+			       type, comm->dev, rc, fi_strerror(-rc));
 		ret = ncclSystemError;
 	}
 
