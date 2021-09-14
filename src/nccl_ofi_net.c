@@ -276,6 +276,7 @@ exit:
 	return ret;
 }
 
+#ifndef EFA_NIC_DUP
 /*
  * @brief	Returns true if the given provider matches IPv6 addressing format,
  *		interfaces from tcp_if_exclude_list or multiple memory tag formats.
@@ -368,6 +369,7 @@ static void filter_tcp_info_list()
 		ofi_info_list = prev;
 	}
 }
+#endif
 
 /*
  * @brief	Gets the CUDA device associated with the buffer
