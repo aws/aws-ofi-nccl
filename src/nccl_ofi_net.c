@@ -510,6 +510,14 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		goto exit;
 	}
 #endif
+#if HAVE_NEURON
+	/* Check if provider requires registration of cuda device buffers */
+	if ((hmem_mr != true) && (type == NCCL_PTR_NEURON)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			"Skip registering NEURON buffer. hmem_mr: %d", hmem_mr);
+		goto exit;
+	}
+#endif
 
 	/* Populate IOV vector for memory registration */
 	iov.iov_base = data;
@@ -530,6 +538,15 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 
 		/* Get CUDA device ID */
 		ret = get_cuda_device(data, &mr_attr.device.cuda);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			goto exit;
+		}
+		break;
+#endif
+#if HAVE_NEURON
+	case NCCL_PTR_NEURON:
+		mr_attr.iface = FI_HMEM_NEURON;
+		ret = ncclRtGetDevice(&mr_attr.device.neuron);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			goto exit;
 		}
@@ -1513,7 +1530,14 @@ static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 {
 	if (support_gdr) {
 		/* Supports message transfer from both CUDA and HOST buffers */
-		*supportedTypes = NCCL_PTR_HOST | (HAVE_CUDA ? NCCL_PTR_CUDA : 0);
+		*supportedTypes = NCCL_PTR_HOST
+#if HAVE_CUDA
+			| NCCL_PTR_CUDA
+#endif
+#if HAVE_NEURON
+			| NCCL_PTR_NEURON
+#endif
+		;
 	} else {
 		/* Supports message transfer from both HOST buffers */
 		*supportedTypes = NCCL_PTR_HOST;
@@ -2686,6 +2710,9 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 	case NCCL_PTR_HOST:
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
+#endif
+#if HAVE_NEURON
+	case NCCL_PTR_NEURON:
 #endif
 		break;
 	default:
