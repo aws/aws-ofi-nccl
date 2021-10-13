@@ -574,6 +574,16 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		}
 		break;
 #endif
+#if HAVE_NEURON
+	case NCCL_PTR_NEURON:
+		mr_attr.access |= FI_REMOTE_READ;
+		mr_attr.iface = FI_HMEM_NEURON;
+		ret = ncclRtGetDevice(&mr_attr.device.neuron);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			goto exit;
+		}
+		break;
+#endif
 	default:
 		ret = ncclInternalError;
 		goto exit;
@@ -1394,7 +1404,14 @@ static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 {
 	if (support_gdr) {
 		/* Supports message transfer from both CUDA and HOST buffers */
-		*supportedTypes = NCCL_PTR_HOST | (HAVE_CUDA ? NCCL_PTR_CUDA : 0);
+		*supportedTypes = NCCL_PTR_HOST
+#if HAVE_CUDA
+			| NCCL_PTR_CUDA
+#endif
+#if HAVE_NEURON
+			| NCCL_PTR_NEURON
+#endif
+		;
 	} else {
 		/* Supports message transfer from both HOST buffers */
 		*supportedTypes = NCCL_PTR_HOST;
@@ -2613,6 +2630,9 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 	case NCCL_PTR_HOST:
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
+#endif
+#if HAVE_NEURON
+	case NCCL_PTR_NEURON:
 #endif
 		break;
 	default:
