@@ -6,7 +6,9 @@
 
 AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
 AM_CFLAGS += -I$(top_srcdir)/include
-AM_LDFLAGS = -lcudart
+if HAVE_CUDA
+  AM_LDFLAGS = -lcudart
+endif HAVE_CUDA
 
 lib_LTLIBRARIES = libnccl-net.la
 libnccl_net_la_SOURCES = nccl_ofi_net.c
