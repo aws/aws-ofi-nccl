@@ -38,10 +38,8 @@ AC_ARG_WITH([libfabric],
 
 AC_ARG_WITH([cuda],
             AC_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation]),
-            [AS_IF([test -d $withval/lib64], [cuda_libdir="lib64"], [cuda_libdir="lib"])
-             CFLAGS="-I$withval/include $CFLAGS"
-             LDFLAGS="-L$withval/$cuda_libdir $LDFLAGS"],
-            [])
+            [with_cuda=$withval],
+            [with_cuda=check])
 
 AC_ARG_WITH([nccl],
             AC_HELP_STRING([--with-nccl=PATH], [Path to non-standard NCCL installation]),
@@ -74,9 +72,27 @@ AS_IF([test "x${enable_trace}" = "xyes" ],
 AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 if aws-ofi-nccl was configured with --enable-trace, 0 otherwise])
 
 # Checks for header files.
-AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h cuda_runtime.h], [],[
+AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h], [],[
 	AC_MSG_ERROR([unable to find required headers])
 ])
+
+AS_IF([test "x$with_cuda" != xno],
+  [
+    AS_IF([test "x$with_cuda" != xcheck], [cuda_path=$with_cuda], [cuda_path=/usr/local/cuda])
+    AC_MSG_CHECKING([CUDA library path])
+    AS_IF([test -d $cuda_path/lib64], [cuda_libdir="lib64"], [cuda_libdir="lib"])
+    CFLAGS="-I$cuda_path/include $CFLAGS"
+    LDFLAGS="-L$cuda_path/$cuda_libdir $LDFLAGS"
+    AC_CHECK_HEADERS([cuda_runtime.h],
+      [AC_DEFINE([HAVE_CUDA], [1], [Define if CUDA is available])],
+      [AS_IF([test "x$with_cuda" != xcheck],
+        [AC_MSG_ERROR([unable to find cuda_runtime.h])],
+        [with_cuda=no
+         AC_DEFINE([HAVE_CUDA], [0], [Define if CUDA is available])])])
+  ],
+  [AC_DEFINE([HAVE_CUDA], [0], [Define if CUDA is available])])
+
+AM_CONDITIONAL(HAVE_CUDA, test "x$with_cuda" != xno)
 
 AC_SEARCH_LIBS([dlopen], [dl], [], [
   AC_MSG_ERROR([unable to find libdl])

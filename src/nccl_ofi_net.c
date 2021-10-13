@@ -14,6 +14,10 @@
 #include <sys/mman.h>
 #include <stack.h>
 #include <nccl_ofi_param.h>
+#include <ctype.h>
+#if HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 static uint32_t libversion = 0;
 /* NICs info list for a provider */
@@ -481,6 +485,7 @@ static void filter_tcp_info_list()
 	}
 }
 
+#if HAVE_CUDA
 /*
  * @brief	Gets the CUDA device associated with the buffer
  *
@@ -517,6 +522,7 @@ exit:
 	*device = cuda_device;
 	return ret;
 }
+#endif
 
 /*
  * @brief	Registers memory region (both HOST and CUDA)
@@ -551,14 +557,14 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 	mr_attr.iov_count = 1;
 	mr_attr.access = FI_SEND | FI_RECV;
 
-	if (type == NCCL_PTR_CUDA)
-		mr_attr.access |= FI_REMOTE_READ;
-	else
+	switch (type) {
+	case NCCL_PTR_HOST:
 		mr_attr.access |= FI_READ;
-
-	if (type == NCCL_PTR_HOST) {
 		mr_attr.iface = FI_HMEM_SYSTEM;
-	} else {
+		break;
+#if HAVE_CUDA
+	case NCCL_PTR_CUDA:
+		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -566,7 +572,13 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			goto exit;
 		}
+		break;
+#endif
+	default:
+		ret = ncclInternalError;
+		goto exit;
 	}
+
 	if (!prov_key_mr) {
 		uint64_t key = allocate_mr_key(comm->dev);
 		if (key == FI_KEY_NOTAVAIL) {
@@ -1153,6 +1165,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
 
+#if HAVE_CUDA
 	if (ofi_nccl_cuda_flush_enable()) {
 #if CUDART_VERSION < 11030
 		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION);
@@ -1162,6 +1175,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		cuda_flush = true;
 #endif
 	}
+#endif
 
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
@@ -1380,7 +1394,7 @@ static ncclResult_t ofi_ptrSupport(int dev, int *supportedTypes)
 {
 	if (support_gdr) {
 		/* Supports message transfer from both CUDA and HOST buffers */
-		*supportedTypes = NCCL_PTR_HOST | NCCL_PTR_CUDA;
+		*supportedTypes = NCCL_PTR_HOST | (HAVE_CUDA ? NCCL_PTR_CUDA : 0);
 	} else {
 		/* Supports message transfer from both HOST buffers */
 		*supportedTypes = NCCL_PTR_HOST;
@@ -2595,11 +2609,17 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 	}
 
 	/* Validate type of buffer */
-	if ((type != NCCL_PTR_HOST) && (type != NCCL_PTR_CUDA)) {
+	switch (type) {
+	case NCCL_PTR_HOST:
+#if HAVE_CUDA
+	case NCCL_PTR_CUDA:
+#endif
+		break;
+	default:
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
 		goto exit;
-	}
+	};
 
 	ret = register_mr_buffers(ofi_comm, data, size, type, &mr_handle);
 
