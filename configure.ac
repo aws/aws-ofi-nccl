@@ -41,6 +41,8 @@ AC_ARG_WITH([cuda],
             [with_cuda=$withval],
             [with_cuda=check])
 
+AC_ARG_ENABLE(neuron, [AS_HELP_STRING([--enable-neuron], [Enable Neuron pointer support])], [], [enable_neuron=no])
+
 AC_ARG_WITH([nccl],
             AC_HELP_STRING([--with-nccl=PATH], [Path to non-standard NCCL installation]),
             [AS_IF([test -d $withval/lib64], [nccl_libdir="lib64"], [nccl_libdir="lib"])
@@ -93,6 +95,10 @@ AS_IF([test "x$with_cuda" != xno],
   [AC_DEFINE([HAVE_CUDA], [0], [Define if CUDA is available])])
 
 AM_CONDITIONAL(HAVE_CUDA, test "x$with_cuda" != xno)
+
+AS_IF([test "x$enable_neuron" != xno],
+    [AC_DEFINE([HAVE_NEURON], [1], [Define if Neuron support is available])],
+    [AC_DEFINE([HAVE_NEURON], [0], [Define if Neuron support is available])])
 
 AC_SEARCH_LIBS([dlopen], [dl], [], [
   AC_MSG_ERROR([unable to find libdl])
