@@ -29,12 +29,10 @@ The plug-in currently supports the following distributions:
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
-It requires
-[Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
-or later and supports
-[NCCL v2.9.9](https://github.com/NVIDIA/nccl/releases/tag/v2.9.9-1).
-The plug-in also maintains backward compatibility with older NCCL versions up to
-[NCCL v2.4.x](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1).
+It requires [Libfabric](http://github.com/ofiwg/libfabric/)
+and [NCCL](http://github.com/NVIDIA/nccl/).  Please see the
+[Release notes](http://github.com/aws/aws-ofi-nccl/releases) for
+information on version compatibility.
 
 Libfabric supports various providers. The plug-in can choose only those which
 support the following features as defined in the
