@@ -5,7 +5,7 @@
 #
 
 AC_PREREQ([2.69])
-AC_INIT([aws-ofi-nccl], [1.1], [rashika@amazon.com])
+AC_INIT([aws-ofi-nccl], [1.1.4aws], [rashika@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])

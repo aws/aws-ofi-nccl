@@ -1,3 +1,5 @@
+#include "config.h"
+
 /* Instead of declaring one single NIC, declare one NIC close to each GPU */
 #define EFA_NIC_DUP
 
@@ -178,7 +180,7 @@ static inline int free_nccl_ofi_req(nccl_ofi_req_t *req, bool dec_inflight_cmds)
 		sComm = req->sComm;
 		if (OFI_UNLIKELY(sComm == NULL)) {
 			ret = ncclSystemError;
-			NCCL_OFI_WARN("Invalid sComm provided for request of device %d\n",
+			NCCL_OFI_WARN("Invalid sComm provided for request of device %d",
 				      sComm->dev);
 			goto exit;
 		}
@@ -1044,6 +1046,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	ofi_log_function = logFunction;
 
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
+
 	/*
 	 * Use a static pre-configured topology for p4d.24xlarge platform type.
 	 *
@@ -1125,8 +1129,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	*/
 	if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) && !support_gdr) {
 		if (cudaGetDeviceCount(&ofi_ndevices) != cudaSuccess) {
-			NCCL_OFI_WARN("Error getting CUDA device count\n");
-			return ncclUnhandledCudaError;
+			NCCL_OFI_WARN("Error getting CUDA device count");
+			ret = ncclUnhandledCudaError;
+			goto exit;
 		}
 		ofi_ndevices /= 2;
 		// Make the list cyclic to emulate having multiple devices
@@ -1134,7 +1139,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
 	} else if (!IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
 		NCCL_OFI_WARN("Only EFA provider is supported");
-		return ncclSystemError;
+		ret = ncclSystemError;
+		goto exit;
 	}
 #else
 	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
@@ -1182,6 +1188,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 exit:
+	if (ret != ncclSuccess) {
+		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
+	}
 	return ret;
 }
 
