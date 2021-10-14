@@ -1,3 +1,5 @@
+#include "config.h"
+
 /*
  * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
@@ -169,7 +171,7 @@ static inline int free_nccl_ofi_req(nccl_ofi_req_t *req, bool dec_inflight_cmds)
 		sComm = req->sComm;
 		if (OFI_UNLIKELY(sComm == NULL)) {
 			ret = ncclSystemError;
-			NCCL_OFI_WARN("Invalid sComm provided for request of device %d\n",
+			NCCL_OFI_WARN("Invalid sComm provided for request of device %d",
 				      sComm->dev);
 			goto exit;
 		}
@@ -986,6 +988,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	ofi_log_function = logFunction;
 
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
+
 	/*
 	 * RDMAV_FORK_SAFE environment variable makes the rdma-core
 	 * library fork-safe. This significantly increases cost of memory
@@ -1062,6 +1066,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 exit:
+	if (ret != ncclSuccess) {
+		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
+	}
 	return ret;
 }
 
