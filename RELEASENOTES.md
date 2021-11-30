@@ -14,6 +14,8 @@ or later and supports [NCCL v2.11.4](https://github.com/NVIDIA/nccl/releases/tag
 maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
 It was tested with Libfabric versions up to [Libfabric v1.13.2](https://github.com/ofiwg/libfabric/releases/tag/v1.13.2).
 
+PR Hook testing
+
 New Features:
 * Print version during plugin initialization
 
