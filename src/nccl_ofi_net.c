@@ -1562,7 +1562,8 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
-	if (support_gdr) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 		rComm->flush_buff.size = sizeof(rComm->flush_buff.host_buffer);
 
 
@@ -2058,7 +2059,8 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 
 	dev = rComm->dev;
 
-	if (support_gdr) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
 		rc = fi_close((fid_t)mr_handle);
