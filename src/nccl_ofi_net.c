@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/mman.h>
 #include <stack.h>
 #include <nccl_ofi_param.h>
 
@@ -1562,19 +1563,27 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
+	const long page_size = sysconf(_SC_PAGESIZE);
+
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
-		rComm->flush_buff.size = sizeof(rComm->flush_buff.host_buffer);
-
+		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
+		rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+					  MAP_PRIVATE | MAP_ANON, -1, 0);
+		if (OFI_UNLIKELY(rComm->flush_buff.host_buffer == MAP_FAILED)) {
+			NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)", errno, strerror(errno));
+			ret = ncclSystemError;
+			goto exit;
+		}
 
 		/* Register flush dummy buffer for provider access */
-		ret = register_mr_buffers(rComm, &rComm->flush_buff.host_buffer,
-					  rComm->flush_buff.size, NCCL_PTR_HOST,
+		ret = register_mr_buffers(rComm, rComm->flush_buff.host_buffer,
+					  page_size, NCCL_PTR_HOST,
 					  &mr_handle);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
-			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev:  %d",
+			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 				      dev);
-			goto error;
+			goto unmap_flush;
 		}
 		rComm->flush_buff.mr_handle = mr_handle;
 	}
@@ -1594,6 +1603,11 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 unlock:
 	pthread_mutex_unlock(&nccl_ofi_lock);
+unmap_flush:
+	if (munmap(rComm->flush_buff.host_buffer, page_size)) {
+		NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
+	}
+	rComm->flush_buff.host_buffer = MAP_FAILED;
 error:
 	if (mr_handle)
 		fi_close((fid_t)mr_handle);
@@ -1933,7 +1947,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 
 	/* Issue RDMA read */
 	do {
-		rc = fi_read(rComm->local_ep, &rComm->flush_buff.host_buffer,
+		rc = fi_read(rComm->local_ep, rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
 			     fi_mr_desc(rComm->flush_buff.mr_handle),
 			     rComm->local_ep_addr, (uint64_t)data,
@@ -2066,10 +2080,14 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 		rc = fi_close((fid_t)mr_handle);
 		if (OFI_UNLIKELY(rc != 0)) {
 			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+			NCCL_OFI_WARN("Unable to de-register flush buffer. RC: %d, Error: %s",
 				      fi_strerror(-rc));
 			goto exit;
 		}
+		if (munmap(rComm->flush_buff.host_buffer, sysconf(_SC_PAGESIZE))) {
+			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
+		}
+		rComm->flush_buff.host_buffer = MAP_FAILED;
 	}
 
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
