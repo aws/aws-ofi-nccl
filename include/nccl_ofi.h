@@ -61,6 +61,9 @@ extern "C" {
 /* Maximum length of directory path */
 #define PATH_MAX	4096
 
+/* Flush read size (bytes) */
+#define NCCL_OFI_FLUSH_SIZE	4
+
 /* NCCL OFI lock for concurrency */
 pthread_mutex_t nccl_ofi_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Logger Function */
@@ -106,7 +109,7 @@ typedef struct free_list {
 
 /* Metadata about dummy flush buffer */
 typedef struct flush_buffer {
-	int host_buffer;
+	void *host_buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */
 	struct fid_mr *mr_handle;
