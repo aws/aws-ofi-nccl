@@ -7,6 +7,32 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+# v1.1.5 release notes
+
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.11.4](https://github.com/NVIDIA/nccl/releases/tag/v2.11.4-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to [Libfabric v1.14.0](https://github.com/ofiwg/libfabric/releases/tag/v1.14.0).
+
+New Features:
+* Make use of FI_EFA_FORK_SAFE environment variable to allow Libfabric to detect when `MADV_DONTFORK`
+  is not needed (#82).  This feature requires Libfabric v1.13.0 or higher.  When used with an older version
+  of Libfabric, the plugin will continue to set the RDMAV_FORK_SAFE environment variable.
+* Do not request FI_PROGRESS_AUTO feature when listing OFI providers; this feature is unnecessary for the plugin
+  and not requesting it improves interoperability.
+
+Bug Fixes:
+* Ensure that the buffer used for flush is page aligned and allocated with `mmap` instead of `malloc`.
+  This change is needed to correctly support `fork()` with `MADV_DONTFORK` (#77).
+* Fix crash when used with a GDR-capable provider that does not require memory registration (#81).
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
 # v1.1.4 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
