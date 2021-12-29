@@ -1040,6 +1040,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
 			       ofi_info_list->fabric_attr->prov_name);
 		local_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
+			       ofi_info_list->fabric_attr->prov_name);
 	}
 
 	/* Check if provider requires heterogeneous memory registration */
@@ -1047,6 +1050,9 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of device buffers",
 			       ofi_info_list->fabric_attr->prov_name);
 		hmem_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of device buffers",
+			       ofi_info_list->fabric_attr->prov_name);
 	}
 
 	/*
@@ -1874,7 +1880,9 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 	nccl_ofi_req_t *req = NULL;
 	ssize_t rc = 0;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	uint64_t cuda_key;
+	uint64_t cuda_key = 0ULL;
+	void* desc = NULL;
+
 
 	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
@@ -1883,12 +1891,6 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 	if (OFI_UNLIKELY(rComm == NULL)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Invalid recvComm provided");
-		goto exit;
-	}
-
-	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Invalid memory registration handle provided");
 		goto exit;
 	}
 
@@ -1922,19 +1924,22 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
-	/* Extract remote key */
-	cuda_key = fi_mr_key(mr_handle);
-	if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Memory registration may not have completed.");
-		goto error;
+	if (mr_handle != NULL) {
+		/* Extract remote key */
+		desc = fi_mr_desc(mr_handle);
+		cuda_key = fi_mr_key(mr_handle);
+		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Memory registration may not have completed.");
+			goto error;
+		}
 	}
 
 	/* Issue RDMA read */
 	do {
 		rc = fi_read(rComm->local_ep, &rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
-			     fi_mr_desc(rComm->flush_buff.mr_handle),
+			     desc,
 			     rComm->local_ep_addr, (uint64_t)data,
 			     cuda_key, &req->ctx);
 		if (rc == 0) {
@@ -2061,12 +2066,14 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	if (support_gdr) {
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
-		rc = fi_close((fid_t)mr_handle);
-		if (OFI_UNLIKELY(rc != 0)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-				      fi_strerror(-rc));
-			goto exit;
+		if (mr_handle) {
+			rc = fi_close((fid_t)mr_handle);
+			if (OFI_UNLIKELY(rc != 0)) {
+				ret = ncclSystemError;
+				NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+					      fi_strerror(-rc));
+				goto exit;
+			}
 		}
 	}
 
