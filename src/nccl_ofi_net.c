@@ -1461,6 +1461,9 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
 			       ofi_info_list->fabric_attr->prov_name);
 		local_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
+			       ofi_info_list->fabric_attr->prov_name);
 	}
 
 	/* Check if provider requires heterogeneous memory registration */
@@ -1468,6 +1471,9 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of device buffers",
 			       ofi_info_list->fabric_attr->prov_name);
 		hmem_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of device buffers",
+			       ofi_info_list->fabric_attr->prov_name);
 	}
 
 exit:
@@ -2781,7 +2787,8 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	recvComm_t *rComm = (recvComm_t *)recvComm;
 	nccl_ofi_req_t *req = NULL;
 	ssize_t rc = 0;
-	uint64_t cuda_key;
+	uint64_t cuda_key = 0ULL;
+	void* desc = NULL;
 	struct fid_mr *mr_handle = NULL;
 	void *data = NULL;
 
@@ -2838,12 +2845,6 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	if (mhandles && mhandles[flush_n])
 		mr_handle = (struct fid_mr *)mhandles[flush_n];
 
-	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Invalid memory registration handle provided");
-		goto exit;
-	}
-
 	data = buffers[flush_n];
 
 	/* Support only max_requests inflight requests. */
@@ -2867,12 +2868,15 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
-	/* Extract remote key */
-	cuda_key = fi_mr_key(mr_handle);
-	if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Memory registration may not have completed.");
-		goto error;
+	if (mr_handle != NULL) {
+		/* Extract remote key */
+		desc = fi_mr_desc(mr_handle);
+		cuda_key = fi_mr_key(mr_handle);
+		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Memory registration may not have completed.");
+			goto error;
+		}
 	}
 
 	NCCL_OFI_TRACE_FLUSH(req, request, &req->ctx);
@@ -2881,7 +2885,7 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	do {
 		rc = fi_read(rComm->local_ep, rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
-			     fi_mr_desc(rComm->flush_buff.mr_handle),
+			     desc,
 			     rComm->local_ep_addr, (uint64_t)data,
 			     cuda_key, &req->ctx);
 		if (rc == 0) {
@@ -2956,12 +2960,14 @@ ncclResult_t nccl_net_ofi_closeRecv(void *recvComm)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
-		rc = fi_close((fid_t)mr_handle);
-		if (OFI_UNLIKELY(rc != 0)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to de-register flush buffer. RC: %d, Error: %s",
-					rc, fi_strerror(-rc));
-			goto exit;
+		if (mr_handle) {
+			rc = fi_close((fid_t)mr_handle);
+			if (OFI_UNLIKELY(rc != 0)) {
+				ret = ncclSystemError;
+				NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+					      fi_strerror(-rc));
+				goto exit;
+			}
 		}
 		if (munmap(rComm->flush_buff.host_buffer, sysconf(_SC_PAGESIZE))) {
 			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
