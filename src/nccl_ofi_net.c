@@ -13,6 +13,7 @@
 #include <stack.h>
 #include <nccl_ofi_param.h>
 
+static uint32_t libversion = 0;
 /* NICs info list for a provider */
 struct fi_info* ofi_info_list = NULL;
 /* Number of NICs */
@@ -992,9 +993,17 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
 
 	/*
-	 * RDMAV_FORK_SAFE environment variable makes the rdma-core
-	 * library fork-safe. This significantly increases cost of memory
-	 * registration when huge pages are enabled.
+	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
+	 * fork-safe support in legacy versions of the rdma-core library.
+	 * Libfabric checks if additional handling is required for fork safety,
+	 * and does not introduce this additional overhead of setting MADV_DONTFORK
+	 * for new versions of rdma-core (38.0 and later) and the Linux kernel
+	 * that support copy-on-fork for pinned memory (5.13 and later).
+	 * These new versions are always fork-safe and additional support in userspace
+	 * is not required.
+	 *
+	 * When legacy versions of the kernel and rdma-core are used, setting
+	 * FI_EFA_FORK_SAFE to 1 disables the use of huge pages in Libfabric.
 	 *
 	 * To prevent data corruption, the EFA provider registers an atfork
 	 * handler which will abort the process whenever it believes
@@ -1003,14 +1012,19 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	 * NCCL applications heavily re-use the buffers for communication and
 	 * thus are not sensitive to increased memory registration costs.
 	 * To prevent NCCL based applications from getting aborted when using
-	 * fork(), plugin explicitly enables RDMAV_FORK_SAFE environment
-	 * variable.
+	 * fork(), the plugin explicitly enables FI_EFA_FORK_SAFE environment
+	 * variable, even in legacy environments where the overhead is high.
 	 */
-	if (!getenv("RDMAV_FORK_SAFE")) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting RDMAV_FORK_SAFE environment variable to 1.");
-		rc = setenv("RDMAV_FORK_SAFE", "1", 1);
+	libversion = fi_version();
+	const char * fork_safe_var_name =
+		(FI_MAJOR(libversion) > 1 || (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
+		? "FI_EFA_FORK_SAFE"
+		: "RDMAV_FORK_SAFE";
+	if (!getenv(fork_safe_var_name)) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting %s environment variable to 1", fork_safe_var_name);
+		rc = setenv(fork_safe_var_name, "1", 1);
 		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to set RDMAV_FORK_SAFE");
+			NCCL_OFI_WARN("Unable to set %s", fork_safe_var_name);
 			ret = ncclSystemError;
 			goto exit;
 		}
