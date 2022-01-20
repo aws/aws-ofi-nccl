@@ -42,7 +42,6 @@ support the following features as defined in the
 * Data transfer context structures (`FI_CONTEXT`)
 * Reliable datagram endpoints (`FI_EP_RDM`)
 * Send after Send ordering semantics (`FI_ORDER_SAS`)
-* Automatic control and data progress model (`FI_PROGRESS_AUTO`)
 * Communication with remote endpoints (`FI_REMOTE_COMM`)
 
 For GPUDirect RDMA support, it requires these additional features from libfabric
