@@ -1350,6 +1350,19 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/*
+	 * Sets intranode latency for EFA networks.
+	 *
+	 * This value is chosen by measuring all reduce latency for
+	 * different NCCL algorithms and using that to calculate intra node
+	 * latency based on NCCL's tuning algorithm.
+	 *
+	 * A few different values around this value were tried to see which
+	 * chose the correct algorithm (tree or ring) most times across
+	 * different message and cluster sizes.
+	 */
+	props->latency = 150;
+
+	/*
 	 * Maximum number of grouped receives. Currently, we set it to 1 to
 	 * maintain single send/recv semantics (similar to NCCL versions < v2.12).
 	 *
