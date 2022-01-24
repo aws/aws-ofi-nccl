@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <assert.h>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -193,6 +194,13 @@ typedef struct pending_reqs_q {
 	pending_reqs_q_elem_t *head;
 	pending_reqs_q_elem_t *tail;
 } pending_reqs_q_t;
+
+typedef struct nccl_ofi_handle {
+	char ep_name[MAX_EP_ADDR];
+	uint64_t tag;
+} nccl_ofi_handle_t;
+
+static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
 
 /*
  * Structure for an OFI network device.
