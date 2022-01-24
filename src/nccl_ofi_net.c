@@ -1240,6 +1240,7 @@ exit:
 static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 {
 	ncclResult_t ret = ncclSuccess;
+	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
 	char ep_name[MAX_EP_ADDR] = {0};
 	size_t namelen = sizeof(ep_name);
 	fi_addr_t local_ep_addr;
@@ -1259,6 +1260,9 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 		ret = ncclSystemError;
 		goto error;
 	}
+
+	/* Zero-out the handle */
+	memset(ofi_handle, 0, sizeof(nccl_ofi_handle_t));
 
 	/*
 	 * Create libfabric components for the given NIC, if not
@@ -1281,17 +1285,24 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	/* Build handle */
-	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid), (void *)&ep_name,
+	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+			 (void *)&ep_name,
 			 &namelen);
-	if (ret != 0) {
+	if (ret == -FI_ETOOSMALL) {
+		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+			      namelen, MAX_EP_ADDR);
+		ret = ncclSystemError;
+		goto error;
+	}
+	else if (ret != 0) {
 		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
 		ret = ncclSystemError;
 		goto error;
 	}
 
-	memcpy(handle, ep_name, MAX_EP_ADDR);
-	memcpy(handle + MAX_EP_ADDR, &tag, sizeof(tag));
+	memcpy(ofi_handle->ep_name, ep_name, MAX_EP_ADDR);
+	ofi_handle->tag = tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
 	num_addrs = fi_av_insert(nccl_ofi_component[dev]->av, (void *)ep_name, 1,
@@ -1346,7 +1357,12 @@ struct connection_info* allocate_connection_info(int dev, nccl_ofi_req_t *req, c
 	int ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
 			 (void *)conn_info->ep_name,
 			 &(conn_info->ep_namelen));
-	if (ret != 0) {
+	if (ret == -FI_ETOOSMALL) {
+		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+			      conn_info->ep_namelen, MAX_EP_ADDR);
+		free(conn_info);
+		return NULL;
+	} else if (ret != 0) {
 		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
 		free(conn_info);
@@ -1389,6 +1405,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	uint64_t max_tag = 0;
 	nccl_ofi_req_t *req = NULL;
 	size_t req_size = sizeof(nccl_ofi_req_t);
+	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
@@ -1415,8 +1432,8 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	max_tag = nccl_ofi_component[dev]->max_tag;
 
 	/* Parse handle to get tag and remote name */
-	memcpy(&remote_ep_addr, (char *)handle, MAX_EP_ADDR);
-	memcpy(&tag, (char *)handle + MAX_EP_ADDR, sizeof(tag));
+	memcpy(&remote_ep_addr, ofi_handle->ep_name, MAX_EP_ADDR);
+	memcpy(&tag, &ofi_handle->tag, sizeof(tag));
 	if (tag < 1 || tag > max_tag) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
 			       dev);
