@@ -1237,12 +1237,44 @@ exit:
 }
 #endif
 
+/*
+ * @brief	Query local address for a libfabric endpoint
+ *
+ * @param	Network device
+ *
+ * @return	Local EP address, on success
+ * 		NULL, others
+ */
+static inline char *get_local_address(int dev)
+{
+	int ret = 0;
+	size_t namelen = MAX_EP_ADDR;
+	char *local_ep_addr = (char *)calloc(namelen, sizeof(char));
+
+	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+			(void *)local_ep_addr,
+			&namelen);
+	if (ret == -FI_ETOOSMALL) {
+		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+			      namelen, MAX_EP_ADDR);
+		free(local_ep_addr);
+		return NULL;
+	} else if (ret != 0) {
+		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		free(local_ep_addr);
+		return NULL;
+	}
+
+	return local_ep_addr;
+}
+
+
 static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 {
 	ncclResult_t ret = ncclSuccess;
 	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
-	char ep_name[MAX_EP_ADDR] = {0};
-	size_t namelen = sizeof(ep_name);
+	char *local_ep_name = NULL;
 	fi_addr_t local_ep_addr;
 	listenComm_t *lComm = NULL;
 	uint64_t tag;
@@ -1285,27 +1317,13 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	/* Build handle */
-	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
-			 (void *)&ep_name,
-			 &namelen);
-	if (ret == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
-			      namelen, MAX_EP_ADDR);
-		ret = ncclSystemError;
-		goto error;
-	}
-	else if (ret != 0) {
-		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		ret = ncclSystemError;
-		goto error;
-	}
+	local_ep_name = get_local_address(dev);
 
-	memcpy(ofi_handle->ep_name, ep_name, MAX_EP_ADDR);
+	memcpy(ofi_handle->ep_name, local_ep_name, MAX_EP_ADDR);
 	ofi_handle->tag = tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
-	num_addrs = fi_av_insert(nccl_ofi_component[dev]->av, (void *)ep_name, 1,
+	num_addrs = fi_av_insert(nccl_ofi_component[dev]->av, (void *)local_ep_name, 1,
 				 &local_ep_addr, 0, NULL);
 	if (OFI_UNLIKELY(num_addrs != 1)) {	/* Only 1 address should be inserted into the AV */
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
@@ -1336,6 +1354,287 @@ error:
 exit:
 	return ret;
 }
+
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+/*
+ * @brief	Creates send communication for a peer
+ *
+ * @param	Network device ID
+ * 		Connection Handle transferred OOB by NCCL
+ *
+ * @return	Initialized Send Communicator object, on success
+ * 		NULL, others
+ * @return	0, success
+ * 		error, others
+ *
+ */
+static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, sendComm_t **sendComm)
+{
+	int ret = ncclSuccess;
+	char remote_ep_addr[MAX_EP_ADDR] = {0};
+	uint64_t tag = 0ULL;
+	uint64_t max_tag = 0;
+	size_t req_size = sizeof(nccl_ofi_req_t);
+	fi_addr_t remote_addr;
+	sendComm_t *sComm = NULL;
+
+	*sendComm = NULL;
+
+	/*
+	 * Create libfabric components for the given NIC, if not
+	 * already created.
+	 */
+	pthread_mutex_lock(&nccl_ofi_lock);
+	ret = get_nccl_ofi_comp(dev);
+	if (ret) {
+		pthread_mutex_unlock(&nccl_ofi_lock);
+		return ret;
+	}
+	pthread_mutex_unlock(&nccl_ofi_lock);
+	max_tag = nccl_ofi_component[dev]->max_tag;
+
+	/* Get tag and remote name from handle */
+	memcpy(&remote_ep_addr, ofi_handle->ep_name, MAX_EP_ADDR);
+	memcpy(&tag, &ofi_handle->tag, sizeof(tag));
+	if (tag < 1 || tag > max_tag) {
+		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
+				dev);
+		return ncclSystemError;
+	}
+
+	/* Insert remote address into AV */
+	ret = fi_av_insert(nccl_ofi_component[dev]->av,
+			   (void *)remote_ep_addr, 1,
+			   &remote_addr, 0, NULL);
+	if (OFI_UNLIKELY(ret != 1)) {
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+				dev, ret);
+		return ncclSystemError;
+	}
+
+	/* Allocate and initialize sendComm */
+	sComm = (sendComm_t *)calloc(1, sizeof(sendComm_t));
+	if (OFI_UNLIKELY(sComm == NULL)) {
+		NCCL_OFI_WARN("Couldn't allocate sendComm for dev %d", dev);
+		return ncclSystemError;
+	}
+
+	sComm->tag = tag;
+	sComm->local_ep = nccl_ofi_component[dev]->ep;
+	sComm->remote_ep = remote_addr;
+	sComm->dev = dev;
+
+	/* Pre-allocated buffers for data path */
+	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
+			req_size);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
+				dev);
+		free(sComm);
+		return ret;
+	}
+
+	*sendComm = sComm;
+	return ret;
+}
+
+/*
+ * @brief	Prepare a send request for a given sendComm
+ *
+ * @param	Valid send communicator object
+ *
+ * @return	NCCL OFI request, on success
+ * 		NULL, others
+ */
+static inline nccl_ofi_req_t *prepare_send_req(sendComm_t *sComm)
+{
+	nccl_ofi_req_t *req = NULL;
+
+	req = allocate_nccl_ofi_request(sComm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+			      sComm->dev);
+		return NULL;
+	}
+
+	req->sComm = sComm;
+	req->dev = sComm->dev;
+	req->direction = NCCL_OFI_SEND;
+
+	return req;
+}
+
+/*
+ * @brief	Send connect request to send communicator's peer
+ *
+ * @param	Valid send communicator object
+ * 		NCCL OFI request
+ *
+ * @return	0, on successfully sending message
+ * 		-1, on failure to get local EP address
+ * 		-FI_EAGAIN, on lack of provider resources to send message
+ * 		others, on error
+ */
+static ssize_t send_connect_message(sendComm_t *sComm, nccl_ofi_req_t *req)
+{
+	ssize_t rc = 0;
+	int ret = ncclSuccess;
+	char *local_ep_addr = NULL;
+	uint64_t max_tag = nccl_ofi_component[sComm->dev]->max_tag;
+
+	/* Get local EP address to transfer in the connect message */
+	local_ep_addr = get_local_address(sComm->dev);
+	if (local_ep_addr == NULL) {
+		return -1;
+	}
+
+	/*
+	 * TODO: replace it with API of FI_INJECT type when most of
+	 * providers can support it, so that need for completion check
+	 * can be lifted.
+	 */
+	rc = fi_tsend(sComm->local_ep, (void *)local_ep_addr,
+			MAX_EP_ADDR, NULL, sComm->remote_ep,
+			sComm->tag | ~max_tag, &req->ctx);
+	if (rc == -FI_EAGAIN) {
+		/*
+		 * Process completions so that you have enough
+		 * resources for sending connect message
+		 */
+		ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
+		if (ret != ncclSuccess)
+			return ncclSystemError;
+	} else if (rc != 0) {
+		NCCL_OFI_WARN("Unable to send connect message for dev %d. RC: %zd, ERROR: %s",
+			       sComm->dev, rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
+/*
+ * @brief	Non-blocking version of ofi_connect which returns sendComm as NULL
+ *		with an expectation that it will be called again until sendComm != NULL
+ *
+ * @param	Network Device ID
+ * 		Connection Handle (transferred OOB by NCCL)
+ *
+ * @return	sendComm = NULL, if connection hasn't been established
+ * 		sendComm != NULL, once connection is established
+ * @return	0, on success
+ * 		error, on others
+ */
+static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
+{
+	ncclResult_t ret = ncclSuccess;
+	ssize_t rc = 0;
+
+	*sendComm = NULL;
+
+	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
+		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
+			      dev, ofi_ndevices - 1);
+		return ncclSystemError;
+	}
+
+	if (OFI_UNLIKELY(handle == NULL)) {
+		NCCL_OFI_WARN("Provided handle is NULL");
+		return ncclSystemError;
+	}
+
+	if (OFI_UNLIKELY(nccl_ofi_component == NULL)) {
+		NCCL_OFI_WARN("NCCL OFI component is not initialised.");
+		return ncclSystemError;
+	}
+
+	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
+
+	/* Extract connection state of the communicator */
+	save_comm_state_t *comm_state = &(ofi_handle->state);
+	nccl_ofi_req_t *req = comm_state->req;
+	sendComm_t *sComm = comm_state->comm;
+
+	/*
+	 * Take appropriate actions based on connection stage of communicator.
+	 *
+	 * Once we have completed the actions for a particular stage, we proceed
+	 * to the next one until failure. This is to ensure we make maximum
+	 * progress in a single function invocation.
+	 */
+	nccl_ofi_comm_stage_t stage = comm_state->stage;
+	switch (stage) {
+		case COMM_CREATE_START:
+			/*
+			 * When we are building the sComm for the first time,
+			 * it should *NOT* come initialized from handle.
+			 */
+			assert(sComm == NULL);
+
+			/* Build sendComm */
+			ret = create_sendComm(dev, ofi_handle, &sComm);
+			if (OFI_UNLIKELY(ret != ncclSuccess))
+				return ret;
+
+			/* Prepare connect request to be sent to peer */
+			req = prepare_send_req(sComm);
+			if (OFI_UNLIKELY(req == NULL)) {
+				free(sComm);
+				return ncclSystemError;
+			}
+
+			comm_state->stage = COMM_SEND_CONN;
+
+		case COMM_SEND_CONN:
+			/* Send "connect" message to remote EP */
+			rc = send_connect_message(sComm, req);
+			if (rc == -FI_EAGAIN) {
+				/* Save connection state */
+				comm_state->comm = sComm;
+				comm_state->req = req;
+				return ncclSuccess;
+			}
+			else if (rc != 0) {
+				free(sComm);
+				free_nccl_ofi_req(req, false);
+				return ncclSystemError;
+			}
+
+			comm_state->stage = COMM_REQ_PENDING_COMP;
+
+		case COMM_REQ_PENDING_COMP:
+			/* Progress our engine to get completions */
+			ret = nccl_ofi_progress(nccl_ofi_component[dev]);
+			if (OFI_UNLIKELY(ret != ncclSuccess)) {
+				free(sComm);
+				free_nccl_ofi_req(req, false);
+				return ncclSystemError;
+			}
+
+			/* Check if the connect message is sent. */
+			if (req->state != NCCL_OFI_REQ_COMPLETED) {
+				/* Save connection state */
+				comm_state->comm = sComm;
+				comm_state->req = req;
+				return ncclSuccess;
+			}
+
+			comm_state->stage = COMM_CONNECTED;
+
+			break;
+
+		case COMM_RECV_CONN:
+		case COMM_CONNECTED:
+		default:
+			NCCL_OFI_WARN("Invalid state of send communicator object: %d", stage);
+			return ncclSystemError;
+	};
+
+	*sendComm = sComm;
+	free_nccl_ofi_req(req, false);
+
+	return ret;
+}
+#else
 
 struct connection_info {
 	char ep_name[MAX_EP_ADDR];
@@ -1392,7 +1691,6 @@ ncclResult_t process_connect_completion(struct connection_info* conn_info)
 	return ncclSuccess;
 }
 
-
 static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -1405,7 +1703,6 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	uint64_t max_tag = 0;
 	nccl_ofi_req_t *req = NULL;
 	size_t req_size = sizeof(nccl_ofi_req_t);
-	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
@@ -1432,21 +1729,21 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	max_tag = nccl_ofi_component[dev]->max_tag;
 
 	/* Parse handle to get tag and remote name */
-	memcpy(&remote_ep_addr, ofi_handle->ep_name, MAX_EP_ADDR);
-	memcpy(&tag, &ofi_handle->tag, sizeof(tag));
+	memcpy(&remote_ep_addr, (char *)handle, MAX_EP_ADDR);
+	memcpy(&tag, (char *)handle + MAX_EP_ADDR, sizeof(tag));
 	if (tag < 1 || tag > max_tag) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
-			       dev);
+			      dev);
 		goto exit;
 	}
 
 	/* Insert remote address into AV */
 	ret = fi_av_insert(nccl_ofi_component[dev]->av,
-			   (void *)remote_ep_addr, 1,
-			   &remote_addr, 0, NULL);
+			  (void *)remote_ep_addr, 1,
+			  &remote_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
-			     dev, ret);
+			      dev, ret);
 		ret = ncclSystemError;
 		goto exit;
 	}
@@ -1469,16 +1766,16 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 			      req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			     dev);
+			      dev);
 		goto error;
 	}
 
 	req = allocate_nccl_ofi_request(sComm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
-				      sComm->dev);
-			goto error;
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+			      sComm->dev);
+		goto error;
 	}
 
 	req->sComm = sComm;
@@ -1515,7 +1812,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		}
 		else {
 			NCCL_OFI_WARN("Unable to send connect message for dev %d. RC: %zd, ERROR: %s",
-				     dev, rc, fi_strerror(-rc));
+				      dev, rc, fi_strerror(-rc));
 			ret = ncclSystemError;
 			goto error;
 		}
@@ -1549,7 +1846,323 @@ error:
 exit:
 	return ret;
 }
+#endif
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+/*
+ * @brief	Allocate a request to receive peer connection message
+ *
+ * @param	Valid listen communicator object
+ *
+ * @return	NCCL OFI request, on success
+ * 		NULL, on error
+ */
+static nccl_ofi_req_t *prepare_recv_conn(listenComm_t *lComm)
+{
+	nccl_ofi_req_t *req = NULL;
+
+	/* Allocate a NCCL OFI request */
+	req = (nccl_ofi_req_t *)calloc(1, sizeof(nccl_ofi_req_t));
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to allocate nccl_ofi_req_t");
+		return NULL;
+	}
+
+	req->state = NCCL_OFI_REQ_CREATED;
+	req->lComm = lComm;
+	req->dev = lComm->dev;
+
+	return req;
+}
+
+/*
+ * @brief	Post a request to receive peer connection message
+ *
+ * @param	listen communicator object, contains the local EP and device information
+ * 		buffer, to receive connection message
+ * 		NCCL OFI receive request
+ *
+ * @return	0, on successful posting of receive request
+ * 		-FI_EAGAIN, on lack of provider resources to post receive request
+ * 		error, others
+ */
+static ssize_t post_recv_conn(listenComm_t *lComm, char **buffer,
+			      size_t size, nccl_ofi_req_t *req)
+{
+	ssize_t rc = 0;
+	int ret = ncclSuccess;
+	int dev = lComm->dev;
+	uint64_t max_tag;
+
+	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+	if (nccl_ofi_comp == NULL) {
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
+			      dev);
+		pthread_mutex_unlock(&nccl_ofi_lock);
+		return ncclSystemError;
+	}
+
+	ret = get_nccl_ofi_comp(dev);
+	if (ret) {
+		pthread_mutex_unlock(&nccl_ofi_lock);
+		return ncclSystemError;
+	}
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
+	max_tag = nccl_ofi_comp->max_tag;
+
+	/* Post a buffer for receiving connection requests */
+	rc = fi_trecv(lComm->local_ep, (void *)*buffer, size,
+		      NULL, FI_ADDR_UNSPEC, lComm->tag | ~max_tag,
+		      0, &req->ctx);
+	if (rc == -FI_EAGAIN) {
+		/*
+		 * Process completions so that you have enough
+		 * resources for posting receive buffer
+		 */
+		ret = nccl_ofi_progress(nccl_ofi_comp);
+		if (OFI_UNLIKELY(ret != 0))
+			return ncclSystemError;
+	}
+	else if (rc != 0)
+		NCCL_OFI_WARN("Unable to post a buffer for receving connections for dev %d. RC: %zd, ERROR: %s",
+			      dev, rc, fi_strerror(-rc));
+
+	return rc;
+}
+
+/*
+ * @brief	Allocated and registers buffer to flush RDMA operations. On
+ * 		Success, receive communicator holds reference to flush buffer
+ * 		and associated memory handle.
+ *
+ * @param	Valid receive communicator object
+ *
+ * @return	0, on success
+ * 		error, on others
+ */
+static int alloc_and_reg_flush_buff(recvComm_t *rComm)
+{
+	int ret = ncclSuccess;
+	const long page_size = sysconf(_SC_PAGESIZE);
+	struct fid_mr *mr_handle = NULL;
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
+
+	rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+					     MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (OFI_UNLIKELY(rComm->flush_buff.host_buffer == MAP_FAILED)) {
+		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
+			      errno, strerror(errno));
+		return ncclSystemError;
+	}
+
+	/* Register flush dummy buffer for provider access */
+	ret = register_mr_buffers(rComm, rComm->flush_buff.host_buffer,
+				  page_size, NCCL_PTR_HOST,
+				  &mr_handle);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
+				rComm->dev);
+
+		if (munmap(rComm->flush_buff.host_buffer, page_size)) {
+			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
+				      errno, strerror(errno));
+		}
+		rComm->flush_buff.host_buffer = MAP_FAILED;
+	}
+
+	rComm->flush_buff.mr_handle = mr_handle;
+
+	return ret;
+}
+
+/*
+ * @brief	Allocate and setup receive communicator object for a peer. This
+ * 		prepares plugin to receive messages from the given peer.
+ *
+ * @param	Valid listen communicator object
+ * 		Peer address
+ *
+ * @return	Receive communicator object, on success
+ * 		NULL, on error
+ */
+static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
+{
+	int ret = ncclSuccess;
+	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[lComm->dev];
+	fi_addr_t remote_ep;
+	recvComm_t *rComm = NULL;
+	size_t req_size = sizeof(nccl_ofi_req_t);
+
+	/* Insert remote EP address to AV */
+	ret = fi_av_insert(nccl_ofi_comp->av, (void *)remote_ep_addr, 1,
+			   &remote_ep, 0, NULL);
+	if (OFI_UNLIKELY(ret != 1)) {
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+			      lComm->dev, fi_strerror(-ret));
+		return NULL;
+	}
+
+	/* Build recvComm */
+	rComm = (recvComm_t *)calloc(1, sizeof(recvComm_t));
+	if (rComm == NULL) {
+		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
+			      lComm->dev);
+		return NULL;
+	}
+
+	rComm->tag = lComm->tag;
+	rComm->local_ep = lComm->local_ep;
+	rComm->local_ep_addr = lComm->local_ep_addr;
+	rComm->remote_ep = remote_ep;
+	rComm->dev = lComm->dev;
+
+	/* Pre-allocated buffers for data path */
+	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
+			      req_size);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
+			     lComm->dev);
+		free(rComm);
+		return NULL;
+	}
+
+	/*
+	 * Setup flush resources if using GPUDirect RDMA unless user disables
+	 * flush operations
+	 */
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
+		ret = alloc_and_reg_flush_buff(rComm);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			free(rComm);
+			return NULL;
+		}
+	}
+
+	return rComm;
+}
+
+/*
+ * @brief	Non-blocking version of ofi_accept which returns recvComm as NULL
+ * 		with an expectation that it will be called again until
+ * 		recvComm != NULL
+ *
+ * @param	Listen Communicator object
+ *
+ * @return	recvComm = NULL, if connection hasn't been established
+ * 		recvComm != NULL, once connection is established
+ * @return	0, on success
+ * 		error, on others
+ */
+static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
+{
+	ncclResult_t ret = ncclSuccess;
+	ssize_t rc = 0;
+
+	listenComm_t *lComm = (listenComm_t *)listenComm;
+	if (lComm == NULL) {
+		NCCL_OFI_WARN("Invalid listen communicator provided");
+		return ncclSystemError;
+	}
+
+	if (lComm->accepted == true) {
+		NCCL_OFI_WARN("listenComm object already has an active connection.");
+		return ncclSystemError;
+	}
+
+	*recvComm = NULL;
+
+	/* Extract communicator state from listen communicator object */
+	save_comm_state_t *comm_state = &lComm->state;
+	recvComm_t *rComm = comm_state->comm;
+	nccl_ofi_req_t *req = comm_state->req;
+
+	/* Extract peer address from listen communicator's buffer */
+	char *remote_ep_addr = lComm->buffer;
+
+	/*
+	 * Take appropriate actions based on connection stage of communicator.
+	 *
+	 * Once we have completed the actions for a particular stage, we proceed
+	 * to the next one until failure. This is to ensure we make maximum
+	 * progress in a single function invocation.
+	 */
+	nccl_ofi_comm_stage_t stage = comm_state->stage;
+	switch (stage) {
+		case COMM_CREATE_START:
+
+			/* Prepare receive request to accept connections */
+			req = prepare_recv_conn(lComm);
+			if (req == NULL)
+				return ncclSystemError;
+
+			comm_state->stage = COMM_RECV_CONN;
+
+		case COMM_RECV_CONN:
+
+			/* Allocate memory for peer address for the first time ONLY */
+			if (remote_ep_addr == NULL)
+				remote_ep_addr = (char *)calloc(MAX_EP_ADDR, sizeof(char));
+
+			/* Post a receive message to receive peer connections */
+			rc = post_recv_conn(lComm, &remote_ep_addr, MAX_EP_ADDR, req);
+			if (rc == -FI_EAGAIN) {
+				/* Save recv request and buffer address for retry */
+				comm_state->req = req;
+				lComm->buffer = remote_ep_addr;
+				return ncclSuccess;
+			} else if (rc != 0) {
+				free(req);
+				return ncclSystemError;
+			}
+
+			comm_state->stage = COMM_REQ_PENDING_COMP;
+
+		case COMM_REQ_PENDING_COMP:
+
+			/* Progress NCCL OFI engine so that connection is accepted */
+			ret = nccl_ofi_progress(nccl_ofi_component[lComm->dev]);
+			if (OFI_UNLIKELY(ret != 0)) {
+				free(req);
+				return ncclSystemError;
+			}
+
+			if (lComm->accepted != true) {
+				/* Save recv request and buffer to retest completion */
+				comm_state->req = req;
+				lComm->buffer = remote_ep_addr;
+				return ncclSuccess;
+			}
+
+			/* Done processing the request so free it */
+			free(req);
+			comm_state->stage = COMM_CONNECTED;
+
+			break;
+
+		case COMM_SEND_CONN:
+		case COMM_CONNECTED:
+		default:
+			NCCL_OFI_WARN("Invalid state of receive communicator object: %d",
+				      stage);
+			return ncclSystemError;
+	}
+
+	/* Prepare receive communicator object for the received peer connection */
+	rComm = prepare_recv_comm(lComm, remote_ep_addr);
+	if (OFI_UNLIKELY(rComm == NULL))
+		return ncclSystemError;
+
+	comm_state->comm = rComm;
+	*recvComm = rComm;
+
+	return ret;
+}
+#else
 static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -1569,7 +2182,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	if (nccl_ofi_comp == NULL) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
-			     dev);
+			      dev);
 		goto unlock;
 	}
 
@@ -1616,7 +2229,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		}
 		else {
 			NCCL_OFI_WARN("Unable to post a buffer for receving connections for dev %d. RC: %zd, ERROR: %s",
-				     dev, rc, fi_strerror(-rc));
+				      dev, rc, fi_strerror(-rc));
 			ret = ncclSystemError;
 			goto exit;
 		}
@@ -1654,7 +2267,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm = (recvComm_t *)calloc(1, sizeof(recvComm_t));
 	if (rComm == NULL) {
 		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
-			     dev);
+			      dev);
 		ret = ncclSystemError;
 		goto exit;
 	}
@@ -1671,7 +2284,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
-					  MAP_PRIVATE | MAP_ANON, -1, 0);
+				MAP_PRIVATE | MAP_ANON, -1, 0);
 		if (OFI_UNLIKELY(rComm->flush_buff.host_buffer == MAP_FAILED)) {
 			NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)", errno, strerror(errno));
 			ret = ncclSystemError;
@@ -1684,7 +2297,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 					  &mr_handle);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-				      dev);
+					dev);
 			goto unmap_flush;
 		}
 		rComm->flush_buff.mr_handle = mr_handle;
@@ -1695,7 +2308,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 			      req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			     dev);
+			      dev);
 		goto error;
 	}
 
@@ -1720,6 +2333,7 @@ exit:
 		free(req);
 	return ret;
 }
+#endif
 
 static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 			      void **mhandle)
@@ -1864,8 +2478,8 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_irecv(void* recvComm, void* data, int size,
-			      void *mhandle, void** request)
+static ncclResult_t ofi_irecv(void* recvComm, void* data, int sizes,
+			      void* mhandle, void** request)
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
@@ -2238,8 +2852,13 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.ptrSupport = ofi_ptrSupport,
 #endif
 	.listen = ofi_listen,
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+	.connect = ofi_iconnect,
+	.accept = ofi_iaccept,
+#else
 	.connect = ofi_connect,
 	.accept = ofi_accept,
+#endif
 	.regMr = ofi_regMr,
 	.deregMr = ofi_deregMr,
 	.isend = ofi_isend,

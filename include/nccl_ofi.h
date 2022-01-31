@@ -37,9 +37,14 @@ extern "C" {
 #define MAX_BDF_LEN		(25)
 
 /*
- * We have a limit of MAX_HANDLE_SIZE = 64 bytes. Therefore, we can only
- * support an endpoint name of maximum 56 bytes. We are using remaining
- * 8 bytes for tags.
+ * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
+ * An endpoint address buffer of 56 bytes *should* be large enough to hold
+ * all libfabric providers. In case the requirement changes, NCCL v2.12
+ * provides enough room to increase this size but we would need to maintain
+ * backwards compatiblity with all NCCL versions.
+ *
+ * We also store tags and communicator stage information in remaining
+ * part of the handle.
  */
 #define MAX_EP_ADDR		(56)
 
@@ -113,12 +118,34 @@ typedef struct flush_buffer {
 	struct fid_mr *mr_handle;
 } flush_buffer_t;
 
+struct nccl_ofi_req;
+typedef struct nccl_ofi_req nccl_ofi_req_t;
+
+/* Various stages of connection establishment */
+typedef enum nccl_ofi_comm_stage {
+	COMM_CREATE_START = 0,
+	COMM_SEND_CONN,
+	COMM_RECV_CONN,
+	COMM_REQ_PENDING_COMP,
+	COMM_CONNECTED,
+} nccl_ofi_comm_stage_t;
+
+typedef struct save_comm_state {
+	void *comm;
+	nccl_ofi_req_t *req;
+	nccl_ofi_comm_stage_t stage;
+} save_comm_state_t;
+
 typedef struct listenComm {
 	uint64_t tag;
 	struct fid_ep *local_ep;
 	fi_addr_t local_ep_addr;
 	int dev;
 	bool accepted;
+	/* Saves temporary state when creating receive communicator object */
+	save_comm_state_t state;
+	/* Saves peer address information */
+	void *buffer;
 } listenComm_t;
 
 typedef struct comm {
@@ -195,6 +222,8 @@ typedef struct pending_reqs_q {
 typedef struct nccl_ofi_handle {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t tag;
+	/* Save temporary communicator state when creating send communicator */
+	save_comm_state_t state;
 } nccl_ofi_handle_t;
 
 static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
