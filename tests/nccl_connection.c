@@ -92,11 +92,13 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank + 1);
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+		while (sComm == NULL)
+			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		while (rComm == NULL)
+			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 			      rank + 1);
 	}
@@ -110,11 +112,13 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank - 1);
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+		while (sComm == NULL)
+			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		while (rComm == NULL)
+			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 			      rank - 1);
 	}
