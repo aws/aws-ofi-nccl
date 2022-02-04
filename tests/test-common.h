@@ -11,6 +11,7 @@
 #include <nccl_net.h>
 #include <nccl_ofi.h>
 #include <nccl_ofi_log.h>
+#include <nccl_ofi_param.h>
 #include "mpi.h"
 #include "config.h"
 #include <unistd.h>
