@@ -80,6 +80,9 @@ void print_dev_props(int dev, ncclNetProperties_t *props)
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Speed: %d", props->name, props->speed);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Port: %d", props->name, props->port);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0))
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Grouped Receives: %d", props->name, props->maxRecvs);
+#endif
 }
 #endif
 
