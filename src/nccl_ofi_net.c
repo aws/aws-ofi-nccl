@@ -1348,6 +1348,20 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	props->maxComms = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev;
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+	/*
+	 * Maximum number of grouped receives. Currently, we set it to 1 to
+	 * maintain single send/recv semantics (similar to NCCL versions < v2.12).
+	 *
+	 * Grouped receives are useful for alltoall collectives where one
+	 * receiver is expected to receive from multiple remote GPUs using
+	 * PXN(PCIe X NVLINK) feature. Other collectives like allreduce aren't
+	 * impacted with this feature as NCCL doesn't aggregate receives from
+	 * same source.
+	 */
+	props->maxRecvs = NCCL_OFI_MAX_RECVS;
+#endif
+
 	ret = ofi_pciPath(dev, &props->pciPath);
 	if (ret != ncclSuccess)
 		props->pciPath = NULL;
@@ -2087,7 +2101,6 @@ static int alloc_and_reg_flush_buff(recvComm_t *rComm)
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 				rComm->dev);
-
 		if (munmap(rComm->flush_buff.host_buffer, page_size)) {
 			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
 				      errno, strerror(errno));
@@ -2503,8 +2516,13 @@ exit:
 	return ret;
 }
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
+			      int tag, void *mhandle, void** request)
+#else
 static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 			      void *mhandle, void** request)
+#endif
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
@@ -2527,6 +2545,11 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 			     NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
+
+	/*
+	 * TODO: Use NCCL provided tags when using grouped receives aka
+	 * props->maxRecvs > 1.
+	 */
 
 	/* Allocate NCCL OFI request */
 	req = allocate_nccl_ofi_request(sComm->nccl_ofi_reqs_fl);
@@ -2588,14 +2611,18 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_irecv(void* recvComm, void* data, int sizes,
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+static ncclResult_t ofi_irecv(void* recvComm, int n, void** buffers, int* sizes,
+			      int *tags, void** mhandles, void** request)
+#else
+static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 			      void* mhandle, void** request)
+#endif
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
 	nccl_ofi_req_t *req = NULL;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
-	void *desc = NULL;
 
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
@@ -2630,12 +2657,53 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int sizes,
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+	req->num_recvs = n;
+
+	if (OFI_UNLIKELY(mhandles == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Memory handles array is NULL");
+		goto error;
+	}
+
+	/* Currently, plugin doesn't support grouped receives */
+	assert(n == 1);
+	for (int recv_n = 0; recv_n < n; recv_n++) {
+		void *desc = NULL;
+
+		if (mhandles[recv_n] != NULL) {
+			desc = fi_mr_desc(mhandles[recv_n]);
+		}
+
+		/*
+		 * TODO: Use NCCL provided tags when plugin supports grouped
+		 * receives aka props->maxRecvs > 1.
+		 */
+
+		/* Try posting buffer to local EP */
+		rc = fi_trecv(rComm->local_ep, buffers[recv_n], sizes[recv_n],
+			      desc, FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
+		if (rc == -FI_EAGAIN) {
+			/* Return NULL request */
+			*request = NULL;
+			goto error;
+		}
+		else if (rc != 0) {
+			NCCL_OFI_WARN("Unable to post receive buffer for dev %d. RC: %zd, ERROR: %s",
+					rComm->dev, rc, fi_strerror(-rc));
+			ret = ncclSystemError;
+			goto error;
+		}
+
+	}
+#else
+	void *desc = NULL;
 	if (mhandle != NULL)
 		desc = fi_mr_desc(mhandle);
 
 	/* Try posting buffer to local EP */
-	rc = fi_trecv(rComm->local_ep, data, size, desc,
-		      FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
+	rc = fi_trecv(rComm->local_ep, buffer, size,
+			desc, FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/* Return NULL request */
 		*request = NULL;
@@ -2643,10 +2711,11 @@ static ncclResult_t ofi_irecv(void* recvComm, void* data, int sizes,
 	}
 	else if (rc != 0) {
 		NCCL_OFI_WARN("Unable to post receive buffer for dev %d. RC: %zd, ERROR: %s",
-			       rComm->dev, rc, fi_strerror(-rc));
+				rComm->dev, rc, fi_strerror(-rc));
 		ret = ncclSystemError;
 		goto error;
 	}
+#endif
 
 	rComm->num_inflight_reqs++;
 
@@ -2707,15 +2776,21 @@ exit:
 	return ret;
 }
 
-static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
-			       void *mhandle, void **request)
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+static ncclResult_t ofi_iflush(void* recvComm, int n, void** buffers, int* sizes,
+			       void** mhandles, void** request)
+#else
+static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
+			       void* mhandle, void** request)
+#endif
 {
 	ncclResult_t ret = ncclSuccess;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
 	nccl_ofi_req_t *req = NULL;
 	ssize_t rc = 0;
-	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 	uint64_t cuda_key;
+	struct fid_mr *mr_handle = NULL;
+	void *data = NULL;
 
 	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
@@ -2727,12 +2802,42 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 		goto exit;
 	}
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+	/* Plugin only supports one receive per request */
+	assert(n == 1);
+
+	/*
+	 * Find the non-zero request for which we will issue flush.
+	 * A single operation can flush all request at once.
+	 */
+	int flush_n = -1;
+	for (int recv_n = 0; recv_n < n; recv_n++) {
+		if (sizes[recv_n] != 0) {
+			flush_n = recv_n;
+			break;
+		}
+	}
+
+	if (flush_n == -1) {
+		/*
+		 * Flush is an expensive operation. So, don't send fi_read for
+		 * 0-sized messages. Since, NCCL issues flush for every irecv(),
+		 * we guarantee to sync data to GPU even without it.
+		 */
+		goto exit;
+	}
+
+	if (mhandles && mhandles[flush_n])
+		mr_handle = (struct fid_mr *)mhandles[flush_n];
+
 	if (OFI_UNLIKELY(mr_handle == NULL)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Invalid memory registration handle provided");
 		goto exit;
 	}
 
+	data = buffers[flush_n];
+#else
 	if (size == 0) {
 		/*
 		 * Flush is an expensive operation. So, don't send fi_read for
@@ -2742,11 +2847,21 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 		goto exit;
 	}
 
+	mr_handle = (struct fid_mr *)mhandle;
+	if (OFI_UNLIKELY(mr_handle == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("Invalid memory registration handle provided");
+		goto exit;
+	}
+
+	data = buffer;
+#endif
+
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(rComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			     NCCL_OFI_MAX_REQUESTS);
+				NCCL_OFI_MAX_REQUESTS);
 		goto exit;
 	}
 
@@ -2792,7 +2907,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* data, int size,
 		}
 		else {
 			NCCL_OFI_WARN("Unable to issue read operation for dev %d. RC: %zd, ERROR: %s",
-				     rComm->dev, rc, fi_strerror(-rc));
+					rComm->dev, rc, fi_strerror(-rc));
 			ret = ncclSystemError;
 			goto error;
 		}
