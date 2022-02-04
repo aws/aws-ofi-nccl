@@ -33,6 +33,18 @@ int main(int argc, char* argv[])
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	int done, received_size, idx;
 
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0))
+	/* For grouped recvs */
+	int tag = 1;
+	int nrecv = NCCL_OFI_MAX_RECVS;
+	int *sizes = (int *)malloc(sizeof(int)*nrecv);
+	int *tags = (int *)malloc(sizeof(int)*nrecv);
+	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
+		sizes[recv_n] = RECV_SIZE;
+		tags[recv_n] = tag;
+	}
+#endif
+
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &num_ranks);
@@ -124,16 +136,18 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank + 1);
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+		while (sComm == NULL)
+			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		while (rComm == NULL)
+			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank + 1);
 
 		/* Send NUM_REQUESTS to Rank 1 */
-		NCCL_OFI_INFO(NCCL_NET, "Sent %d requests to rank %d", NUM_REQUESTS,
+		NCCL_OFI_INFO(NCCL_NET, "Send %d requests to rank %d", NUM_REQUESTS,
 				rank + 1);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
 			OFINCCLCHECK(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type));
@@ -144,9 +158,16 @@ int main(int argc, char* argv[])
 			NCCL_OFI_TRACE(NCCL_NET,
 					"Successfully registered send memory for request %d of rank %d",
 					idx, rank);
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE, tag,
+						mhandle[idx], (void **)&req[idx]));
+#else
 			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
 						mhandle[idx], (void **)&req[idx]));
+#endif
 		}
+		NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
+				rank + 1);
 	}
 	else if (rank == 1) {
 
@@ -158,11 +179,13 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank - 1);
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+    while (sComm == NULL)
+		  OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+    while (rComm == NULL)
+		  OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank - 1);
 
@@ -174,8 +197,13 @@ int main(int argc, char* argv[])
 			OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
 						buffer_type, &mhandle[idx]));
 			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void *)&recv_buf[idx],
+						sizes, tags, &mhandle[idx], (void **)&req[idx]));
+#else
 			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf[idx],
 						RECV_SIZE, mhandle[idx], (void **)&req[idx]));
+#endif
 		}
 	}
 
@@ -201,9 +229,15 @@ int main(int argc, char* argv[])
 						idx);
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 8, 0)) /* Support NCCL v2.8 */
 					nccl_ofi_req_t *iflush_req = NULL;
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
+								    (void **)&recv_buf[idx],
+								    sizes, &mhandle[idx], (void **)&iflush_req));
+#else
 					OFINCCLCHECK(extNet->iflush((void *)rComm,
-								    (void *)recv_buf[idx],
+								    (void **)recv_buf[idx],
 								    RECV_SIZE, mhandle[idx], (void **)&iflush_req));
+#endif
 					done = 0;
 					while (!done) {
 						OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
