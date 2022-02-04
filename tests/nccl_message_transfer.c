@@ -223,30 +223,33 @@ int main(int argc, char* argv[])
 				inflight_reqs--;
 				req_completed[idx] = 1;
 
-				if ((rank == 1) && (buffer_type == NCCL_PTR_CUDA)) {
-					NCCL_OFI_TRACE(NCCL_NET,
-						"Issue flush for data consistency. Request idx: %d",
-						idx);
+				/* Invoke flush operations unless user has explicitly disabled it. */
+				if (!ofi_nccl_gdr_flush_disable()) {
+					if ((rank == 1) && (buffer_type == NCCL_PTR_CUDA)) {
+						NCCL_OFI_TRACE(NCCL_NET,
+								"Issue flush for data consistency. Request idx: %d",
+								idx);
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 8, 0)) /* Support NCCL v2.8 */
-					nccl_ofi_req_t *iflush_req = NULL;
+						nccl_ofi_req_t *iflush_req = NULL;
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
-					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
-								    (void **)&recv_buf[idx],
-								    sizes, &mhandle[idx], (void **)&iflush_req));
+						OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
+									(void **)&recv_buf[idx],
+									sizes, &mhandle[idx], (void **)&iflush_req));
 #else
-					OFINCCLCHECK(extNet->iflush((void *)rComm,
-								    (void **)recv_buf[idx],
-								    RECV_SIZE, mhandle[idx], (void **)&iflush_req));
+						OFINCCLCHECK(extNet->iflush((void *)rComm,
+									(void **)recv_buf[idx],
+									RECV_SIZE, mhandle[idx], (void **)&iflush_req));
 #endif
-					done = 0;
-					while (!done) {
-						OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+						done = 0;
+						while (!done) {
+							OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+						}
+#else
+						OFINCCLCHECK(extNet->flush((void *)rComm,
+									(void *)recv_buf[idx],
+									RECV_SIZE, mhandle[idx]));
+#endif
 					}
-#else
-                    			OFINCCLCHECK(extNet->flush((void *)rComm,
-								   (void *)recv_buf[idx],
-								   RECV_SIZE, mhandle[idx]));
-#endif
 				}
 
 				/* Deregister memory handle */
@@ -254,7 +257,10 @@ int main(int argc, char* argv[])
 					OFINCCLCHECK(extNet->deregMr((void *)sComm, mhandle[idx]));
 				}
 				else if (rank == 1) {
-					OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
+					if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
+						/* Data validation may fail if flush operations are disabled */
+					} else
+						OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
 
 					OFINCCLCHECK(extNet->deregMr((void *)rComm, mhandle[idx]));
 				}

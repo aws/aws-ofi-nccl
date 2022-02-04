@@ -231,7 +231,8 @@ int main(int argc, char *argv[])
 				inflight_reqs--;
 				req_completed_recv[idx] = 1;
 
-				if (buffer_type == NCCL_PTR_CUDA) {
+				/* Invoke flush operations unless user has explicitly disabled it */
+				if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
 					NCCL_OFI_TRACE(NCCL_NET,
 						"Issue flush for data consistency. Request idx: %d",
 						idx);
@@ -257,7 +258,10 @@ int main(int argc, char *argv[])
 #endif
 				}
 
-				OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
+				if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
+					/* Data validation may fail if flush operations are disabled */
+				} else
+					OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
 
 				/* Deregister memory handle */
 				OFINCCLCHECK(extNet->deregMr((void *)rComm, recv_mhandle[idx]));
