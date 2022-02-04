@@ -61,6 +61,9 @@ extern "C" {
  */
 #define MIN_TAG_BITS_FOR_RING_ID	(32 + 1)
 
+/* Maximum number of grouped receives */
+#define NCCL_OFI_MAX_RECVS	1
+
 /* This is twice the size of maximum inflight requests supported by NCCL */
 #define NCCL_OFI_MAX_REQUESTS	256
 
@@ -183,6 +186,9 @@ typedef struct nccl_ofi_req {
 
 	/* Associated Device ID */
 	int dev;
+
+	/* Number of receives associated with request */
+	int num_recvs;
 
 	/* Size of completed request */
 	size_t size;
