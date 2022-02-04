@@ -1310,14 +1310,64 @@ exit:
 	return ret;
 }
 
+struct connection_info {
+	char ep_name[MAX_EP_ADDR];
+	size_t ep_namelen;
+	nccl_ofi_req_t* req;
+	struct connection_info* memory_buffer;
+	bool connect_to_self;
+};
+
+struct connection_info* allocate_connection_info(int dev, nccl_ofi_req_t *req, char* remote_ep_name)
+{
+	struct connection_info* conn_info = (struct connection_info*)calloc(1, sizeof(*conn_info));
+	if (OFI_UNLIKELY(conn_info == NULL)) {
+		return NULL;
+	}
+	conn_info->ep_namelen = sizeof(conn_info->ep_name);
+
+	/* Get local EP address to transfer in the connect message */
+	int ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+			 (void *)conn_info->ep_name,
+			 &(conn_info->ep_namelen));
+	if (ret != 0) {
+		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		free(conn_info);
+		return NULL;
+	}
+
+	conn_info->req = req;
+	/* for future freeing conn_info buffer */
+	conn_info->memory_buffer = conn_info;
+	conn_info->connect_to_self = (memcmp(conn_info->ep_name, remote_ep_name, conn_info->ep_namelen) == 0);
+
+	return conn_info;
+}
+
+ncclResult_t process_connect_completion(struct connection_info* conn_info)
+{
+	/* process postponed completions */
+	do {
+		ncclResult_t ret = nccl_ofi_progress(nccl_ofi_component[conn_info->req->dev]);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	} while (conn_info->req->state != NCCL_OFI_REQ_COMPLETED);
+	free_nccl_ofi_req(conn_info->req, false);
+	free(conn_info->memory_buffer);
+	NCCL_OFI_TRACE(NCCL_NET, "Processed completion for connect message");
+	return ncclSuccess;
+}
+
+
 static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
 	ssize_t rc = 0;
 	uint64_t tag = 0ULL;
 	char remote_ep_addr[MAX_EP_ADDR] = {0};
-	char local_ep_addr[MAX_EP_ADDR] = {0};
-	size_t namelen = sizeof(local_ep_addr);
+	struct connection_info* conn_info = NULL;
 	fi_addr_t remote_addr;
 	sendComm_t *sComm = NULL;
 	uint64_t max_tag = 0;
@@ -1402,13 +1452,9 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
-	/* Get local EP address to transfer in the connect message */
-	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
-			 (void *)&local_ep_addr,
-			 &namelen);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
+	conn_info = allocate_connection_info(dev, req, remote_ep_addr);
+	if (OFI_UNLIKELY(conn_info == NULL)) {
+		NCCL_OFI_WARN("Couldn't allocate connection_info for dev %d", dev);
 		ret = ncclSystemError;
 		goto error;
 	}
@@ -1420,8 +1466,8 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		 * providers can support it, so that need for completion check
 		 * below can be lifted.
 		 */
-		rc = fi_tsend(sComm->local_ep, (void *)&local_ep_addr,
-			      MAX_EP_ADDR, NULL, sComm->remote_ep,
+		rc = fi_tsend(sComm->local_ep, (void *)conn_info,
+			      sizeof(*conn_info), NULL, sComm->remote_ep,
 			      sComm->tag | ~max_tag, &req->ctx);
 		if (rc == 0)
 			break;
@@ -1443,11 +1489,13 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	} while (true);
 
 	/* Ensure the message is sent. */
-	do {
-		ret = nccl_ofi_progress(nccl_ofi_component[dev]);
-		if (OFI_UNLIKELY(ret != 0))
+	/* Skip this step for sending to self */
+	if (!conn_info->connect_to_self) {
+		ret = process_connect_completion(conn_info);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			goto error;
-	} while (req->state != NCCL_OFI_REQ_COMPLETED);
+		}
+	}
 
 	*sendComm = sComm;
 
@@ -1458,9 +1506,14 @@ unlock:
 error:
 	if (sComm)
 		free(sComm);
-exit:
+
+	if (conn_info) {
+		free(conn_info);
+	}
+
 	if (req)
 		free_nccl_ofi_req(req, false);
+exit:
 	return ret;
 }
 
@@ -1473,7 +1526,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	int dev = lComm->dev;
 	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
 	nccl_ofi_req_t *req = NULL;
-	char remote_ep_addr[MAX_EP_ADDR] = {0};
+	struct connection_info conn_info = {0};
 	fi_addr_t remote_ep;
 	uint64_t max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
@@ -1514,7 +1567,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 
 	/* Post a buffer for receiving connection requests */
 	do {
-		rc = fi_trecv(lComm->local_ep, (void *)&remote_ep_addr, MAX_EP_ADDR,
+		rc = fi_trecv(lComm->local_ep, (void *)&conn_info, sizeof(conn_info),
 			      NULL, FI_ADDR_UNSPEC, lComm->tag | ~max_tag,
 			      0, &req->ctx);
 		if (rc == 0)
@@ -1543,8 +1596,19 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 			goto exit;
 	}
 
+	if (conn_info.connect_to_self) {
+		NCCL_OFI_TRACE(NCCL_NET, "Accept from self");
+		ret = process_connect_completion(&conn_info);
+		if (OFI_UNLIKELY(ret != ncclSuccess)) {
+			goto error;
+		}
+	}
+	else {
+		NCCL_OFI_TRACE(NCCL_NET, "Accept from remote");
+	}
+
 	/* Insert remote EP address to AV */
-	ret = fi_av_insert(nccl_ofi_comp->av, (void *)remote_ep_addr, 1,
+	ret = fi_av_insert(nccl_ofi_comp->av, (void *)conn_info.ep_name, 1,
 			   &remote_ep, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
