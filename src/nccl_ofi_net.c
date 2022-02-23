@@ -2324,6 +2324,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	uint64_t max_tag;
 	size_t req_size = sizeof(nccl_ofi_req_t);
 	struct fid_mr *mr_handle = NULL;
+	const long page_size = sysconf(_SC_PAGESIZE);
 
 	pthread_mutex_lock(&nccl_ofi_lock);
 	if (nccl_ofi_comp == NULL) {
@@ -2413,8 +2414,6 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->local_ep_addr = lComm->local_ep_addr;
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
-
-	const long page_size = sysconf(_SC_PAGESIZE);
 
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
