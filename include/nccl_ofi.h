@@ -10,7 +10,6 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
-#include <assert.h>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -240,7 +239,7 @@ typedef struct nccl_ofi_handle {
 #endif
 } nccl_ofi_handle_t;
 
-static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
+_Static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
 
 /*
  * Structure for an OFI network device.
