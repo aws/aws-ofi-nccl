@@ -2680,6 +2680,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	uint64_t cuda_key = 0ULL;
 	struct fid_mr *mr_handle = NULL;
 	void *data = NULL;
+	void *flush_mr_desc = NULL;
 
 	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
@@ -2719,12 +2720,6 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	if (mhandles && mhandles[flush_n])
 		mr_handle = (struct fid_mr *)mhandles[flush_n];
 
-	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Invalid memory registration handle provided");
-		goto exit;
-	}
-
 	data = buffers[flush_n];
 #else
 	if (size == 0) {
@@ -2737,11 +2732,6 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	}
 
 	mr_handle = (struct fid_mr *)mhandle;
-	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Invalid memory registration handle provided");
-		goto exit;
-	}
 
 	data = buffer;
 #endif
@@ -2767,19 +2757,27 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
-	/* Extract remote key */
-	cuda_key = fi_mr_key(mr_handle);
-	if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Memory registration may not have completed.");
-		goto error;
+	if (rComm->flush_buff.mr_handle != NULL) {
+		/* Not checking for NULL flush_mr_desc as fi_mr_desc()
+		 * returns valid descriptors by valid handles */
+		flush_mr_desc = fi_mr_desc(rComm->flush_buff.mr_handle);
+	}
+
+	if (mr_handle != NULL) {
+		/* Extract remote key */
+		cuda_key = fi_mr_key(mr_handle);
+		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Memory registration may not have completed.");
+			goto error;
+		}
 	}
 
 	/* Issue RDMA read */
 	do {
 		rc = fi_read(rComm->local_ep, rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
-			     fi_mr_desc(rComm->flush_buff.mr_handle),
+			     flush_mr_desc,
 			     rComm->local_ep_addr, (uint64_t)data,
 			     cuda_key, &req->ctx);
 		if (rc == 0) {
