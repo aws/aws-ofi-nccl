@@ -2788,9 +2788,9 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	nccl_ofi_req_t *req = NULL;
 	ssize_t rc = 0;
 	uint64_t cuda_key = 0ULL;
-	void* desc = NULL;
 	struct fid_mr *mr_handle = NULL;
 	void *data = NULL;
+	void *flush_mr_desc = NULL;
 
 	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
@@ -2868,9 +2868,14 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
+	if (rComm->flush_buff.mr_handle != NULL) {
+		/* Not checking for NULL flush_mr_desc as fi_mr_desc()
+		 * returns valid descriptors by valid handles */
+		flush_mr_desc = fi_mr_desc(rComm->flush_buff.mr_handle);
+	}
+
 	if (mr_handle != NULL) {
 		/* Extract remote key */
-		desc = fi_mr_desc(mr_handle);
 		cuda_key = fi_mr_key(mr_handle);
 		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
 			ret = ncclSystemError;
@@ -2885,7 +2890,7 @@ ncclResult_t nccl_net_ofi_iflush(void* recvComm, int n, void** buffers, int* siz
 	do {
 		rc = fi_read(rComm->local_ep, rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
-			     desc,
+			     flush_mr_desc,
 			     rComm->local_ep_addr, (uint64_t)data,
 			     cuda_key, &req->ctx);
 		if (rc == 0) {
