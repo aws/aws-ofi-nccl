@@ -7,6 +7,30 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+# v1.2.0 release notes
+
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.12.7](https://github.com/NVIDIA/nccl/releases/tag/v2.12.7-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to [Libfabric v1.14.0](https://github.com/ofiwg/libfabric/releases/tag/v1.14.0).
+
+New Features:
+* Add support for NCCL v2.12 with backwards compatibility to previous NCCL versions.
+
+Bug Fixes:
+* Prevent deadlock in connection establishment when using rendezvour providers.
+* Enable flush operations for provider that doesn't require memory registration.
+* Enable successful runs of unit-tests with flush disabled.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+* psm3
+
+
 # v1.1.5 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
