@@ -945,7 +945,13 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 		}
 		else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
 			rc = fi_cq_readerr(cq, &err_buffer, 0);
-			if (OFI_UNLIKELY(rc < 0)) {
+			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
+				/*
+				 * Error not available yet.
+				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
+				 */
+				break;
+			} else if (OFI_UNLIKELY(rc < 0)) {
 				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
 					     rc,
 					     fi_cq_strerror(cq,
