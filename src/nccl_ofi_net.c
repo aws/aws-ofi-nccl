@@ -108,6 +108,50 @@ void free_ofi_fl(free_list_t *nccl_ofi_req_fl)
 	free(nccl_ofi_req_fl);
 }
 
+static const char *nccl_ofi_req_state_str(nccl_ofi_req_state_t state)
+{
+	switch(state) {
+	case NCCL_OFI_REQ_CREATED:
+		return "CREATED";
+	case NCCL_OFI_REQ_PENDING:
+		return "PENDING";
+	case NCCL_OFI_REQ_COMPLETED:
+		return "COMPLETED";
+	case NCCL_OFI_REQ_ERROR:
+		return "ERROR";
+	default:
+		return "unknown";
+	}
+}
+
+static const char *nccl_ofi_req_direction_str(nccl_ofi_req_state_t state)
+{
+	switch(state) {
+	case NCCL_OFI_SEND:
+		return "SEND";
+	case NCCL_OFI_RECV:
+		return "RECV";
+	default:
+		return "unknown";
+	}
+}
+
+/*
+ * @brief	Print NCCL OFI request information
+ */
+static const char *nccl_ofi_request_str(nccl_ofi_req_t *req)
+{
+	static char buf[256];
+	snprintf(buf, sizeof(buf), "{ buffer_index: %lu, dev: %d, size: %zu, state: %s, direction: %s }",
+		req->buffer_index,
+		req->dev,
+		req->size,
+		nccl_ofi_req_state_str(req->state),
+		nccl_ofi_req_direction_str(req->direction)
+	);
+	return buf;
+}
+
 /*
  * @brief	Assign an allocated NCCL OFI request buffer
  */
@@ -965,16 +1009,21 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 			} else if (OFI_UNLIKELY(rc < 0)) {
 				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
 					     rc,
-					     fi_cq_strerror(cq,
-						err_buffer.prov_errno,
-						err_buffer.err_data, NULL, 0));
+					     fi_strerror(-rc));
 				ret = ncclSystemError;
 				goto exit;
 			}
 
-			/* TODO: Add debug log to dump failed request details */
 			req = container_of(err_buffer.op_context,
 					   nccl_ofi_req_t, ctx);
+			NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %s. Completed length: %ld, Request: %s",
+					req,
+					err_buffer.err,
+				    fi_cq_strerror(cq,
+						err_buffer.prov_errno,
+						err_buffer.err_data, NULL, 0),
+					(long)err_buffer.len,
+					nccl_ofi_request_str(req));
 			req->state = NCCL_OFI_REQ_ERROR;
 			req->size = err_buffer.len;
 		}
@@ -984,7 +1033,7 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 		}
 		else {
 			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
-				     rc, fi_strerror(-ret));
+				     rc, fi_strerror(-rc));
 			ret = ncclSystemError;
 			goto exit;
 		}
