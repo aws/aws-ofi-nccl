@@ -1419,7 +1419,12 @@ static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_t *props)
 		goto exit;
 	}
 
-	dev_props.name = strdup(nic_info->device_attr->name);
+	/* name is NULL if device is a part of multirail config */
+	/* overriding default name only if value is available from provider */
+	if (nic_info->device_attr->name) {
+		dev_props.name = strdup(nic_info->device_attr->name);
+	}
+
 	/* Speed reported in Mbps */
 	dev_props.speed = nic_info->link_attr->speed / (1e6);
 
