@@ -23,6 +23,24 @@
 #include <cuda_runtime.h>
 #endif
 
+/* Maximum length of EC2 platform type */
+#define EC2_PLATFORM_LEN	128
+#define TOPO_FILENAME_LEN	128
+
+struct ec2_platform_topology {
+	char name[EC2_PLATFORM_LEN];
+	char topology[TOPO_FILENAME_LEN];
+} platform_topo_map[] = {
+	[0] = {
+		.name = "p4d.24xlarge",
+		.topology = "p4d-24xl-topo.xml"
+	},
+	[1] = {
+		.name = "p4de.24xlarge",
+		.topology = "p4de-24xl-topo.xml"
+	},
+};
+
 static uint32_t libversion = 0;
 /* NICs info list for a provider */
 struct fi_info* ofi_info_list = NULL;
@@ -1050,19 +1068,22 @@ static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 }
 
 /*
- * @brief	Checks if the underlying hardware type matches the input platform type.
+ * @brief	Provides EC2 platform type as reported by the
+ * 		first line of
+ *		/sys/devices/virtual/dmi/id/product_name
  *
- * @return	-1, on error
- *		1, if it matches
- *		0, if it does not match
+ * @input	Buffer to store platform type, can be reallocated
+ * 		if required
+ *
+ * @return	-1, on file operation error
+ * 		0, on successful read
  */
-static int platform_type_matches(char *platform_type)
+static int get_platform_type(char **platform_type)
 {
 	char file[] = "/sys/devices/virtual/dmi/id/product_name";
 	FILE *fd = NULL;
-	int len = strlen(platform_type);
-	int idx = 0, ret = -1;
 	char ch;
+	int len = 0;
 
 	fd = fopen(file, "r");
 	if (fd == NULL) {
@@ -1070,29 +1091,97 @@ static int platform_type_matches(char *platform_type)
 		return -1;
 	}
 
-	/* Read first line of the file */
+	/* Read first line of the file, reallocing the buffer as necessary */
 	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
-
-		/* Report mismatch if characters read are more than string length */
-		if (idx == len) {
-			ret = 0;
-			goto exit;
-		}
-
-		/* Fail fast if there's a mismatch */
-		if (ch != platform_type[idx++]) {
-			ret = 0;
-			goto exit;
+		(*platform_type)[len++] = ch;
+		if (len > EC2_PLATFORM_LEN) {
+			*platform_type = realloc(*platform_type, len + EC2_PLATFORM_LEN);
 		}
 	}
+	(*platform_type)[len] = '\0';
 
-	if (idx == len) {
-		ret = 1;
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Read %d bytes. EC2 platform type is %s", len, *platform_type);
+
+	fclose(fd);
+	return 0;
+}
+
+/*
+ * @brief	Returns static topology filename for given platform type, if found
+ *
+ * @input	Platform type
+ *
+ * @return	NULL, if no topology found
+ * 		Topology filename, if match found
+ */
+static char* get_static_topology_file(char *platform_type)
+{
+	static const int platform_n = sizeof(platform_topo_map)/sizeof(platform_topo_map[0]);
+
+	for (int idx = 0; idx < platform_n; idx++) {
+		if (strcmp(platform_type, platform_topo_map[idx].name) == 0)
+			return platform_topo_map[idx].topology;
+	}
+
+	return NULL;
+}
+
+/*
+ * @brief	Update NCCL's system topology using static pre-configured topology
+ * 		files for supported EC2 platform types.
+ *
+ * @return	0, when we are succesfully able to update NCCL topology or
+ * 		   if we find no match
+ * 		error, on failure
+ */
+static ncclResult_t update_nccl_topology()
+{
+	int ret = ncclSuccess;
+	int rc = 0;
+
+	char *platform_type = (char *)malloc(sizeof(char)*EC2_PLATFORM_LEN);
+	if (platform_type == NULL) {
+		NCCL_OFI_WARN("Unable to allocate platform type");
+		return ncclSystemError;
+	}
+
+	ret = get_platform_type(&platform_type);
+	if (ret < 0) {
+		ret = ncclSystemError;
+		goto exit;
+	}
+
+	char *topo_file = get_static_topology_file(platform_type);
+	if (topo_file == NULL) {
+		goto exit;
+	} else {
+		/* Update topology */
+		char topology_path[PATH_MAX];
+
+		rc = snprintf(topology_path, sizeof(topology_path), "%s/%s",
+				XML_DIR, topo_file);
+		if (rc < 0 || rc >= sizeof(topology_path) {
+			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s, Topology file: %s",
+					rc, PATH_MAX, XML_DIR, topo_file);
+			ret = ncclSystemError;
+			goto exit;
+		}
+
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
+				platform_type, topology_path);
+
+		rc = setenv("NCCL_TOPO_FILE", topology_path, 1);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE");
+			ret = ncclSystemError;
+			goto exit;
+		}
+
 	}
 
 exit:
-	if (fd)
-		fclose(fd);
+	free(platform_type);
 	return ret;
 }
 
@@ -1107,45 +1196,20 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
 
 	/*
-	 * Use a static pre-configured topology for p4d.24xlarge platform type.
+	 * Use a static pre-configured topology for supported EC2 platform types
 	 *
-	 * While the actual physical topology is 2 GPUs and a NIC behind a PCIe
-	 * switch, the AWS hypervisor presents this as a separate PCI bus without
-	 * switch. To enable GPUDirect, plugin silently overrides the system topology
-	 * using `NCCL_TOPO_FILE` environment variable to inform NCCL of the
-	 * underlying hardware topology.
+	 * For example, for P4D platform, while the actual physical topology is
+	 * 2 GPUs and a NIC behind a PCIe switch, the AWS hypervisor presents
+	 * this as a separate PCI bus without switch. To enable GPUDirect,
+	 * plugin silently overrides the system topology using `NCCL_TOPO_FILE`
+	 * environment variable to inform NCCL of the underlying hardware topology.
 	 *
 	 * This topology information helps NCCL to form optimal
 	 * graphs by using right GPU-NIC pairs for transfers through network.
 	 */
-	int is_p4 = platform_type_matches("p4d.24xlarge");
-
-	if (is_p4 < 0) {
-		ret = ncclSystemError;
+	ret = update_nccl_topology();
+	if (ret != ncclSuccess)
 		goto exit;
-	} else if (is_p4) {
-		char p4d_topology[PATH_MAX];
-
-		rc = snprintf(p4d_topology, sizeof(p4d_topology), "%s/%s",
-			      XML_DIR, "p4d-24xl-topo.xml");
-		if (rc < 0 || rc >= PATH_MAX) {
-			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s",
-				rc, PATH_MAX, XML_DIR);
-			ret = ncclSystemError;
-			goto exit;
-		}
-
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Running on P4d platform, Setting NCCL_TOPO_FILE environment variable to %s",
-			      p4d_topology);
-
-		rc = setenv("NCCL_TOPO_FILE", p4d_topology, 1);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE");
-			ret = ncclSystemError;
-			goto exit;
-		}
-	}
 
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
