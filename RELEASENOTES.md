@@ -7,7 +7,7 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
-# v1.2.0 release notes
+# v1.3.0 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
 or later and supports [NCCL v2.12.10](https://github.com/NVIDIA/nccl/releases/tag/v2.12.10-1) while
