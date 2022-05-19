@@ -1280,7 +1280,12 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 			ret = ncclUnhandledCudaError;
 			goto exit;
 		}
-		ofi_ndevices /= 2;
+		if (ofi_ndevices > 1)
+			ofi_ndevices /= 2;
+		if (ofi_ndevices < 1) {
+			ret = ncclSystemError;
+			goto exit;
+		}
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
