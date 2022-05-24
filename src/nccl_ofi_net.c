@@ -697,7 +697,8 @@ static int find_ofi_provider(struct fi_info **providers)
 
 		/* Indicate that plugin doesn't support transfers using GPU buffers */
 		support_gdr = false;
-
+#if !HAVE_NEURON
+		/* Functioning without GDR support is not a valid use case for neuron */
 		/* Re-try finding non-GPUDirect capable provider */
 		get_hints(hints, false);
 
@@ -707,6 +708,7 @@ static int find_ofi_provider(struct fi_info **providers)
 		} else if (rc != 0) {
 			NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
 		}
+#endif
 	}
 	else if (rc != 0) {
 		NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
@@ -1336,7 +1338,11 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 exit:
 	if (ret != ncclSuccess) {
+#if HAVE_CUDA
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
+#else
+		NCCL_OFI_INFO(NCCL_INIT, " initialization failed");
+#endif
 	}
 	return ret;
 }
