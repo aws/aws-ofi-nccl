@@ -546,10 +546,6 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
 		mr_attr.iface = FI_HMEM_NEURON;
-		ret = ncclRtGetDevice(&mr_attr.device.neuron);
-		if (OFI_UNLIKELY(ret != ncclSuccess)) {
-			goto exit;
-		}
 		break;
 #endif
 	default:
