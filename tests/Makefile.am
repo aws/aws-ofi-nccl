@@ -7,7 +7,11 @@
 AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
 AM_CFLAGS += -I$(top_srcdir)/include
 AM_LDFLAGS = -lmpi -lcudart
-LDADD = ../src/libnccl-net.la
+if ENABLE_NEURON
+    LDADD = ../src/libnccom-net.la
+else
+    LDADD = ../src/libnccl-net.la
+endif
 CC ?= mpicc
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
