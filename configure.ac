@@ -97,8 +97,11 @@ AS_IF([test "x$with_cuda" != xno],
 AM_CONDITIONAL(HAVE_CUDA, test "x$with_cuda" != xno)
 
 AS_IF([test "x$enable_neuron" != xno],
+    AS_IF([test "x$with_cuda" != xno], [AC_MSG_ERROR([Cuda (--with_cuda) and Neuron devices (--enable_neuron) cannot be defined at same time])])
     [AC_DEFINE([HAVE_NEURON], [1], [Define if Neuron support is available])],
     [AC_DEFINE([HAVE_NEURON], [0], [Define if Neuron support is available])])
+
+AM_CONDITIONAL(ENABLE_NEURON, test "x$enable_neuron" != xno)
 
 AC_SEARCH_LIBS([dlopen], [dl], [], [
   AC_MSG_ERROR([unable to find libdl])

@@ -186,11 +186,19 @@ ncclNet_t *get_extNet(void)
 	void *netPluginLib = NULL;
 	ncclNet_t *extNet = NULL;
 
+#if ENABLE_NEURON
+	netPluginLib = dlopen("libnccom-net.so", RTLD_NOW | RTLD_LOCAL);
+	if (netPluginLib == NULL) {
+		NCCL_OFI_WARN("Unable to load libnccom-net.so: %s", dlerror());
+		return NULL;
+	}
+#else
 	netPluginLib = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
 	if (netPluginLib == NULL) {
 		NCCL_OFI_WARN("Unable to load libnccl-net.so: %s", dlerror());
 		return NULL;
 	}
+#endif
 
 	extNet = (ncclNet_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
 	if (extNet == NULL) {
