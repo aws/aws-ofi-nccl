@@ -10,5 +10,10 @@ if HAVE_CUDA
   AM_LDFLAGS = -lcudart
 endif HAVE_CUDA
 
-lib_LTLIBRARIES = libnccl-net.la
-libnccl_net_la_SOURCES = nccl_ofi_net.c
+if ENABLE_NEURON
+  lib_LTLIBRARIES = libnccom-net.la
+  libnccom_net_la_SOURCES = nccl_ofi_net.c
+else
+  lib_LTLIBRARIES = libnccl-net.la
+  libnccl_net_la_SOURCES = nccl_ofi_net.c
+endif
