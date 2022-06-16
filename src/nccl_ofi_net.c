@@ -2142,8 +2142,8 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 		return ncclSystemError;
 	}
 
-	if (lComm->accepted == true) {
-		NCCL_OFI_WARN("listenComm object already has an active connection.");
+	if (lComm->state.stage != COMM_REQ_PENDING_COMP && lComm->accepted) {
+		NCCL_OFI_WARN("listenComm %p object already has an active connection (%d).", listenComm, lComm->accepted);
 		return ncclSystemError;
 	}
 
