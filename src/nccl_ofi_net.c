@@ -1569,7 +1569,7 @@ static ssize_t send_connect_message(sendComm_t *sComm, nccl_ofi_req_t *req)
 	 */
 	rc = fi_tsend(sComm->local_ep, (void *)local_ep_addr,
 			MAX_EP_ADDR, NULL, sComm->remote_ep,
-			sComm->tag | ~max_tag, &req->ctx);
+			sComm->tag | (max_tag + 1), &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/*
 		 * Process completions so that you have enough
@@ -1872,7 +1872,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		 */
 		rc = fi_tsend(sComm->local_ep, (void *)conn_info,
 			      sizeof(*conn_info), NULL, sComm->remote_ep,
-			      sComm->tag | ~max_tag, &req->ctx);
+			      sComm->tag | (max_tag + 1), &req->ctx);
 		if (rc == 0)
 			break;
 		else if (rc == -FI_EAGAIN) {
@@ -1989,7 +1989,7 @@ static ssize_t post_recv_conn(listenComm_t *lComm, char **buffer,
 
 	/* Post a buffer for receiving connection requests */
 	rc = fi_trecv(lComm->local_ep, (void *)*buffer, size,
-		      NULL, FI_ADDR_UNSPEC, lComm->tag | ~max_tag,
+		      NULL, FI_ADDR_UNSPEC, lComm->tag | (max_tag + 1),
 		      0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/*
@@ -2288,7 +2288,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	/* Post a buffer for receiving connection requests */
 	do {
 		rc = fi_trecv(lComm->local_ep, (void *)&conn_info, sizeof(conn_info),
-			      NULL, FI_ADDR_UNSPEC, lComm->tag | ~max_tag,
+			      NULL, FI_ADDR_UNSPEC, lComm->tag | (max_tag + 1),
 			      0, &req->ctx);
 		if (rc == 0)
 			break;
