@@ -996,7 +996,7 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cqe_burst];
 	nccl_ofi_req_t *req = NULL;
 	struct fid_cq *cq = nccl_ofi_comp->cq;
-	uint64_t control_bit_mask = ~(nccl_ofi_comp->max_tag);
+	uint64_t control_bit_mask = nccl_ofi_comp->max_tag + 1;
 
 	while (true) {
 
