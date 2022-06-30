@@ -118,6 +118,12 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Boolean</td>
       <td>0/1 (Default: 0)</td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_NIC_DUP_CONNS</code></td>
+      <td>Set number of NIC connections. This is used to increase hardware utilization. Applicable for P3Dn when using less number of GPUs than 8..</td>
+      <td>Integer</td>
+      <td>x, to set x number of connections. Only overridden for greater than 0 values (Default: 0)</td>
+   </tr>
 </table>
 
 

@@ -1280,12 +1280,23 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 			ret = ncclUnhandledCudaError;
 			goto exit;
 		}
+
 		if (ofi_ndevices > 1)
 			ofi_ndevices /= 2;
 		if (ofi_ndevices < 1) {
+			NCCL_OFI_WARN("Incorrect number of CUDA devices provided: %d", ofi_ndevices);
 			ret = ncclSystemError;
 			goto exit;
 		}
+
+		int nic_dup_conns = ofi_nccl_nic_dup_conns();
+		if (nic_dup_conns > 0) {
+			NCCL_OFI_INFO(NCCL_INIT,
+						  "Setting AWS OFI ndev to %d from user configuration, OFI_NCCL_NIC_DUP_CONNS",
+						  nic_dup_conns);
+			ofi_ndevices = nic_dup_conns;
+		}
+
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
@@ -1403,8 +1414,15 @@ static ncclResult_t ofi_pciPath(int dev, char** path)
 	if (ofi_info_list != NULL &&
 	    IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) &&
 	    !support_gdr) {
+
+		int num_gpus_visible;
+		if (cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting CUDA device count");
+			return ncclUnhandledCudaError;
+		}
+
 		// Return a fake NIC PCI path based on the CUDA device path
-		return getCudaPath(dev, path);
+		return getCudaPath(dev % num_gpus_visible, path);
 	}
 #endif
 	ncclResult_t ret = ncclSuccess;
