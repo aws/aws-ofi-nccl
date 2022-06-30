@@ -115,6 +115,17 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Boolean</td>
       <td>0/1 (Default: 0)</td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_CUDA_FLUSH_ENABLE</code></td>
+      <td>When using GPUDirect use the cudaDeviceFlushGPUDirectRDMAWrites to
+      enforce data consistency at the receiving GPU. Requires CUDA 11.3 or
+      later. Note that this function only provides a GPU memory fence and
+      requires that data has already been delivered to GPU memory. Some
+      networks and PCIe configurations require an additional network-level
+      flush that is not provided by this option.</td>
+      <td>Boolean</td>
+      <td>0/1 (Default: 0)</td>
+   </tr>
 </table>
 
 
