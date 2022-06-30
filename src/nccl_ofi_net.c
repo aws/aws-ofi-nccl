@@ -1286,6 +1286,14 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 			ret = ncclSystemError;
 			goto exit;
 		}
+		int nic_dup_connections = ofi_nccl_nic_dup_connections();
+		if(nic_dup_connections > 0){
+			ofi_ndevices = nic_dup_connections;
+			NCCL_OFI_INFO(NCCL_INIT, 
+				"Setting AWS OFI ndev to %d from OFI_NCCL_NIC_DUP_CONNECTIONS",
+				ofi_ndevices
+			);	
+		}
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
 		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);

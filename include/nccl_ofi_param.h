@@ -92,6 +92,11 @@ OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
  */
 OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
 
+/*
+ * Specify the number of network connections created by EFA_NIC_DUP
+ */
+OFI_NCCL_PARAM_INT(nic_dup_connections, "NIC_DUP_CONNECTIONS", 0);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
