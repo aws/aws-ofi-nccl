@@ -27,6 +27,10 @@ bool local_mr = false;
 bool hmem_mr = false;
 /* Indicates if GPUDirect is supported by libfabric provider */
 bool support_gdr = true;
+/* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
+ * to flush data to the GPU. Note, CUDA flush support is not supported on all
+ * platforms and should be disabled by default */
+bool cuda_flush = false;
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -515,7 +519,9 @@ exit:
 static void get_hints(struct fi_info *hints, int request_gdr)
 {
 	if (request_gdr) {
-		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_RMA | FI_READ | FI_REMOTE_COMM;
+		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_REMOTE_COMM;
+		if (!cuda_flush)
+			hints->caps |= FI_RMA | FI_READ;
 		/*
 		 * Set MR mode bits to indicate that application allows
 		 * registration of both local and device memory buffers
@@ -1047,6 +1053,16 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	ofi_log_function = logFunction;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
+
+	if (ofi_nccl_cuda_flush_enable()) {
+#if CUDART_VERSION < 11030
+		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION)
+		cuda_flush = false;
+#else
+		NCCL_OFI_WARN("CUDA flush enabled");
+		cuda_flush = true;
+#endif
+	}
 
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
@@ -2107,7 +2123,7 @@ static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
 	 * flush operations
 	 */
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
 		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		ret = alloc_and_reg_flush_buff(rComm);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
@@ -2352,7 +2368,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
@@ -2745,6 +2761,22 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
 		goto exit;
 
+#if CUDART_VERSION >= 11030
+	if (cuda_flush) {
+		cudaError_t cuda_ret = cudaDeviceFlushGPUDirectRDMAWrites(
+						cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
+						cudaFlushGPUDirectRDMAWritesToOwner);
+
+		if (cuda_ret != cudaSuccess) {
+			ret = ncclUnhandledCudaError;
+			NCCL_OFI_WARN("Error performing CUDA GDR flush");
+			goto exit;
+		}
+
+		goto exit;
+	}
+#endif
+
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
 		ret = ncclSystemError;
@@ -2900,6 +2932,11 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 		goto exit;
 	}
 
+	/* ofi_iflush doesn't return a request when CUDA flush is enabled */
+	if (cuda_flush) {
+		goto exit;
+	}
+
 	/* Ensure that the request completes */
 	while (done == 0) {
 		ret = ofi_test(req, &done, NULL);
@@ -2961,7 +2998,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 
 	dev = rComm->dev;
 
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)rComm->flush_buff.mr_handle;
