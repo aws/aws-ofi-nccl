@@ -99,6 +99,16 @@ OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
 OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
 #endif
 
+/*
+ * When using GPUDirect use the cudaDeviceFlushGPUDirectRDMAWrites
+ * to enforce data consistency at the receiving GPU. Requires CUDA 11.3 or
+ * later. Note that this function only provides a GPU memory fence and requires
+ * that data has already been delivered to GPU memory. Some networks and
+ * PCIe configurations require an additional network-level flush that
+ * is not provided by this option.
+ */
+OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
