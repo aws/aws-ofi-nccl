@@ -17,6 +17,7 @@ AC_PROG_CC
 AC_PROG_CC_STDC
 AC_PROG_MAKE_SET
 AM_PROG_AR
+AC_CHECK_PROG(MPICC_FOUND, [mpicc], "yes")
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_CHECK_HEADER_STDBOOL
@@ -54,7 +55,7 @@ AC_ARG_WITH([mpi],
             [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
              CFLAGS="-I$withval/include $CFLAGS"
              LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
-            [])
+            [AS_IF([test "$MPICC_FOUND" == "yes"], [], AC_MSG_ERROR([--with-mpi= argument missing]))])
 
 AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
 AC_MSG_CHECKING([whether to enable trace messages])
