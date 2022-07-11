@@ -17,7 +17,17 @@ AC_PROG_CC
 AC_PROG_CC_STDC
 AC_PROG_MAKE_SET
 AM_PROG_AR
-AC_CHECK_PROG(MPICC_FOUND, [mpicc], "yes")
+
+# If an mpicc executable is found or tests are disabled, bypass the check for
+# whether --with-mpi= is specified.
+AC_CHECK_PROG(BYPASS_MPICC_CHECK, [mpicc], "yes", "no")
+AC_ARG_ENABLE([tests], AS_HELP_STRING([--disable-tests], [Disable test binaries]))
+AS_IF([test "x$enable_tests" != "xno"], [
+            AC_SUBST(TEST_DIR, "tests")
+], [
+            AC_SUBST(TEST_DIR, "")
+            AC_SUBST(BYPASS_MPICC_CHECK, "yes")
+])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_CHECK_HEADER_STDBOOL
@@ -55,7 +65,7 @@ AC_ARG_WITH([mpi],
             [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
              CFLAGS="-I$withval/include $CFLAGS"
              LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
-            [AS_IF([test "$MPICC_FOUND" == "yes"], [], AC_MSG_ERROR([--with-mpi= argument missing]))])
+            [AS_IF([test "$BYPASS_MPICC_CHECK" == "yes"], [], AC_MSG_ERROR([--with-mpi= argument missing]))])
 
 AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
 AC_MSG_CHECKING([whether to enable trace messages])
