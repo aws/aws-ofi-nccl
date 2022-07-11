@@ -7,6 +7,32 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+# v1.4.0 release notes
+
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.12.12](https://github.com/NVIDIA/nccl/releases/tag/v2.12.12-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to [Libfabric v1.15.1](https://github.com/ofiwg/libfabric/releases/tag/v1.15.1).
+
+New Features:
+* Allow users to disable building the unit tests.
+* Allow enable_debug flag to configure
+* Allow configuring number of EFA connections for non-GDR platforms.
+
+Bug Fixes:
+* Fix compilation on CentOS 7.
+* Update tag generation for control messages.
+* Check for required MPI headers to build unit tests.
+* Fix the active connection issue for non-blocking accepts (impacts NCCL versions 2.12 and above).
+* Fix EFA_NIC_DUP when only a single GPU is visible
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
 # v1.3.0 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
