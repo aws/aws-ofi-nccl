@@ -136,13 +136,15 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank + 1);
-		while (sComm == NULL)
+		while (sComm == NULL) {
 			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		while (rComm == NULL)
+		while (rComm == NULL) {
 			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank + 1);
 
@@ -159,11 +161,15 @@ int main(int argc, char* argv[])
 					"Successfully registered send memory for request %d of rank %d",
 					idx, rank);
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
-			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE, tag,
-						mhandle[idx], (void **)&req[idx]));
+			while (req[idx] == NULL) {
+				OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE, tag,
+							 mhandle[idx], (void **)&req[idx]));
+			}
 #else
-			OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
-						mhandle[idx], (void **)&req[idx]));
+			while (req[idx] == NULL) {
+				OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
+							 mhandle[idx], (void **)&req[idx]));
+			}
 #endif
 		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
@@ -179,13 +185,15 @@ int main(int argc, char* argv[])
 
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank - 1);
-		while (sComm == NULL)
+		while (sComm == NULL) {
 			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm));
+		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		while (rComm == NULL)
+		while (rComm == NULL) {
 			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank - 1);
 
@@ -198,11 +206,15 @@ int main(int argc, char* argv[])
 						buffer_type, &mhandle[idx]));
 			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
-			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void *)&recv_buf[idx],
-						sizes, tags, &mhandle[idx], (void **)&req[idx]));
+			while (req[idx] == NULL) {
+				OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void *)&recv_buf[idx],
+							 sizes, tags, &mhandle[idx], (void **)&req[idx]));
+			}
 #else
-			OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf[idx],
-						RECV_SIZE, mhandle[idx], (void **)&req[idx]));
+			while (req[idx] == NULL) {
+				OFINCCLCHECK(extNet->irecv((void *)rComm, (void *)recv_buf[idx],
+							 RECV_SIZE, mhandle[idx], (void **)&req[idx]));
+			}
 #endif
 		}
 	}
