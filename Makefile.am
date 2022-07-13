@@ -5,5 +5,8 @@
 #
 
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = src tests topology
+SUBDIRS = src topology
+if ENABLE_TESTS
+SUBDIRS += tests
+endif
 EXTRA_DIST = autogen.sh
