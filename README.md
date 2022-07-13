@@ -89,6 +89,13 @@ following config option:
    --enable-trace         Enable printing trace messages
 ```
 
+By default, tests are built.  To disable building tests, use the following
+config option:
+
+```
+   --disable-tests        Disable build of tests.
+```
+
 ### Plugin Configurations
 
 The plugin allows to configure the following variables at run-time according to your environment.
