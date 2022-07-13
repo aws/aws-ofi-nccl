@@ -56,6 +56,10 @@ AC_ARG_WITH([mpi],
              LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
             [])
 
+AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
+      [Disable build of test binaries])], [enable_tests], [])
+AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" != "xno"])
+
 AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
 AC_MSG_CHECKING([whether to enable trace messages])
 AS_IF([test "x${enable_trace}" = "xyes" ],
