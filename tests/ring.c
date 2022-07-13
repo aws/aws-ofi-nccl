@@ -175,11 +175,15 @@ int main(int argc, char *argv[])
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered send memory for request %d of rank %d", idx, rank);
 
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
-		OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
-			     send_mhandle[idx], (void **)&send_req[idx]));
+		while (send_req[idx] == NULL) {
+			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
+				     send_mhandle[idx], (void **)&send_req[idx]));
+		}
 #else
-		OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE,
-			     send_mhandle[idx], (void **)&send_req[idx]));
+		while (send_req[idx] == NULL) {
+			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE,
+				     send_mhandle[idx], (void **)&send_req[idx]));
+		}
 #endif
 	}
 
@@ -192,11 +196,15 @@ int main(int argc, char *argv[])
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 
 #if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
-		OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
-			     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
+		while (recv_req[idx] == NULL) {
+			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
+				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
+		}
 #else
-		OFINCCLCHECK(extNet->irecv((void *)rComm, (void **)recv_buf[idx],
-			     RECV_SIZE, recv_mhandle[idx], (void **)&recv_req[idx]));
+		while (recv_req[idx] == NULL) {
+			OFINCCLCHECK(extNet->irecv((void *)rComm, (void **)recv_buf[idx],
+				     RECV_SIZE, recv_mhandle[idx], (void **)&recv_req[idx]));
+		}
 #endif
 	}
 
