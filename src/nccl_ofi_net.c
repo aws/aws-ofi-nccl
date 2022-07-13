@@ -2915,25 +2915,16 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 	nccl_ofi_req_t *req = NULL;
 	int done = 0;
 
-	if (size == 0) {
-		/*
-		 * Flush is an expensive operation. So, don't send fi_read for
-		 * 0-sized messages. Since, NCCL issues flush for every irecv(),
-		 * we guarantee to sync data to GPU even without it.
-		 */
+	ret = ofi_iflush(recvComm, data, size, mhandle, (void **)&req);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		goto exit;
 	}
 
-	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
-		goto exit;
-
-	ret = OFI_UNLIKELY(ofi_iflush(recvComm, data, size, mhandle, (void **)&req));
-	if (ret != ncclSuccess) {
-		goto exit;
-	}
-
-	/* ofi_iflush doesn't return a request when CUDA flush is enabled */
-	if (cuda_flush) {
+	/*
+	 * Req could be NULL for zero-sized writes or when GDR isn't used or
+	 * when CUDA flush is enabled
+	 */
+	if (req == NULL) {
 		goto exit;
 	}
 
