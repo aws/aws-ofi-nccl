@@ -52,13 +52,16 @@ AC_ARG_WITH([nccl],
 AC_ARG_WITH([mpi],
             AC_HELP_STRING([--with-mpi=PATH], [Path to non-standard MPI installation]),
             [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
-             CFLAGS="-I$withval/include $CFLAGS"
+             CPPFLAGS="-I$withval/include $CPPFLAGS"
              LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
             [])
 
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
       [Disable build of test binaries])], [enable_tests], [])
 AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" != "xno"])
+
+# Search first for mpi.h in provided directory, then on system.
+AS_IF([test "x$enable_tests" != "xno" ], AC_CHECK_HEADERS(mpi.h, [], AC_MSG_ERROR("mpi.h not found")))
 
 AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
 AC_MSG_CHECKING([whether to enable trace messages])
