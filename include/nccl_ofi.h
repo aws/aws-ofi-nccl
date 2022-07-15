@@ -272,6 +272,13 @@ typedef struct nccl_ofi_handle {
 	save_comm_state_t state;
 } nccl_ofi_handle_t;
 
+typedef struct nccl_ofi_mr_handle {
+	void *addr;
+	size_t size;
+	int type;
+	struct fid_mr *fi_handle;
+} nccl_ofi_mr_handle_t;
+
 _Static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
 
 /*

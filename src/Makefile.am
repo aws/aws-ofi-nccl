@@ -5,6 +5,7 @@
 #
 
 AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
+AM_LDFLAGS  =
 
 sources = \
 	nccl_ofi_net.c \
@@ -21,8 +22,13 @@ endif
 
 if ENABLE_NEURON
   lib_LTLIBRARIES = libnccom-net.la
-  libnccom_net_la_SOURCES = $(sources)
+  libnccl_net_la_SOURCES = $(sources)
 else
   lib_LTLIBRARIES = libnccl-net.la
   libnccl_net_la_SOURCES = $(sources)
+endif
+
+if HAVE_GDRCOPY
+AM_LDFLAGS += -lgdrapi
+libnccl_net_la_SOURCES += hcopy.c
 endif
