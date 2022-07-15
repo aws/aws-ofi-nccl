@@ -76,9 +76,9 @@ extern "C" {
 #define NCCL_OFI_MR_KEY_BYTES	1
 
 /* NCCL OFI lock for concurrency */
-pthread_mutex_t nccl_ofi_lock = PTHREAD_MUTEX_INITIALIZER;
+extern pthread_mutex_t nccl_ofi_lock;
 /* Logger Function */
-ncclDebugLogger_t ofi_log_function = NULL;
+extern ncclDebugLogger_t ofi_log_function;
 
 typedef enum nccl_ofi_req_state {
 	NCCL_OFI_REQ_CREATED = 0,
@@ -244,6 +244,13 @@ typedef struct nccl_ofi_handle {
 	save_comm_state_t state;
 #endif
 } nccl_ofi_handle_t;
+
+typedef struct nccl_ofi_mr_handle {
+	void *addr;
+	size_t size;
+	int type;
+	struct fid_mr *fi_handle;
+} nccl_ofi_mr_handle_t;
 
 _Static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
 
