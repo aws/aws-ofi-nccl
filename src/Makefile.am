@@ -10,3 +10,8 @@ AM_LDFLAGS = -lcudart
 
 lib_LTLIBRARIES = libnccl-net.la
 libnccl_net_la_SOURCES = nccl_ofi_net.c
+
+if HAVE_GDRCOPY
+AM_LDFLAGS += -lgdrapi
+libnccl_net_la_SOURCES += hcopy.c
+endif
