@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
 				req_completed_recv[idx] = 1;
 
 				/* Invoke flush operations unless user has explicitly disabled it */
-				if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
+				if (buffer_type == NCCL_PTR_CUDA) {
 					NCCL_OFI_TRACE(NCCL_NET,
 						"Issue flush for data consistency. Request idx: %d",
 						idx);
@@ -256,8 +256,10 @@ int main(int argc, char *argv[])
 								    recv_mhandle[idx], (void **)&iflush_req));
 #endif
 					done = 0;
-					while (!done) {
-						OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+					if (iflush_req) {
+						while (!done) {
+							OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+						}
 					}
 #else
 					OFINCCLCHECK(extNet->flush((void *)rComm,
