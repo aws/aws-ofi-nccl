@@ -69,6 +69,12 @@ extern "C" {
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
 
+/* Maxiumum registration key value when not using FI_MR_PROV_KEY */
+#define NCCL_OFI_MAX_MR_KEY	256
+
+/* Registration key size when not using FI_MR_PROV_KEY */
+#define NCCL_OFI_MR_KEY_BYTES	1
+
 /* NCCL OFI lock for concurrency */
 extern pthread_mutex_t nccl_ofi_lock;
 /* Logger Function */
