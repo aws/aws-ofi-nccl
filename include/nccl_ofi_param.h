@@ -109,6 +109,12 @@ OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
  */
 OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
 
+/*
+ * Specify the memory registration key size in bytes when using a libfabric
+ * provider that supports application-selected memory registration keys.
+ */
+OFI_NCCL_PARAM_INT(mr_key_size, "MR_KEY_SIZE", 2);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif

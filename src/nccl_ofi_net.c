@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <inttypes.h>
 #include <sys/mman.h>
 #include <stack.h>
 #include <nccl_ofi_param.h>
@@ -60,6 +61,10 @@ bool local_mr = false;
 bool virt_addr_mr = false;
 /* Indicates if memory registration of device buffers is required */
 bool hmem_mr = false;
+/* Indicates if endpoint memory registration is required */
+bool endpoint_mr = false;
+/* Indicates if the provider selects MR keys */
+bool prov_key_mr = false;
 /* Indicates if GPUDirect is supported by libfabric provider */
 bool support_gdr = true;
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
@@ -79,6 +84,69 @@ ncclDebugLogger_t ofi_log_function = NULL;
  * maximum number of recvs supported by plugin.
  */
 int max_requests = NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS;
+
+/* Table indicating allocation state of MR keys */
+static size_t num_mr_keys = 0;
+static bool *mr_keys = NULL;
+
+/*
+ * @brief	Allocate a memory registration key
+ */
+static uint64_t allocate_mr_key(int dev)
+{
+	uint64_t key = FI_KEY_NOTAVAIL;
+
+	if (prov_key_mr) {
+		NCCL_OFI_WARN("Invalid call to allocate_mr_key");
+		return FI_KEY_NOTAVAIL;
+	}
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+
+	for (size_t i = 0; i < num_mr_keys; i++) {
+		if (mr_keys[dev * num_mr_keys + i]) {
+			mr_keys[dev * num_mr_keys + i] = false;
+			key = i;
+			break;
+		}
+	}
+
+	if (key == FI_KEY_NOTAVAIL)
+		NCCL_OFI_WARN("No MR keys available (max: %d)", num_mr_keys);
+
+	pthread_mutex_unlock(&nccl_ofi_lock);
+	return key;
+}
+
+/*
+ * @brief	Free a memory registration key
+ */
+static ncclResult_t free_mr_key(int dev, uint64_t key)
+{
+	if (prov_key_mr) {
+		NCCL_OFI_WARN("Invalid call to free_mr_key");
+		return ncclInvalidArgument;
+	}
+
+	if (key >= num_mr_keys) {
+		NCCL_OFI_WARN("Key value out of range (%"PRIu64")", key);
+		return ncclInvalidArgument;
+	}
+
+	if (mr_keys[dev * num_mr_keys + key] != false) {
+		NCCL_OFI_WARN("Attempted to free a key that's not in use (%"PRIu64")", key);
+		return ncclInvalidArgument;
+	}
+
+	pthread_mutex_lock(&nccl_ofi_lock);
+
+	mr_keys[dev * num_mr_keys + key] = true;
+
+	pthread_mutex_unlock(&nccl_ofi_lock);
+
+	return ncclSuccess;
+}
+
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -525,23 +593,6 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		goto exit;
 	}
 
-#if HAVE_CUDA
-	/* Check if provider requires registration of cuda device buffers */
-	if ((hmem_mr != true) && (type == NCCL_PTR_CUDA)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			"Skip registering CUDA buffer. hmem_mr: %d", hmem_mr);
-		goto exit;
-	}
-#endif
-#if HAVE_NEURON
-	/* Check if provider requires registration of cuda device buffers */
-	if ((hmem_mr != true) && (type == NCCL_PTR_NEURON)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			"Skip registering NEURON buffer. hmem_mr: %d", hmem_mr);
-		goto exit;
-	}
-#endif
-
 	/* Populate IOV vector for memory registration */
 	iov.iov_base = data;
 	iov.iov_len = size;
@@ -553,10 +604,12 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 
 	switch (type) {
 	case NCCL_PTR_HOST:
+		mr_attr.access |= FI_READ;
 		mr_attr.iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
+		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -568,6 +621,7 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 #endif
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
+		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_NEURON;
 		/*
 		 * Store a sentinel; libfabric requires this to be initialized Libfabric
@@ -582,7 +636,17 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 	default:
 		ret = ncclInternalError;
 		goto exit;
-	};
+	}
+
+	if (!prov_key_mr) {
+		uint64_t key = allocate_mr_key(comm->dev);
+		if (key == FI_KEY_NOTAVAIL) {
+			NCCL_OFI_WARN("MR key allocation failed");
+			ret = ncclSystemError;
+			goto exit;
+		}
+		mr_attr.requested_key = key;
+	}
 
 	rc = fi_mr_regattr(comm->baseComm.ofi_comp->domain,
 			    &mr_attr, 0, mr_handle);
@@ -590,6 +654,25 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
 			       type, comm->dev, rc, fi_strerror(-rc));
 		ret = ncclSystemError;
+		goto exit;
+	}
+
+	if (endpoint_mr) {
+		rc = fi_mr_bind(*mr_handle, (fid_t)nccl_ofi_component[comm->dev]->ep, 0);
+		if (OFI_UNLIKELY(rc != 0)) {
+			NCCL_OFI_WARN("Unable to bind MR to EP (type = %d) for device %d. RC: %d, Error: %s",
+				       type, comm->dev, rc, fi_strerror(-rc));
+			ret = ncclSystemError;
+			goto exit;
+		}
+
+		rc = fi_mr_enable(*mr_handle);
+		if (OFI_UNLIKELY(rc != 0)) {
+			NCCL_OFI_WARN("Unable to enable MR (type = %d) for device %d. RC: %d, Error: %s",
+				       type, comm->dev, rc, fi_strerror(-rc));
+			ret = ncclSystemError;
+			goto exit;
+		}
 	}
 
 exit:
@@ -608,8 +691,10 @@ static void get_hints(struct fi_info *hints, int request_gdr)
 		/*
 		 * Set MR mode bits to indicate that application allows
 		 * registration of both local and device memory buffers
+		 * and can support the endpoint memory registration model
 		 */
-		hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM;
+		hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_ENDPOINT;
+		hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	}
 	else {
 		hints->caps = FI_TAGGED | FI_MSG | FI_REMOTE_COMM;
@@ -1478,13 +1563,60 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 			       ofi_info_list->fabric_attr->prov_name);
 	}
 
-	/* Check if provider requires heterogeneous memory registration */
-	if (ofi_info_list->domain_attr->mr_mode & FI_MR_HMEM) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of device buffers",
+	/* Check if provider selects memory registration keys */
+	if (!(ofi_info_list->caps & FI_RMA)) {
+		/* When FI_RMA is not requested, Libfabric considers
+		   memory registrations to be local only, and
+		   therefore the requested_key field is ignored and
+		   (unfortunately) a random key may be returned from
+		   fi_mr_key().  This totally screws up the code to
+		   provide a unique MR key, which is, according to
+		   Libfabric, unnecessary in this mode anyway, so fall
+		   back to the provider-specified key code, which
+		   should behave properly in either case. */
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s only configured for local registration.",
 			       ofi_info_list->fabric_attr->prov_name);
-		hmem_mr = true;
+		prov_key_mr = true;
+	} else if (ofi_info_list->domain_attr->mr_mode & FI_MR_PROV_KEY) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s selects memory registration keys",
+			       ofi_info_list->fabric_attr->prov_name);
+		prov_key_mr = true;
 	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of device buffers",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not select memory registration keys",
+			       ofi_info_list->fabric_attr->prov_name);
+
+		if (ofi_info_list->domain_attr->mr_key_size < ofi_nccl_mr_key_size()) {
+			NCCL_OFI_WARN("Provider %s supports MR key size of %zu, but %zu was requested",
+				      ofi_info_list->fabric_attr->prov_name,
+				      ofi_info_list->domain_attr->mr_key_size,
+				      ofi_nccl_mr_key_size());
+
+			ret = ncclSystemError;
+			goto exit;
+		}
+
+		/* The provider may return support for a larger key size. Use
+		 * the size requested by the user to allow them to limit the
+		 * size of the mr_keys table. */
+		num_mr_keys = (size_t) 1 << (ofi_nccl_mr_key_size() * 8);
+
+		mr_keys = malloc(sizeof(bool) * num_mr_keys * ofi_ndevices);
+		if (NULL == mr_keys) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Unable to allocate MR keys table");
+			ret = ncclSystemError;
+			goto exit;
+		}
+		for (size_t i = 0; i < num_mr_keys * ofi_ndevices; i++)
+			mr_keys[i] = true;
+	}
+
+	/* Check if provider uses endpoint memory registration */
+	if (ofi_info_list->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires endpoint memory registration",
+			       ofi_info_list->fabric_attr->prov_name);
+		endpoint_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
 			       ofi_info_list->fabric_attr->prov_name);
 	}
 
@@ -2531,6 +2663,19 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	if (OFI_LIKELY(mr_handle == NULL)) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
 		goto exit;
+	}
+
+	if (!prov_key_mr) {
+		uint64_t key = fi_mr_key(mr_handle);
+		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
+		} else {
+			ret = free_mr_key(((ofiComm_t *)comm)->dev, key);
+			if (OFI_UNLIKELY(ret != ncclSuccess)) {
+				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
+			}
+		}
 	}
 
 	rc = fi_close((fid_t)mr_handle);
