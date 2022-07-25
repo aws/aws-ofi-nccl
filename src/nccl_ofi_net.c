@@ -1215,7 +1215,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	if (ofi_nccl_cuda_flush_enable()) {
 #if CUDART_VERSION < 11030
-		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION)
+		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION);
 		cuda_flush = false;
 #else
 		NCCL_OFI_WARN("CUDA flush enabled");
