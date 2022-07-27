@@ -239,14 +239,18 @@ static inline int free_nccl_ofi_req(nccl_ofi_req_t *req, bool dec_inflight_cmds)
 		/* Zero out buffer */
 		zero_nccl_ofi_req(req);
 
+	        pthread_mutex_lock(&nccl_ofi_lock);
 		ret = stack_push(sComm->nccl_ofi_reqs_fl->free_index,
 				 buffer_index);
-		if (OFI_UNLIKELY(ret != 0))
+		if (OFI_UNLIKELY(ret != 0)) {
+	                pthread_mutex_unlock(&nccl_ofi_lock);
 			goto exit;
+		}
 
 		/* Reduce inflight commands */
 		if (OFI_LIKELY(dec_inflight_cmds == true))
 			sComm->num_inflight_reqs--;
+	        pthread_mutex_unlock(&nccl_ofi_lock);
 
 	}
 	else if (req->direction == NCCL_OFI_RECV) {
@@ -271,14 +275,19 @@ static inline int free_nccl_ofi_req(nccl_ofi_req_t *req, bool dec_inflight_cmds)
 		/* Zero out buffer */
 		zero_nccl_ofi_req(req);
 
+	        pthread_mutex_lock(&nccl_ofi_lock);
+
 		ret = stack_push(rComm->nccl_ofi_reqs_fl->free_index,
 				 buffer_index);
-		if (OFI_UNLIKELY(ret != 0))
+		if (OFI_UNLIKELY(ret != 0)) {
+	                pthread_mutex_unlock(&nccl_ofi_lock);
 			goto exit;
+		}
 
 		/* Reduce inflight commands */
 		if (OFI_LIKELY(dec_inflight_cmds == true))
 			rComm->num_inflight_reqs--;
+	        pthread_mutex_unlock(&nccl_ofi_lock);
 	}
 	else {
 		ret = ncclSystemError;
@@ -2041,11 +2050,13 @@ static int alloc_and_reg_flush_buff(recvComm_t *rComm)
 
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 
+	pthread_mutex_lock(&nccl_ofi_lock);
 	rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
 					     MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (OFI_UNLIKELY(rComm->flush_buff.host_buffer == MAP_FAILED)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
 			      errno, strerror(errno));
+	        pthread_mutex_unlock(&nccl_ofi_lock);
 		return ncclSystemError;
 	}
 
@@ -2064,6 +2075,7 @@ static int alloc_and_reg_flush_buff(recvComm_t *rComm)
 	}
 
 	rComm->flush_buff.mr_handle = mr_handle;
+	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	return ret;
 }
@@ -2474,7 +2486,7 @@ static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 	if (OFI_UNLIKELY(rc != 0)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-			      fi_strerror(-rc));
+			      rc, fi_strerror(-rc));
 	}
 
 exit:
@@ -2562,10 +2574,18 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 		goto error;
 	}
 
+	/*
+	 * NCCL shouldn't have access to the request until this method
+	 * returns, so lock only the inflight increment.
+	 */
+	pthread_mutex_lock(&nccl_ofi_lock);
+
 	sComm->num_inflight_reqs++;
 
 	/* Return request to NCCL */
 	*request = req;
+
+	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	goto exit;
 
@@ -2588,6 +2608,8 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	ssize_t rc = 0;
 	nccl_ofi_req_t *req = NULL;
 	recvComm_t *rComm = (recvComm_t *)recvComm;
+
+	pthread_mutex_lock(&nccl_ofi_lock);
 
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
@@ -2693,6 +2715,7 @@ error:
 	if (req)
 		free_nccl_ofi_req(req, false);
 exit:
+	pthread_mutex_unlock(&nccl_ofi_lock);
 	return ret;
 }
 
@@ -2892,9 +2915,13 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 		}
 	} while (true);
 
+	pthread_mutex_lock(&nccl_ofi_lock);
+
 	rComm->num_inflight_reqs++;
 
 	*request = req;
+
+	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	return ret;
 
@@ -2935,10 +2962,12 @@ static ncclResult_t ofi_flush(void* recvComm, void* data, int size,
 		 * If testing request completion fails and returns
 		 * not completed, reduce number of inflight requests.
 		 */
+		pthread_mutex_lock(&nccl_ofi_lock);
 		if (OFI_UNLIKELY((ret != ncclSuccess) && (done == 0))) {
 			rComm->num_inflight_reqs--;
 			goto error;
 		}
+		pthread_mutex_unlock(&nccl_ofi_lock);
 	}
 
 	return ret;
@@ -2963,11 +2992,11 @@ static ncclResult_t ofi_closeSend(void *sendComm)
 	}
 
 	dev = sComm->dev;
+	pthread_mutex_lock(&nccl_ofi_lock);
 
 	free_ofi_fl(sComm->nccl_ofi_reqs_fl);
 	free(sendComm);
 
-	pthread_mutex_lock(&nccl_ofi_lock);
 	put_nccl_ofi_comp(dev);
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
@@ -2989,6 +3018,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 
 	dev = rComm->dev;
 
+	pthread_mutex_lock(&nccl_ofi_lock);
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
@@ -2998,7 +3028,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 			if (OFI_UNLIKELY(rc != 0)) {
 				ret = ncclSystemError;
 				NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-					      fi_strerror(-rc));
+					      rc, fi_strerror(-rc));
 				goto exit;
 			}
 		}
@@ -3011,7 +3041,6 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
 	free(recvComm);
 
-	pthread_mutex_lock(&nccl_ofi_lock);
 	put_nccl_ofi_comp(dev);
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
