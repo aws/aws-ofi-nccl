@@ -1040,8 +1040,15 @@ exit:
 
 static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 {
-	/* Read completion queue entries */
-	return ofi_process_cq(nccl_ofi_comp);
+	/*
+         * Read completion queue entries
+         * The service thread in NCCL calls this, so it must be locked.
+         */
+        ncclResult_t r;
+        pthread_mutex_lock(&nccl_ofi_lock);
+        r = ofi_process_cq(nccl_ofi_comp);
+        pthread_mutex_unlock(&nccl_ofi_lock);
+        return r;
 }
 
 static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
@@ -2982,6 +2989,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	ncclResult_t ret = ncclSuccess;
 	struct fid_mr *mr_handle = NULL;
 
+	pthread_mutex_lock(&nccl_ofi_lock);
 	if (OFI_UNLIKELY(recvComm == NULL)) {
 		ret = ncclSystemError;
 		goto exit;
@@ -3011,7 +3019,6 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
 	free(recvComm);
 
-	pthread_mutex_lock(&nccl_ofi_lock);
 	put_nccl_ofi_comp(dev);
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
