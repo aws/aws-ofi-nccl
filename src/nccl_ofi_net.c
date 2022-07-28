@@ -2798,7 +2798,7 @@ static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		ret = nccl_ofi_hcopy_unregister(mr_handle->addr);
 		if (ret) {
-			NCCL_OFI_WARN("nccl_ofi_hcopy_register failed (%d)", ret);
+			NCCL_OFI_WARN("nccl_ofi_hcopy_unregister failed (%d)", ret);
 			ret = ncclSystemError;
 			goto exit;
 		}
