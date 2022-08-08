@@ -2474,7 +2474,7 @@ static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 	if (OFI_UNLIKELY(rc != 0)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-			      fi_strerror(-rc));
+				rc, fi_strerror(-rc));
 	}
 
 exit:
@@ -2998,7 +2998,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 			if (OFI_UNLIKELY(rc != 0)) {
 				ret = ncclSystemError;
 				NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-					      fi_strerror(-rc));
+						rc, fi_strerror(-rc));
 				goto exit;
 			}
 		}
