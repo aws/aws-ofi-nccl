@@ -31,6 +31,8 @@ bool support_gdr = true;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+/* Indicates whether ofi_iflush() is required. */
+bool gdr_flush = true;
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -1063,6 +1065,8 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		cuda_flush = true;
 #endif
 	}
+	
+	gdr_flush = !ofi_nccl_gdr_flush_disable();
 
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
@@ -2123,7 +2127,7 @@ static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
 	 * flush operations
 	 */
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
+	if (gdr_flush && support_gdr && !cuda_flush) {
 		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		ret = alloc_and_reg_flush_buff(rComm);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
@@ -2368,7 +2372,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
 
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
+	if (gdr_flush && support_gdr && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 		rComm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		rComm->flush_buff.host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
@@ -2758,7 +2762,8 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	void *data = NULL;
 	void *flush_mr_desc = NULL;
 
-	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
+	/* If flushing is disabled or not needed, just return. */
+	if (!gdr_flush || !support_gdr || (!local_mr && !hmem_mr))
 		goto exit;
 
 #if CUDART_VERSION >= 11030
