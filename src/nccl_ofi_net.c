@@ -2971,10 +2971,12 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 
 	nccl_ofi_req_t *req = (nccl_ofi_req_t *)request;
 
-	/* Progress NCCL OFI in order to process completions */
-	ret = nccl_ofi_progress(nccl_ofi_component[req->dev]);
-	if (OFI_UNLIKELY(ret != 0))
-		goto exit;
+	/* Process more completions unless the current request is completed */
+	if (req->state != NCCL_OFI_REQ_COMPLETED) {
+		ret = nccl_ofi_progress(nccl_ofi_component[req->dev]);
+		if (OFI_UNLIKELY(ret != 0))
+			goto exit;
+	}
 
 	/* Determine whether the request has finished and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_REQ_COMPLETED ||
