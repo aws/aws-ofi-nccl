@@ -2936,13 +2936,14 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 			*size = req->size;
 		/* Mark as done */
 		*done = 1;
+
+		if (OFI_UNLIKELY(req->state == NCCL_OFI_REQ_ERROR))
+			ret = ncclSystemError;
 		free_nccl_ofi_req(req, true);
 	}
-	else
+	else {
 		*done = 0;
-
-	if (OFI_UNLIKELY(req->state == NCCL_OFI_REQ_ERROR))
-		ret = ncclSystemError;
+	}
 
 exit:
 	return ret;
