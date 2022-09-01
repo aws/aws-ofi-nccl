@@ -1099,10 +1099,6 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 	uint64_t control_bit_mask = nccl_ofi_comp->max_tag + 1;
 
 	while (true) {
-
-		/* Zero-out buffers */
-		memset(&cqe_tagged_buffers, 0, sizeof(cqe_tagged_buffers));
-
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(cq, &cqe_tagged_buffers[0], cqe_burst);
 		if (rc > 0) {
