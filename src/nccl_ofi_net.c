@@ -24,8 +24,15 @@ static uint32_t libversion = 0;
 struct fi_info* ofi_info_list = NULL;
 /* Number of NICs */
 int ofi_ndevices = -1;
-/* NCCL OFI component array for all NICs */
-nccl_ofi_t **nccl_ofi_component = NULL;
+/*
+ * NCCL OFI component array for all NICs. To avoid contention
+ * over the libfabric resources that are associated with every
+ * component, the netdev to component lookup structure is per
+ * thread. So every service thread maintains an array of
+ * component structures and these structures/resources are then
+ * used by the corresponding proxy thread.
+ */
+__thread nccl_ofi_t **nccl_ofi_component = NULL;
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
 /* Indicates if remote virtual addressing is used */
@@ -595,7 +602,7 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		mr_attr.requested_key = key;
 	}
 
-	rc = fi_mr_regattr(nccl_ofi_component[comm->dev]->domain,
+	rc = fi_mr_regattr(comm->baseComm.ofi_comp->domain,
 			    &mr_attr, 0, mr_handle);
 	if (OFI_UNLIKELY(rc != 0)) {
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
@@ -955,13 +962,15 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Could not extract provider information for given NIC ID %d",
 			     dev);
-		goto exit;
+		goto error;
 	}
 
-	nccl_ofi_component[dev] = (nccl_ofi_t *)calloc(1, sizeof(nccl_ofi_t));
-	if (OFI_UNLIKELY(nccl_ofi_component[dev] == NULL)) {
-		ret = ncclSystemError;
-		goto exit;
+	if (!nccl_ofi_component[dev]) {
+		nccl_ofi_component[dev] = (nccl_ofi_t *)calloc(1, sizeof(nccl_ofi_t));
+		if (nccl_ofi_component[dev] == NULL) {
+			ret = ncclSystemError;
+			goto error;
+		}
 	}
 
 	/* Initialise tag and num_cqes */
@@ -971,27 +980,26 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 
 	ret = create_nccl_ofi_component(prov, nccl_ofi_component[dev]);
 	if (ret != 0)
-		goto exit;
+		goto error;
 
-	NCCL_OFI_TRACE(NCCL_NET, "OFI component #%d is created", dev);
+	NCCL_OFI_TRACE(NCCL_NET, "OFI component %p for dev #%d is created", nccl_ofi_component[dev], dev);
 
 	return ret;
 
-exit:
-	if (nccl_ofi_component[dev] != NULL)
+error:
+	if (nccl_ofi_component[dev] != NULL) {
 		free(nccl_ofi_component[dev]);
+		nccl_ofi_component[dev] = NULL;
+	}
 	return ret;
 }
 
 /*
  * @brief	Release various libfabric resources.
  */
-void release_nccl_ofi_component(int dev)
+void release_nccl_ofi_component(nccl_ofi_t *nccl_ofi_comp, int dev)
 {
-	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
-
-	if (!nccl_ofi_comp)
-		return;
+	assert(nccl_ofi_comp != NULL);
 
 	if (nccl_ofi_comp->ep)
 		fi_close((fid_t)nccl_ofi_comp->ep);
@@ -1004,10 +1012,23 @@ void release_nccl_ofi_component(int dev)
 	if (nccl_ofi_comp->fabric)
 		fi_close((fid_t)nccl_ofi_comp->fabric);
 
-	free(nccl_ofi_comp);
-	nccl_ofi_component[dev] = NULL;
-
-	NCCL_OFI_TRACE(NCCL_NET, "OFI component #%d is released", dev);
+	/*
+	 * Ideally we would also free up nccl_ofi_comp here but there is no
+	 * straightforward way to do that in this case. The caller of
+	 * ofi_connect/ofi_listen maintains the nccl_ofi_component array in its
+	 * thread local storage and also allocates memory for individual array
+	 * entries. The array entries/individual nccl_ofi_t structures can be
+	 * used by different threads which means that the caller of
+	 * release_nccl_ofi_component can be different from the caller of
+	 * ofi_connect/ofi_listen and that caller has no way of changing the
+	 * corresponding array entry in nccl_ofi_component to NULL.
+	 * We keep the nccl_ofi_t struct around so that when other threads
+	 * find the refcnt to be 0, they know that the libfabric resources need
+	 * to be reallocated. In a separate CR we can try storing a pointer to
+	 * nccl_ofi_component array in the comm structure. That way other threads
+	 * have access to it and can clean up after themselves.
+	 */
+	NCCL_OFI_TRACE(NCCL_NET, "Libfabric resources for OFI component %p dev #%d is released", nccl_ofi_comp, dev);
 }
 
 /*
@@ -1015,16 +1036,38 @@ void release_nccl_ofi_component(int dev)
  * 		Create if it does not exist. Increase refernce counter. Must be
  * 		protected by nccl_ofi_lock.
  */
-static ncclResult_t get_nccl_ofi_comp(int dev)
+static nccl_ofi_t *get_nccl_ofi_comp(int dev)
 {
 	ncclResult_t ret = ncclSuccess;
+	nccl_ofi_t *ret_ofi_comp = NULL;
 
-	if (!nccl_ofi_component[dev])
+	/*
+	 * nccl_ofi_lock is common across all threads even though the data structure
+	 * it is protecting, nccl_ofi_component, is local to a particular thread.
+	 * While this approach is fine given that we don't call get_nccl_ofi_comp
+	 * or put_nccl_ofi_comp in the latency sensitive path, a cleaner approach
+	 * would be to break this off into two different locks. A thread local one that
+	 * protects the nccl_ofi_component array and individual ones for the nccl_ofi
+	 * structures within that can be shared by all threads
+	 */
+	pthread_mutex_lock(&nccl_ofi_lock);
+	if (nccl_ofi_component == NULL) {
+		nccl_ofi_component = (nccl_ofi_t **)calloc(ofi_ndevices, sizeof(nccl_ofi_t *));
+		if (nccl_ofi_component == NULL) {
+			NCCL_OFI_WARN("Unable to allocate nccl_ofi_component");
+			goto unlock;
+		}
+	}
+	if (!nccl_ofi_component[dev] || nccl_ofi_component[dev]->refcnt == 0)
 		ret = create_nccl_ofi_comp_for_dev(dev, ofi_info_list);
 
-	++nccl_ofi_component[dev]->refcnt;
-
-	return ret;
+	if (ret == ncclSuccess) {
+		++nccl_ofi_component[dev]->refcnt;
+		ret_ofi_comp = nccl_ofi_component[dev];
+	}
+unlock:
+	pthread_mutex_unlock(&nccl_ofi_lock);
+	return ret_ofi_comp;
 }
 
 /*
@@ -1032,10 +1075,13 @@ static ncclResult_t get_nccl_ofi_comp(int dev)
  *		Decrease refernce counter. Release resources if reference
  *		counter becomes zero. Must be protected by nccl_ofi_lock.
  */
-static void put_nccl_ofi_comp(int dev)
+static void put_nccl_ofi_comp(nccl_ofi_t *ofi_comp, int dev)
 {
-	if (--nccl_ofi_component[dev]->refcnt == 0)
-		release_nccl_ofi_component(dev);
+	assert(ofi_comp != NULL);
+	pthread_mutex_lock(&nccl_ofi_lock);
+	if (--ofi_comp->refcnt == 0)
+		release_nccl_ofi_component(ofi_comp, dev);
+	pthread_mutex_unlock(&nccl_ofi_lock);
 }
 
 #define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
@@ -1182,7 +1228,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret = ncclSuccess;
 	char *prov_include = NULL;
-	int idx, rc;
+	int rc;
 
 	ofi_log_function = logFunction;
 
@@ -1248,7 +1294,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
 	if (strncmp("tcp", ofi_info_list->fabric_attr->prov_name, strlen("tcp")) == 0) {
 		filter_tcp_info_list();
-		if (OFI_UNLIKELY(ofi_info_list == NULL)) {
+		if (ofi_info_list == NULL) {
 			NCCL_OFI_WARN("No viable endpoint found for TCP provider. Try and relax the filters using OFI_NCCL_USE_IPV6_TCP or OFI_NCCL_EXCLUDE_TCP_IF environment variables");
 			ret = ncclSystemError;
 			goto exit;
@@ -1333,22 +1379,6 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	} else {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
 			       ofi_info_list->fabric_attr->prov_name);
-	}
-
-	/*
-	 * Allocate NCCL OFI component array. Individual components are
-	 * allocated as we use them.
-	 */
-	nccl_ofi_component =
-		(nccl_ofi_t **)malloc(sizeof(nccl_ofi_t *) * ofi_ndevices);
-	if (OFI_UNLIKELY(nccl_ofi_component == NULL)) {
-		NCCL_OFI_WARN("Unable to allocate nccl_ofi_component");
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	for (idx = 0; idx < ofi_ndevices; idx++) {
-		nccl_ofi_component[idx] = NULL;
 	}
 
 exit:
@@ -1539,13 +1569,13 @@ exit:
  * @return	Local EP address, on success
  * 		NULL, others
  */
-static inline char *get_local_address(int dev)
+static inline char *get_local_address(int dev, nccl_ofi_t *nccl_ofi_comp)
 {
 	int ret = 0;
 	size_t namelen = MAX_EP_ADDR;
 	char *local_ep_addr = (char *)calloc(namelen, sizeof(char));
 
-	ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+	ret = fi_getname(&(nccl_ofi_comp->ep->fid),
 			(void *)local_ep_addr,
 			&namelen);
 	if (ret == -FI_ETOOSMALL) {
@@ -1573,18 +1603,13 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	listenComm_t *lComm = NULL;
 	uint64_t tag;
 	int num_addrs;
+	nccl_ofi_t *nccl_ofi_comp = NULL;
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
 			      dev, ofi_ndevices - 1);
 		ret = ncclSystemError;
 		goto exit;
-	}
-
-	if (OFI_UNLIKELY(nccl_ofi_component == NULL)) {
-		NCCL_OFI_WARN("NCCL OFI component is not initialised.");
-		ret = ncclSystemError;
-		goto error;
 	}
 
 	/* Zero-out the handle */
@@ -1594,57 +1619,61 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	 * Create libfabric components for the given NIC, if not
 	 * already created, else increase tag ID.
 	 */
-	pthread_mutex_lock(&nccl_ofi_lock);
-	ret = get_nccl_ofi_comp(dev);
-	if (ret)
-		goto unlock;
+	nccl_ofi_comp = get_nccl_ofi_comp(dev);
+	if (!nccl_ofi_comp)
+		goto exit;
 
-	if (nccl_ofi_component[dev]->tag + 1 >=
-	    nccl_ofi_component[dev]->max_tag) {
+	if (nccl_ofi_comp->tag + 1 >=
+	    nccl_ofi_comp->max_tag) {
 		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
 			      " Maximum is %ld",
-			      dev, nccl_ofi_component[dev]->max_tag);
+			      dev, nccl_ofi_comp->max_tag);
 		ret = ncclSystemError;
-		goto unlock;
+		goto error;
 	}
-	tag = ++nccl_ofi_component[dev]->tag;
-	pthread_mutex_unlock(&nccl_ofi_lock);
+	tag = ++nccl_ofi_comp->tag;
 
 	/* Build handle */
-	local_ep_name = get_local_address(dev);
+	local_ep_name = get_local_address(dev, nccl_ofi_comp);
 
 	memcpy(ofi_handle->ep_name, local_ep_name, MAX_EP_ADDR);
 	ofi_handle->tag = tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
-	num_addrs = fi_av_insert(nccl_ofi_component[dev]->av, (void *)local_ep_name, 1,
+	num_addrs = fi_av_insert(nccl_ofi_comp->av, (void *)local_ep_name, 1,
 				 &local_ep_addr, 0, NULL);
 	if (OFI_UNLIKELY(num_addrs != 1)) {	/* Only 1 address should be inserted into the AV */
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
 			      dev, fi_strerror(-ret));
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	} else {
 		ret = ncclSuccess;
 	}
 
 	/* Build listenComm */
 	lComm = (listenComm_t *)calloc(1, sizeof(listenComm_t));
+	if (OFI_UNLIKELY(lComm == NULL)) {
+		NCCL_OFI_WARN("Couldn't allocate listenComm for dev %d", dev);
+		ret = ncclSystemError;
+		goto error;
+	}
 	lComm->tag = tag;
-	lComm->local_ep = nccl_ofi_component[dev]->ep;
+	lComm->local_ep = nccl_ofi_comp->ep;
 	lComm->accepted = false;
 	lComm->dev = dev;
 	lComm->local_ep_addr = local_ep_addr;
+	lComm->baseComm.ofi_comp = nccl_ofi_comp;
 
 	*listenComm = lComm;
 
 	goto exit;
 
-unlock:
-	pthread_mutex_unlock(&nccl_ofi_lock);
 error:
 	if (lComm)
 		free(lComm);
+	if (nccl_ofi_comp)
+		put_nccl_ofi_comp(nccl_ofi_comp, dev);
 exit:
 	return ret;
 }
@@ -1662,30 +1691,21 @@ exit:
  * 		error, others
  *
  */
-static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, sendComm_t **sendComm)
+static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, nccl_ofi_t *nccl_ofi_comp, sendComm_t **sendComm)
 {
-	int ret = ncclSuccess;
 	char remote_ep_addr[MAX_EP_ADDR] = {0};
 	uint64_t tag = 0ULL;
 	uint64_t max_tag = 0;
 	size_t req_size = sizeof(nccl_ofi_req_t);
 	fi_addr_t remote_addr;
 	sendComm_t *sComm = NULL;
-
 	*sendComm = NULL;
 
 	/*
 	 * Create libfabric components for the given NIC, if not
 	 * already created.
 	 */
-	pthread_mutex_lock(&nccl_ofi_lock);
-	ret = get_nccl_ofi_comp(dev);
-	if (ret) {
-		pthread_mutex_unlock(&nccl_ofi_lock);
-		return ret;
-	}
-	pthread_mutex_unlock(&nccl_ofi_lock);
-	max_tag = nccl_ofi_component[dev]->max_tag;
+	max_tag = nccl_ofi_comp->max_tag;
 
 	/* Get tag and remote name from handle */
 	memcpy(&remote_ep_addr, ofi_handle->ep_name, MAX_EP_ADDR);
@@ -1696,8 +1716,10 @@ static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, sendCo
 		return ncclSystemError;
 	}
 
+	ncclResult_t ret = ncclSuccess;
+
 	/* Insert remote address into AV */
-	ret = fi_av_insert(nccl_ofi_component[dev]->av,
+	ret = fi_av_insert(nccl_ofi_comp->av,
 			   (void *)remote_ep_addr, 1,
 			   &remote_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
@@ -1714,9 +1736,10 @@ static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, sendCo
 	}
 
 	sComm->tag = tag;
-	sComm->local_ep = nccl_ofi_component[dev]->ep;
+	sComm->local_ep = nccl_ofi_comp->ep;
 	sComm->remote_ep = remote_addr;
 	sComm->dev = dev;
+	sComm->baseComm.ofi_comp = nccl_ofi_comp;
 
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
@@ -1774,10 +1797,10 @@ static ssize_t send_connect_message(sendComm_t *sComm, nccl_ofi_req_t *req)
 	ssize_t rc = 0;
 	int ret = ncclSuccess;
 	char *local_ep_addr = NULL;
-	uint64_t max_tag = nccl_ofi_component[sComm->dev]->max_tag;
+	uint64_t max_tag = sComm->baseComm.ofi_comp->max_tag;
 
 	/* Get local EP address to transfer in the connect message */
-	local_ep_addr = get_local_address(sComm->dev);
+	local_ep_addr = get_local_address(sComm->dev, sComm->baseComm.ofi_comp);
 	if (local_ep_addr == NULL) {
 		return -1;
 	}
@@ -1795,7 +1818,7 @@ static ssize_t send_connect_message(sendComm_t *sComm, nccl_ofi_req_t *req)
 		 * Process completions so that you have enough
 		 * resources for sending connect message
 		 */
-		ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
+		ret = nccl_ofi_progress(sComm->baseComm.ofi_comp);
 		if (ret != ncclSuccess)
 			return ncclSystemError;
 	} else if (rc != 0) {
@@ -1836,11 +1859,6 @@ static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
 		return ncclSystemError;
 	}
 
-	if (OFI_UNLIKELY(nccl_ofi_component == NULL)) {
-		NCCL_OFI_WARN("NCCL OFI component is not initialised.");
-		return ncclSystemError;
-	}
-
 	nccl_ofi_handle_t *ofi_handle = (nccl_ofi_handle_t *)handle;
 
 	/* Extract connection state of the communicator */
@@ -1864,15 +1882,23 @@ static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
 			 */
 			assert(sComm == NULL);
 
+			nccl_ofi_t *nccl_ofi_comp = get_nccl_ofi_comp(dev);
+			if (!nccl_ofi_comp) {
+				return ncclSuccess;
+			}
+
 			/* Build sendComm */
-			ret = create_sendComm(dev, ofi_handle, &sComm);
-			if (OFI_UNLIKELY(ret != ncclSuccess))
+			ret = create_sendComm(dev, ofi_handle, nccl_ofi_comp, &sComm);
+			if (OFI_UNLIKELY(ret != ncclSuccess)) {
+				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ret;
+			}
 
 			/* Prepare connect request to be sent to peer */
 			req = prepare_send_req(sComm);
 			if (OFI_UNLIKELY(req == NULL)) {
 				free(sComm);
+				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ncclSystemError;
 			}
 
@@ -1888,6 +1914,7 @@ static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
 				return ncclSuccess;
 			}
 			else if (rc != 0) {
+				put_nccl_ofi_comp(sComm->baseComm.ofi_comp, dev);
 				free(sComm);
 				free_nccl_ofi_req(req, false);
 				return ncclSystemError;
@@ -1897,8 +1924,9 @@ static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
 
 		case COMM_REQ_PENDING_COMP:
 			/* Progress our engine to get completions */
-			ret = nccl_ofi_progress(nccl_ofi_component[dev]);
+			ret = nccl_ofi_progress(sComm->baseComm.ofi_comp);
 			if (OFI_UNLIKELY(ret != ncclSuccess)) {
+				put_nccl_ofi_comp(sComm->baseComm.ofi_comp, dev);
 				free(sComm);
 				free_nccl_ofi_req(req, false);
 				return ncclSystemError;
@@ -1938,7 +1966,7 @@ struct connection_info {
 	bool connect_to_self;
 };
 
-struct connection_info* allocate_connection_info(int dev, nccl_ofi_req_t *req, char* remote_ep_name)
+struct connection_info* allocate_connection_info(nccl_ofi_t *nccl_ofi_comp, nccl_ofi_req_t *req, char* remote_ep_name)
 {
 	struct connection_info* conn_info = (struct connection_info*)calloc(1, sizeof(*conn_info));
 	if (OFI_UNLIKELY(conn_info == NULL)) {
@@ -1947,7 +1975,7 @@ struct connection_info* allocate_connection_info(int dev, nccl_ofi_req_t *req, c
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
 	/* Get local EP address to transfer in the connect message */
-	int ret = fi_getname(&(nccl_ofi_component[dev]->ep->fid),
+	int ret = fi_getname(&(nccl_ofi_comp->ep->fid),
 			 (void *)conn_info->ep_name,
 			 &(conn_info->ep_namelen));
 	if (ret == -FI_ETOOSMALL) {
@@ -1974,7 +2002,7 @@ ncclResult_t process_connect_completion(struct connection_info* conn_info)
 {
 	/* process postponed completions */
 	do {
-		ncclResult_t ret = nccl_ofi_progress(nccl_ofi_component[conn_info->req->dev]);
+		ncclResult_t ret = nccl_ofi_progress(conn_info->req->bComm->ofi_comp);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -1997,6 +2025,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	uint64_t max_tag = 0;
 	nccl_ofi_req_t *req = NULL;
 	size_t req_size = sizeof(nccl_ofi_req_t);
+	nccl_ofi_t *nccl_ofi_comp = NULL;
 
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
@@ -2005,22 +2034,14 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 		goto exit;
 	}
 
-	if (OFI_UNLIKELY(nccl_ofi_component == NULL)) {
-		NCCL_OFI_WARN("NCCL OFI component is not initialised.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-
 	/*
 	 * Create libfabric components for the given NIC, if not
 	 * already created.
 	 */
-	pthread_mutex_lock(&nccl_ofi_lock);
-	ret = get_nccl_ofi_comp(dev);
-	if (ret)
-		goto unlock;
-	pthread_mutex_unlock(&nccl_ofi_lock);
-	max_tag = nccl_ofi_component[dev]->max_tag;
+	nccl_ofi_comp = get_nccl_ofi_comp(dev);
+	if (!nccl_ofi_comp)
+		goto exit;
+	max_tag = nccl_ofi_comp->max_tag;
 
 	/* Parse handle to get tag and remote name */
 	memcpy(&remote_ep_addr, (char *)handle, MAX_EP_ADDR);
@@ -2028,18 +2049,18 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	if (tag < 1 || tag > max_tag) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
 			      dev);
-		goto exit;
+		goto error;
 	}
 
 	/* Insert remote address into AV */
-	ret = fi_av_insert(nccl_ofi_component[dev]->av,
+	ret = fi_av_insert(nccl_ofi_comp->av,
 			  (void *)remote_ep_addr, 1,
 			  &remote_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
 			      dev, ret);
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	/* Build sendComm */
@@ -2051,9 +2072,10 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	}
 
 	sComm->tag = tag;
-	sComm->local_ep = nccl_ofi_component[dev]->ep;
+	sComm->local_ep = nccl_ofi_comp->ep;
 	sComm->remote_ep = remote_addr;
 	sComm->dev = dev;
+	sComm->baseComm.ofi_comp = nccl_ofi_comp;
 
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
@@ -2076,7 +2098,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
-	conn_info = allocate_connection_info(dev, req, remote_ep_addr);
+	conn_info = allocate_connection_info(nccl_ofi_comp, req, remote_ep_addr);
 	if (OFI_UNLIKELY(conn_info == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate connection_info for dev %d", dev);
 		ret = ncclSystemError;
@@ -2100,7 +2122,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 			 * Process completions so that you have enough
 			 * resources for sending connect message
 			 */
-			ret = nccl_ofi_progress(nccl_ofi_component[dev]);
+			ret = nccl_ofi_progress(nccl_ofi_comp);
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		}
@@ -2125,8 +2147,6 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 
 	goto exit;
 
-unlock:
-	pthread_mutex_unlock(&nccl_ofi_lock);
 error:
 	if (sComm)
 		free(sComm);
@@ -2134,6 +2154,9 @@ error:
 	if (conn_info) {
 		free(conn_info);
 	}
+
+	if (nccl_ofi_comp)
+		put_nccl_ofi_comp(nccl_ofi_comp, dev);
 
 	if (req)
 		free_nccl_ofi_req(req, false);
@@ -2180,7 +2203,7 @@ static nccl_ofi_req_t *prepare_recv_conn(listenComm_t *lComm)
  * 		-FI_EAGAIN, on lack of provider resources to post receive request
  * 		error, others
  */
-static ssize_t post_recv_conn(listenComm_t *lComm, char **buffer,
+static ssize_t post_recv_conn(listenComm_t *lComm, nccl_ofi_t *nccl_ofi_comp, char **buffer,
 			      size_t size, nccl_ofi_req_t *req)
 {
 	ssize_t rc = 0;
@@ -2188,22 +2211,11 @@ static ssize_t post_recv_conn(listenComm_t *lComm, char **buffer,
 	int dev = lComm->dev;
 	uint64_t max_tag;
 
-	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
-
-	pthread_mutex_lock(&nccl_ofi_lock);
 	if (nccl_ofi_comp == NULL) {
 		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
 			      dev);
-		pthread_mutex_unlock(&nccl_ofi_lock);
 		return ncclSystemError;
 	}
-
-	ret = get_nccl_ofi_comp(dev);
-	if (ret) {
-		pthread_mutex_unlock(&nccl_ofi_lock);
-		return ncclSystemError;
-	}
-	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	max_tag = nccl_ofi_comp->max_tag;
 
@@ -2285,7 +2297,7 @@ static int alloc_and_reg_flush_buff(recvComm_t *rComm)
 static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
 {
 	int ret = ncclSuccess;
-	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[lComm->dev];
+	nccl_ofi_t *nccl_ofi_comp = lComm->baseComm.ofi_comp;
 	fi_addr_t remote_ep;
 	recvComm_t *rComm = NULL;
 	size_t req_size = sizeof(nccl_ofi_req_t);
@@ -2312,6 +2324,7 @@ static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
 	rComm->local_ep_addr = lComm->local_ep_addr;
 	rComm->remote_ep = remote_ep;
 	rComm->dev = lComm->dev;
+	rComm->baseComm.ofi_comp = lComm->baseComm.ofi_comp;
 
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
@@ -2361,6 +2374,7 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 		NCCL_OFI_WARN("Invalid listen communicator provided");
 		return ncclSystemError;
 	}
+	int dev = lComm->dev;
 
 	if (lComm->state.stage != COMM_REQ_PENDING_COMP && lComm->accepted) {
 		NCCL_OFI_WARN("listenComm %p object already has an active connection (%d).", listenComm, lComm->accepted);
@@ -2377,6 +2391,15 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 	/* Extract peer address from listen communicator's buffer */
 	char *remote_ep_addr = lComm->buffer;
 
+	nccl_ofi_t *nccl_ofi_comp = lComm->baseComm.ofi_comp;
+	if (nccl_ofi_comp == NULL) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
+			     dev);
+		return ret;
+	}
+
+
 	/*
 	 * Take appropriate actions based on connection stage of communicator.
 	 *
@@ -2388,10 +2411,23 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 	switch (stage) {
 		case COMM_CREATE_START:
 
+			/*
+			 * The libfabric resources maintained by the ofi_comp structure is passed
+			 * from lComm to rComm so they can then be used by ofi_irecv. We want
+			 * to make sure those resources are not freed up when we call
+			 * ofi_closeListen so we maintain an additional refcnt and free it up
+			 * when ofi_closeRecv is called.
+			 */
+			pthread_mutex_lock(&nccl_ofi_lock);
+			nccl_ofi_comp->refcnt++;
+			pthread_mutex_unlock(&nccl_ofi_lock);
+
 			/* Prepare receive request to accept connections */
 			req = prepare_recv_conn(lComm);
-			if (req == NULL)
+			if (req == NULL) {
+				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ncclSystemError;
+			}
 
 			comm_state->stage = COMM_RECV_CONN;
 
@@ -2402,7 +2438,7 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 				remote_ep_addr = (char *)calloc(MAX_EP_ADDR, sizeof(char));
 
 			/* Post a receive message to receive peer connections */
-			rc = post_recv_conn(lComm, &remote_ep_addr, MAX_EP_ADDR, req);
+			rc = post_recv_conn(lComm, nccl_ofi_comp, &remote_ep_addr, MAX_EP_ADDR, req);
 			if (rc == -FI_EAGAIN) {
 				/* Save recv request and buffer address for retry */
 				comm_state->req = req;
@@ -2410,6 +2446,7 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 				return ncclSuccess;
 			} else if (rc != 0) {
 				free(req);
+				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ncclSystemError;
 			}
 
@@ -2418,9 +2455,10 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 		case COMM_REQ_PENDING_COMP:
 
 			/* Progress NCCL OFI engine so that connection is accepted */
-			ret = nccl_ofi_progress(nccl_ofi_component[lComm->dev]);
+			ret = nccl_ofi_progress(nccl_ofi_comp);
 			if (OFI_UNLIKELY(ret != 0)) {
 				free(req);
+				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ncclSystemError;
 			}
 
@@ -2442,13 +2480,16 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 		default:
 			NCCL_OFI_WARN("Invalid state of receive communicator object: %d",
 				      stage);
+			/* TODO put ofi_comp here? */
 			return ncclSystemError;
 	}
 
 	/* Prepare receive communicator object for the received peer connection */
 	rComm = prepare_recv_comm(lComm, remote_ep_addr);
-	if (OFI_UNLIKELY(rComm == NULL))
+	if (OFI_UNLIKELY(rComm == NULL)) {
+		put_nccl_ofi_comp(nccl_ofi_comp, dev);
 		return ncclSystemError;
+	}
 
 	comm_state->comm = rComm;
 	*recvComm = rComm;
@@ -2463,7 +2504,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	recvComm_t *rComm = NULL;
 	listenComm_t *lComm = (listenComm_t *)listenComm;
 	int dev = lComm->dev;
-	nccl_ofi_t *nccl_ofi_comp = nccl_ofi_component[dev];
+	nccl_ofi_t *nccl_ofi_comp;
 	nccl_ofi_req_t *req = NULL;
 	struct connection_info conn_info = {0};
 	fi_addr_t remote_ep;
@@ -2472,17 +2513,22 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	struct fid_mr *mr_handle = NULL;
 	const long page_size = sysconf(_SC_PAGESIZE);
 
-	pthread_mutex_lock(&nccl_ofi_lock);
+	nccl_ofi_comp = lComm->baseComm.ofi_comp;
 	if (nccl_ofi_comp == NULL) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
-			      dev);
-		goto unlock;
+			     dev);
+		goto exit;
 	}
-
-	ret = get_nccl_ofi_comp(dev);
-	if (ret)
-		goto unlock;
+	/*
+	 * The libfabric resources maintained by the ofi_comp structure is passed
+	 * from lComm to rComm so they can then be used by ofi_irecv. We want
+	 * to make sure those resources are not freed up when we call
+	 * ofi_closeListen so we maintain an additional refcnt and free it up
+	 * when ofi_closeRecv is called.
+	 */
+	pthread_mutex_lock(&nccl_ofi_lock);
+	nccl_ofi_comp->refcnt++;
 	pthread_mutex_unlock(&nccl_ofi_lock);
 
 	max_tag = nccl_ofi_comp->max_tag;
@@ -2490,7 +2536,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	if (lComm->accepted == true) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("listenComm object already has an active connection.");
-		goto exit;
+		goto error;
 	}
 
 	/* Allocate a NCCL OFI request */
@@ -2498,7 +2544,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to allocate nccl_ofi_req_t");
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	req->state = NCCL_OFI_REQ_CREATED;
@@ -2519,13 +2565,13 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 			 */
 			ret = nccl_ofi_progress(nccl_ofi_comp);
 			if (OFI_UNLIKELY(ret != 0))
-				goto exit;
+				goto error;
 		}
 		else {
 			NCCL_OFI_WARN("Unable to post a buffer for receving connections for dev %d. RC: %zd, ERROR: %s",
 				      dev, rc, fi_strerror(-rc));
 			ret = ncclSystemError;
-			goto exit;
+			goto error;
 		}
 	} while (true);
 
@@ -2533,7 +2579,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	while (lComm->accepted == false) {
 		ret = nccl_ofi_progress(nccl_ofi_comp);
 		if (OFI_UNLIKELY(ret != 0))
-			goto exit;
+			goto error;
 	}
 
 	if (conn_info.connect_to_self) {
@@ -2554,7 +2600,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
 			      dev, fi_strerror(-ret));
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	/* Build recvComm */
@@ -2563,7 +2609,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
 			      dev);
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	rComm->tag = lComm->tag;
@@ -2571,6 +2617,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	rComm->local_ep_addr = lComm->local_ep_addr;
 	rComm->remote_ep = remote_ep;
 	rComm->dev = dev;
+	rComm->baseComm.ofi_comp = lComm->baseComm.ofi_comp;
 
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
@@ -2580,7 +2627,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 		if (OFI_UNLIKELY(rComm->flush_buff.host_buffer == MAP_FAILED)) {
 			NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)", errno, strerror(errno));
 			ret = ncclSystemError;
-			goto exit;
+			goto error;
 		}
 
 		/* Register flush dummy buffer for provider access */
@@ -2600,16 +2647,14 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 			      req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			      dev);
-		goto error;
+			     dev);
+		goto unmap_flush;
 	}
 
 	*recvComm = rComm;
 
 	goto exit;
 
-unlock:
-	pthread_mutex_unlock(&nccl_ofi_lock);
 unmap_flush:
 	if (munmap(rComm->flush_buff.host_buffer, page_size)) {
 		NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
@@ -2620,6 +2665,8 @@ error:
 		fi_close((fid_t)mr_handle);
 	if (rComm)
 		free(rComm);
+	if (nccl_ofi_comp)
+		put_nccl_ofi_comp(nccl_ofi_comp, dev);
 exit:
 	if (req)
 		free(req);
@@ -2719,6 +2766,7 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	ssize_t rc = 0;
 	nccl_ofi_req_t *req = NULL;
 	sendComm_t *sComm = (sendComm_t *)sendComm;
+	nccl_ofi_t *nccl_ofi_comp = NULL;
 	void *desc = NULL;
 
 	/* Validate sendComm */
@@ -2754,6 +2802,14 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
+	nccl_ofi_comp = sComm->baseComm.ofi_comp;
+	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is not initialised",
+			     sComm->dev);
+		goto error;
+	}
+
 	if (mhandle != NULL)
 		desc = fi_mr_desc(mhandle);
 	/*
@@ -2764,7 +2820,7 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 		      sComm->remote_ep, sComm->tag, &req->ctx);
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
+		ret = nccl_ofi_progress(nccl_ofi_comp);
 		/* Return NULL request */
 		*request = NULL;
 		goto error;
@@ -2827,6 +2883,19 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 		goto error;
 	}
 
+	nccl_ofi_t *nccl_ofi_comp = rComm->baseComm.ofi_comp;
+	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is not initialised",
+			     rComm->dev);
+		goto error;
+	}
+
+	/* Progress NCCL OFI */
+	ret = nccl_ofi_progress(nccl_ofi_comp);
+	if (OFI_UNLIKELY(ret != 0))
+		goto error;
+
 	req->rComm = rComm;
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
@@ -2879,8 +2948,6 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	rc = fi_trecv(rComm->local_ep, buffer, size,
 			desc, FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
-		/* Make progress for next try */
-		ret = nccl_ofi_progress(nccl_ofi_component[rComm->dev]);
 		/* Return NULL request */
 		*request = NULL;
 		goto error;
@@ -2918,10 +2985,17 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 	}
 
 	nccl_ofi_req_t *req = (nccl_ofi_req_t *)request;
+	nccl_ofi_t *nccl_ofi_comp = req->bComm->ofi_comp;
+	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
+			      req->dev);
+		goto exit;
+	}
 
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_REQ_COMPLETED) {
-		ret = nccl_ofi_progress(nccl_ofi_component[req->dev]);
+		ret = nccl_ofi_progress(nccl_ofi_comp);
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -3087,7 +3161,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = nccl_ofi_progress(nccl_ofi_component[rComm->dev]);
+			ret = nccl_ofi_progress(rComm->baseComm.ofi_comp);
 			if (OFI_UNLIKELY(ret != ncclSuccess))
 				goto error;
 		}
@@ -3172,12 +3246,8 @@ static ncclResult_t ofi_closeSend(void *sendComm)
 	dev = sComm->dev;
 
 	free_ofi_fl(sComm->nccl_ofi_reqs_fl);
+	put_nccl_ofi_comp(sComm->baseComm.ofi_comp, dev);
 	free(sendComm);
-
-	pthread_mutex_lock(&nccl_ofi_lock);
-	put_nccl_ofi_comp(dev);
-	pthread_mutex_unlock(&nccl_ofi_lock);
-
 exit:
 	return ret;
 }
@@ -3216,12 +3286,8 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	}
 
 	free_ofi_fl(rComm->nccl_ofi_reqs_fl);
+	put_nccl_ofi_comp(rComm->baseComm.ofi_comp, dev);
 	free(recvComm);
-
-	pthread_mutex_lock(&nccl_ofi_lock);
-	put_nccl_ofi_comp(dev);
-	pthread_mutex_unlock(&nccl_ofi_lock);
-
 exit:
 	return ret;
 }
@@ -3239,12 +3305,8 @@ static ncclResult_t ofi_closeListen(void *listenComm)
 
 	dev = lComm->dev;
 
+	put_nccl_ofi_comp(lComm->baseComm.ofi_comp, dev);
 	free(listenComm);
-
-	pthread_mutex_lock(&nccl_ofi_lock);
-	put_nccl_ofi_comp(dev);
-	pthread_mutex_unlock(&nccl_ofi_lock);
-
 exit:
 	return ret;
 }
