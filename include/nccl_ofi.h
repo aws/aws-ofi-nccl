@@ -139,8 +139,14 @@ typedef struct save_comm_state {
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 #endif
+typedef struct nccl_ofi nccl_ofi_t;
+
+typedef struct baseOfiComm {
+	nccl_ofi_t *ofi_comp;
+} baseOfiComm_t;
 
 typedef struct listenComm {
+	baseOfiComm_t baseComm;
 	uint64_t tag;
 	struct fid_ep *local_ep;
 	fi_addr_t local_ep_addr;
@@ -155,6 +161,7 @@ typedef struct listenComm {
 } listenComm_t;
 
 typedef struct comm {
+    baseOfiComm_t baseComm;
     int dev;
     uint64_t tag;
     uint64_t num_inflight_reqs;
@@ -176,6 +183,7 @@ typedef struct comm {
 typedef struct nccl_ofi_req {
 	/* Associated Comm object */
 	union {
+		baseOfiComm_t *bComm;
 		listenComm_t *lComm;
 		sendComm_t *sComm;
 		recvComm_t *rComm;
@@ -251,7 +259,7 @@ _Static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OF
  * called for the first time and put_nccl_ofi_comp() releases the object if
  * refcnt is decreased down to zero.
  */
-typedef struct nccl_ofi {
+struct nccl_ofi {
 	/* Reference counter of the object */
 	int refcnt;
 
@@ -284,7 +292,7 @@ typedef struct nccl_ofi {
 
 	/* Pending requests queue */
 	pending_reqs_q_t *pending_reqs_q;
-} nccl_ofi_t;
+};
 
 #ifdef _cplusplus
 } // End extern "C"
