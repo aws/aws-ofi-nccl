@@ -1155,6 +1155,10 @@ exit:
 
 static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 {
+	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
+		NCCL_OFI_WARN("NCCL OFI component is not initialised");
+		return ncclSystemError;
+	}
 	/* Read completion queue entries */
 	return ofi_process_cq(nccl_ofi_comp);
 }
@@ -2700,7 +2704,6 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	ssize_t rc = 0;
 	nccl_ofi_req_t *req = NULL;
 	sendComm_t *sComm = (sendComm_t *)sendComm;
-	nccl_ofi_t *nccl_ofi_comp = NULL;
 	void *desc = NULL;
 
 	/* Validate sendComm */
@@ -2736,16 +2739,8 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
-	nccl_ofi_comp = nccl_ofi_component[sComm->dev];
-	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("NCCL OFI component for dev %d is not initialised",
-			     sComm->dev);
-		goto error;
-	}
-
 	/* Progress NCCL OFI */
-	ret = nccl_ofi_progress(nccl_ofi_comp);
+	ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -2914,18 +2909,9 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 	}
 
 	nccl_ofi_req_t *req = (nccl_ofi_req_t *)request;
-	nccl_ofi_t *nccl_ofi_comp = NULL;
 
 	/* Progress NCCL OFI in order to process completions */
-	nccl_ofi_comp = nccl_ofi_component[req->dev];
-	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("NCCL OFI component for dev %d is uninitialised",
-			      req->dev);
-		goto exit;
-	}
-
-	ret = nccl_ofi_progress(nccl_ofi_comp);
+	ret = nccl_ofi_progress(nccl_ofi_component[req->dev]);
 	if (OFI_UNLIKELY(ret != 0))
 		goto exit;
 
