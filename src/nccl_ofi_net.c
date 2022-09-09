@@ -2739,11 +2739,6 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
 
-	/* Progress NCCL OFI */
-	ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
-	if (OFI_UNLIKELY(ret != 0))
-		goto error;
-
 	if (mhandle != NULL)
 		desc = fi_mr_desc(mhandle);
 	/*
@@ -2753,7 +2748,9 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 	rc = fi_tsend(sComm->local_ep, data, size, desc,
 		      sComm->remote_ep, sComm->tag, &req->ctx);
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
-		/* Return NULL */
+		/* Make progress for next try */
+		ret = nccl_ofi_progress(nccl_ofi_component[sComm->dev]);
+		/* Return NULL request */
 		*request = NULL;
 		goto error;
 	}
@@ -2815,11 +2812,6 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 		goto error;
 	}
 
-	/* Progress NCCL OFI */
-	ret = nccl_ofi_progress(nccl_ofi_component[rComm->dev]);
-	if (OFI_UNLIKELY(ret != 0))
-		goto error;
-
 	req->rComm = rComm;
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
@@ -2872,6 +2864,8 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	rc = fi_trecv(rComm->local_ep, buffer, size,
 			desc, FI_ADDR_UNSPEC, rComm->tag, 0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
+		/* Make progress for next try */
+		ret = nccl_ofi_progress(nccl_ofi_component[rComm->dev]);
 		/* Return NULL request */
 		*request = NULL;
 		goto error;
