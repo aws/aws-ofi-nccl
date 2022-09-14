@@ -1038,6 +1038,23 @@ static void put_nccl_ofi_comp(int dev)
 		release_nccl_ofi_component(dev);
 }
 
+#define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
+
+/*
+ * @brief	Update nccl_ofi_req on completion
+ *		Fill up request context to deliver to user along with state update.
+ *		User polls state field to check completion.
+ *
+ */
+static inline void update_nccl_ofi_req(nccl_ofi_req_t *req, nccl_ofi_req_state_t state, size_t size)
+{
+	req->size = size;
+	/* As ofi_test() can be called on other thread, state should be updated last and there should be
+	 * a barrier before state update */
+	__sync_synchronize();
+	req->state = state;
+}
+
 /*
  * @brief	Processes completion entries from CQ
  *
@@ -1053,19 +1070,18 @@ static inline ncclResult_t process_completions(
 	uint64_t comp_idx = 0, comp_flags = 0;
 
 	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
+		void *op_ctx = cq_entry[comp_idx].op_context;
 
-		comp_flags = cq_entry[comp_idx].flags;
-
-		req = container_of(cq_entry[comp_idx].op_context,
-				   nccl_ofi_req_t, ctx);
-		if (OFI_UNLIKELY(req == NULL)) {
+		if (OFI_UNLIKELY(op_ctx == NULL)) {
 			NCCL_OFI_WARN("Invalid request context provided");
 			ret = ncclSystemError;
 			goto exit;
 		}
 
-		req->state = NCCL_OFI_REQ_COMPLETED;
-		req->size = cq_entry[comp_idx].len;
+		comp_flags = cq_entry[comp_idx].flags;
+
+		req = container_of(op_ctx, nccl_ofi_req_t, ctx);
+		update_nccl_ofi_req(req, NCCL_OFI_REQ_COMPLETED, cq_entry[comp_idx].len);
 
 		/* Determine if this is control message */
 		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {
@@ -1134,8 +1150,7 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 						err_buffer.err_data, NULL, 0),
 					(long)err_buffer.len,
 					nccl_ofi_request_str(req));
-			req->state = NCCL_OFI_REQ_ERROR;
-			req->size = err_buffer.len;
+			update_nccl_ofi_req(req, NCCL_OFI_REQ_ERROR, err_buffer.len);
 		}
 		else if (rc == -FI_EAGAIN) {
 			/* No completions to process */
@@ -2914,6 +2929,7 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 	/* Determine whether the request has finished and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_REQ_COMPLETED ||
 		       req->state == NCCL_OFI_REQ_ERROR)) {
+		__compiler_barrier();
 		if (size)
 			*size = req->size;
 		/* Mark as done */
