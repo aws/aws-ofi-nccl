@@ -142,7 +142,7 @@ ncclResult_t deallocate_buffer(void *buf, int buffer_type)
 		break;
 	default:
 		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
-		return cudaErrorInvalidValue;
+		return ncclInvalidArgument;
 	}
 
 	return ncclSuccess;
