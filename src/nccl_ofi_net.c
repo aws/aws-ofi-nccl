@@ -172,9 +172,9 @@ static const char *nccl_ofi_req_state_str(nccl_ofi_req_state_t state)
 	}
 }
 
-static const char *nccl_ofi_req_direction_str(nccl_ofi_req_state_t state)
+static const char *nccl_ofi_req_direction_str(nccl_ofi_req_direction_t direction)
 {
-	switch(state) {
+	switch(direction) {
 	case NCCL_OFI_SEND:
 		return "SEND";
 	case NCCL_OFI_RECV:
