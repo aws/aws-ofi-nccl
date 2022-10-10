@@ -540,7 +540,11 @@ exit:
  *		non-zero on error
  */
 static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
+#if HAVE_NEURON
+					size_t size, int type,
+#elif HAVE_CUDA
 					int size, int type,
+#endif
 					struct fid_mr **mr_handle)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -2674,7 +2678,11 @@ exit:
 }
 #endif
 
+#if HAVE_NEURON
+static ncclResult_t ofi_regMr(void *comm, void *data, size_t size, int type,
+#elif HAVE_CUDA
 static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
+#endif
 			      void **mhandle)
 {
 	struct fid_mr *mr_handle = NULL;
