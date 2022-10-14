@@ -1307,6 +1307,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
 
+#if HAVE_CUDA
 	if (ofi_nccl_cuda_flush_enable()) {
 #if CUDART_VERSION < 11030
 		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION);
@@ -1316,6 +1317,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		cuda_flush = true;
 #endif
 	}
+#endif
 
 	/*
 	 * Use a static pre-configured topology for supported EC2 platform types
