@@ -58,7 +58,8 @@ AC_ARG_WITH([mpi],
             [])
 
 AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
-      [Disable build of test binaries])], [enable_tests], [])
+              [Disable build of test binaries])], [enable_tests],
+              [if test "x$enable_neuron" != xno; then enable_tests=no; fi])
 AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" != "xno"])
 
 # Search first for mpi.h in provided directory, then on system.
