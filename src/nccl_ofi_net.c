@@ -1616,7 +1616,7 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	props->maxComms = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev;
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/*
 	 * Sets intranode latency for EFA networks.
 	 *
@@ -1833,7 +1833,7 @@ exit:
 	return ret;
 }
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 /*
  * @brief	Creates send communication for a peer
  *
@@ -2261,7 +2261,7 @@ exit:
 }
 #endif
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 /*
  * @brief	Allocate a request to receive peer connection message
  *
@@ -2830,7 +2830,7 @@ exit:
 	return ret;
 }
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 			      int tag, void *mhandle, void** request)
 #else
@@ -2922,7 +2922,7 @@ exit:
 	return ret;
 }
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 static ncclResult_t ofi_irecv(void* recvComm, int n, void** buffers, int* sizes,
 			      int *tags, void** mhandles, void** request)
 #else
@@ -2976,7 +2976,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	req->dev = rComm->dev;
 	req->direction = NCCL_OFI_RECV;
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	req->num_recvs = n;
 
 	if (OFI_UNLIKELY(mhandles == NULL)) {
@@ -3097,7 +3097,7 @@ exit:
 	return ret;
 }
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 static ncclResult_t ofi_iflush(void* recvComm, int n, void** buffers, int* sizes,
 			       void** mhandles, void** request)
 #else
@@ -3139,7 +3139,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 		goto exit;
 	}
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* Plugin only supports one receive per request */
 	assert(n == 1);
 
@@ -3394,7 +3394,7 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.ptrSupport = ofi_ptrSupport,
 #endif
 	.listen = ofi_listen,
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
+#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	.connect = ofi_iconnect,
 	.accept = ofi_iaccept,
 #else
