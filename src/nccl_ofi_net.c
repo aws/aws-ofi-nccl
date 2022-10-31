@@ -1451,11 +1451,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 
 exit:
 	if (ret != ncclSuccess) {
-#if HAVE_CUDA
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
-#else
-		NCCL_OFI_INFO(NCCL_INIT, " initialization failed");
-#endif
 	}
 	return ret;
 }
