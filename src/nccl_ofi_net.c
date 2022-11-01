@@ -23,6 +23,8 @@ int ofi_ndevices = -1;
 nccl_ofi_t **nccl_ofi_component = NULL;
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
+/* Indicates if remote virtual addressing is used */
+bool virt_addr_mr = false;
 /* Indicates if memory registration of device buffers is required */
 bool hmem_mr = false;
 /* Indicates if GPUDirect is supported by libfabric provider */
@@ -1129,6 +1131,16 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 		local_mr = true;
 	} else {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
+			       ofi_info_list->fabric_attr->prov_name);
+	}
+
+	/* Check if provider uses remote virtual addressing */
+	if (ofi_info_list->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses remote virtual addressing",
+			       ofi_info_list->fabric_attr->prov_name);
+		virt_addr_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not use remote virtual addressing",
 			       ofi_info_list->fabric_attr->prov_name);
 	}
 
@@ -2870,7 +2882,8 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 		rc = fi_read(rComm->local_ep, rComm->flush_buff.host_buffer,
 			     rComm->flush_buff.size,
 			     flush_mr_desc,
-			     rComm->local_ep_addr, (uint64_t)data,
+			     rComm->local_ep_addr,
+			     (uint64_t)(virt_addr_mr ? data : 0),
 			     cuda_key, &req->ctx);
 		if (rc == 0) {
 			break;
