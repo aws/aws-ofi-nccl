@@ -709,6 +709,8 @@ static void get_hints(struct fi_info *hints, int request_gdr)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
+	hints->domain_attr->threading = FI_THREAD_SAFE;
+
 	/* Set progress mode to unspec to use the provider's default mode. */
 	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
 	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
