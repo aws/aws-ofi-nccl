@@ -18,6 +18,7 @@
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+#include "tracepoint.h"
 
 static uint32_t libversion = 0;
 /* NICs info list for a provider */
@@ -1128,6 +1129,8 @@ static inline ncclResult_t process_completions(
 
 		req = container_of(op_ctx, nccl_ofi_req_t, ctx);
 		update_nccl_ofi_req(req, NCCL_OFI_REQ_COMPLETED, cq_entry[comp_idx].len);
+
+		NCCL_OFI_TRACE_COMPLETIONS(req, &req->ctx);
 
 		/* Determine if this is control message */
 		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {
@@ -2812,6 +2815,9 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 
 	if (mhandle != NULL)
 		desc = fi_mr_desc(mhandle);
+
+	NCCL_OFI_TRACE_SEND(req->dev, size, req, request, &req->ctx);
+
 	/*
 	 * Try sending data to remote EP; Return NULL request
 	 * if not able to send.
@@ -2917,6 +2923,8 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 		if (mhandles[recv_n] != NULL) {
 			desc = fi_mr_desc(mhandles[recv_n]);
 		}
+
+        NCCL_OFI_TRACE_RECV(rComm->dev, rComm->tag, sizes[recv_n], req, request, &req->ctx);
 
 		/*
 		 * TODO: Use NCCL provided tags when plugin supports grouped
@@ -3144,6 +3152,8 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 			goto error;
 		}
 	}
+
+	NCCL_OFI_TRACE_FLUSH(req, request, &req->ctx);
 
 	/* Issue RDMA read */
 	do {

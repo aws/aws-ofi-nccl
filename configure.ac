@@ -74,6 +74,22 @@ AS_IF([test "x${enable_trace}" = "xyes" ],
        AC_MSG_RESULT(no)])
 AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 if aws-ofi-nccl was configured with --enable-trace, 0 otherwise])
 
+dnl Check for LTTNG tracing capability
+AC_ARG_WITH([lttng],
+    AS_HELP_STRING([--with-lttng=DIR],
+           [Enable tracing capability with LTTNG @<:@default=no@:>@]))
+AS_IF([test -n "$with_lttng"],
+      [
+       AC_CHECK_LIB(lttng-ust,lttng_ust_probe_register, [], AC_MSG_ERROR("lttng-ust not found"))
+       AS_IF([test -d $withval/lib64], [lttng_libdir="lib64"], [lttng_libdir="lib"])
+       LDFLAGS="-L$withval/$lttng_libdir $LDFLAGS"
+       AC_DEFINE(HAVE_LTTNG, 1, [Build with LTTNG tracing])
+      ],
+      [
+       AC_DEFINE(HAVE_LTTNG, 0, [Build without LTTNG tracing])
+      ]
+)
+
 # Checks for header files.
 AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h], [],[
 	AC_MSG_ERROR([unable to find required headers])

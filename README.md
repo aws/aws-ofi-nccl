@@ -86,6 +86,15 @@ following config option:
    --enable-trace         Enable printing trace messages
 ```
 
+
+LTTNG tracing is documented in the doc/tracing.md file.
+
+To enable LTTNG tracing, use the following configuration option:
+
+```
+  --with-lttng=PATH       Path to LTTNG installation
+```
+
 By default, tests are built.  To disable building tests, use the following
 config option:
 
