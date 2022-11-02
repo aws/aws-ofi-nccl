@@ -494,11 +494,7 @@ exit:
  *		non-zero on error
  */
 static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
-#if HAVE_NEURON
 					size_t size, int type,
-#elif HAVE_CUDA
-					int size, int type,
-#endif
 					struct fid_mr **mr_handle)
 {
 	ncclResult_t ret = ncclSuccess;
