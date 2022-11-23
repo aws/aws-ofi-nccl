@@ -9,9 +9,9 @@
 extern "C" {
 #endif
 
-#include <nccl_ofi.h>
-#include <nccl_ofi_log.h>
-#include <nccl.h>
+#include "nccl_ofi.h"
+#include "nccl_ofi_log.h"
+#include "nccl-headers/error.h"
 #include <stdlib.h>
 
 /*
@@ -112,7 +112,7 @@ exit:
 }
 
 #ifdef _cplusplus
-{ // End extern "C"
+} // End extern "C"
 #endif
 
 #endif // End STACK_H_
