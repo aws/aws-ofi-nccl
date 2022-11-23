@@ -476,7 +476,7 @@ static ncclResult_t get_cuda_device(void *data, int *device)
 		cuda_device = attr.device;
 	}
 	else {
-		ret = ncclInvalidArgument;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid type of buffer provided. Only device memory is expected for NCCL_PTR_CUDA type");
 	}
 
@@ -557,7 +557,7 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 		break;
 #endif
 	default:
-		ret = ncclInvalidArgument;
+		ret = ncclInternalError;
 		goto exit;
 	};
 
@@ -1397,7 +1397,7 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 			ofi_ndevices /= 2;
 		if (ofi_ndevices < 1) {
 			NCCL_OFI_WARN("Incorrect number of CUDA devices provided: %d", ofi_ndevices);
-			ret = ncclSystemError;
+			ret = ncclInvalidUsage;
 			goto exit;
 		}
 
@@ -1657,7 +1657,7 @@ static ncclResult_t ofi_getProperties(int dev, ncclNetProperties_t *props)
 
 	if (dev < 0 || dev >= ofi_ndevices) {
 		NCCL_OFI_WARN("Incorrect dev %d provided", dev);
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto error;
 	}
 
@@ -1758,7 +1758,7 @@ static ncclResult_t ofi_listen(int dev, void *handle, void **listenComm)
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
 			      dev, ofi_ndevices - 1);
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto exit;
 	}
 
@@ -2001,7 +2001,7 @@ static ncclResult_t ofi_iconnect(int dev, void *handle, void **sendComm)
 	if (OFI_UNLIKELY(dev < 0 || dev >= ofi_ndevices)) {
 		NCCL_OFI_WARN("Incorrect device ID %d provided. Correct values are from 0 to %d",
 			      dev, ofi_ndevices - 1);
-		return ncclSystemError;
+		return ncclInternalError;
 	}
 
 	if (OFI_UNLIKELY(handle == NULL)) {
@@ -2463,7 +2463,7 @@ static ncclResult_t ofi_iaccept(void *listenComm, void **recvComm)
 	listenComm_t *lComm = (listenComm_t *)listenComm;
 	if (lComm == NULL) {
 		NCCL_OFI_WARN("Invalid listen communicator provided");
-		return ncclSystemError;
+		return ncclInternalError;
 	}
 	int dev = lComm->dev;
 
@@ -2768,7 +2768,7 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 
 	/* Validate Comm */
 	if (OFI_UNLIKELY(ofi_comm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid Comm object provided");
 		goto exit;
 	}
@@ -2784,7 +2784,7 @@ static ncclResult_t ofi_regMr(void *comm, void *data, int size, int type,
 #endif
 		break;
 	default:
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
 		goto exit;
 	};
@@ -2804,7 +2804,7 @@ static ncclResult_t ofi_deregMr(void *comm, void *mhandle)
 
 	/* Validate Comm */
 	if (OFI_UNLIKELY(comm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid Comm object provided");
 		goto exit;
 	}
@@ -2842,14 +2842,14 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 
 	/* Validate sendComm */
 	if (OFI_UNLIKELY(sComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid sendComm provided");
 		goto error;
 	}
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(sComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			     NCCL_OFI_MAX_REQUESTS);
 		goto error;
@@ -2935,7 +2935,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid recvComm provided");
 		goto error;
 	}
@@ -2978,7 +2978,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	req->num_recvs = n;
 
 	if (OFI_UNLIKELY(mhandles == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Memory handles array is NULL");
 		goto error;
 	}
@@ -3056,7 +3056,7 @@ static ncclResult_t ofi_test(void* request, int* done, int* size)
 
 	/* Check if request is valid */
 	if (OFI_UNLIKELY(request == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto exit;
 	}
 
@@ -3134,7 +3134,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 
 	/* Validate recvComm */
 	if (OFI_UNLIKELY(rComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		NCCL_OFI_WARN("Invalid recvComm provided");
 		goto exit;
 	}
@@ -3315,7 +3315,7 @@ static ncclResult_t ofi_closeSend(void *sendComm)
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(sendComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto exit;
 	}
 
@@ -3336,7 +3336,7 @@ static ncclResult_t ofi_closeRecv(void *recvComm)
 	struct fid_mr *mr_handle = NULL;
 
 	if (OFI_UNLIKELY(recvComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto exit;
 	}
 
@@ -3373,7 +3373,7 @@ static ncclResult_t ofi_closeListen(void *listenComm)
 	ncclResult_t ret = ncclSuccess;
 
 	if (OFI_UNLIKELY(listenComm == NULL)) {
-		ret = ncclSystemError;
+		ret = ncclInternalError;
 		goto exit;
 	}
 
