@@ -3218,6 +3218,9 @@ const ncclNet_t NCCL_PLUGIN_SYMBOL = {
 	.accept = ofi_accept,
 #endif
 	.regMr = ofi_regMr,
+#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 13, 0)) /* Support NCCL v2.13 */
+	.regMrDmaBuf = NULL,
+#endif
 	.deregMr = ofi_deregMr,
 	.isend = ofi_isend,
 	.irecv = ofi_irecv,
