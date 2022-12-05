@@ -50,6 +50,14 @@ bool support_gdr = true;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+/*
+ * Maximum numbers of requests supported by plugin. Since NCCL Net v5, one
+ * NCCL request can correspond to multiple network requests with `n` identifier
+ * passed to irecv(). Therefore, the total number of requests that plugin should
+ * support is product of number of NCCL requests and maximum number of
+ * recvs supported by plugin.
+ */
+int max_requests = NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS;
 
 /* Table indicating allocation state of MR keys */
 static size_t num_mr_keys = 0;
@@ -976,7 +984,7 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 
 	/* Initialise tag and num_cqes */
 	nccl_ofi_component[dev]->tag = 0;
-	nccl_ofi_component[dev]->num_cqes = NCCL_OFI_MAX_REQUESTS;
+	nccl_ofi_component[dev]->num_cqes = max_requests;
 	nccl_ofi_component[dev]->prov_name = prov->fabric_attr->prov_name;
 
 	ret = create_nccl_ofi_component(prov, nccl_ofi_component[dev]);
@@ -1764,8 +1772,7 @@ static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, nccl_o
 		(0 == memcmp(sComm->connection_info->ep_name, remote_ep_addr, sComm->connection_info->ep_namelen)) ? 1 : 0;
 
 	/* Pre-allocated buffers for data path */
-	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
-			req_size);
+	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, max_requests, req_size);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 				dev);
@@ -2105,8 +2112,7 @@ static ncclResult_t ofi_connect(int dev, void *handle, void **sendComm)
 	sComm->baseComm.ofi_comp = nccl_ofi_comp;
 
 	/* Pre-allocated buffers for data path */
-	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
-			      req_size);
+	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, max_requests, req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      dev);
@@ -2354,8 +2360,7 @@ static recvComm_t *prepare_recv_comm(listenComm_t *lComm, char *remote_ep_addr)
 	rComm->baseComm.ofi_comp = lComm->baseComm.ofi_comp;
 
 	/* Pre-allocated buffers for data path */
-	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
-			      req_size);
+	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, max_requests, req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			     lComm->dev);
@@ -2683,8 +2688,7 @@ static ncclResult_t ofi_accept(void *listenComm, void **recvComm)
 	}
 
 	/* Pre-allocated buffers for data path */
-	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, NCCL_OFI_MAX_REQUESTS,
-			      req_size);
+	ret = allocate_ofi_fl(&rComm->nccl_ofi_reqs_fl, max_requests, req_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			     dev);
@@ -2820,11 +2824,11 @@ static ncclResult_t ofi_isend(void *sendComm, void* data, int size,
 		goto error;
 	}
 
-	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(sComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	/* Support only max_requests inflight requests. */
+	if (OFI_UNLIKELY(sComm->num_inflight_reqs == max_requests)) {
 		ret = ncclInternalError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			     NCCL_OFI_MAX_REQUESTS);
+			      max_requests);
 		goto error;
 	}
 
@@ -2913,11 +2917,11 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 		goto error;
 	}
 
-	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(rComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	/* Support only max_requests inflight requests. */
+	if (OFI_UNLIKELY(rComm->num_inflight_reqs == max_requests)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			     NCCL_OFI_MAX_REQUESTS);
+			      max_requests);
 		goto error;
 	}
 
@@ -2957,7 +2961,7 @@ static ncclResult_t ofi_irecv(void* recvComm, void* buffer, int size,
 	}
 
 	/* Currently, plugin doesn't support grouped receives */
-	assert(n == 1);
+	assert(n <= NCCL_OFI_MAX_RECVS);
 	for (int recv_n = 0; recv_n < n; recv_n++) {
 		void *desc = NULL;
 
@@ -3115,7 +3119,7 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 
 #if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* Plugin only supports one receive per request */
-	assert(n == 1);
+	assert(n <= NCCL_OFI_MAX_RECVS);
 
 	/*
 	 * Find the non-zero request for which we will issue flush.
@@ -3157,11 +3161,11 @@ static ncclResult_t ofi_iflush(void* recvComm, void* buffer, int size,
 	data = buffer;
 #endif
 
-	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(rComm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	/* Support only max_requests inflight requests. */
+	if (OFI_UNLIKELY(rComm->num_inflight_reqs == max_requests)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-				NCCL_OFI_MAX_REQUESTS);
+			      max_requests);
 		goto exit;
 	}
 
