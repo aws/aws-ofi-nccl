@@ -17,8 +17,7 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
-#include <nccl.h>
-#include <nccl_net.h>
+#include "nccl-headers/net.h"
 
 #ifdef __GNUC__
 #define OFI_LIKELY(x)	__builtin_expect((x), 1)
