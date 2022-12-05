@@ -63,8 +63,11 @@ extern "C" {
 /* Maximum number of grouped receives */
 #define NCCL_OFI_MAX_RECVS	1
 
-/* This is twice the size of maximum inflight requests supported by NCCL */
-#define NCCL_OFI_MAX_REQUESTS	256
+/*
+ * This is twice the size of maximum inflight requests supported by NCCL to
+ * accomodate for recv and flush requests at the receiver.
+ */
+#define NCCL_OFI_MAX_REQUESTS	(NCCL_NET_MAX_REQUESTS * 2)
 
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
