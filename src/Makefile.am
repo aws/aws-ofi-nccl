@@ -12,8 +12,8 @@ endif HAVE_CUDA
 
 if ENABLE_NEURON
   lib_LTLIBRARIES = libnccom-net.la
-  libnccom_net_la_SOURCES = nccl_ofi_net.c tracepoint.c
+  libnccom_net_la_SOURCES = nccl_ofi_net.c tracepoint.c compat_v6.c compat_v5.c compat_v4.c compat_v3.c compat_v2.c
 else
   lib_LTLIBRARIES = libnccl-net.la
-  libnccl_net_la_SOURCES = nccl_ofi_net.c tracepoint.c
+  libnccl_net_la_SOURCES = nccl_ofi_net.c tracepoint.c compat_v6.c compat_v5.c compat_v4.c compat_v3.c compat_v2.c
 endif
