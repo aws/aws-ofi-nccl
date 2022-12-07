@@ -54,6 +54,12 @@ typedef void (*ncclDebugLogger_t)(ncclDebugLogLevel level, unsigned long flags, 
 #include "net_v4.h"
 #include "net_v3.h"
 #include "net_v2.h"
+#include "net-ofi/net_ofi_v6.h"
+#include "net-ofi/net_ofi_v4.h"
+#include "net-ofi/net_ofi_v3.h"
+#include "net-ofi/net_ofi_v2.h"
+
+typedef ncclNetProperties_v6_t ncclNetProperties_t;
 
 #ifdef _cplusplus
 } // End extern "C"

@@ -74,10 +74,12 @@ extern "C" {
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
 
-/* NCCL OFI lock for concurrency */
-pthread_mutex_t nccl_ofi_lock = PTHREAD_MUTEX_INITIALIZER;
-/* Logger Function */
-ncclDebugLogger_t ofi_log_function = NULL;
+// NCCL OFI lock for concurrency
+extern pthread_mutex_t nccl_ofi_lock;
+// Logger Function
+extern ncclDebugLogger_t ofi_log_function;
+// Maximum numbers of requests supported by plugin
+extern int max_requests;
 
 typedef enum nccl_ofi_req_state {
 	NCCL_OFI_REQ_CREATED = 0,
@@ -125,7 +127,6 @@ typedef struct flush_buffer {
 	struct fid_mr *mr_handle;
 } flush_buffer_t;
 
-#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 struct nccl_ofi_req;
 typedef struct nccl_ofi_req nccl_ofi_req_t;
 
@@ -143,7 +144,7 @@ typedef struct save_comm_state {
 	nccl_ofi_req_t *req;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
-#endif
+
 typedef struct nccl_ofi nccl_ofi_t;
 
 typedef struct baseOfiComm {
@@ -157,12 +158,10 @@ typedef struct listenComm {
 	fi_addr_t local_ep_addr;
 	int dev;
 	bool accepted;
-#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* Saves temporary state when creating receive communicator object */
 	save_comm_state_t state;
 	/* Saves peer address information */
 	void *buffer;
-#endif
 } listenComm_t;
 
 typedef struct comm {
@@ -203,10 +202,8 @@ typedef struct nccl_ofi_req {
 	/* Associated Device ID */
 	int dev;
 
-#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* Number of receives associated with request */
 	int num_recvs;
-#endif
 
 	/* Size of completed request */
 	size_t size;
@@ -246,10 +243,8 @@ typedef struct pending_reqs_q {
 typedef struct nccl_ofi_handle {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t tag;
-#if HAVE_CUDA && (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
-#endif
 } nccl_ofi_handle_t;
 
 _Static_assert(sizeof(nccl_ofi_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
