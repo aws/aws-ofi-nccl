@@ -29,8 +29,7 @@ The plug-in currently supports the following distributions:
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
-It requires [Libfabric](http://github.com/ofiwg/libfabric/)
-and [NCCL](http://github.com/NVIDIA/nccl/).  Please see the
+It requires [Libfabric](http://github.com/ofiwg/libfabric/). Please see the
 [Release notes](http://github.com/aws/aws-ofi-nccl/releases) for
 information on version compatibility.
 
@@ -55,10 +54,9 @@ GPUDirect RDMA support.
 
 ### Dependencies
 
-`aws-ofi-nccl` requires working installations of NCCL and libfabric. You can
-find the instructions for installing the first two at
-[NCCL installation](https://github.com/NVIDIA/nccl) and
-[libfabric installation](https://github.com/ofiwg/libfabric) respectively.
+`aws-ofi-nccl` requires a working installation of libfabric. You can
+find the instructions for installing libfabric at
+[libfabric installation](https://github.com/ofiwg/libfabric).
 
 ### Build Instructions
 
@@ -78,7 +76,6 @@ dependencies with the following flags:
 ```
   --with-libfabric=PATH   Path to non-standard libfabric installation
   --with-cuda=PATH        Path to non-standard CUDA installation
-  --with-nccl=PATH        Path to non-standard NCCL installation
   --with-mpi=PATH         Path to non-standard MPI installation
 ```
 
@@ -163,7 +160,7 @@ for your linux distribution. Once MPI is setup, you can use commands like below
 for running any test of your choice.
 
 ```
-mpirun -n 2 --host <host-1>,<host-2> -x RDMAV_FORK_SAFE=1 $INSTALL_PREFIX/bin/nccl_message_transfer
+mpirun -n 2 --host <host-1>,<host-2> $INSTALL_PREFIX/bin/nccl_message_transfer
 ```
 
 **Note:** All tests require 2 MPI ranks to run except [ring.c](tests/ring.c)
