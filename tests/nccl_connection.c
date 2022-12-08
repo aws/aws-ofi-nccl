@@ -44,7 +44,6 @@ int main(int argc, char* argv[])
 	/* Indicates if NICs support GPUDirect */
 	int support_gdr[ndev];
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
 		ncclNetProperties_t props = {0};
@@ -54,19 +53,6 @@ int main(int argc, char* argv[])
 		/* Set CUDA support */
 		support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
-#else
-	/* Get PCIe path and plugin memory pointer support */
-	for (dev = 0; dev < ndev; dev++) {
-		char *path = NULL;
-		int supported_types = 0;
-		extNet->pciPath(dev, &path);
-		OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
-		NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
-
-		/* Set CUDA support */
-		support_gdr[dev] = is_gdr_supported_nic(supported_types);
-	}
-#endif
 
 	/* Choose specific device per rank for communication */
 	dev = rand() % ndev;
