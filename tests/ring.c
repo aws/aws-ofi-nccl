@@ -33,7 +33,6 @@ int main(int argc, char *argv[])
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	int done, received_size, idx;
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 	/* For grouped receives */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
@@ -44,7 +43,6 @@ int main(int argc, char *argv[])
 		sizes[recv_n] = RECV_SIZE;
 		tags[recv_n] = tag;
 	}
-#endif
 
 	/* Start up MPI */
 	MPI_Init(&argc, &argv);
@@ -96,7 +94,6 @@ int main(int argc, char *argv[])
 	/* Indicates if NICs support GPUDirect */
 	int support_gdr[ndev];
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
         /* Get Properties for the device */
         for (dev = 0; dev < ndev; dev++) {
                 ncclNetProperties_t props = {0};
@@ -106,19 +103,6 @@ int main(int argc, char *argv[])
                 /* Set CUDA support */
 		support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
         }
-#else
-        /* Get PCIe path and plugin memory pointer support */
-        for (dev = 0; dev < ndev; dev++) {
-                char *path = NULL;
-                int supported_types = 0;
-                extNet->pciPath(dev, &path);
-                OFINCCLCHECK(extNet->ptrSupport(dev, &supported_types));
-                NCCL_OFI_TRACE(NCCL_INIT, "Dev %d has path %s and supports pointers of type %d", dev, path, supported_types);
-
-                /* Set CUDA support */
-                support_gdr[dev] = is_gdr_supported_nic(supported_types);
-        }
-#endif
 
 	/* Choose specific device per rank for communication */
 	dev = rand() % ndev;
@@ -174,17 +158,10 @@ int main(int argc, char *argv[])
 			     buffer_type, &send_mhandle[idx]));
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered send memory for request %d of rank %d", idx, rank);
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 		while (send_req[idx] == NULL) {
 			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
 				     send_mhandle[idx], (void **)&send_req[idx]));
 		}
-#else
-		while (send_req[idx] == NULL) {
-			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE,
-				     send_mhandle[idx], (void **)&send_req[idx]));
-		}
-#endif
 	}
 
 	/* Receive NUM_REQUESTS from prev rank */
@@ -195,17 +172,10 @@ int main(int argc, char *argv[])
 			     buffer_type, &recv_mhandle[idx]));
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 		while (recv_req[idx] == NULL) {
 			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
 				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
 		}
-#else
-		while (recv_req[idx] == NULL) {
-			OFINCCLCHECK(extNet->irecv((void *)rComm, (void **)recv_buf[idx],
-				     RECV_SIZE, recv_mhandle[idx], (void **)&recv_req[idx]));
-		}
-#endif
 	}
 
 	/* Allocate and populate expected buffer */
@@ -244,28 +214,16 @@ int main(int argc, char *argv[])
 					NCCL_OFI_TRACE(NCCL_NET,
 						"Issue flush for data consistency. Request idx: %d",
 						idx);
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 8, 0)) /* Support NCCL v2.8 */
 					nccl_ofi_req_t *iflush_req = NULL;
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0)) /* Support NCCL v2.12 */
 					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
 								    (void **)&recv_buf[idx], sizes,
 								    &recv_mhandle[idx], (void **)&iflush_req));
-#else
-					OFINCCLCHECK(extNet->iflush((void *)rComm,
-								    (void **)recv_buf[idx], RECV_SIZE,
-								    recv_mhandle[idx], (void **)&iflush_req));
-#endif
 					done = 0;
 					if (iflush_req) {
 						while (!done) {
 							OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
 						}
 					}
-#else
-					OFINCCLCHECK(extNet->flush((void *)rComm,
-								   (void *)recv_buf[idx],
-								   RECV_SIZE, recv_mhandle[idx]));
-#endif
 				}
 
 				if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {

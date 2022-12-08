@@ -8,21 +8,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
-#include <nccl_net.h>
-#include <nccl_ofi.h>
-#include <nccl_ofi_log.h>
-#include <nccl_ofi_param.h>
+#include "nccl-headers/net.h"
+#include "nccl_ofi.h"
+#include "nccl_ofi_log.h"
+#include "nccl_ofi_param.h"
 #include "mpi.h"
 #include "config.h"
 #include <unistd.h>
-#include <nccl.h>
 #include <dlfcn.h>
 #include <stdarg.h>
+#include <cuda_runtime.h>
 
 #define STR2(v)		#v
 #define STR(v)		STR2(v)
 
-#define NUM_REQUESTS	(255)
+#define NUM_REQUESTS	(NCCL_NET_MAX_REQUESTS)
 #define SEND_SIZE	(5000)
 #define RECV_SIZE	(5200)
 
@@ -41,6 +41,10 @@
                 return ncclUnhandledCudaError;					\
         }									\
 } while(false);
+
+// Can be changed when porting new versions to the plugin
+#define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v6
+typedef ncclNet_v6_t ncclNet_t;
 
 void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	    int line, const char *fmt, ...)
@@ -71,7 +75,6 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	va_end(vargs);
 }
 
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 6, 4))
 void print_dev_props(int dev, ncclNetProperties_t *props)
 {
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
@@ -81,11 +84,8 @@ void print_dev_props(int dev, ncclNetProperties_t *props)
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Speed: %d", props->name, props->speed);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Port: %d", props->name, props->port);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);
-#if (NCCL_VERSION_CODE >= NCCL_VERSION(2, 12, 0))
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Grouped Receives: %d", props->name, props->maxRecvs);
-#endif
 }
-#endif
 
 int is_gdr_supported_nic(uint64_t ptr_support)
 {
@@ -186,19 +186,11 @@ ncclNet_t *get_extNet(void)
 	void *netPluginLib = NULL;
 	ncclNet_t *extNet = NULL;
 
-#if ENABLE_NEURON
-	netPluginLib = dlopen("libnccom-net.so", RTLD_NOW | RTLD_LOCAL);
-	if (netPluginLib == NULL) {
-		NCCL_OFI_WARN("Unable to load libnccom-net.so: %s", dlerror());
-		return NULL;
-	}
-#else
 	netPluginLib = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
 	if (netPluginLib == NULL) {
 		NCCL_OFI_WARN("Unable to load libnccl-net.so: %s", dlerror());
 		return NULL;
 	}
-#endif
 
 	extNet = (ncclNet_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
 	if (extNet == NULL) {
