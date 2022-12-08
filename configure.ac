@@ -43,13 +43,6 @@ AC_ARG_WITH([cuda],
 
 AC_ARG_ENABLE(neuron, [AS_HELP_STRING([--enable-neuron], [Enable Neuron pointer support])], [], [enable_neuron=no])
 
-AC_ARG_WITH([nccl],
-            AC_HELP_STRING([--with-nccl=PATH], [Path to non-standard NCCL installation]),
-            [AS_IF([test -d $withval/lib64], [nccl_libdir="lib64"], [nccl_libdir="lib"])
-             CFLAGS="-I$withval/include $CFLAGS"
-             LDFLAGS="-L$withval/$nccl_libdir $LDFLAGS"],
-            [])
-
 AC_ARG_WITH([mpi],
             AC_HELP_STRING([--with-mpi=PATH], [Path to non-standard MPI installation]),
             [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
