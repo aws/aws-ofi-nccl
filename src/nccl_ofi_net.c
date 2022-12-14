@@ -1242,7 +1242,20 @@ static ncclResult_t ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 	/* Check if provider selects memory registration keys */
-	if (ofi_info_list->domain_attr->mr_mode & FI_MR_PROV_KEY) {
+	if (!(ofi_info_list->caps & FI_RMA)) {
+		/* When FI_RMA is not requested, Libfabric considers
+		   memory registrations to be local only, and
+		   therefore the requested_key field is ignored and
+		   (unfortunately) a random key may be returned from
+		   fi_mr_key().  This totally screws up the code to
+		   provide a unique MR key, which is, according to
+		   Libfabric, unnecessary in this mode anyway, so fall
+		   back to the provider-specified key code, which
+		   should behave properly in either case. */
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s only configured for local registration.",
+			       ofi_info_list->fabric_attr->prov_name);
+		prov_key_mr = true;
+	} else if (ofi_info_list->domain_attr->mr_mode & FI_MR_PROV_KEY) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s selects memory registration keys",
 			       ofi_info_list->fabric_attr->prov_name);
 		prov_key_mr = true;
