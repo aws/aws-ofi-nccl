@@ -67,10 +67,13 @@ extern "C" {
 #define NCCL_OFI_MAX_RECVS	1
 
 /*
- * This is twice the size of maximum inflight requests supported by NCCL to
- * accomodate for recv and flush requests at the receiver.
+ * This defines a higher value than maximum inflight requests supported by NCCL
+ * while not putting a lot of memory pressure. This higher number ensures that
+ * we are able to support more number of outstanding requests with dynamic buffer
+ * depth changes in NCCL and Neuron.
  */
-#define NCCL_OFI_MAX_REQUESTS	(NCCL_NET_MAX_REQUESTS * 2)
+#define NCCL_OFI_MAX_REQUESTS	(128)
+_Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less then what NCCL requires");
 
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
