@@ -599,6 +599,14 @@ static ncclResult_t register_mr_buffers(ofiComm_t *comm, void *data,
 	case NCCL_PTR_NEURON:
 		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_NEURON;
+		/*
+		 * Store a sentinel; libfabric requires this to be initialized Libfabric
+		 * requires the device.neuron field to be set for Neuron HMEM, but the EFA
+		 * provider does not use the value.  Store an invalid device id sentinel to
+		 * both follow the Libfabric spec and cause an error if a provider uses the
+		 * value in the future.
+		 */
+		mr_attr.device.neuron = -1;
 		break;
 #endif
 	default:
