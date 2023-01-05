@@ -21,9 +21,6 @@ extern "C" {
 
 #define NCCL_NET_HANDLE_MAXSIZE 128
 
-// Maximum number of requests per comm object
-#define NCCL_NET_MAX_REQUESTS 128
-
 typedef enum {
         NCCL_LOG_NONE=0,
         NCCL_LOG_VERSION=1,
