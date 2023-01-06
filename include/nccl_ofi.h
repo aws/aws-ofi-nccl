@@ -73,7 +73,11 @@ extern "C" {
  * depth changes in NCCL and Neuron.
  */
 #define NCCL_OFI_MAX_REQUESTS	(128)
-_Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less then what NCCL requires");
+#if HAVE_NEURON
+_Static_assert(NCCL_NET_NEURON_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less than what Neuron requires");
+#else
+_Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less than what NCCL requires");
+#endif
 
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
