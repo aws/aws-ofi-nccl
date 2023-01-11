@@ -109,6 +109,12 @@ OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
  */
 OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
 
+/*
+ * Maximum number of cq entries to read in a single call to
+ * fi_cq_read.
+ */
+OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
