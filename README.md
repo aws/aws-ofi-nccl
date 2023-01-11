@@ -148,6 +148,16 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Boolean</td>
       <td>0/1 (Default: 0)</td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_CQ_READ_COUNT</code></td>
+      <td>Adjust the maximum number of completion entries that will
+	  be read in a single Libfabric polling loop.  In general, users
+	  should not have to adjust this value.  An array of completion
+	  queue entry structures is created on the stack, so large (over
+      16-32) values of this parameter may cause stack overflows.</td>
+      <td>Integer</td>
+      <td>Default: 4</td>
+   </tr>
 </table>
 
 
