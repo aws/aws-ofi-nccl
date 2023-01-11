@@ -282,9 +282,6 @@ struct nccl_ofi {
 	/* Maximum supported tag ID */
 	uint64_t max_tag;
 
-	/* Count of CQEs to read from CQ */
-	uint64_t num_cqes;
-
 	/* Provider name */
 	char *prov_name;
 

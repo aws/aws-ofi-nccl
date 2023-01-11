@@ -51,6 +51,12 @@ bool support_gdr = true;
  * platforms and should be disabled by default */
 bool cuda_flush = false;
 
+/* number of cq entries to read in a single call to fi_cq_read.
+   This variable will be updated during init (hence, can not be
+   const), but will not change during execution.  Therefore, it may be
+   read in the polling loop without protection of a lock. */
+static size_t cq_read_count = 1;
+
 // NCCL OFI lock for concurrency
 pthread_mutex_t nccl_ofi_lock = PTHREAD_MUTEX_INITIALIZER;
 // Logger Function
@@ -997,7 +1003,6 @@ static ncclResult_t create_nccl_ofi_comp_for_dev(int dev, struct fi_info *nic_in
 
 	/* Initialise tag and num_cqes */
 	nccl_ofi_component[dev]->tag = 0;
-	nccl_ofi_component[dev]->num_cqes = max_requests;
 	nccl_ofi_component[dev]->prov_name = prov->fabric_attr->prov_name;
 
 	ret = create_nccl_ofi_component(prov, nccl_ofi_component[dev]);
@@ -1179,18 +1184,17 @@ static ncclResult_t ofi_process_cq(nccl_ofi_t *nccl_ofi_comp)
 	ssize_t rc = 0;
 	ncclResult_t ret = ncclSuccess;
 	struct fi_cq_err_entry err_buffer = { 0 };
-	uint64_t cqe_burst = nccl_ofi_comp->num_cqes;
-	struct fi_cq_tagged_entry cqe_tagged_buffers[cqe_burst];
+	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
 	nccl_ofi_req_t *req = NULL;
 	struct fid_cq *cq = nccl_ofi_comp->cq;
 	uint64_t control_bit_mask = nccl_ofi_comp->max_tag + 1;
 
 	while (true) {
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(cq, &cqe_tagged_buffers[0], cqe_burst);
+		rc = fi_cq_read(cq, cqe_tagged_buffers, cq_read_count);
 		if (rc > 0) {
 			ret = process_completions(
-					&cqe_tagged_buffers[0], rc,
+					cqe_tagged_buffers, rc,
 					control_bit_mask);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
@@ -1405,6 +1409,10 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
 			       ofi_info_list->fabric_attr->prov_name);
 	}
+
+	/* Store the cq_read_count parameter value in a global
+	   variable to avoid the lookup overhead during execution. */
+	cq_read_count = ofi_nccl_cq_read_count();
 
 exit:
 	if (ret != ncclSuccess) {
