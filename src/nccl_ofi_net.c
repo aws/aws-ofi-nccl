@@ -20,6 +20,9 @@
 #endif
 #include "tracepoint.h"
 
+#define EFA_PROVIDER_NAME "efa"
+#define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
+
 static uint32_t libversion = 0;
 /* NICs info list for a provider */
 struct fi_info* ofi_info_list = NULL;
@@ -1511,6 +1514,21 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	props->port = 1;
 	props->maxComms = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev;
+
+	if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name)) {
+		/*
+		 * Sets intranode latency for EFA networks.
+		 *
+		 * This value is chosen by measuring all reduce latency for
+		 * different NCCL algorithms and using that to calculate intra node
+		 * latency based on NCCL's tuning algorithm.
+		 *
+		 * A few different values around this value were tried to see which
+		 * chose the correct algorithm (tree or ring) most times across
+		 * different message and cluster sizes.
+		 */
+		props->latency = 150;
+	}
 
 	/*
 	 * Maximum number of grouped receives. Currently, we set it to 1 to
