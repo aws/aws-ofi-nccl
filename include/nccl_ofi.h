@@ -175,6 +175,13 @@ typedef struct listenComm {
 	void *buffer;
 } listenComm_t;
 
+typedef struct nccl_ofi_connection_info {
+	char ep_name[MAX_EP_ADDR];
+	uint64_t ep_namelen;
+	uint64_t connect_to_self;
+	nccl_ofi_req_t* req;
+} nccl_ofi_connection_info_t;
+
 typedef struct comm {
     baseOfiComm_t baseComm;
     int dev;
@@ -186,9 +193,7 @@ typedef struct comm {
     free_list_t *nccl_ofi_reqs_fl;
 
     union {
-        struct {
-            free_list_t *pending_reqs_fl;
-        }; // sendComm_t
+        nccl_ofi_connection_info_t *connection_info; /* sendComm_t */
         struct {
             flush_buffer_t flush_buff;
         }; // recvComm_t

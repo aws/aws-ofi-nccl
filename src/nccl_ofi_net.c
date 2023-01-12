@@ -2071,6 +2071,29 @@ static inline int create_sendComm(int dev, nccl_ofi_handle_t *ofi_handle, nccl_o
 	sComm->dev = dev;
 	sComm->baseComm.ofi_comp = nccl_ofi_comp;
 
+	sComm->connection_info = calloc(1, sizeof(nccl_ofi_connection_info_t));
+	if (!sComm->connection_info) {
+		return ncclSystemError;
+	}
+
+	sComm->connection_info->ep_namelen = sizeof(sComm->connection_info->ep_name);
+
+	ret = fi_getname(&(sComm->baseComm.ofi_comp->ep->fid),
+			 (void *)sComm->connection_info->ep_name,
+			 &sComm->connection_info->ep_namelen);
+	if (ret == -FI_ETOOSMALL) {
+		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+			      sComm->connection_info->ep_namelen, MAX_EP_ADDR);
+		return ncclSystemError;
+	} else if (ret != 0) {
+		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		return ncclSystemError;
+	}
+
+	sComm->connection_info->connect_to_self =
+		(0 == memcmp(sComm->connection_info->ep_name, remote_ep_addr, sComm->connection_info->ep_namelen)) ? 1 : 0;
+
 	/* Pre-allocated buffers for data path */
 	ret = allocate_ofi_fl(&sComm->nccl_ofi_reqs_fl, max_requests, req_size);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
@@ -2125,23 +2148,20 @@ static ssize_t send_connect_message(sendComm_t *sComm, nccl_ofi_req_t *req)
 {
 	ssize_t rc = 0;
 	int ret = ncclSuccess;
-	char *local_ep_addr = NULL;
 	uint64_t max_tag = sComm->baseComm.ofi_comp->max_tag;
 
-	/* Get local EP address to transfer in the connect message */
-	local_ep_addr = get_local_address(sComm->dev, sComm->baseComm.ofi_comp);
-	if (local_ep_addr == NULL) {
-		return -1;
-	}
+	/* If connecting to self, pass along the send req so that the
+	   accept side can clean up the request */
+	sComm->connection_info->req = (sComm->connection_info->connect_to_self == 1) ? req : NULL;
 
 	/*
 	 * TODO: replace it with API of FI_INJECT type when most of
 	 * providers can support it, so that need for completion check
 	 * can be lifted.
 	 */
-	rc = fi_tsend(sComm->local_ep, (void *)local_ep_addr,
-			MAX_EP_ADDR, NULL, sComm->remote_ep,
-			sComm->tag | (max_tag + 1), &req->ctx);
+	rc = fi_tsend(sComm->local_ep, (void *)sComm->connection_info,
+		      sizeof(*sComm->connection_info), NULL, sComm->remote_ep,
+		      sComm->tag | (max_tag + 1), &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/*
 		 * Process completions so that you have enough
@@ -2252,6 +2272,14 @@ ncclResult_t nccl_net_ofi_connect(int dev, void *handle, void **sendComm)
 			comm_state->stage = COMM_REQ_PENDING_COMP;
 
 		case COMM_REQ_PENDING_COMP:
+			if (sComm->connection_info->connect_to_self == 1) {
+				NCCL_OFI_TRACE(NCCL_NET, "Connect to self; short circuit cleanup");
+				/* short cut to avoid rendezvous
+				   deadlock in GDR detection */
+				comm_state->stage = COMM_CONNECTED;
+				break;
+			}
+
 			/* Progress our engine to get completions */
 			ret = nccl_ofi_progress(sComm->baseComm.ofi_comp);
 			if (OFI_UNLIKELY(ret != ncclSuccess)) {
@@ -2323,7 +2351,7 @@ static nccl_ofi_req_t *prepare_recv_conn(listenComm_t *lComm)
  * 		-FI_EAGAIN, on lack of provider resources to post receive request
  * 		error, others
  */
-static ssize_t post_recv_conn(listenComm_t *lComm, nccl_ofi_t *nccl_ofi_comp, char **buffer,
+static ssize_t post_recv_conn(listenComm_t *lComm, nccl_ofi_t *nccl_ofi_comp, void *buffer,
 			      size_t size, nccl_ofi_req_t *req)
 {
 	ssize_t rc = 0;
@@ -2340,7 +2368,7 @@ static ssize_t post_recv_conn(listenComm_t *lComm, nccl_ofi_t *nccl_ofi_comp, ch
 	max_tag = nccl_ofi_comp->max_tag;
 
 	/* Post a buffer for receiving connection requests */
-	rc = fi_trecv(lComm->local_ep, (void *)*buffer, size,
+	rc = fi_trecv(lComm->local_ep, buffer, size,
 		      NULL, FI_ADDR_UNSPEC, lComm->tag | (max_tag + 1),
 		      0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
@@ -2508,7 +2536,7 @@ ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm)
 	nccl_ofi_req_t *req = comm_state->req;
 
 	/* Extract peer address from listen communicator's buffer */
-	char *remote_ep_addr = lComm->buffer;
+	nccl_ofi_connection_info_t *conn_info = lComm->buffer;
 
 	nccl_ofi_t *nccl_ofi_comp = lComm->baseComm.ofi_comp;
 	if (nccl_ofi_comp == NULL) {
@@ -2555,18 +2583,21 @@ ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm)
 		case COMM_RECV_CONN:
 
 			/* Allocate memory for peer address for the first time ONLY */
-			if (remote_ep_addr == NULL)
-				remote_ep_addr = (char *)calloc(MAX_EP_ADDR, sizeof(char));
+			if (conn_info == NULL) {
+				conn_info = calloc(1, sizeof(nccl_ofi_connection_info_t));
+			}
 
 			/* Post a receive message to receive peer connections */
-			rc = post_recv_conn(lComm, nccl_ofi_comp, &remote_ep_addr, MAX_EP_ADDR, req);
+			rc = post_recv_conn(lComm, nccl_ofi_comp, conn_info, sizeof(nccl_ofi_connection_info_t), req);
 			if (rc == -FI_EAGAIN) {
 				/* Save recv request and buffer address for retry */
 				comm_state->req = req;
-				lComm->buffer = remote_ep_addr;
+				lComm->buffer = conn_info;
 				return ncclSuccess;
 			} else if (rc != 0) {
 				free(req);
+				free(conn_info);
+				lComm->buffer = NULL;
 				put_nccl_ofi_comp(nccl_ofi_comp, dev);
 				return ncclSystemError;
 			}
@@ -2586,8 +2617,16 @@ ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm)
 			if (lComm->accepted != true) {
 				/* Save recv request and buffer to retest completion */
 				comm_state->req = req;
-				lComm->buffer = remote_ep_addr;
+				lComm->buffer = conn_info;
 				return ncclSuccess;
+			}
+
+			if (conn_info->connect_to_self) {
+				NCCL_OFI_TRACE(NCCL_NET, "Accept from self; cleaning up");
+				if (conn_info->req->state != NCCL_OFI_REQ_COMPLETED) {
+					lComm->buffer = conn_info;
+					return ncclSuccess;
+				}
 			}
 
 			/* Done processing the request so free it */
@@ -2606,11 +2645,13 @@ ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm)
 	}
 
 	/* Prepare receive communicator object for the received peer connection */
-	rComm = prepare_recv_comm(lComm, remote_ep_addr);
+	rComm = prepare_recv_comm(lComm, conn_info->ep_name);
 	if (OFI_UNLIKELY(rComm == NULL)) {
 		put_nccl_ofi_comp(nccl_ofi_comp, dev);
 		return ncclSystemError;
 	}
+
+	free(conn_info);
 
 	comm_state->comm = rComm;
 	*recvComm = rComm;
