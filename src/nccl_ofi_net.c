@@ -132,17 +132,17 @@ static ncclResult_t free_mr_key(int dev, uint64_t key)
 {
 	if (prov_key_mr) {
 		NCCL_OFI_WARN("Invalid call to free_mr_key");
-		return ncclInvalidArgument;
+		return ncclInternalError;
 	}
 
 	if (key >= num_mr_keys) {
 		NCCL_OFI_WARN("Key value out of range (%"PRIu64")", key);
-		return ncclInvalidArgument;
+		return ncclInternalError;
 	}
 
 	if (mr_keys[dev * num_mr_keys + key] != false) {
 		NCCL_OFI_WARN("Attempted to free a key that's not in use (%"PRIu64")", key);
-		return ncclInvalidArgument;
+		return ncclInternalError;
 	}
 
 	pthread_mutex_lock(&nccl_ofi_lock);
