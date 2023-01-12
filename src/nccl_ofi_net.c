@@ -17,14 +17,15 @@
 #include <stack.h>
 #include <nccl_ofi_param.h>
 #ifdef EFA_NIC_DUP
-#define EFA_PROVIDER_NAME "efa"
-#define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 #include <ctype.h>
 #endif
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
 #include "tracepoint.h"
+
+#define EFA_PROVIDER_NAME "efa"
+#define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 
 struct ec2_platform_topology {
 	const char* name;
@@ -1640,18 +1641,20 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	props->maxComms = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev;
 
-	/*
-	 * Sets intranode latency for EFA networks.
-	 *
-	 * This value is chosen by measuring all reduce latency for
-	 * different NCCL algorithms and using that to calculate intra node
-	 * latency based on NCCL's tuning algorithm.
-	 *
-	 * A few different values around this value were tried to see which
-	 * chose the correct algorithm (tree or ring) most times across
-	 * different message and cluster sizes.
-	 */
-	props->latency = 150;
+	if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name)) {
+		/*
+		 * Sets intranode latency for EFA networks.
+		 *
+		 * This value is chosen by measuring all reduce latency for
+		 * different NCCL algorithms and using that to calculate intra node
+		 * latency based on NCCL's tuning algorithm.
+		 *
+		 * A few different values around this value were tried to see which
+		 * chose the correct algorithm (tree or ring) most times across
+		 * different message and cluster sizes.
+		 */
+		props->latency = 150;
+	}
 
 	/*
 	 * Maximum number of grouped receives. Currently, we set it to 1 to
