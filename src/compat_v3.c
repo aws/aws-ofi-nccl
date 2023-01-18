@@ -8,29 +8,6 @@ ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction)
 	return nccl_net_ofi_init(logFunction);
 }
 
-_Static_assert(offsetof(nccl_ofi_handle_t, state) <= NCCL_NET_HANDLE_MAXSIZE_V3, "Size of OFI Handle (without state) is too large");
-
-ncclResult_t nccl_net_ofi_listen_v3(int dev, void* handle, void** listenComm)
-{
-	nccl_ofi_handle_t nccl_net_ofi_handle;
-	ncclResult_t ret = ncclSuccess;
-
-	ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
-	if (ret != ncclSuccess)
-		return ret;
-
-	memcpy(handle, &nccl_net_ofi_handle, NCCL_NET_HANDLE_MAXSIZE_V3);
-	return ret;
-}
-
-ncclResult_t nccl_net_ofi_connect_v3(int dev, void* handle, void** sendComm)
-{
-	nccl_ofi_handle_t nccl_net_ofi_handle = {0};
-
-	memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V3);
-	return nccl_net_ofi_connect_v4(dev, &nccl_net_ofi_handle, sendComm);
-}
-
 ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* mhandle)
 {
 	void *req = NULL;
@@ -55,8 +32,8 @@ const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.init = nccl_net_ofi_init_v3,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = nccl_net_ofi_getProperties_v4,
-	.listen = nccl_net_ofi_listen_v3,
-	.connect = nccl_net_ofi_connect_v3,
+	.listen = nccl_net_ofi_listen_v4,
+	.connect = nccl_net_ofi_connect_v4,
 	.accept = nccl_net_ofi_accept_v4,
 	.regMr = nccl_net_ofi_regMr,
 	.deregMr = nccl_net_ofi_deregMr,
