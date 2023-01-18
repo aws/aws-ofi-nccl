@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+#define NCCL_NET_HANDLE_MAXSIZE_V4 64
+
 typedef struct {
 	char* name;     // Used mostly for logging.
 	char* pciPath;  // Path to the PCI device in /sys.
