@@ -24,12 +24,30 @@ ncclResult_t nccl_net_ofi_getProperties_v4(int dev, ncclNetProperties_v4_t* prop
 	return ret;
 }
 
+_Static_assert(offsetof(nccl_ofi_handle_t, state) <= NCCL_NET_HANDLE_MAXSIZE_V4, "Size of OFI Handle (without state) is too large");
+
+ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
+{
+        nccl_ofi_handle_t nccl_net_ofi_handle = {0};
+        ncclResult_t ret = ncclSuccess;
+
+        ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
+        if (ret != ncclSuccess)
+                return ret;
+
+        memcpy(handle, &nccl_net_ofi_handle, NCCL_NET_HANDLE_MAXSIZE_V4);
+        return ret;
+}
+
 ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
+        nccl_ofi_handle_t nccl_net_ofi_handle = {0};
+
+        memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 
 	while (*sendComm == NULL) {
-		ret = nccl_net_ofi_connect(dev, handle, sendComm);
+		ret = nccl_net_ofi_connect(dev, &nccl_net_ofi_handle, sendComm);
 		if (ret != ncclSuccess)
 			return ret;
 	}
@@ -75,7 +93,7 @@ const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = nccl_net_ofi_getProperties_v4,
-	.listen = nccl_net_ofi_listen,
+	.listen = nccl_net_ofi_listen_v4,
 	.connect = nccl_net_ofi_connect_v4,
 	.accept = nccl_net_ofi_accept_v4,
 	.regMr = nccl_net_ofi_regMr,

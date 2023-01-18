@@ -10,7 +10,6 @@
 extern "C" {
 #endif
 
-#define NCCL_NET_HANDLE_MAXSIZE_V3 64
 #define NCCL_NET_MAX_REQUESTS_V3 16
 
 typedef ncclNetProperties_v4_t ncclNetProperties_v3_t;
