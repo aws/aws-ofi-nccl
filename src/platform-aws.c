@@ -22,21 +22,31 @@ struct ec2_platform_data {
 	const char* name;
 	const char* topology;
 	int default_dup_conns;
+	bool force_proto_simple;
 } platform_data_map[] = {
 	[0] = {
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
-		.default_dup_conns = 0
+		.default_dup_conns = 0,
+		.force_proto_simple = true,
 	},
 	[1] = {
 		.name = "p4de.24xlarge",
 		.topology = "p4de-24xl-topo.xml",
-		.default_dup_conns = 0
+		.default_dup_conns = 0,
+		.force_proto_simple = true,
 	},
 	[2] = {
 		.name = "p3dn.24xlarge",
 		.topology = NULL,
-		.default_dup_conns = 4
+		.default_dup_conns = 4,
+		.force_proto_simple = true,
+	},
+	[3] = {
+		.name = "trn1.32xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.force_proto_simple = false,
 	},
 };
 
@@ -142,9 +152,39 @@ ncclResult_t platform_init(void)
 	}
 
 	platform_data = get_platform_data(platform_type);
-	if (!platform_data) goto exit;
 
-	if (platform_data->topology) {
+	/* if we're here, we think we're on an EC2 instance, so force
+	 * EFA provider (for platforms without EFA, this will cause a
+	 * fallback to NCCL's internal TCP.  In the case of Neuron, a
+	 * hard failure when there are no NICs.  Both are the
+	 * behaviors we want).
+	 */
+	if (!getenv("FI_PROVIDER")) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting FI_PROVIDER to \"efa\"");
+		rc = setenv("FI_PROVIDER", "efa", 0);
+		if (rc) {
+			NCCL_OFI_WARN("Error setting FI_PROVIDER environment variable: %d", rc);
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
+
+	/* Use the simple protocol whenever we're not sure the
+	 * LL/LL128 protocols are safe.  In the future, we may want to
+	 * revisit this and only set simple in cases where we know
+	 * that it is not safe (P4d/P4e).
+	 */
+	if (!getenv("NCCL_PROTO") && (!platform_data || platform_data->force_proto_simple)) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
+		rc = setenv("NCCL_PROTO", "simple", 0);
+		if (rc) {
+			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable : %d", rc);
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
+
+	if (platform_data && platform_data->topology) {
 		/* Update topology */
 		char topology_path[PATH_MAX];
 
@@ -170,7 +210,7 @@ ncclResult_t platform_init(void)
 
 	}
 
-	if (nic_dup_conns == 0)
+	if (nic_dup_conns == 0 && platform_data)
 		nic_dup_conns = platform_data->default_dup_conns;
 
 exit:
