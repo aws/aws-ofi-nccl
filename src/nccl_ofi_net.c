@@ -1,8 +1,5 @@
 #include "config.h"
 
-/* Instead of declaring one single NIC, declare one NIC close to each GPU */
-#define EFA_NIC_DUP
-
 /*
  * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
@@ -17,9 +14,7 @@
 #include <sys/mman.h>
 #include <stack.h>
 #include <nccl_ofi_param.h>
-#ifdef EFA_NIC_DUP
 #include <ctype.h>
-#endif
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
@@ -31,14 +26,22 @@
 struct ec2_platform_data {
 	const char* name;
 	const char* topology;
+	int default_dup_conns;
 } platform_data_map[] = {
 	[0] = {
 		.name = "p4d.24xlarge",
-		.topology = "p4d-24xl-topo.xml"
+		.topology = "p4d-24xl-topo.xml",
+		.default_dup_conns = 0
 	},
 	[1] = {
 		.name = "p4de.24xlarge",
-		.topology = "p4de-24xl-topo.xml"
+		.topology = "p4de-24xl-topo.xml",
+		.default_dup_conns = 0
+	},
+	[2] = {
+		.name = "p3dn.24xlarge",
+		.topology = NULL,
+		.default_dup_conns = 4
 	},
 };
 
@@ -72,6 +75,12 @@ bool support_gdr = true;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+
+/* number of duplicate providers to create for each discovered
+ * provider, including renaming to cause NCCL to create additional
+ * rings to use the connections
+ */
+int nic_dup_conns = 0;
 
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
@@ -442,7 +451,6 @@ exit:
 	return ret;
 }
 
-#ifndef EFA_NIC_DUP
 /*
  * @brief	Returns true if the given provider matches IPv6 addressing format,
  *		interfaces from tcp_if_exclude_list or multiple memory tag formats.
@@ -535,7 +543,6 @@ static void filter_tcp_info_list()
 		ofi_info_list = prev;
 	}
 }
-#endif
 
 #if HAVE_CUDA
 /*
@@ -1365,7 +1372,7 @@ struct ec2_platform_data *get_platform_data(const char *platform_type)
  * 		   if we find no match
  * 		error, on failure
  */
-static ncclResult_t update_nccl_topology()
+static ncclResult_t aws_platform_init(void)
 {
 	int ret = ncclSuccess;
 	int rc = 0;
@@ -1407,8 +1414,10 @@ static ncclResult_t update_nccl_topology()
 			ret = ncclSystemError;
 			goto exit;
 		}
-
 	}
+
+	if (nic_dup_conns == 0)
+		nic_dup_conns = platform_data->default_dup_conns;
 
 exit:
 	if (platform_type)
@@ -1438,6 +1447,8 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	}
 #endif
 
+	nic_dup_conns = ofi_nccl_nic_dup_conns();
+
 	/*
 	 * Use a static pre-configured topology for supported EC2 platform types
 	 *
@@ -1450,7 +1461,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	 * This topology information helps NCCL to form optimal
 	 * graphs by using right GPU-NIC pairs for transfers through network.
 	 */
-	ret = update_nccl_topology();
+	ret = aws_platform_init();
 	if (ret != ncclSuccess)
 		goto exit;
 
@@ -1499,47 +1510,22 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		goto exit;
 	}
 
-#ifdef EFA_NIC_DUP
-	/*
-	 * If we detect the Amazon EFA provider and we are not using GPUDirect RDMA,
-	 * emulate a NIC per GPU so that NCCL will build more rings and achieve
-	 * better peak BW.
-	*/
-#if HAVE_CUDA
-	if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) && !support_gdr) {
-		if (cudaGetDeviceCount(&ofi_ndevices) != cudaSuccess) {
-			NCCL_OFI_WARN("Error getting CUDA device count");
-			ret = ncclUnhandledCudaError;
-			goto exit;
-		}
-
-		if (ofi_ndevices > 1)
-			ofi_ndevices /= 2;
-		if (ofi_ndevices < 1) {
-			NCCL_OFI_WARN("Incorrect number of CUDA devices provided: %d", ofi_ndevices);
-			ret = ncclInvalidUsage;
-			goto exit;
-		}
-
-		int nic_dup_conns = ofi_nccl_nic_dup_conns();
-		if (nic_dup_conns > 0) {
-			NCCL_OFI_INFO(NCCL_INIT,
-						  "Setting AWS OFI ndev to %d from user configuration, OFI_NCCL_NIC_DUP_CONNS",
-						  nic_dup_conns);
-			ofi_ndevices = nic_dup_conns;
-		}
+	/* Allow for multiple virtual nics per nic to increase
+	 * throughput for NICs that do not handle single QP situations
+	 * well. */
+	if (nic_dup_conns > 1 && !support_gdr) {
+		ofi_ndevices *= nic_dup_conns;
 
 		// Make the list cyclic to emulate having multiple devices
 		ofi_info_list->next = ofi_info_list;
-		NCCL_OFI_INFO(NCCL_INIT, "Forcing AWS OFI ndev %d", ofi_ndevices);
-	} else
-#endif
-	if (!IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name)) {
-		NCCL_OFI_WARN("Only EFA provider is supported");
+		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
+			      nic_dup_conns, ofi_ndevices);
+	} else if (nic_dup_conns > 0) {
+		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
 		ret = ncclSystemError;
 		goto exit;
 	}
-#else
+
 	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
 	if (strncmp("tcp", ofi_info_list->fabric_attr->prov_name, strlen("tcp")) == 0) {
 		filter_tcp_info_list();
@@ -1549,10 +1535,9 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 			goto exit;
 		}
 	}
-#endif
 
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
-		      ofi_info_list->fabric_attr->prov_name);
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
+		      ofi_info_list->fabric_attr->prov_name, ofi_ndevices);
 
 	/* Check if provider requires local memory registration */
 	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
@@ -1648,72 +1633,8 @@ ncclResult_t nccl_net_ofi_devices(int *ndev)
 	return ncclSuccess;
 }
 
-#if HAVE_CUDA
-#ifdef EFA_NIC_DUP
-// Macro to check CUDA calls
-#define CUDACHECK(cmd) do {                 			        	\
-	cudaError_t e = cmd;                                   			\
-	if( e != cudaSuccess ) {                                		\
-		NCCL_OFI_WARN("Cuda failure '%s'", cudaGetErrorString(e));	\
-		return ncclUnhandledCudaError;                      		\
-	}                                                       		\
-} while(false)
-
-#define BUSID_SIZE (sizeof("0000:00:00.0"))
-#define BUSID_REDUCED_SIZE (sizeof("0000:00"))
-
-static ncclResult_t getCudaPath(int dev, char** path)
+static ncclResult_t get_device_pci_path(int dev, struct fid_nic *nic_info, char** path)
 {
-	int i,c,cudaDev;
-	char busId[BUSID_SIZE];
-	CUDACHECK(cudaDeviceGetPCIBusId(busId, BUSID_SIZE, dev));
-
-	for (i=0; i<BUSID_SIZE; i++) busId[i] = tolower(busId[i]);
-	char busPath[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.0";
-	memcpy(busPath+sizeof("/sys/class/pci_bus/")-1, busId, BUSID_REDUCED_SIZE-1);
-	memcpy(busPath+sizeof("/sys/class/pci_bus/0000:00/../../")-1, busId, BUSID_SIZE-1);
-	*path = realpath(busPath, NULL);
-	if (*path == NULL) {
-		NCCL_OFI_WARN("Could not find real path of %s", busPath);
-		return ncclSystemError;
-	}
-	// Trim the end of the path to mimic a device on the same PCI switch
-	for (c=strlen(*path); c && (*path)[c] != '/'; c--) (*path)[c] = '\0';
-
-	// Query the current CUDA device
-	CUDACHECK(cudaGetDevice(&cudaDev));
-
-	/* If the current CUDA device isn't the requested device make the NCCL
-	 * distance detection algorithm think this device is further away
-	 * i.e. NODE verses PHB
-	 */
-	if (cudaDev/2 != dev) (*path)[c] = '\0';
-
-	NCCL_OFI_INFO(NCCL_INIT, "[%d] getCudaPath dev %d busId %s path %s", cudaDev, dev, busId, *path);
-	return ncclSuccess;
-}
-#endif
-#endif
-
-static ncclResult_t nccl_net_ofi_pciPath(int dev, struct fid_nic *nic_info, char** path)
-{
-#if HAVE_CUDA
-#ifdef EFA_NIC_DUP
-	if (ofi_info_list != NULL &&
-	    IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) &&
-	    !support_gdr) {
-
-		int num_gpus_visible;
-		if (cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
-			NCCL_OFI_WARN("Error getting CUDA device count");
-			return ncclUnhandledCudaError;
-		}
-
-		// Return a fake NIC PCI path based on the CUDA device path
-		return getCudaPath(dev % num_gpus_visible, path);
-	}
-#endif
-#endif
 	ncclResult_t ret = ncclSuccess;
 	struct fi_pci_attr *pci = NULL;
 	char *device_path = NULL;
@@ -1853,19 +1774,67 @@ ncclResult_t nccl_net_ofi_getProperties(int dev, ncclNetProperties_t *props)
 	/* Speed reported in Mbps */
 	dev_props.speed = nic_info->link_attr->speed / (1e6);
 
-	ret = nccl_net_ofi_pciPath(dev, nic_info, &(dev_props.pciPath));
+	ret = get_device_pci_path(dev, nic_info, &(dev_props.pciPath));
 	if (ret != ncclSuccess)
 		props->pciPath = NULL;
 
-#ifdef EFA_NIC_DUP
-        if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name) && !support_gdr) {
-		/* Make a unique device name for each EFA device */
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Correcting device names");
-		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s%x", nic_info->device_attr->name, dev);
-        }
-        else if (!IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name))
-                NCCL_OFI_WARN("Only EFA provider is supported");
+	if (nic_dup_conns > 1) {
+#if HAVE_CUDA
+		int num_gpus_visible, active_cuda_device, gpus_per_conn;
+		size_t c;
+
+		if (cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting CUDA device count");
+			ret = ncclUnhandledCudaError;
+			goto error;
+		}
+
+		if (cudaGetDevice(&active_cuda_device) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting current CUDA device");
+			ret = ncclUnhandledCudaError;
+			goto error;
+		}
+
+		gpus_per_conn = num_gpus_visible / ofi_ndevices;
+		if (gpus_per_conn == 0) gpus_per_conn = 1;
+
+		/* The goal is to have gpus_per_conn gpus in the local
+		 * system think that any given virtual nic is the one
+		 * that they should use, and that it is different than
+		 * the other NICs in the system.  We do this by only
+		 * leaving a valid device id in pciPath when
+		 * active_cuda_device / gpus_per_comm is equal to the
+		 * NIC dev index we're currently querying.  For the
+		 * others, we provide a PCIPath that points at the PCI
+		 * Bus itself, which NCCL will interpret to be on a
+		 * different complex than the bus (assuming the NIC
+		 * BUS and GPU BUS are the same).
+		 *
+		 * There are a bunch of assumptions in this logic,
+		 * such that the physical NICs in the system don't
+		 * have PCI affinity with the GPUs.  Given that we've
+		 * already established that GPUDirect doesn't work,
+		 * this is probably ok; any affinity is lost by
+		 * bouncing through host buffers anyway.
+		 */
+		if (active_cuda_device / gpus_per_conn  != dev) {
+			for (c=strlen(dev_props.pciPath); c && dev_props.pciPath[c] != '/'; c--) {
+				dev_props.pciPath[c] = '\0';
+			}
+			dev_props.pciPath[c] = '\0';
+		}
+		NCCL_OFI_TRACE(NCCL_INIT, "Returning synthetic PCI path for device %d of  %s",
+			       dev, dev_props.pciPath);
+
+		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s-%x", nic_info->device_attr->name, dev);
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Adjusted dev %d device name to %s",
+			       dev, dev_props.name);
+#else
+		NCCL_OFI_WARN("NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  This should not happen.");
+		ret = ncclSystemError;
+		goto error;
 #endif
+	}
 
 	goto exit;
 
