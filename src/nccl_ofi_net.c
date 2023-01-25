@@ -1,7 +1,7 @@
 #include "config.h"
 
 /*
- * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
@@ -1430,7 +1430,7 @@ ncclResult_t nccl_net_ofi_devices(int *ndev)
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
+static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
 {
 	ncclResult_t ret = ncclSuccess;
 	struct fi_info* prov = NULL;
@@ -1477,26 +1477,6 @@ ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
 
 exit:
 	return ret;
-}
-
-ncclResult_t nccl_net_ofi_ptrSupport(int dev, int *supportedTypes)
-{
-	if (support_gdr) {
-		/* Supports message transfer from both CUDA and HOST buffers */
-		*supportedTypes = NCCL_PTR_HOST
-#if HAVE_CUDA
-			| NCCL_PTR_CUDA
-#endif
-#if HAVE_NEURON
-			| NCCL_PTR_NEURON
-#endif
-		;
-	} else {
-		/* Supports message transfer from both HOST buffers */
-		*supportedTypes = NCCL_PTR_HOST;
-	}
-
-	return ncclSuccess;
 }
 
 static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
@@ -1546,7 +1526,15 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	if (ret != ncclSuccess)
 		props->pciPath = NULL;
 
-	ret = nccl_net_ofi_ptrSupport(dev, &props->ptrSupport);
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (support_gdr) {
+		/* Supports message transfer from both CUDA and HOST buffers */
+#if HAVE_CUDA
+		props->ptrSupport |= NCCL_PTR_CUDA;
+#elif HAVE_NEURON
+		props->ptrSupport |= NCCL_PTR_NEURON;
+#endif
+	}
 
 	/* Should be successful for ptrSupport invocation */
 	return ret;
