@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_H_
@@ -91,6 +91,11 @@ extern pthread_mutex_t nccl_ofi_lock;
 extern ncclDebugLogger_t ofi_log_function;
 // Maximum numbers of requests supported by plugin
 extern int max_requests;
+/* number of duplicate providers to create for each discovered
+ * provider, including renaming to cause NCCL to create additional
+ * rings to use the connections
+ */
+extern int nic_dup_conns;
 
 typedef enum nccl_ofi_req_state {
 	NCCL_OFI_REQ_CREATED = 0,
@@ -306,6 +311,14 @@ struct nccl_ofi {
 	/* Pending requests queue */
 	pending_reqs_q_t *pending_reqs_q;
 };
+
+/* Declare a platform-specific initialization hook that can be
+ * provided by platform-specific source files (such as the optionally
+ * compiled platform_aws.c).  The function is declared as a weak
+ * symbol so that linkage will not break if no platform specific hook
+ * is provided; in that case platform_init will be NULL at runtime.
+ */
+ncclResult_t platform_init(void) __attribute__((weak));
 
 #ifdef _cplusplus
 } // End extern "C"
