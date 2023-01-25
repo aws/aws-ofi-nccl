@@ -7,7 +7,7 @@
  * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
-
+#define _GNU_SOURCE
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1691,7 +1691,7 @@ static ncclResult_t getCudaPath(int dev, char** path)
 #endif
 #endif
 
-static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
+static ncclResult_t nccl_net_ofi_pciPath(int dev, struct fid_nic *nic_info, char** path)
 {
 #if HAVE_CUDA
 #ifdef EFA_NIC_DUP
@@ -1711,26 +1711,9 @@ static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
 #endif
 #endif
 	ncclResult_t ret = ncclSuccess;
-	struct fi_info* prov = NULL;
-	struct fid_nic *nic_info = NULL;
 	struct fi_pci_attr *pci = NULL;
-	char device_path[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.00";
-
-	prov = get_nic_info(dev, ofi_info_list);
-	if (prov == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Unable to find provider for dev %d", dev);
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	nic_info = (struct fid_nic *)prov->nic;
-	if (nic_info == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "No NIC info for dev %d", dev);
-		ret = ncclSystemError;
-		goto exit;
-	}
+	char *device_path = NULL;
+	int ret_int;
 
 	if (nic_info->bus_attr->bus_type != FI_BUS_PCI) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
@@ -1741,19 +1724,28 @@ static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
 	}
 
 	pci = &nic_info->bus_attr->attr.pci;
-	sprintf(device_path,
-		"/sys/class/pci_bus/%04x:%02x/../../%04x:%02x:%02x.%01x",
-		pci->domain_id, pci->bus_id,
-		pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+	ret_int = asprintf(&device_path,
+			   "/sys/class/pci_bus/%04x:%02x/../../%04x:%02x:%02x.%01x",
+			   pci->domain_id, pci->bus_id,
+			   pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+	if (ret_int < 0) {
+		NCCL_OFI_WARN("pciPath: Allocation failure");
+		ret = ncclSystemError;
+		goto exit;
+	}
 
 	*path = realpath(device_path, NULL);
 	if (*path == NULL) {
 		NCCL_OFI_WARN("pciPath: Could not find real path of %s",
 			      device_path);
 		ret = ncclSystemError;
+		goto exit;
 	}
 
 exit:
+	if (device_path)
+		free(device_path);
+
 	return ret;
 }
 
@@ -1799,10 +1791,6 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	 * same source.
 	 */
 	props->maxRecvs = NCCL_OFI_MAX_RECVS;
-
-	ret = nccl_net_ofi_pciPath(dev, &props->pciPath);
-	if (ret != ncclSuccess)
-		props->pciPath = NULL;
 
 	props->ptrSupport = NCCL_PTR_HOST;
 	if (support_gdr) {
@@ -1860,6 +1848,10 @@ ncclResult_t nccl_net_ofi_getProperties(int dev, ncclNetProperties_t *props)
 
 	/* Speed reported in Mbps */
 	dev_props.speed = nic_info->link_attr->speed / (1e6);
+
+	ret = nccl_net_ofi_pciPath(dev, nic_info, &(dev_props.pciPath));
+	if (ret != ncclSuccess)
+		props->pciPath = NULL;
 
 #ifdef EFA_NIC_DUP
         if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name) && !support_gdr) {
