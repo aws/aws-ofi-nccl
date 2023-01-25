@@ -28,10 +28,10 @@
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 
-struct ec2_platform_topology {
+struct ec2_platform_data {
 	const char* name;
 	const char* topology;
-} platform_topo_map[] = {
+} platform_data_map[] = {
 	[0] = {
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml"
@@ -1338,20 +1338,20 @@ error:
 }
 
 /*
- * @brief	Returns static topology filename for given platform type, if found
+ * @brief	Returns AWS-specific platform data, if found
  *
  * @input	Platform type
  *
  * @return	NULL, if no topology found
- * 		Topology filename, if match found
+ * 		Topology structure, if match found
  */
-static const char* get_static_topology_file(const char *platform_type)
+struct ec2_platform_data *get_platform_data(const char *platform_type)
 {
-	const size_t platform_n = sizeof(platform_topo_map)/sizeof(platform_topo_map[0]);
+	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
 
 	for (size_t idx = 0; idx < platform_n; idx++) {
-		if (strcmp(platform_type, platform_topo_map[idx].name) == 0)
-			return platform_topo_map[idx].topology;
+		if (strcmp(platform_type, platform_data_map[idx].name) == 0)
+			return &platform_data_map[idx];
 	}
 
 	return NULL;
@@ -1369,6 +1369,7 @@ static ncclResult_t update_nccl_topology()
 {
 	int ret = ncclSuccess;
 	int rc = 0;
+	struct ec2_platform_data *platform_data;
 
 	const char *platform_type = get_platform_type();
 	if (platform_type == NULL) {
@@ -1376,7 +1377,10 @@ static ncclResult_t update_nccl_topology()
 		goto exit;
 	}
 
-	const char *topo_file = get_static_topology_file(platform_type);
+	platform_data = get_platform_data(platform_type);
+	if (!platform_data) goto exit;
+
+	const char *topo_file = platform_data->topology;
 	if (topo_file == NULL) {
 		/* No topology file exists for the given platform so return success */
 		goto exit;
