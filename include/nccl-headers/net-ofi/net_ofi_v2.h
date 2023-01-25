@@ -1,6 +1,6 @@
 /*
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
- * Copyright (c) 2022 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2022-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NET_OFI_V2_H_
@@ -11,8 +11,8 @@ extern "C" {
 #endif
 
 // Function declarations for net v2 API
-ncclResult_t nccl_net_ofi_pciPath(int dev, char** path);
-ncclResult_t nccl_net_ofi_ptrSupport(int dev, int *supportedTypes);
+ncclResult_t nccl_net_ofi_pciPath_v2(int dev, char** path);
+ncclResult_t nccl_net_ofi_ptrSupport_v2(int dev, int *supportedTypes);
 
 #ifdef _cplusplus
 }
