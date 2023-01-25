@@ -4,7 +4,7 @@
  * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
-
+#define _GNU_SOURCE
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +23,6 @@
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 
-static uint32_t libversion = 0;
 /* NICs info list for a provider */
 struct fi_info* ofi_info_list = NULL;
 /* Number of NICs */
@@ -53,6 +52,12 @@ bool support_gdr = true;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+
+/* number of duplicate providers to create for each discovered
+ * provider, including renaming to cause NCCL to create additional
+ * rings to use the connections
+ */
+int nic_dup_conns = 0;
 
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
@@ -134,6 +139,7 @@ static ncclResult_t free_mr_key(int dev, uint64_t key)
 
 	return ncclSuccess;
 }
+
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -1260,7 +1266,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret = ncclSuccess;
 	char *prov_include = NULL;
-	int rc;
 
 	ofi_log_function = logFunction;
 
@@ -1278,47 +1283,33 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	}
 #endif
 
-	/*
-	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
-	 * fork-safe support in legacy versions of the rdma-core library.
-	 * Libfabric checks if additional handling is required for fork safety,
-	 * and does not introduce this additional overhead of setting MADV_DONTFORK
-	 * for new versions of rdma-core (38.0 and later) and the Linux kernel
-	 * that support copy-on-fork for pinned memory (5.13 and later).
-	 * These new versions are always fork-safe and additional support in userspace
-	 * is not required.
-	 *
-	 * When legacy versions of the kernel and rdma-core are used, setting
-	 * FI_EFA_FORK_SAFE to 1 disables the use of huge pages in Libfabric.
-	 *
-	 * To prevent data corruption, the EFA provider registers an atfork
-	 * handler which will abort the process whenever it believes
-	 * rdma-core is not fork-safe.
-	 *
-	 * NCCL applications heavily re-use the buffers for communication and
-	 * thus are not sensitive to increased memory registration costs.
-	 * To prevent NCCL based applications from getting aborted when using
-	 * fork(), the plugin explicitly enables FI_EFA_FORK_SAFE environment
-	 * variable, even in legacy environments where the overhead is high.
-	 */
-	libversion = fi_version();
-	const char * fork_safe_var_name =
-		(FI_MAJOR(libversion) > 1 || (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
-		? "FI_EFA_FORK_SAFE"
-		: "RDMAV_FORK_SAFE";
-	if (!getenv(fork_safe_var_name)) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting %s environment variable to 1", fork_safe_var_name);
-		rc = setenv(fork_safe_var_name, "1", 1);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to set %s", fork_safe_var_name);
-			ret = ncclSystemError;
+	nic_dup_conns = ofi_nccl_nic_dup_conns();
+
+	if (platform_init) {
+		ret = platform_init();
+		if (ret != ncclSuccess)
 			goto exit;
-		}
 	}
 
 	/* Get list of NICs fi_info structures for a single provider */
 	ret = get_ofi_provider(prov_include, &ofi_info_list);
 	if (ret != 0 || ofi_info_list == NULL) {
+		ret = ncclSystemError;
+		goto exit;
+	}
+
+	/* Allow for multiple virtual nics per nic to increase
+	 * throughput for NICs that do not handle single QP situations
+	 * well. */
+	if (nic_dup_conns > 1 && !support_gdr) {
+		ofi_ndevices *= nic_dup_conns;
+
+		// Make the list cyclic to emulate having multiple devices
+		ofi_info_list->next = ofi_info_list;
+		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
+			      nic_dup_conns, ofi_ndevices);
+	} else if (nic_dup_conns > 0) {
+		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
 		ret = ncclSystemError;
 		goto exit;
 	}
@@ -1333,8 +1324,8 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		}
 	}
 
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s",
-		      ofi_info_list->fabric_attr->prov_name);
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
+		      ofi_info_list->fabric_attr->prov_name, ofi_ndevices);
 
 	/* Check if provider requires local memory registration */
 	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
@@ -1430,29 +1421,12 @@ ncclResult_t nccl_net_ofi_devices(int *ndev)
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
+static ncclResult_t get_device_pci_path(int dev, struct fid_nic *nic_info, char** path)
 {
 	ncclResult_t ret = ncclSuccess;
-	struct fi_info* prov = NULL;
-	struct fid_nic *nic_info = NULL;
 	struct fi_pci_attr *pci = NULL;
-	char device_path[] = "/sys/class/pci_bus/0000:00/../../0000:00:00.00";
-
-	prov = get_nic_info(dev, ofi_info_list);
-	if (prov == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Unable to find provider for dev %d", dev);
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	nic_info = (struct fid_nic *)prov->nic;
-	if (nic_info == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "No NIC info for dev %d", dev);
-		ret = ncclSystemError;
-		goto exit;
-	}
+	char *device_path = NULL;
+	int ret_int;
 
 	if (nic_info->bus_attr->bus_type != FI_BUS_PCI) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
@@ -1463,19 +1437,28 @@ static ncclResult_t nccl_net_ofi_pciPath(int dev, char** path)
 	}
 
 	pci = &nic_info->bus_attr->attr.pci;
-	sprintf(device_path,
-		"/sys/class/pci_bus/%04x:%02x/../../%04x:%02x:%02x.%01x",
-		pci->domain_id, pci->bus_id,
-		pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+	ret_int = asprintf(&device_path,
+			   "/sys/class/pci_bus/%04x:%02x/../../%04x:%02x:%02x.%01x",
+			   pci->domain_id, pci->bus_id,
+			   pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+	if (ret_int < 0) {
+		NCCL_OFI_WARN("pciPath: Allocation failure");
+		ret = ncclSystemError;
+		goto exit;
+	}
 
 	*path = realpath(device_path, NULL);
 	if (*path == NULL) {
 		NCCL_OFI_WARN("pciPath: Could not find real path of %s",
 			      device_path);
 		ret = ncclSystemError;
+		goto exit;
 	}
 
 exit:
+	if (device_path)
+		free(device_path);
+
 	return ret;
 }
 
@@ -1521,10 +1504,6 @@ static ncclResult_t set_nic_props_default(int dev, struct fi_info *nic_prov,
 	 * same source.
 	 */
 	props->maxRecvs = NCCL_OFI_MAX_RECVS;
-
-	ret = nccl_net_ofi_pciPath(dev, &props->pciPath);
-	if (ret != ncclSuccess)
-		props->pciPath = NULL;
 
 	props->ptrSupport = NCCL_PTR_HOST;
 	if (support_gdr) {
@@ -1582,6 +1561,68 @@ ncclResult_t nccl_net_ofi_getProperties(int dev, ncclNetProperties_t *props)
 
 	/* Speed reported in Mbps */
 	dev_props.speed = nic_info->link_attr->speed / (1e6);
+
+	ret = get_device_pci_path(dev, nic_info, &(dev_props.pciPath));
+	if (ret != ncclSuccess)
+		props->pciPath = NULL;
+
+	if (nic_dup_conns > 1) {
+#if HAVE_CUDA
+		int num_gpus_visible, active_cuda_device, gpus_per_conn;
+		size_t c;
+
+		if (cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting CUDA device count");
+			ret = ncclUnhandledCudaError;
+			goto error;
+		}
+
+		if (cudaGetDevice(&active_cuda_device) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting current CUDA device");
+			ret = ncclUnhandledCudaError;
+			goto error;
+		}
+
+		gpus_per_conn = num_gpus_visible / ofi_ndevices;
+		if (gpus_per_conn == 0) gpus_per_conn = 1;
+
+		/* The goal is to have gpus_per_conn gpus in the local
+		 * system think that any given virtual nic is the one
+		 * that they should use, and that it is different than
+		 * the other NICs in the system.  We do this by only
+		 * leaving a valid device id in pciPath when
+		 * active_cuda_device / gpus_per_comm is equal to the
+		 * NIC dev index we're currently querying.  For the
+		 * others, we provide a PCIPath that points at the PCI
+		 * Bus itself, which NCCL will interpret to be on a
+		 * different complex than the bus (assuming the NIC
+		 * BUS and GPU BUS are the same).
+		 *
+		 * There are a bunch of assumptions in this logic,
+		 * such that the physical NICs in the system don't
+		 * have PCI affinity with the GPUs.  Given that we've
+		 * already established that GPUDirect doesn't work,
+		 * this is probably ok; any affinity is lost by
+		 * bouncing through host buffers anyway.
+		 */
+		if (active_cuda_device / gpus_per_conn  != dev) {
+			for (c=strlen(dev_props.pciPath); c && dev_props.pciPath[c] != '/'; c--) {
+				dev_props.pciPath[c] = '\0';
+			}
+			dev_props.pciPath[c] = '\0';
+		}
+		NCCL_OFI_TRACE(NCCL_INIT, "Returning synthetic PCI path for device %d of  %s",
+			       dev, dev_props.pciPath);
+
+		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s-%x", nic_info->device_attr->name, dev);
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Adjusted dev %d device name to %s",
+			       dev, dev_props.name);
+#else
+		NCCL_OFI_WARN("NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  This should not happen.");
+		ret = ncclSystemError;
+		goto error;
+#endif
+	}
 
 	goto exit;
 

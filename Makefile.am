@@ -5,7 +5,7 @@
 #
 
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = src
+SUBDIRS = src topology
 if ENABLE_TESTS
 SUBDIRS += tests
 endif

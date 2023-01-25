@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2020 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2020-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_PARAM_H_
@@ -91,6 +91,13 @@ OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
  * By default, plugin issues flush commands.
  */
 OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
+
+/*
+ * Specify the number of network connections created by
+ * NIC_DUP_CONNS.  Each chosen Libfabric provider will be duplicated N
+ * times and exposed to NCCL as a unique endpoint.
+ */
+OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
 
 /*
  * When using GPUDirect use the cudaDeviceFlushGPUDirectRDMAWrites
