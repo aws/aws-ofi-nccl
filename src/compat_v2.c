@@ -1,11 +1,37 @@
 #include <nccl_ofi.h>
 
+ncclResult_t nccl_net_ofi_pciPath_v2(int dev, char** path)
+{
+	ncclNetProperties_t props_latest;
+	ncclResult_t ret = ncclSuccess;
+
+	ret = nccl_net_ofi_getProperties(dev, &props_latest);
+
+	if (ret == ncclSuccess)
+		*path = props_latest.pciPath;
+
+	return ret;
+}
+
+ncclResult_t nccl_net_ofi_ptrSupport_v2(int dev, int *supportedTypes)
+{
+	ncclNetProperties_t props_latest;
+	ncclResult_t ret = ncclSuccess;
+
+	ret = nccl_net_ofi_getProperties(dev, &props_latest);
+
+	if (ret == ncclSuccess)
+		*supportedTypes = props_latest.ptrSupport;
+
+	return ret;
+}
+
 const ncclNet_v2_t ncclNetPlugin_v2 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init_v3,
 	.devices = nccl_net_ofi_devices,
-	.pciPath = nccl_net_ofi_pciPath,
-	.ptrSupport = nccl_net_ofi_ptrSupport,
+	.pciPath = nccl_net_ofi_pciPath_v2,
+	.ptrSupport = nccl_net_ofi_ptrSupport_v2,
 	.listen = nccl_net_ofi_listen_v4,
 	.connect = nccl_net_ofi_connect_v4,
 	.accept = nccl_net_ofi_accept_v4,
