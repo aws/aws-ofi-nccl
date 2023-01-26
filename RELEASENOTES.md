@@ -7,6 +7,42 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+# v1.5.0 release notes
+
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.16.2](https://github.com/NVIDIA/nccl/releases/tag/v2.16.2-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to
+[Libfabric v1.16.1](https://github.com/ofiwg/libfabric/releases/tag/v1.16.1).
+
+New Features:
+* A single plugin build can now be used with multiple NCCL versions
+  simultaneously (from NCCL v2.4.8 forward).  As a result, the
+  `--with-nccl` argument is no longer necessary when building the
+  plugin.
+* Support for Tranium-based instance types.  Most users should
+  continue to use the plugin that is included with the Neuron software
+  stack, rather than building this plugin from scratch.
+* Add support for flushing using CUDA's
+  `cudaDeviceFlushGPUDirectRDMAWrites()` call rather than a read from
+  the NIC.  We find the default read from the NIC to perform better
+  for most situations.
+
+Bug Fixes:
+* Improve performance of small messages by removing redundant
+  initialization of internal structures and redundant correctness
+  checks throughout the codebase.
+* Improve performance of applications with multiple active proxy
+  threads.
+* Improved pacing of Libfabric request completion polling, which will
+  reduce stack memory utilization in many cases.
+* Fix some compiler warnings.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* efa
+
 # v1.4.0 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
