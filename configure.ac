@@ -120,6 +120,9 @@ AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
   AC_MSG_ERROR([unable to find libfabric])
 ])
 
+NCCL_OFI_PLATFORM="none"
+AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
+
 AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
@@ -129,4 +132,6 @@ LT_INIT([shared disable-static])
 AC_OUTPUT
 echo "*"
 echo "* AWS OFI NCCL plugin has been configured."
+echo "*"
+echo "* Platform-specific optimizations: ${NCCL_OFI_PLATFORM}"
 echo "*"
