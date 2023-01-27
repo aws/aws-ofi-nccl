@@ -22,13 +22,18 @@ AX_CHECK_ENABLE_DEBUG([no])
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
 
-LT_INIT([shared disable-static])
+LT_INIT([shared disable-static pic-only])
 
 
 # Checks for programs
 AC_PROG_CC
 AC_PROG_CC_STDC
 AC_C_INLINE
+
+dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
+dnl bunch of debugging flags, so there's no ordering requirement
+dnl between this and AC_PROG_CC.
+AS_IF([test "${ax_enable_debug}" = "no"], [CFLAGS="${CFLAGS} -O3"])
 
 
 # Checks for header files
@@ -56,92 +61,42 @@ AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlope
 
 
 # Checks for external packages
-AC_ARG_WITH([libfabric],
-            AC_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation]),
-            [AS_IF([test -d $withval/lib64], [ofi_libdir="lib64"], [ofi_libdir="lib"])
-             CFLAGS="-I$withval/include $CFLAGS"
-             LDFLAGS="-L$withval/$ofi_libdir $LDFLAGS"],
-            [])
+CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])
 
-AC_ARG_WITH([cuda],
-            AC_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation]),
-            [with_cuda=$withval],
-            [with_cuda=check])
+CHECK_PKG_LTTNG()
 
-AC_ARG_ENABLE(neuron, [AS_HELP_STRING([--enable-neuron], [Enable Neuron pointer support])], [], [enable_neuron=no])
+have_device_interface=no
+CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
+                        [AC_MSG_ERROR([Cannot enable both CUDA and neuron.])],
+                        [want_cuda=no])
+                  have_device_interface=neuon])
+CHECK_PKG_CUDA([have_device_interface=cuda])
 
-AC_ARG_WITH([mpi],
-            AC_HELP_STRING([--with-mpi=PATH], [Path to non-standard MPI installation]),
-            [AS_IF([test -d $withval/lib64], [mpi_libdir="lib64"], [mpi_libdir="lib"])
-             CPPFLAGS="-I$withval/include $CPPFLAGS"
-             LDFLAGS="-L$withval/$mpi_libdir $LDFLAGS"],
-            [])
+AS_IF([test "${have_device_interface}" = "no"],
+      [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
 
-AC_ARG_ENABLE([tests], [AS_HELP_STRING([--disable-tests],
-              [Disable build of test binaries])], [enable_tests],
-              [if test "x$enable_neuron" != xno; then enable_tests=no; fi])
-AM_CONDITIONAL([ENABLE_TESTS], [test "x$enable_tests" != "xno"])
+# do we want our tests?
+CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
-# Search first for mpi.h in provided directory, then on system.
-AS_IF([test "x$enable_tests" != "xno" ], AC_CHECK_HEADERS(mpi.h, [], AC_MSG_ERROR("mpi.h not found")))
+AC_ARG_ENABLE([tests],
+   [AS_HELP_STRING([--disable-tests], [Disable build of test binaries])])
+AS_IF([test "${enable_tests}" != "no" -a "${enable_neuron}" = "yes"],
+      [AC_MSG_WARN([Disabling tests due to Neuron configuration.])
+       enable_tests=no],
+      [test "${enable_tests}" = "yes" -a "${found_mpi}" = "no"],
+      [AC_MSG_ERROR([Tests requested, but MPI not found.  Aborting.])])
+AM_CONDITIONAL([ENABLE_TESTS], [test "$enable_tests" != "no"])
 
-AC_ARG_ENABLE(trace, [AS_HELP_STRING([--enable-trace], [Enable printing trace messages])], [], [enable_trace=no])
+# Enable output at the TRACE level for unit tests.
+AC_ARG_ENABLE([trace],
+   [AS_HELP_STRING([--enable-trace], [Enable printing trace messages in test programs])])
 AC_MSG_CHECKING([whether to enable trace messages])
-AS_IF([test "x${enable_trace}" = "xyes" ],
+AS_IF([test "${enable_trace}" = "yes" ],
       [trace=1
        AC_MSG_RESULT(yes)],
-       [trace=0
+      [trace=0
        AC_MSG_RESULT(no)])
-AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 if aws-ofi-nccl was configured with --enable-trace, 0 otherwise])
-
-dnl Check for LTTNG tracing capability
-AC_ARG_WITH([lttng],
-    AS_HELP_STRING([--with-lttng=DIR],
-           [Enable tracing capability with LTTNG @<:@default=no@:>@]))
-AS_IF([test -n "$with_lttng"],
-      [
-       AC_CHECK_LIB(lttng-ust,lttng_ust_probe_register, [], AC_MSG_ERROR("lttng-ust not found"))
-       AS_IF([test -d $withval/lib64], [lttng_libdir="lib64"], [lttng_libdir="lib"])
-       LDFLAGS="-L$withval/$lttng_libdir $LDFLAGS"
-       AC_DEFINE(HAVE_LTTNG, 1, [Build with LTTNG tracing])
-      ],
-      [
-       AC_DEFINE(HAVE_LTTNG, 0, [Build without LTTNG tracing])
-      ]
-)
-
-AS_IF([test "x$with_cuda" != xno],
-  [
-    AS_IF([test "x$with_cuda" != xcheck], [cuda_path=$with_cuda], [cuda_path=/usr/local/cuda])
-    AC_MSG_CHECKING([CUDA library path])
-    AS_IF([test -d $cuda_path/lib64], [cuda_libdir="lib64"], [cuda_libdir="lib"])
-    CFLAGS="-I$cuda_path/include $CFLAGS"
-    LDFLAGS="-L$cuda_path/$cuda_libdir $LDFLAGS"
-    AC_CHECK_HEADERS([cuda_runtime.h],
-      [AC_DEFINE([HAVE_CUDA], [1], [Define if CUDA is available])],
-      [AS_IF([test "x$with_cuda" != xcheck],
-        [AC_MSG_ERROR([unable to find cuda_runtime.h])],
-        [with_cuda=no
-         AC_DEFINE([HAVE_CUDA], [0], [Define if CUDA is available])])])
-  ],
-  [AC_DEFINE([HAVE_CUDA], [0], [Define if CUDA is available])])
-
-AM_CONDITIONAL(HAVE_CUDA, test "x$with_cuda" != xno)
-
-AS_IF([test "x$enable_neuron" != xno],
-    AS_IF([test "x$with_cuda" != xno], [AC_MSG_ERROR([Cuda (--with_cuda) and Neuron devices (--enable_neuron) cannot be defined at same time])])
-    [AC_DEFINE([HAVE_NEURON], [1], [Define if Neuron support is available])],
-    [AC_DEFINE([HAVE_NEURON], [0], [Define if Neuron support is available])])
-
-AM_CONDITIONAL(ENABLE_NEURON, test "x$enable_neuron" != xno)
-
-AC_CHECK_HEADERS([rdma/fabric.h], [],[
-	AC_MSG_ERROR([unable to find required headers])
-])
-
-AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
-  AC_MSG_ERROR([unable to find libfabric])
-])
+AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output should include TRACE level])
 
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
