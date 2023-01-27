@@ -1,34 +1,57 @@
+# -*- Autoconf -*-
 #
-# Copyright (c) 2018-2019, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
 
-AC_PREREQ([2.69])
+# Initialization
 AC_INIT([aws-ofi-nccl], [1.5.0aws], [rashika@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
+AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIRS([m4])
-AM_SILENT_RULES([yes])
-AX_CHECK_ENABLE_DEBUG([no])
 
-# Checks for programs.
-AC_PROG_CC
-AC_PROG_CC_STDC
-AC_PROG_MAKE_SET
+AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
+AM_SILENT_RULES([yes])
+
+dnl AX_CHECK_ENABLE_DEBUG must be called before AC_PROG_CC or
+dnl AM_PROG_AR
+AX_CHECK_ENABLE_DEBUG([no])
+dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
 
-# Checks for typedefs, structures, and compiler characteristics.
-AC_CHECK_HEADER_STDBOOL
+LT_INIT([shared disable-static])
+
+
+# Checks for programs
+AC_PROG_CC
+AC_PROG_CC_STDC
 AC_C_INLINE
+
+
+# Checks for header files
+AC_CHECK_HEADER_STDBOOL
+
+AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h], [],[
+	AC_MSG_ERROR([unable to find required headers])
+])
+
+
+# Checks for types
 AC_TYPE_SIZE_T
 AC_TYPE_SSIZE_T
 AC_TYPE_UINT64_T
+
+
+# Checks for library functions
 AC_FUNC_MALLOC
 AC_CHECK_FUNCS([memset realpath])
+AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
 
-# Checks for libraries.
+
+# Checks for external packages
 AC_ARG_WITH([libfabric],
             AC_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation]),
             [AS_IF([test -d $withval/lib64], [ofi_libdir="lib64"], [ofi_libdir="lib"])
@@ -83,10 +106,6 @@ AS_IF([test -n "$with_lttng"],
       ]
 )
 
-# Checks for header files.
-AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h rdma/fabric.h], [],[
-	AC_MSG_ERROR([unable to find required headers])
-])
 
 AS_IF([test "x$with_cuda" != xno],
   [
@@ -113,9 +132,10 @@ AS_IF([test "x$enable_neuron" != xno],
 
 AM_CONDITIONAL(ENABLE_NEURON, test "x$enable_neuron" != xno)
 
-AC_SEARCH_LIBS([dlopen], [dl], [], [
-  AC_MSG_ERROR([unable to find libdl])
+AC_CHECK_HEADERS([rdma/fabric.h], [],[
+	AC_MSG_ERROR([unable to find required headers])
 ])
+
 AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
   AC_MSG_ERROR([unable to find libfabric])
 ])
@@ -123,12 +143,10 @@ AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
 NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
 
-AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects])
 AC_CONFIG_FILES([Makefile
                  src/Makefile
                  tests/Makefile
                  topology/Makefile])
-LT_INIT([shared disable-static])
 AC_OUTPUT
 echo "*"
 echo "* AWS OFI NCCL plugin has been configured."
