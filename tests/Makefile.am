@@ -4,9 +4,10 @@
 # See LICENSE.txt for license information
 #
 
-AM_CPPFLAGS = -I$(top_srcdir)/include
-LDADD = $(top_builddir)/src/libnccl-net.la -lmpi -lcudart
-CC ?= mpicc
+AM_CPPFLAGS = -I$(top_srcdir)/include $(MPI_CPPFLAGS)
+AM_LDFLAGS = $(MPI_LDFLAGS)
+LDADD = $(top_builddir)/src/libnccl-net.la $(MPI_LIBS) -lcudart
+CC = $(MPICC)
 
 if ENABLE_TESTS
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
