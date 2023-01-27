@@ -1,9 +1,18 @@
+*~
+
 src/*.o
+src/*.lo
+src/*.la
 tests/*.o
 !tests/*.c
 !tests/*.h
 libnccl-net.so
 tags
+config.h
+
+tests/nccl_connection
+tests/nccl_message_transfer
+tests/ring
 
 # http://www.gnu.org/software/automake
 .deps/
@@ -27,6 +36,7 @@ autom4te.cache
 /config.log
 /config.status
 /config.sub
+/config.cache
 /configure
 /configure.scan
 /depcomp
