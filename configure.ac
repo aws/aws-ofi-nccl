@@ -32,11 +32,14 @@ AC_C_INLINE
 
 
 # Checks for header files
-AC_CHECK_HEADER_STDBOOL
+AC_HEADER_STDBOOL
+AS_IF([test "${ac_cv_header_stdbool_h}" = "no"],
+      [AC_MSG_ERROR([NCCL OFI Plugin requires stdbool.h])])
 
-AC_CHECK_HEADERS([limits.h stdlib.h string.h unistd.h], [],[
-	AC_MSG_ERROR([unable to find required headers])
-])
+AC_CHECK_HEADER([limits.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires limits.h])])
+AC_CHECK_HEADER([stdlib.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires stdlib.h])])
+AC_CHECK_HEADER([string.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires string.h])])
+AC_CHECK_HEADER([unistd.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires unistd.h])])
 
 
 # Checks for types
@@ -47,7 +50,8 @@ AC_TYPE_UINT64_T
 
 # Checks for library functions
 AC_FUNC_MALLOC
-AC_CHECK_FUNCS([memset realpath])
+AC_CHECK_FUNC([memset], [], [AC_MSG_ERROR([NCCL OFI Plugin requires memset function.])])
+AC_CHECK_FUNC([realpath], [], [AC_MSG_ERROR([NCCL OFI Plugin requires realpath function.])])
 AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
 
 
@@ -105,7 +109,6 @@ AS_IF([test -n "$with_lttng"],
        AC_DEFINE(HAVE_LTTNG, 0, [Build without LTTNG tracing])
       ]
 )
-
 
 AS_IF([test "x$with_cuda" != xno],
   [
