@@ -5,9 +5,6 @@
 #
 
 AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
-if HAVE_CUDA
-  AM_LDFLAGS = -lcudart
-endif HAVE_CUDA
 
 sources = \
 	nccl_ofi_net.c \
