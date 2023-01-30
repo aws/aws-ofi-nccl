@@ -1,20 +1,16 @@
 #
-# Copyright (c) 2018-2019, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
 
-AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
-AM_CFLAGS += -I$(top_srcdir)/include
-AM_LDFLAGS = -lmpi -lcudart
-if ENABLE_NEURON
-    LDADD = ../src/libnccom-net.la
-else
-    LDADD = ../src/libnccl-net.la
-endif
+AM_CPPFLAGS = -I$(top_srcdir)/include
+LDADD = $(top_builddir)/src/libnccl-net.la -lmpi -lcudart
 CC ?= mpicc
 
+if ENABLE_TESTS
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
-nccl_connection_SOURCES = nccl_connection.c
-nccl_message_transfer_SOURCES = nccl_message_transfer.c
-ring_SOURCES = ring.c
+endif
+nccl_connection_SOURCES = test-common.h nccl_connection.c
+nccl_message_transfer_SOURCES = test-common.h nccl_message_transfer.c
+ring_SOURCES = test-common.h ring.c
