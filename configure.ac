@@ -143,10 +143,19 @@ AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [
   AC_MSG_ERROR([unable to find libfabric])
 ])
 
+AC_ARG_ENABLE([picky-compiler],
+   [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
+AS_IF([test "${enable_picky_compiler}" != "no"],
+      [picky_compiler_flags="-Wall"
+       AC_MSG_NOTICE([Adding ${picky_compiler_flags} to CFLAGS.])
+       CFLAGS="${CFLAGS} ${picky_compiler_flags}"
+       AS_UNSET([picky_compiler_flags])])
+
 NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
 
 AC_CONFIG_FILES([Makefile
+                 include/Makefile
                  src/Makefile
                  tests/Makefile
                  topology/Makefile])
