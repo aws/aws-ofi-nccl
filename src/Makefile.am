@@ -4,7 +4,6 @@
 # See LICENSE.txt for license information
 #
 
-AM_CFLAGS = -g -O3 -Wall -fPIC -Wno-sign-compare
 AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
 if HAVE_CUDA
   AM_LDFLAGS = -lcudart
