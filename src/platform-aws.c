@@ -223,8 +223,15 @@ ncclResult_t platform_init(void)
 		}
 	}
 
-	if (platform_data && platform_data->topology) {
-		/* Update topology */
+	/*
+	 * Update topology if platform topology is available and 
+	 * environment variable NCCL_TOPO_FILE is not set.
+	 */
+	if (getenv("NCCL_TOPO_FILE")) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Running on %s platform, NCCL_TOPO_FILE environment variable is already set to %s",
+			      platform_type, getenv("NCCL_TOPO_FILE"));
+	} else if (platform_data && platform_data->topology) {
 		char topology_path[PATH_MAX];
 
 		rc = snprintf(topology_path, sizeof(topology_path), "%s/%s",
