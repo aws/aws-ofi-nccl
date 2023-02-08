@@ -15,6 +15,8 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
   AC_ARG_WITH([libfabric],
      [AC_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation])])
 
+  AS_IF([test -n "${with_libfabric}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-libfabric=${with_libfabric}"])
+
   AS_IF([test -z "${with_libfabric}" -o "${with_libfabric}" = "yes"],
         [],
         [test "${with_libfabric}" = "no"],

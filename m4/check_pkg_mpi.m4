@@ -15,6 +15,8 @@ AC_DEFUN([CHECK_PKG_MPI], [
   AC_ARG_WITH([mpi],
      [AC_HELP_STRING([--with-mpi=PATH], [Path to non-standard MPI installation])])
 
+  AS_IF([test -n "${with_mpi}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-mpi=${with_mpi}"])
+
   AS_IF([test -z "${with_mpi}" -o "${with_mpi}" = "yes"],
         [],
         [test "${with_mpi}" = "no"],
