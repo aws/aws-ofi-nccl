@@ -24,6 +24,7 @@ AM_PROG_AR
 
 LT_INIT([shared disable-static pic-only])
 
+NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 
 # Checks for programs
 AC_PROG_CC
@@ -108,6 +109,8 @@ AS_IF([test "${enable_picky_compiler}" != "no"],
 
 NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
+
+AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
 AC_CONFIG_FILES([Makefile
                  include/Makefile

@@ -15,6 +15,8 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AC_ARG_WITH([cuda],
      [AC_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation])])
 
+  AS_IF([test -n "${with_cuda}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-cuda=${with_cuda}"])
+
   AS_IF([test -z "${with_cuda}" -o "${with_cuda}" = "yes"],
         [],
         [test "${with_cuda}" = "no"],
