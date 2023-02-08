@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef STACK_H_
@@ -17,7 +17,7 @@ extern "C" {
 /*
  * @brief	Allocate stack of free indexes
  */
-static stack_t *allocate_stack(size_t num_elems)
+static inline stack_t *allocate_stack(size_t num_elems)
 {
 	stack_t *stack = NULL;
 
@@ -38,7 +38,7 @@ exit:
  * @brief	Free given stack
  */
 
-void free_stack(stack_t *stack)
+inline void free_stack(stack_t *stack)
 {
 	if (!stack)
 		return;
