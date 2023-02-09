@@ -7,6 +7,50 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+For releases before v1.6.0, there were generally two slightly
+different releases for any version, an AWS-specific release and
+a general release.  With v1.6.0, we have unified the code and made the
+AWS-specific parts a compile-time option.  When a feature (or entire
+release) was only available in one of the two variants, we note that
+in the release notes.
+
+# v1.5.0 release notes
+
+There was no general 1.5.0 release; it was limited to an AWS release.
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.16.2](https://github.com/NVIDIA/nccl/releases/tag/v2.16.2-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to
+[Libfabric v1.16.1](https://github.com/ofiwg/libfabric/releases/tag/v1.16.1).
+
+New Features:
+* A single plugin build can now be used with multiple NCCL versions
+  simultaneously (from NCCL v2.4.8 forward).  As a result, the
+  `--with-nccl` argument is no longer necessary when building the
+  plugin.
+* Support for Tranium-based instance types.  Most users should
+  continue to use the plugin that is included with the Neuron software
+  stack, rather than building this plugin from scratch.
+* Add support for flushing using CUDA's
+  `cudaDeviceFlushGPUDirectRDMAWrites()` call rather than a read from
+  the NIC.  We find the default read from the NIC to perform better
+  for most situations.
+
+Bug Fixes:
+* Improve performance of small messages by removing redundant
+  initialization of internal structures and redundant correctness
+  checks throughout the codebase.
+* Improve performance of applications with multiple active proxy
+  threads.
+* Improved pacing of Libfabric request completion polling, which will
+  reduce stack memory utilization in many cases.
+* Fix some compiler warnings.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* efa
+
 # v1.4.0 release notes
 
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
@@ -17,12 +61,14 @@ It was tested with Libfabric versions up to [Libfabric v1.15.1](https://github.c
 New Features:
 * Allow users to disable building the unit tests.
 * Allow enable_debug flag to configure
+* Fix EFA_NIC_DUP when only a single GPU is visible (AWS release only).
 
 Bug Fixes:
 * Fix compilation on CentOS 7.
 * Update tag generation for control messages.
 * Check for required MPI headers to build unit tests.
 * Fix the active connection issue for non-blocking accepts (impacts NCCL versions 2.12 and above).
+* Fix EFA_NIC_DUP when only a single GPU is visible (AWS release only).
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -40,10 +86,14 @@ It was tested with Libfabric versions up to [Libfabric v1.14.0](https://github.c
 
 New Features:
 * Log error-ed request entry.
+* Add P4De topology (AWS release only).
 
 Bug Fixes:
 * Retry `fi_cq_readerr` until error-ed request entry is available.
 * Fix crash for providers supporting multi-rail devices.
+* Retry `fi_cq_readerr` until error-ed request entry is available and
+  log it (AWS release only).
+
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -133,6 +183,9 @@ versions up to [Libfabric v1.12.1](https://github.com/ofiwg/libfabric/releases/t
 
 Ubuntu 16.04 has reached end-of-life and is no longer supported starting with this release.
 
+Bug Fixes:
+* Fix bootstrap crash with NCCL 2.9.6 on P4D instances (AWS release only).
+
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
 bundled in the source code:
@@ -153,6 +206,26 @@ New Features:
 
 Bug Fixes:
 * Handle `flush` disable configuration
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code:
+* tcp;ofi_rxm
+* sockets
+* efa
+
+# v1.1.1 release notes
+
+There was no general 1.1.1 release; it was limited to an AWS release.
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)and supports [NCCL v2.7.8](https://gitub.com/NVIDIA/nccl/releases/tag/v2.7.8-1)
+while maintaining backward compatibility with older NCCL versions (upto
+[NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+
+It introduces the following new features and bug fixes.
+
+New Features:
+* Injects a static topology into NCCL for P4d hardware
+* Use EFA provider supplied speed for EFA hardware.
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
