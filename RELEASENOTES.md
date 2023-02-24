@@ -7,8 +7,16 @@
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
+For releases before v1.6.0, there were generally two slightly
+different releases for any version, an AWS-specific release and
+a general release.  With v1.6.0, we have unified the code and made the
+AWS-specific parts a compile-time option.  When a feature (or entire
+release) was only available in one of the two variants, we note that
+in the release notes.
+
 # v1.5.0 release notes
 
+There was no general 1.5.0 release; it was limited to an AWS release.
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
 or later and supports [NCCL v2.16.2](https://github.com/NVIDIA/nccl/releases/tag/v2.16.2-1) while
 maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
@@ -53,14 +61,14 @@ It was tested with Libfabric versions up to [Libfabric v1.15.1](https://github.c
 New Features:
 * Allow users to disable building the unit tests.
 * Allow enable_debug flag to configure
-* Allow configuring number of EFA connections for non-GDR platforms.
+* Fix EFA_NIC_DUP when only a single GPU is visible (AWS release only).
 
 Bug Fixes:
 * Fix compilation on CentOS 7.
 * Update tag generation for control messages.
 * Check for required MPI headers to build unit tests.
 * Fix the active connection issue for non-blocking accepts (impacts NCCL versions 2.12 and above).
-* Fix EFA_NIC_DUP when only a single GPU is visible
+* Fix EFA_NIC_DUP when only a single GPU is visible (AWS release only).
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -77,10 +85,15 @@ maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8]
 It was tested with Libfabric versions up to [Libfabric v1.14.0](https://github.com/ofiwg/libfabric/releases/tag/v1.14.0).
 
 New Features:
-* Add P4De topology
+* Log error-ed request entry.
+* Add P4De topology (AWS release only).
 
 Bug Fixes:
-* Retry `fi_cq_readerr` until error-ed request entry is available and log it.
+* Retry `fi_cq_readerr` until error-ed request entry is available.
+* Fix crash for providers supporting multi-rail devices.
+* Retry `fi_cq_readerr` until error-ed request entry is available and
+  log it (AWS release only).
+
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -88,6 +101,7 @@ bundled in the source code:
 * tcp;ofi_rxm
 * sockets
 * efa
+* psm3
 
 # v1.2.0 release notes
 
@@ -130,6 +144,7 @@ New Features:
 Bug Fixes:
 * Ensure that the buffer used for flush is page aligned and allocated with `mmap` instead of `malloc`.
   This change is needed to correctly support `fork()` with `MADV_DONTFORK` (#77).
+* Fix crash when used with a GDR-capable provider that does not require memory registration (#81).
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -168,10 +183,8 @@ versions up to [Libfabric v1.12.1](https://github.com/ofiwg/libfabric/releases/t
 
 Ubuntu 16.04 has reached end-of-life and is no longer supported starting with this release.
 
-This release introduces the following bug fixes:
-
 Bug Fixes:
-* Fix bootstrap crash with NCCL 2.9.6 on P4D instances
+* Fix bootstrap crash with NCCL 2.9.6 on P4D instances (AWS release only).
 
 Testing:
 The plugin has been tested with following libfabric providers using unit tests
@@ -202,7 +215,9 @@ bundled in the source code:
 * efa
 
 # v1.1.1 release notes
-This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)and supports [NCCL v2.7.8](https://github.com/NVIDIA/nccl/releases/tag/v2.7.8-1)
+
+There was no general 1.1.1 release; it was limited to an AWS release.
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)and supports [NCCL v2.7.8](https://gitub.com/NVIDIA/nccl/releases/tag/v2.7.8-1)
 while maintaining backward compatibility with older NCCL versions (upto
 [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
 
