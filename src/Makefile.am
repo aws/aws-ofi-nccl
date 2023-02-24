@@ -10,6 +10,7 @@ sources = \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
 	nccl_ofi_topo.c \
+	nccl_ofi_msgbuff.c \
 	nccl_ofi_freelist.c \
 	tracepoint.c
 
