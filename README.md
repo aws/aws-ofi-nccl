@@ -1,5 +1,8 @@
-*NOTE: This is an experimental branch specifically targeted for testing on AWS.
-Therefore, This branch is not supported.*
+*NOTE: Historically, the aws branch has contained AWS-specific
+ features.  As of early 2023, those features have been merged into the
+ master branch.  This branch will remain for historical
+ purposes, but we recommend customers switch to either a released
+ version or the master branch.
 
 # AWS OFI NCCL
 
