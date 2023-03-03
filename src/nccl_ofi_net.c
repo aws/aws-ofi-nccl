@@ -399,7 +399,7 @@ exit:
 	return ret;
 }
 
-static int in_list(char *item, char *list)
+static int in_list(const char *item, const char *list)
 {
 	int ret = 0;
 	char *token = NULL;
@@ -438,7 +438,7 @@ exit:
 static bool match_prov_info(char *name, uint32_t addr_format,
 			    uint64_t mem_tag_format, uint64_t expected_mem_tag_format)
 {
-	char *tcp_if_exclude_list = ofi_nccl_exclude_tcp_if();
+	const char *tcp_if_exclude_list = ofi_nccl_exclude_tcp_if();
 
 	if (in_list(name, tcp_if_exclude_list)) {
 		return true;
