@@ -161,13 +161,8 @@ ncclResult_t platform_init(void)
 	 * behaviors we want).
 	 */
 	if (!getenv("FI_PROVIDER")) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting FI_PROVIDER to \"efa\"");
-		rc = setenv("FI_PROVIDER", "efa", 0);
-		if (rc) {
-			NCCL_OFI_WARN("Error setting FI_PROVIDER environment variable: %d", rc);
-			ret = ncclSystemError;
-			goto exit;
-		}
+		NCCL_OFI_INFO(NCCL_INIT, "Setting provider_filter to efa");
+		provider_filter = "efa";
 	}
 
 	/* Use the simple protocol whenever we're not sure the
