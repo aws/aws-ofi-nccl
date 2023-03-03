@@ -42,12 +42,6 @@ struct ec2_platform_data {
 		.default_dup_conns = 4,
 		.force_proto_simple = true,
 	},
-	[3] = {
-		.name = "trn1.32xlarge",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.force_proto_simple = false,
-	},
 };
 
 /*
@@ -165,10 +159,14 @@ ncclResult_t platform_init(void)
 		provider_filter = "efa";
 	}
 
+#if HAVE_CUDA
 	/* Use the simple protocol whenever we're not sure the
 	 * LL/LL128 protocols are safe.  In the future, we may want to
 	 * revisit this and only set simple in cases where we know
 	 * that it is not safe (P4d/P4e).
+	 *
+	 * This only has impact on the Nvidia CUDA case, as the
+	 * Tranium code does not use the LL/LL128 protocols.
 	 */
 	if (!getenv("NCCL_PROTO") && (!platform_data || platform_data->force_proto_simple)) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
@@ -179,7 +177,9 @@ ncclResult_t platform_init(void)
 			goto exit;
 		}
 	}
+#endif
 
+#if HAVE_CUDA
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
 	 * fork-safe support in legacy versions of the rdma-core library.
@@ -202,6 +202,10 @@ ncclResult_t platform_init(void)
 	 * To prevent NCCL based applications from getting aborted when using
 	 * fork(), the plugin explicitly enables FI_EFA_FORK_SAFE environment
 	 * variable, even in legacy environments where the overhead is high.
+	 *
+	 * The Neuron team has asked us to skip trying to set this
+	 * environment variable on Neuron platforms, so we only do
+	 * this for Nvidia platforms.
 	 */
 	libversion = fi_version();
 	const char * fork_safe_var_name =
@@ -217,6 +221,7 @@ ncclResult_t platform_init(void)
 			goto exit;
 		}
 	}
+#endif
 
 	/*
 	 * Update topology if platform topology is available and 
