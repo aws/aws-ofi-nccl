@@ -78,6 +78,8 @@ ncclDebugLogger_t ofi_log_function = NULL;
  */
 int max_requests = NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS;
 
+const char *provider_filter = NULL;
+
 /* Table indicating allocation state of MR keys */
 static size_t num_mr_keys = 0;
 static bool *mr_keys = NULL;
@@ -399,7 +401,7 @@ exit:
 	return ret;
 }
 
-static int in_list(char *item, char *list)
+static int in_list(const char *item, const char *list)
 {
 	int ret = 0;
 	char *token = NULL;
@@ -768,77 +770,78 @@ exit:
 
 /*
  * @brief	Calls fi_getinfo() to find a list of usable providers for RDM
- *		tagged endpoints.
+ *		tagged endpoints.  The code will return all providers
+ *		with the same name as the first provider in the list
+ *		returned by fi_getinfo() that satisfies any filters
+ *		applied by prov_include.
  *
- * @param	prov_include_list
+ * @param	prov_include
  *		Contains a list of preferred provider names.
  *
  * @return	A list of fi_info structures for a single provider.
  * @return	0 on success
  *		non-zero on error
  */
-static int get_ofi_provider(char *prov_include, struct fi_info **prov_info_list)
+static int get_ofi_provider(const char *prov_include, struct fi_info **prov_info_list)
 {
-	int idx = 0, prov_idx = 0, i, rc = 0;
-	struct fi_info *providers = NULL, *prov = NULL;
-	struct fi_info *prov_info_vec[MAX_PROV_INFO] = {NULL};
-	int info_count[MAX_PROV_INFO] = {0};
-	char *prov_name;
+	int rc = 0;
+	struct fi_info *providers = NULL, *prov = NULL, *last_prov;
+	char *selected_prov_name = NULL;
 
 	rc = find_ofi_provider(&providers);
 	if (rc != 0)
 		goto error;
 
-	/*
-	 * Create an array of providers where each index represents
-	 * a info structure list for a single provider name.
+	if (!providers)
+		goto error;
+
+	/* Pick a provider name to use.  If there is a prov_include
+	 * provided, use the first provider which matches the list,
+	 * otherwise use the first provider in the list.
 	 */
-	prov_info_vec[idx] = providers;
-
-	prov = providers;
-	prov_name = prov->fabric_attr->prov_name;
-	while (prov != NULL && prov->next != NULL) {
-
-		/* Increment number of devices found for the given provider */
-		info_count[idx]++;
-
-		char *name = prov->next->fabric_attr->prov_name;
-		if (strcmp(prov_name, name) != 0) {
-			prov_name = name;
-			prov_info_vec[++idx] = prov->next;
-			prov->next = NULL;
-			prov = prov_info_vec[idx];
-		}
-		else {
-			prov = prov->next;
-		}
-	}
-
-	/* To account for the last prov object */
-	if (prov != NULL)
-		info_count[idx]++;
-
-	if (prov_include == NULL) {
-		*prov_info_list = prov_info_vec[0];
-		ofi_ndevices = info_count[0];
-	}
-	else {
-		for (prov_idx = 0; prov_idx <= idx; prov_idx++) {
-			prov_name = prov_info_vec[prov_idx]->fabric_attr->prov_name;
-			if (in_list(prov_name, prov_include)) {
-				*prov_info_list = prov_info_vec[prov_idx];
-				ofi_ndevices = info_count[prov_idx];
+	if (prov_include) {
+		prov = providers;
+		while (prov) {
+			if (in_list(prov->fabric_attr->prov_name, prov_include)) {
+				selected_prov_name = prov->fabric_attr->prov_name;
 				break;
 			}
+			prov = prov->next;
 		}
+	} else {
+		selected_prov_name = providers->fabric_attr->prov_name;
+	}
+	if (!selected_prov_name)
+		goto error;
+
+	/* Now remove all providers in the providers list that do not
+	 * match the selected name, and count the ones that do.
+	 */
+	prov = providers;
+	providers = NULL;
+	last_prov = NULL;
+	ofi_ndevices = 0;
+	while (prov) {
+		struct fi_info *prov_next = prov->next;
+		prov->next = NULL;
+
+		if (strcmp(selected_prov_name, prov->fabric_attr->prov_name) != 0) {
+			fi_freeinfo(prov);
+		} else {
+			if (!providers) {
+				providers = last_prov = prov;
+			} else {
+				last_prov->next = prov;
+				last_prov = prov;
+			}
+			ofi_ndevices++;
+		}
+		prov = prov_next;
 	}
 
-	/* Free unused fi_info objects */
-	for (i = 0; i <= idx; i++) {
-		if ((i != prov_idx) && prov_info_vec[i]) {
-			fi_freeinfo(prov_info_vec[i]);
-		}
-	}
+	*prov_info_list = providers;
+	if (ofi_ndevices == 0)
+		goto error;
 
 	return ncclSuccess;
 
@@ -1265,7 +1268,6 @@ static inline ncclResult_t nccl_ofi_progress(nccl_ofi_t *nccl_ofi_comp)
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret = ncclSuccess;
-	char *prov_include = NULL;
 
 	ofi_log_function = logFunction;
 
@@ -1292,7 +1294,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 	/* Get list of NICs fi_info structures for a single provider */
-	ret = get_ofi_provider(prov_include, &ofi_info_list);
+	ret = get_ofi_provider(provider_filter, &ofi_info_list);
 	if (ret != 0 || ofi_info_list == NULL) {
 		ret = ncclSystemError;
 		goto exit;
