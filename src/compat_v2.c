@@ -1,4 +1,10 @@
-#include <nccl_ofi.h>
+/*
+ * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ */
+
+#include "config.h"
+
+#include "nccl_ofi.h"
 
 ncclResult_t nccl_net_ofi_pciPath_v2(int dev, char** path)
 {

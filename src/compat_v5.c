@@ -2,7 +2,9 @@
  * Copyright (c) 2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include <nccl_ofi.h>
+#include "config.h"
+
+#include "nccl_ofi.h"
 
 const ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "AWS Libfabric",

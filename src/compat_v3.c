@@ -1,4 +1,10 @@
-#include <nccl_ofi.h>
+/*
+ * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ */
+
+#include "config.h"
+
+#include "nccl_ofi.h"
 
 // To handle the difference in maximum number of requests that
 // can be sent over the network

@@ -50,8 +50,9 @@ typedef enum {
 typedef void (*ncclDebugLogger_t)(ncclDebugLogLevel level, unsigned long flags, const char *file, int line, const char *fmt, ...);
 
 #include "net_v6.h"
-#include "net_v5.h"
 #include "net_v4.h"
+#include "net-ofi/net_ofi_v6.h"
+#include "net-ofi/net_ofi_v4.h"
 
 typedef ncclNetProperties_v6_t ncclNetProperties_t;
 

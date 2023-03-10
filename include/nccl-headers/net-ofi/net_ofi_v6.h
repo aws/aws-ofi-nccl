@@ -17,7 +17,12 @@ ncclResult_t nccl_net_ofi_getProperties(int dev, ncclNetProperties_v6_t *props);
 ncclResult_t nccl_net_ofi_listen(int dev, void *handle, void **listenComm);
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle, void** sendComm);
 ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm);
-ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type, void **mhandle);
+#if HAVE_NEURON
+ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
+#elif HAVE_CUDA
+ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
+#endif
+				void **mhandle);
 ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size, int type, uint64_t offset, int fd, void** mhandle);
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle);
 ncclResult_t nccl_net_ofi_isend(void *sendComm, void* data, int size, int tag, void *mhandle, void** request);
