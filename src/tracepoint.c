@@ -3,7 +3,7 @@
  */
 
 #include <config.h>
-#if HAVE_LTTNG == 1
+#if HAVE_LIBLTTNG_UST == 1
 
 #define TRACEPOINT_CREATE_PROBES
 #define LTTNG_UST_TRACEPOINT_DEFINE
@@ -17,4 +17,4 @@
 
 #include <tracepoint.h>
 
-#endif // HAVE_LTTNG == 1
+#endif // HAVE_LIBLTTNG_UST == 1
