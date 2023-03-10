@@ -9,9 +9,13 @@
 extern "C" {
 #endif
 
-#include <nccl_ofi_log.h>
 #include <assert.h>
+#include <errno.h>
+#include <pthread.h>
 #include <string.h>
+#include <stdbool.h>
+
+#include "nccl_ofi_log.h"
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \

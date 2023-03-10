@@ -2,7 +2,9 @@
  * Copyright (c) 2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include <nccl_ofi.h>
+#include "config.h"
+
+#include "nccl_ofi.h"
 
 ncclResult_t nccl_net_ofi_getProperties_v4(int dev, ncclNetProperties_v4_t* props)
 {

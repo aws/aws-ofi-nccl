@@ -43,7 +43,11 @@ typedef struct {
 	ncclResult_t (*accept)(void* listenComm, void** recvComm);
 	// Register/Deregister memory. Comm can be either a sendComm or a recvComm.
 	// Type is either NCCL_PTR_HOST or NCCL_PTR_CUDA.
+#if HAVE_NEURON
+	ncclResult_t (*regMr)(void* comm, void* data, size_t size, int type, void** mhandle);
+#elif HAVE_CUDA
 	ncclResult_t (*regMr)(void* comm, void* data, int size, int type, void** mhandle);
+#endif
 	ncclResult_t (*deregMr)(void* comm, void* mhandle);
 	// Asynchronous send to a peer.
 	// May return request == NULL if the call cannot be performed (or would block)

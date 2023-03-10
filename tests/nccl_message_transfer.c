@@ -7,6 +7,8 @@
  * data transfer APIs
  */
 
+#include "config.h"
+
 #include "test-common.h"
 
 int main(int argc, char* argv[])

@@ -1,9 +1,10 @@
-#include "config.h"
-
 /*
  * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
+
+#include "config.h"
+
 #define _GNU_SOURCE
 #include <limits.h>
 #include <stdio.h>
@@ -12,12 +13,13 @@
 #include <unistd.h>
 #include <inttypes.h>
 #include <sys/mman.h>
-#include <stack.h>
-#include <nccl_ofi_param.h>
 #include <ctype.h>
 #if HAVE_CUDA
 #include <cuda_runtime.h>
 #endif
+
+#include "stack.h"
+#include "nccl_ofi_param.h"
 #include "tracepoint.h"
 
 #define EFA_PROVIDER_NAME "efa"
