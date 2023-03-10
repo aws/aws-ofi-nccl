@@ -31,7 +31,7 @@
  */
 
 #include "config.h"
-#if HAVE_LTTNG == 1
+#if HAVE_LIBLTTNG_UST == 1
 
 /*
  * LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ must be included so that the tracepoints
@@ -132,4 +132,4 @@ LTTNG_UST_TRACEPOINT_EVENT(
 #define NCCL_OFI_TRACE_FLUSH(...)
 #define NCCL_OFI_TRACE_COMPLETIONS(...)
 
-#endif // HAVE_LTTNG
+#endif // HAVE_LIBLTTNG_UST
