@@ -13,9 +13,10 @@ int main(int argc, char *argv[])
 
 	/* Plugin defines */
 	int ndev, dev, cuda_dev, i;
-	sendComm_t *sComm_next = NULL;
-	listenComm_t *lComm = NULL;
-	recvComm_t *rComm = NULL;
+
+	nccl_net_ofi_send_comm_t *sComm_next = NULL;
+	nccl_net_ofi_listen_comm_t *lComm = NULL;
+	nccl_net_ofi_recv_comm_t *rComm = NULL;
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {0};
@@ -24,8 +25,8 @@ int main(int argc, char *argv[])
 	ofi_log_function = logger;
 
 	/* Initialisation for data transfer */
-	nccl_ofi_req_t *send_req[NUM_REQUESTS] = {NULL};
-	nccl_ofi_req_t *recv_req[NUM_REQUESTS] = {NULL};
+	nccl_net_ofi_req_t *send_req[NUM_REQUESTS] = {NULL};
+	nccl_net_ofi_req_t *recv_req[NUM_REQUESTS] = {NULL};
 	void *send_mhandle[NUM_REQUESTS];
 	void *recv_mhandle[NUM_REQUESTS];
 	int req_completed_send[NUM_REQUESTS] = {0};
@@ -213,7 +214,7 @@ int main(int argc, char *argv[])
 					NCCL_OFI_TRACE(NCCL_NET,
 						"Issue flush for data consistency. Request idx: %d",
 						idx);
-					nccl_ofi_req_t *iflush_req = NULL;
+					nccl_net_ofi_req_t *iflush_req = NULL;
 					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
 								    (void **)&recv_buf[idx], sizes,
 								    &recv_mhandle[idx], (void **)&iflush_req));

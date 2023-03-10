@@ -10,7 +10,7 @@
 // can be sent over the network
 ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction)
 {
-	max_requests = NCCL_NET_MAX_REQUESTS_V3;
+	max_reqs = NCCL_NET_MAX_REQUESTS_V3;
 	return nccl_net_ofi_init(logFunction);
 }
 
