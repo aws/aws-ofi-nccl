@@ -17,9 +17,9 @@ int main(int argc, char* argv[])
 
 	/* Plugin defines */
 	int ndev, dev;
-	sendComm_t *sComm = NULL;
-	listenComm_t *lComm = NULL;
-	recvComm_t *rComm = NULL;
+	nccl_net_ofi_send_comm_t *sComm = NULL;
+	nccl_net_ofi_listen_comm_t *lComm = NULL;
+	nccl_net_ofi_recv_comm_t *rComm = NULL;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	ncclNet_t *extNet = NULL;
 

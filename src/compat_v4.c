@@ -26,11 +26,11 @@ ncclResult_t nccl_net_ofi_getProperties_v4(int dev, ncclNetProperties_v4_t* prop
 	return ret;
 }
 
-_Static_assert(offsetof(nccl_ofi_handle_t, state) <= NCCL_NET_HANDLE_MAXSIZE_V4, "Size of OFI Handle (without state) is too large");
+_Static_assert(offsetof(nccl_net_ofi_conn_handle_t, state) <= NCCL_NET_HANDLE_MAXSIZE_V4, "Size of OFI Handle (without state) is too large");
 
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 {
-        nccl_ofi_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
         ncclResult_t ret = ncclSuccess;
 
         ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
@@ -44,7 +44,7 @@ ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
-        nccl_ofi_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
 
         memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 

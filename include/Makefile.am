@@ -6,6 +6,7 @@
 
 noinst_HEADERS = \
 	nccl_ofi.h \
+	nccl_ofi_sendrecv.h \
 	nccl_ofi_log.h \
 	nccl_ofi_param.h \
 	stack.h \
