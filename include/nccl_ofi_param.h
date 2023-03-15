@@ -18,8 +18,8 @@ extern "C" {
 #include "nccl_ofi_log.h"
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
-pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-int64_t ofi_nccl_##name() { \
+static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
+static inline int64_t ofi_nccl_##name() { \
     static bool initialized = false; \
     static int64_t value = default_value; \
     if (initialized) { \
@@ -50,8 +50,8 @@ int64_t ofi_nccl_##name() { \
 }
 
 #define OFI_NCCL_PARAM_STR(name, env, default_value) \
-pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-const char *ofi_nccl_##name() { \
+static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
+static inline const char *ofi_nccl_##name() { \
     static bool initialized = false; \
     static const char *value = default_value; \
     if (initialized) { \
