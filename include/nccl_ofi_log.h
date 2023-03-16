@@ -10,6 +10,8 @@
 extern "C" {
 #endif
 
+#include "nccl_ofi.h"
+
 #define NCCL_OFI_WARN(fmt, ...)							\
 	(*ofi_log_function)(NCCL_LOG_WARN, NCCL_ALL, __PRETTY_FUNCTION__,	\
 	__LINE__, "NET/OFI " fmt, ##__VA_ARGS__)

@@ -9,6 +9,8 @@ AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
 sources = \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
+	nccl_ofi_rdma.c \
+	nccl_ofi_scheduler.c \
 	nccl_ofi_topo.c \
 	nccl_ofi_msgbuff.c \
 	nccl_ofi_freelist.c \

@@ -16,6 +16,7 @@ tests/ring
 tests/msgbuff
 tests/freelist
 tests/deque
+tests/scheduler
 
 # http://www.gnu.org/software/automake
 .deps/

@@ -16,6 +16,18 @@ extern "C" {
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
 
+typedef enum nccl_net_ofi_sendrecv_req_state {
+	NCCL_OFI_SENDRECV_REQ_CREATED = 0,
+	NCCL_OFI_SENDRECV_REQ_PENDING,
+	NCCL_OFI_SENDRECV_REQ_COMPLETED,
+	NCCL_OFI_SENDRECV_REQ_ERROR,
+} nccl_net_ofi_sendrecv_req_state_t;
+
+typedef enum nccl_net_ofi_sendrecv_req_direction {
+	NCCL_OFI_SENDRECV_SEND = 1,
+	NCCL_OFI_SENDRECV_RECV,
+} nccl_net_ofi_sendrecv_req_direction_t;
+
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	/* This base listen communicator must be the first member of
 	 * this struct. This allows casting between pointers of this
@@ -49,6 +61,14 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 	nccl_ofi_connection_info_t *conn_info;
 } nccl_net_ofi_sendrecv_send_comm_t;
 
+/* Metadata about dummy flush buffer */
+typedef struct nccl_net_ofi_sendrecv_flush_buffer {
+	void *host_buffer;
+	size_t size;
+	/* Memory registration handle of the local buffer */
+	struct fid_mr *mr_handle;
+} nccl_net_ofi_sendrecv_flush_buffer_t;
+
 typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	/* This base receive communicator must be the first member of
 	 * this struct. This allows casting between pointers of this
@@ -63,7 +83,7 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	fi_addr_t local_ep_addr;
 	struct fid_ep *local_ep;
 
-	flush_buffer_t flush_buff;
+	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /**
@@ -171,18 +191,6 @@ typedef struct nccl_net_ofi_sendrecv_device {
 	/* Memory registration key pool */
 	nccl_ofi_mr_keypool_t key_pool;
 } nccl_net_ofi_sendrecv_device_t;
-
-typedef enum nccl_net_ofi_sendrecv_req_state {
-	NCCL_OFI_REQ_CREATED = 0,
-	NCCL_OFI_REQ_PENDING,
-	NCCL_OFI_REQ_COMPLETED,
-	NCCL_OFI_REQ_ERROR,
-} nccl_net_ofi_sendrecv_req_state_t;
-
-typedef enum nccl_ofi_sendrecv_req_direction {
-	NCCL_OFI_SEND = 1,
-	NCCL_OFI_RECV,
-} nccl_net_ofi_sendrecv_req_direction_t;
 	
 typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_req_t base;
@@ -212,7 +220,7 @@ typedef struct nccl_net_ofi_sendrecv_req {
 /*
  * @brief	Initialize plugin with sendrecv protocol structures
  */
-ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info *info_list,
+ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info *ofi_info_list,
 					int num_ofi_infos,
 					bool provide_own_mr_key);
 

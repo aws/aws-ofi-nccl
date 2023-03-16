@@ -131,6 +131,47 @@ OFI_NCCL_PARAM_INT(mr_key_size, "MR_KEY_SIZE", 2);
  */
 OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
 
+/*
+ * Protocol to use for send/recv operations.  Valid options are
+ * SENDRECV and RDMA, with SENDRECV the default.  Default param is
+ * NULL so that we can determine if user set the option.
+ */
+OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
+
+/*
+ * Disable the native RDMA write support check when using the "RDMA" protocol
+ * for send/recv operations on AWS platforms. When the check is disabled, the
+ * "RDMA" protocol can be used even on platforms where native RDMA write is not
+ * supported or cannot be verified to be supported. By default, the plugin
+ * peforms the native RDMA support checks.
+ */
+OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
+
+/*
+ * Maximum size of a message in bytes before message is multiplexed
+ */
+OFI_NCCL_PARAM_INT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", 8192);
+
+/*
+ * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
+ * more bounce buffers if we dip below this threshold, allocating new bounce
+ * buffers if needed.
+ */
+OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64);
+
+/*
+ * Maximum bounce buffers posted per endpoint. The plugin will not attempt to
+ * post more bounce buffers if we reach this threshold, returning available
+ * buffers to the free list if needed
+ */
+OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
+
+/*
+ * Eager message size limit when using RDMA protocol. Message sizes greater than
+ * this limit will always be sent using RDMA write instead of eagerly.
+ */
+OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif

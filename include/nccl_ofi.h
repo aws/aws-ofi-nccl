@@ -17,6 +17,7 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
+#include <rdma/fi_ext.h>
 #if HAVE_NEURON
 #include "nccl-headers/net_neuron.h"
 #else
@@ -32,10 +33,6 @@ extern "C" {
 #define OFI_UNLIKELY(x)	(x)
 #endif
 
-#define OFI_MAJOR_VERSION	(1)
-#define OFI_MINOR_VERSION	(6)
-#define ofi_version		FI_VERSION(OFI_MAJOR_VERSION, \
-					   OFI_MINOR_VERSION)
 #define MAX_PROV_INFO		(15)
 #define MAX_BDF_LEN		(25)
 
@@ -115,8 +112,27 @@ extern const char *provider_filter;
    read in the polling loop without protection of a lock. */
 extern size_t cq_read_count;
 
+/* Indicates if memory registration of local buffers is required */
+extern bool local_mr;
+
+/* Indicates if endpoint memory registration is required */
+extern bool endpoint_mr;
+
 /* Indicates if remote virtual addressing is used */
 extern bool virt_addr_mr;
+
+/* Selected communication protocol.
+ *
+ * Until the protocol environment variable is checked in init(), this
+ * is the protocol that the plugin will try to initialize; it can be
+ * overridden by platform_init().  After init(), this is the protocol
+ * that was selected.
+ *
+ * Valid values are SENDRECV and RDMA; default is SENDRECV (set by the
+ * param OFI_NCCL_PROTOCOL)
+ */
+extern const char *nccl_ofi_selected_protocol;
+
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;
@@ -179,20 +195,13 @@ typedef struct free_list {
 	void *buffers[];
 } free_list_t;
 
-/* Metadata about dummy flush buffer */
-typedef struct flush_buffer {
-	void *host_buffer;
-	size_t size;
-	/* Memory registration handle of the local buffer */
-	struct fid_mr *mr_handle;
-} flush_buffer_t;
-
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
 	COMM_SEND_CONN,
 	COMM_RECV_CONN,
-	COMM_REQ_PENDING_COMP,
+	COMM_CONN_REQ_PENDING,
+	COMM_CONN_RESP_REQ_PENDING,
 	COMM_CONNECTED,
 } nccl_ofi_comm_stage_t;
 
@@ -264,6 +273,10 @@ struct nccl_net_ofi_device {
 	 * 		nccl_ofi_device.  Create if it does not exist. Store
 	 * 		in pthread key. Increase reference counter. Must be
 	 * 		protected by lock stored in device.
+	 * 
+	 * 		During the plugin initialization, this function will be 
+	 * 		called once per process using one of the instantiated device structs
+	 * 		to create and configure the endpoint of the initializing thread.
 	 */
 	ncclResult_t (*get_ep)(nccl_net_ofi_device_t *base_dev,
 			       nccl_net_ofi_ep_t **ep);
@@ -482,7 +495,7 @@ ncclResult_t nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, 
  * @return	Address vector av
  */
 ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
-						 struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
+				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
 
 /*
  * @brief	Allocates free list for NCCL OFI requests
@@ -496,37 +509,13 @@ ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_size,
 void free_ofi_fl(free_list_t *nccl_ofi_req_fl);
 
 /*
- * @brief	Query local address for a libfabric endpoint
- *
- * @param	Network device
- *
- * @return	Local EP address, on success
- * 		NULL, others
+ * @brief	Allocate a element from free_list fl.
  */
-static inline char *get_local_address(struct fid_ep *ep)
-{
-	int ret = 0;
-	size_t namelen = MAX_EP_ADDR;
-	char *local_ep_addr = (char *)calloc(namelen, sizeof(char));
+void *allocate_fl_buff(free_list_t *fl, size_t buff_sz, uint64_t *next_avail_index);
 
-	ret = fi_getname(&ep->fid,
-			 (void *)local_ep_addr,
-			 &namelen);
-	if (ret == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
-			      namelen, MAX_EP_ADDR);
-		free(local_ep_addr);
-		return NULL;
-	} else if (ret != 0) {
-		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		free(local_ep_addr);
-		return NULL;
-	}
-
-	return local_ep_addr;
-}
-
+/*
+ * @brief	Initialize memory registration keypool
+ */
 ncclResult_t nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys);
 
 /*
@@ -538,20 +527,6 @@ struct fi_info *get_nic_info(int dev_id, struct fi_info *info_list);
  * @brief	Release libfabric endpoint and address vector
  */
 void nccl_ofi_ep_release_ofi(struct fid_ep *ep, struct fid_av *av, struct fid_cq *cq, int dev_id);
-
-/*
- * @brief	Register memory buffers
- */
-#if HAVE_NEURON
-ncclResult_t nccl_net_ofi_reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
-				      nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				      void *data, size_t size, int type,
-#elif HAVE_CUDA
-ncclResult_t nccl_net_ofi_reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
-				      nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				      void *data, int size, int type,
-#endif
-				      void **mhandle);
 
 /*
  * @brief	Register DMA buffer for send comm. Unimplemented.
@@ -570,30 +545,29 @@ ncclResult_t nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *sen
 						   nccl_net_ofi_mr_handle_t **handle);
 
 /*
- * @brief	Base memory deregistration function
+ * @brief	Free a memory registration key
  */
-ncclResult_t nccl_net_ofi_dereg_mr_base_comm(struct fid_mr *mr_handle, nccl_ofi_mr_keypool_t *key_pool, int dev_id);
+ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key);
+
+#if HAVE_CUDA
+/*
+ * @brief	Gets the CUDA device associated with the buffer
+ *
+ * @param	data
+ *		Pointer to CUDA buffer.
+ *
+ * @return	Valid CUDA device ID on success
+ *		-1 on error
+ * @return	0 on success
+ *		non-zero on error
+ */
+ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
+#endif
 
 /*
- * @brief	Allocated and registers buffer to flush RDMA operations. On
- * 		Success, receive communicator holds reference to flush buffer
- * 		and associated memory handle.
- *
- * @param	comp
- *		Valid receive object
- * @param	flush_buff
- *		Valid pointer to flush buffer
- * @param	dev_id
- *		Device index
- *
- * @return	0, on success
- * 		error, on others
+ * @brief	Allocate a memory registration key
  */
-int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep,
-				    nccl_ofi_mr_keypool_t *key_pool,
-				    flush_buffer_t *flush_buff, int dev_id);
-
-
+uint64_t nccl_net_ofi_allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool);
 
 /*
  * @brief	Free libfabric NIC info list.
@@ -612,6 +586,14 @@ void nccl_net_ofi_free_info_list(struct fi_info *info_list);
  * is provided; in that case platform_init will be NULL at runtime.
  */
 ncclResult_t platform_init(void) __attribute__((weak));
+
+/* Declare a platform-specific endpoint configuration hook that can be
+ * provided by platform-specific source files (such as the optionally
+ * compiled platform_aws.c).  The function is declared as a weak
+ * symbol so that linkage will not break if no platform specific hook
+ * is provided; in that case platform_config_endpoint will be NULL at runtime.
+ */
+ncclResult_t platform_config_endpoint(void* ep) __attribute__((weak));
 
 #ifdef _cplusplus
 } // End extern "C"

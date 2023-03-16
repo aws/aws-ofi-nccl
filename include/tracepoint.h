@@ -51,20 +51,85 @@ LTTNG_UST_TRACEPOINT_EVENT(
     LTTNG_UST_TP_ARGS(
             int, dev,
             int, size,
+            void *, comm,
+            uint16_t, msg_seq_num,
             void *, request,
-            void **, nccl_req,
-            void *, ctx
+            void *, nccl_req
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
             lttng_ust_field_integer(int, size, size)
+            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
+            lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
-            lttng_ust_field_integer(uint64_t, ctx, (uint64_t)ctx)
     )
 )
-#define NCCL_OFI_TRACE_SEND(dev, size, request, nccl_req,ctx) \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, request, nccl_req,ctx)
+#define NCCL_OFI_TRACE_SEND(dev, size, comm, msg_seq_num, request, nccl_req) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, msg_seq_num, request, nccl_req)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Send_ctrl_recv,
+    LTTNG_UST_TP_ARGS(
+            int, dev,
+            int, rail_id,
+            void *, comm,
+            uint16_t, msg_seq_num
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer(int, dev, dev)
+            lttng_ust_field_integer(int, rail_id, rail_id)
+            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
+            lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
+    )
+)
+#define NCCL_OFI_TRACE_SEND_CTRL_RECV(dev, rail_id, comm, msg_seq_num) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_recv, dev, rail_id, comm, msg_seq_num)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Send_write_segment_start,
+    LTTNG_UST_TP_ARGS(
+            int, dev,
+            int, rail_id,
+            size_t, size,
+            void *, comm,
+            uint16_t, msg_seq_num,
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer(int, dev, dev)
+            lttng_ust_field_integer(int, rail_id, rail_id)
+            lttng_ust_field_integer(size_t, size, size)
+            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
+            lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_SEND_WRITE_SEG_START(dev, rail_id, size, comm, msg_seq_num, request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_write_segment_start, dev, rail_id, size, comm, msg_seq_num, request)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Send_write_segment_complete,
+    LTTNG_UST_TP_ARGS(
+            int, dev,
+            int, rail_id,
+            void *, comm,
+            uint16_t, msg_seq_num,
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer(int, dev, dev)
+            lttng_ust_field_integer(int, rail_id, rail_id)
+            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
+            lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(dev, rail_id, comm, msg_seq_num, request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_write_segment_complete, dev, rail_id, comm, msg_seq_num, request)
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
@@ -74,8 +139,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             int, tag,
             int, size,
             void *, request,
-            void **, nccl_req,
-            void *, ctx
+            void *, nccl_req
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
@@ -83,11 +147,61 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer(int, size, size)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
-            lttng_ust_field_integer(uint64_t, ctx, (uint64_t)ctx)
     )
 )
-#define NCCL_OFI_TRACE_RECV(dev, tag, size, request, nccl_req,ctx) \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req,ctx)
+#define NCCL_OFI_TRACE_RECV(dev, tag, size, request, nccl_req) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Recv_ctrl_send_complete,
+    LTTNG_UST_TP_ARGS(
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_ctrl_send_complete, request)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Recv_segment_complete,
+    LTTNG_UST_TP_ARGS(
+            int, dev,
+            int, rail_id,
+            size_t, size,
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer(int, dev, dev)
+            lttng_ust_field_integer(int, rail_id, rail_id)
+            lttng_ust_field_integer(size_t, size, size)
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, size, request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, size, request)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Eager_recv,
+    LTTNG_UST_TP_ARGS(
+            int, dev,
+            int, rail_id,
+            void *, comm,
+            uint16_t, msg_seq_num
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer(int, dev, dev)
+            lttng_ust_field_integer(int, rail_id, rail_id)
+            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
+            lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
+    )
+)
+#define NCCL_OFI_TRACE_EAGER_RECV(dev, rail_id, comm, msg_seq_num) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Eager_recv, dev, rail_id, comm, msg_seq_num)
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
@@ -109,17 +223,41 @@ LTTNG_UST_TRACEPOINT_EVENT(
     Flush,
     LTTNG_UST_TP_ARGS(
             void *, request,
-            void **, nccl_req,
-            void *, ctx
+            void *, nccl_req
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
-            lttng_ust_field_integer(uint64_t, ctx, (uint64_t)ctx)
     )
 )
-#define NCCL_OFI_TRACE_FLUSH(request,nccl_req,ctx) \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Flush, request, nccl_req,ctx)
+#define NCCL_OFI_TRACE_FLUSH(request, nccl_req) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Flush, request, nccl_req)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Pending_queue_insert,
+    LTTNG_UST_TP_ARGS(
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_PENDING_INSERT(request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_insert, request)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Pending_queue_remove,
+    LTTNG_UST_TP_ARGS(
+            void *, request
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+    )
+)
+#define NCCL_OFI_TRACE_PENDING_REMOVE(request) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_remove, request)
 
 #endif /* NCCL_OFI_TRACEPOINT_H */
 
@@ -128,8 +266,16 @@ LTTNG_UST_TRACEPOINT_EVENT(
 #else
 
 #define NCCL_OFI_TRACE_SEND(...)
+#define NCCL_OFI_TRACE_SEND_CTRL_RECV(...)
+#define NCCL_OFI_TRACE_SEND_WRITE_SEG_START(...)
+#define NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(...)
 #define NCCL_OFI_TRACE_RECV(...)
+#define NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(...)
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(...)
+#define NCCL_OFI_TRACE_EAGER_RECV(...)
 #define NCCL_OFI_TRACE_FLUSH(...)
+#define NCCL_OFI_TRACE_PENDING_INSERT(...)
+#define NCCL_OFI_TRACE_PENDING_REMOVE(...)
 #define NCCL_OFI_TRACE_COMPLETIONS(...)
 
 #endif // HAVE_LIBLTTNG_UST
