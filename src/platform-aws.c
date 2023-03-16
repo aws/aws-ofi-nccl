@@ -15,32 +15,38 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_param.h"
 #include "tracepoint.h"
 
+static bool sendrecv_support_ll128 = false;
+static bool write_support_ll128 = false;
+static bool disable_native_rdma_check;
+const char *platform_type;
 
 struct ec2_platform_data {
 	const char* name;
 	const char* topology;
 	int default_dup_conns;
-	bool force_proto_simple;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
-		.force_proto_simple = true,
 	},
 	{
 		.name = "p4de.24xlarge",
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
-		.force_proto_simple = true,
 	},
 	{
 		.name = "p3dn.24xlarge",
 		.topology = NULL,
 		.default_dup_conns = 4,
-		.force_proto_simple = true,
+	},
+	{
+		.name = "p5.48xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
 	},
 };
 
@@ -123,6 +129,171 @@ struct ec2_platform_data *get_platform_data(const char *platform_type)
 	return NULL;
 }
 
+static ncclResult_t configure_nccl_proto(struct ec2_platform_data *platform_data)
+{
+	int ret = ncclSuccess;
+	
+	/* Explicitly set the simple protocol using the "NCCL_PROTO" environment
+	 * variable whenever we know that the LL/LL128 protocols are not safe,
+	 * such as on P4d/P4e.
+	 *
+	 * This only has impact on the Nvidia CUDA case, as the
+	 * Tranium code does not use the LL/LL128 protocols.
+	 */
+	bool support_ll128_proto = sendrecv_support_ll128 || write_support_ll128;
+	if (!support_ll128_proto) {
+		if (!getenv("NCCL_PROTO")) {
+			NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
+			int rc = setenv("NCCL_PROTO", "simple", 0);
+			if (rc) {
+				NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %d", rc);
+				ret = ncclSystemError;
+				goto exit;
+			}
+		} else if (strcmp(getenv("NCCL_PROTO"), "simple")) {
+			NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
+		}
+	}
+
+exit:
+	return ret;
+}
+
+static ncclResult_t validate_rdma_write(void* endpoint)
+{
+	int ret = ncclSuccess;
+#if HAVE_DECL_FI_OPT_EFA_EMULATED_WRITE
+	bool optval;
+	size_t optlen = 0;
+	struct fid_ep *ep = (struct fid_ep *) endpoint;
+
+	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_EFA_EMULATED_WRITE, &optval, &optlen);
+	if(ret != 0 || optlen != sizeof(bool)) {
+		NCCL_OFI_WARN("Couldn't get FI_OPT_EFA_EMULATED_WRITE. optlen: %lu, RC: %d, ERROR: %s",
+			      optlen, ret, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto exit;
+	}
+	/* If the selected protocol is RDMA write and RDMA write is not
+	 * supported for the endpoint, throw an error 
+	 */
+	else if (optval && 0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
+		NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE is true when the communication protocol is RDMA write.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d", 
+		       optval);
+#else
+	NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA write.");
+	ret = ncclSystemError;
+	goto exit;
+#endif
+exit:
+	return ret;
+}
+
+static ncclResult_t configure_sendrecv_inorder(void* endpoint, bool is_init)
+{
+	int ret = ncclSuccess;
+#if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
+	bool optval = true;
+	struct fid_ep *ep = (struct fid_ep *) endpoint;
+
+	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
+			FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES, 
+			&optval, sizeof(optval));
+	if (ret != 0 && ret != -FI_EOPNOTSUPP) {
+		NCCL_OFI_WARN("Couldn't set FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto exit;
+	}
+
+	/* If this is called during plugin initialization, set the global flag
+	 * sendrecv_support_ll128 to true if
+	 * FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES could be set to true,
+	 * otherwise keep it at its default value of false.
+	 */
+	if (is_init) {
+		if (ret == 0) {
+			sendrecv_support_ll128 = true;
+		}
+	}
+	/* If an endpoint supported SENDRECV LL128 during plugin initialization
+	 * but does not support it now, throw an error.
+	 */
+	else if (sendrecv_support_ll128 && ret == -FI_EOPNOTSUPP) {
+		NCCL_OFI_WARN("SENDRECV LL128 not supported while it was supported during initialization.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	/* If an endpoint did not support SENDRECV LL128 during plugin
+	 * initialization but supports it now, throw an error.
+	 */
+	else if (!sendrecv_support_ll128 && ret == 0) {
+		NCCL_OFI_WARN("SENDRECV LL128 supported while it not supported during initialization.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES. optval: %d, RC: %d, ERROR: %s", 
+		       optval, ret, fi_strerror(-ret));
+	ret = ncclSuccess;
+exit:
+#endif
+	return ret;
+}
+
+static ncclResult_t configure_write_inorder(void* endpoint, bool is_init)
+{
+	int ret = ncclSuccess;
+#if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
+	bool optval = true;
+	struct fid_ep *ep = (struct fid_ep *) endpoint;
+
+	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
+			FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES,
+			&optval, sizeof(optval));
+	if (ret != 0 && ret != -FI_EOPNOTSUPP) {
+		NCCL_OFI_WARN("Couldn't set FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		ret = ncclSystemError;
+		goto exit;
+	}
+	/* If this is called during plugin initialization, set the global flag
+	 * write_support_ll128 to true if
+	 * FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES could be set to true,
+	 * otherwise keep it at its default value of false.
+	 */
+	if (is_init) {
+		if (ret == 0) {
+			write_support_ll128 = true;
+		}
+	}
+	/* If an endpoint supported WRITE LL128 during plugin initialization but
+	 * does not support it now, throw an error.
+	 */
+	else if (write_support_ll128 && ret == -FI_EOPNOTSUPP) {
+		NCCL_OFI_WARN("WRITE LL128 not supported while it was supported during initialization.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	/* If an endpoint did not support SENDRECV LL128 during plugin
+	 * initialization but supports it now, throw an error.
+	 */
+	else if (!write_support_ll128 && ret == 0) {
+		NCCL_OFI_WARN("WRITE LL128 supported while it not supported during initialization.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES. optval: %d, RC: %d, ERROR: %s", 
+		       optval, ret, fi_strerror(-ret));
+	ret = ncclSuccess;
+exit:
+#endif
+	return ret;
+}
+
 /*
  * @brief	Update NCCL's system topology using static pre-configured topology
  * 		files for supported EC2 platform types.
@@ -140,7 +311,7 @@ ncclResult_t platform_init(void)
 
 	NCCL_OFI_INFO(NCCL_INIT, "Configuring AWS-specific options");
 
-	const char *platform_type = get_platform_type();
+	platform_type = get_platform_type();
 	if (platform_type == NULL) {
 		ret = ncclSystemError;
 		goto exit;
@@ -158,26 +329,6 @@ ncclResult_t platform_init(void)
 		NCCL_OFI_INFO(NCCL_INIT, "Setting provider_filter to efa");
 		provider_filter = "efa";
 	}
-
-#if HAVE_CUDA
-	/* Use the simple protocol whenever we're not sure the
-	 * LL/LL128 protocols are safe.  In the future, we may want to
-	 * revisit this and only set simple in cases where we know
-	 * that it is not safe (P4d/P4e).
-	 *
-	 * This only has impact on the Nvidia CUDA case, as the
-	 * Tranium code does not use the LL/LL128 protocols.
-	 */
-	if (!getenv("NCCL_PROTO") && (!platform_data || platform_data->force_proto_simple)) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
-		rc = setenv("NCCL_PROTO", "simple", 0);
-		if (rc) {
-			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable : %d", rc);
-			ret = ncclSystemError;
-			goto exit;
-		}
-	}
-#endif
 
 #if HAVE_CUDA
 	/*
@@ -259,8 +410,80 @@ ncclResult_t platform_init(void)
 	if (nic_dup_conns == 0 && platform_data)
 		nic_dup_conns = platform_data->default_dup_conns;
 
+	disable_native_rdma_check = (bool) ofi_nccl_disable_native_rdma_check();
+
 exit:
-	if (platform_type)
-		free((char *)platform_type);
+	return ret;
+}
+
+ncclResult_t platform_config_endpoint(void* endpoint) {
+	static bool is_init = true;
+	int ret = ncclSuccess;
+
+	if (endpoint == NULL) {
+		NCCL_OFI_WARN("Unable to configure invalid endpoint");
+		ret = ncclSystemError;
+		goto exit;
+	}
+	/* If the selected communication protocol is RDMA write and the user did
+	 * not disable the native RDMA support check, validate that the
+	 * FI_OPT_EFA_EMULATED_WRITE endpoint option can be accessed, and that
+	 * emulated writes are disabled.
+	 */
+	if (0 == strcmp("RDMA", nccl_ofi_selected_protocol) && !disable_native_rdma_check) {
+		ret = validate_rdma_write(endpoint);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+
+#if HAVE_CUDA
+	/* During initialization, if the chosen communication protocol is
+	 * SENDRECV, try to set FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
+	 * to true to see if the LL/LL128 protocol is supported. After
+	 * initialization, try to set the option to true again and if the
+	 * LL/LL128 protocols are not supported for SENDRECV and were supported
+	 * in initialization, throw an error.
+	 */
+	if (0 == strcmp("SENDRECV", nccl_ofi_selected_protocol)) {
+		ret = configure_sendrecv_inorder(endpoint, is_init);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+
+	/* During initialization, if the chosen communication protocol is RDMA, try to
+	 * set FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES to true to see if the
+	 * LL/LL128 protocol is supported. After initialization, try to set the option
+	 * to true again and if the LL/LL128 protocols are not supported for RDMA and
+	 * were supported in initialization, throw an error.
+	 */
+	else if (0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
+		ret = configure_write_inorder(endpoint, is_init);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+
+	/* if this is called during the plugin initialization, determine whether
+	 * to explicitly set NCCL_PROTO to "simple" based on whether we support
+	 * the LL/LL128 NCCL protocols.
+	 */
+	if (is_init) {
+		struct ec2_platform_data *platform_data = get_platform_data(platform_type);
+		ret = configure_nccl_proto(platform_data);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+#endif // HAVE_CUDA
+exit:
+	/* if this is called during the plugin initialization, indicate that the
+	 * intialzation has already completed and should not be done again 
+	 */
+	if (is_init) {
+		is_init = false;
+	}
+
 	return ret;
 }

@@ -30,6 +30,14 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [check_pkg_found=no])])
+  
+  AC_CHECK_DECLS([FI_OPT_CUDA_API_PERMITTED,
+                  FI_OPT_EFA_USE_DEVICE_RDMA,
+                  FI_OPT_EFA_EMULATED_WRITE,
+                  FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES,
+                  FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES],
+                  [], [], [[#include <rdma/fi_endpoint.h>
+                            #include <rdma/fi_ext.h>]])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [$1],

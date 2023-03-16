@@ -165,6 +165,42 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Integer</td>
       <td>Default: 4</td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_PROTOCOL</code></td>
+      <td>Protocol to use for implementing send/recv operations.
+      Default is `SENDRECV`, which uses the Libfabric tagged send/recv
+      interface.  This implementation will give the best performance
+      on hardware that implements tagged sends natively, and likely
+      most Libfabric implementations that include an eager send
+      optimization for GPU buffers.  The other valid option is `RDMA`,
+      which implements a sender-managed receive queue using RDMA write
+      operations and supports multi-rail channels per GPU.  The `RDMA`
+      protocol is likely to work better than `SENDRECV` on networks that
+      do not have an eager optimization or that have multiple NICs per
+      GPU.</td>
+      <td>String</td>
+      <td>Default: SENDRECV</td>
+   </tr>
+   <tr>
+      <td><code>OFI_NCCL_ROUND_ROBIN_THRESHOLD</code></td>
+      <td>Adjust the maximum size of `RDMA` protocol messages that are
+	  assigned to multi-rail channels in round-robin mode. Messages larger
+	  than the threshold are multiplexed over all channels to increase
+	  network throughput. In general, users should not have to adjust this
+	  value. A very small threshold may cause the `RDMA` protocol
+	  initialization fail since RDMA protocol control messages
+	  shall not be multiplexed.</td>
+      <td>Integer</td>
+      <td>Default: 8192</td>
+   </tr>
+   <tr>
+      <td><code>OFI_NCCL_EAGER_MAX_SIZE</code></td>
+      <td>Eager message size limit when using RDMA protocol. Message sizes greater than
+      this limit will always be sent using RDMA write instead of eagerly.</td>
+      <td>Integer</td>
+      <td>Any non-negative integer, though must be <= ROUND_ROBIN_THRESHOLD. Defaults to 8KiB.
+      </td>
+   </tr>
 </table>
 
 

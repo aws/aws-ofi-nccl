@@ -22,6 +22,8 @@
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
 #include "nccl_ofi_sendrecv.h"
+#include "nccl_ofi_rdma.h"
+#include "nccl_ofi_topo.h"
 
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
@@ -36,6 +38,9 @@ bool support_gdr = true;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+
+/* Selected Libfabric API version */
+int selected_fi_version;
 
 /* number of duplicate providers to create for each discovered
  * provider, including renaming to cause NCCL to create additional
@@ -71,15 +76,15 @@ bool endpoint_mr = false;
 /* Indicates if remote virtual addressing is used */
 bool virt_addr_mr = false;
 
-/*
- * @brief	Return the desired plugin communication protocol
- */
-static inline const char* select_protocol()
-{
-	static char str[] = "SENDRECV";
-	return str;
-}
+/* Selected communication protocol. */
+const char *nccl_ofi_selected_protocol = "SENDRECV";
 
+/*
+ * @brief	Free list of libfabric NIC info structs
+ *
+ * This function frees all elements of the input list. The input list
+ * may be a circular list.
+ */
 void nccl_net_ofi_free_info_list(struct fi_info *info_list)
 {
 	if (!info_list) return;
@@ -102,8 +107,19 @@ void nccl_net_ofi_free_info_list(struct fi_info *info_list)
 
 /*
  * @brief	Allocate a memory registration key
+ *
+ * Extract an available key from the key pool, mark the key as
+ * unavailable in the key pool, and return extracted key. Noop in case
+ * no key was available.
+ *
+ * This operation is locked by the key pool's internal lock.
+ *
+ * @param	key_pool
+ *		The Key pool
+ * @return	Extracted key, on susccess
+ *		FI_KEY_NOTAVAIL, in case no key is available
  */
-static uint64_t allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool)
+uint64_t nccl_net_ofi_allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool)
 {
 	uint64_t key = FI_KEY_NOTAVAIL;
 	bool* mr_keys = key_pool->mr_keys;
@@ -134,8 +150,12 @@ static uint64_t allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool)
 
 /*
  * @brief	Free a memory registration key
+ *
+ * Return input key into the key pool.
+ *
+ * This operation is locked by the key pool's internal lock.
  */
-static ncclResult_t free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key)
+ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key)
 {
 	bool* mr_keys = key_pool->mr_keys;
 	int num_mr_keys = key_pool->size;
@@ -234,6 +254,30 @@ void free_ofi_fl(free_list_t *nccl_ofi_req_fl)
 		free_stack(nccl_ofi_req_fl->free_index);
 
 	free(nccl_ofi_req_fl);
+}
+
+void *allocate_fl_buff(free_list_t *fl, size_t buff_sz, uint64_t *next_avail_index)
+{
+	if (OFI_UNLIKELY(fl == NULL || fl->free_index == NULL)) {
+		NCCL_OFI_WARN("Free list is empty or Free Index stack does not exist.");
+		return NULL;
+	}
+
+	/* Get free index */
+	*next_avail_index = stack_pop(fl->free_index);
+	if (OFI_UNLIKELY(*next_avail_index >= fl->free_index->size)) {
+		NCCL_OFI_WARN("No pre-allocated buffer is available for use. next_avail_index: %lu and free_index Size: %d",
+			      *next_avail_index, fl->free_index->size);
+		return NULL;
+	}
+
+	/* Get buffer */
+	if (OFI_UNLIKELY(fl->buffers == NULL)) {
+		NCCL_OFI_WARN("No pre-allocated buffers are present.");
+		return NULL;
+	}
+
+	return &(((char *)fl->buffers)[*next_avail_index * buff_sz]);
 }
 
 static int in_list(const char *item, const char *list)
@@ -364,18 +408,7 @@ static void filter_tcp_info_list(struct fi_info **info_list, int *num_infos)
 }
 
 #if HAVE_CUDA
-/*
- * @brief	Gets the CUDA device associated with the buffer
- *
- * @param	data
- *		Pointer to CUDA buffer.
- *
- * @return	Valid CUDA device ID on success
- *		-1 on error
- * @return	0 on success
- *		non-zero on error
- */
-static ncclResult_t get_cuda_device(void *data, int *dev_id)
+ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
 {
 	ncclResult_t ret = ncclSuccess;
 	int cuda_device = -1;
@@ -403,116 +436,6 @@ static ncclResult_t get_cuda_device(void *data, int *dev_id)
 #endif
 
 /*
- * @brief	Registers memory region (both HOST and CUDA)
- *
- * @return	OFI memory handle for data transfer operations
- * @return	0 on success
- *		non-zero on error
- */
-static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
-					nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-					void *data, size_t size,
-					int type, struct fid_mr **mr_handle)
-{
-	ncclResult_t ret = ncclSuccess;
-	int rc;
-	struct fi_mr_attr mr_attr = {0};
-	struct iovec iov = {0};
-
-	/* Check if provider requires registration of local buffers */
-	if ((local_mr != true) && (type == NCCL_PTR_HOST)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Skip registering host buffer. local_mr: %d", local_mr);
-		goto exit;
-	}
-
-	/* Populate IOV vector for memory registration */
-	iov.iov_base = data;
-	iov.iov_len = size;
-
-	/* Initialize MR attributes */
-	mr_attr.mr_iov = &iov;
-	mr_attr.iov_count = 1;
-	mr_attr.access = FI_SEND | FI_RECV;
-
-	switch (type) {
-	case NCCL_PTR_HOST:
-		mr_attr.access |= FI_READ;
-		mr_attr.iface = FI_HMEM_SYSTEM;
-		break;
-#if HAVE_CUDA
-	case NCCL_PTR_CUDA:
-		mr_attr.access |= FI_REMOTE_READ;
-		mr_attr.iface = FI_HMEM_CUDA;
-
-		/* Get CUDA device ID */
-		ret = get_cuda_device(data, &mr_attr.device.cuda);
-		if (OFI_UNLIKELY(ret != ncclSuccess)) {
-			goto exit;
-		}
-		break;
-#endif
-#if HAVE_NEURON
-	case NCCL_PTR_NEURON:
-		mr_attr.access |= FI_REMOTE_READ;
-		mr_attr.iface = FI_HMEM_NEURON;
-		/*
-		 * Store a sentinel; libfabric requires this to be initialized Libfabric
-		 * requires the device.neuron field to be set for Neuron HMEM, but the EFA
-		 * provider does not use the value.  Store an invalid device id sentinel to
-		 * both follow the Libfabric spec and cause an error if a provider uses the
-		 * value in the future.
-		 */
-		mr_attr.device.neuron = -1;
-		break;
-#endif
-	default:
-		ret = ncclInternalError;
-		goto exit;
-	}
-
-	if (key_pool->mr_keys) {
-		uint64_t key = allocate_mr_key(key_pool);
-		if (key == FI_KEY_NOTAVAIL) {
-			NCCL_OFI_WARN("MR key allocation failed");
-			ret = ncclSystemError;
-			goto exit;
-		}
-		mr_attr.requested_key = key;
-	}
-
-	rc = fi_mr_regattr(domain,
-			   &mr_attr, 0, mr_handle);
-	if (OFI_UNLIKELY(rc != 0)) {
-		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
-			      type, dev_id, rc, fi_strerror(-rc));
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	if (endpoint_mr) {
-		rc = fi_mr_bind(*mr_handle, &ep->fid, 0);
-		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Unable to bind MR to EP (type = %d) for device %d. RC: %d, Error: %s",
-				      type, dev_id, rc, fi_strerror(-rc));
-			ret = ncclSystemError;
-			goto exit;
-		}
-
-		rc = fi_mr_enable(*mr_handle);
-		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Unable to enable MR (type = %d) for device %d. RC: %d, Error: %s",
-				      type, dev_id, rc, fi_strerror(-rc));
-			ret = ncclSystemError;
-			goto exit;
-		}
-	}
-
- exit:
-	return ret;
-}
-
-/*
  * @brief	Returns hints info structure depending on GPUDirect support requirement
  */
 static void get_hints(struct fi_info *hints, int req_gdr)
@@ -537,6 +460,13 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 		 */
 		hints->domain_attr->mr_mode = FI_MR_LOCAL;
 	}
+
+	/*
+	 * Add capabilities needed for RDMA protcol:
+	 * - FI_DIRECTED_RECV - support fi_trecv from specific endpoint
+	 * - FI_RMA and family - support RMA operations
+	 */
+	hints->caps |= FI_DIRECTED_RECV | FI_RMA | FI_WRITE | FI_REMOTE_WRITE;
 
 	hints->mode = FI_CONTEXT;
 
@@ -580,8 +510,31 @@ static int find_ofi_provider(struct fi_info **providers)
 	/* Get hints for GPUDirect capable provider */
 	get_hints(gdr_hints, true);
 
-	rc = fi_getinfo(ofi_version, NULL, NULL, 0ULL, gdr_hints, providers);
-	if (rc == -FI_ENODATA) {
+/* Libfabric 1.18.0 API introduced significant API and behavior changes,
+ * including the "FI_OPT_CUDA_API_PERMITTED" endpoint option (which
+ * enables/disables CUDA operations at runtime), setting the
+ * "FI_EFA_USE_DEVICE_RDMA" environment variable to true by default (the
+ * previous default was false), and new endpoint options for EFA. Thus, we will
+ * first try to use the 1.18.0 API, and if it is unavailable, we will fall back
+ * to the previously utilized v1.6 API to support customers with older versions
+ * of Libfabric.
+ */
+	rc = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, gdr_hints, providers);
+	if (rc == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
+		selected_fi_version = FI_VERSION(1, 18);
+		goto exit;
+	}
+	
+	rc = fi_getinfo(FI_VERSION(1, 6), NULL, NULL, 0ULL, gdr_hints, providers);
+	if (rc == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.6 API, with GPUDirect RDMA support");
+		selected_fi_version = FI_VERSION(1, 6);
+		goto exit;
+	}
+	else if (rc == -FI_ENODATA) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Could not find any optimal provider supporting GPUDirect RDMA");
 
@@ -592,15 +545,28 @@ static int find_ofi_provider(struct fi_info **providers)
 		/* Re-try finding non-GPUDirect capable provider */
 		get_hints(hints, false);
 
-		rc = fi_getinfo(ofi_version, NULL, NULL, 0ULL, hints, providers);
-		if (rc == -FI_ENODATA) {
+		rc = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, providers);
+		if (rc == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Using Libfabric 1.18 API, without GPUDirect RDMA support");
+			selected_fi_version = FI_VERSION(1, 18);
+			goto exit;
+		}
+		
+		rc = fi_getinfo(FI_VERSION(1, 6), NULL, NULL, 0ULL, hints, providers);
+		if (rc == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Using Libfabric 1.6 API, without GPUDirect RDMA support");
+			selected_fi_version = FI_VERSION(1, 6);
+		}
+		else if (rc == -FI_ENODATA) {
 			NCCL_OFI_WARN("Couldn't find any optimal provider");
-		} else if (rc != 0) {
+		} else {
 			NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
 		}
 #endif
 	}
-	else if (rc != 0) {
+	else {
 		NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
 	}
 
@@ -715,7 +681,7 @@ struct fi_info *get_nic_info(int dev_id, struct fi_info *info_list)
 }
 
 ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
-						 struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
+				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
 {
 	ncclResult_t ret = ncclSuccess;
  	struct fi_av_attr av_attr = {0};
@@ -766,6 +732,37 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 		goto error;
 	}
 
+
+	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
+	 * using the Libfabric 1.18 API with HMEM support.
+	 */
+	if (selected_fi_version == FI_VERSION(1,18) && support_gdr) {
+#if HAVE_DECL_FI_OPT_CUDA_API_PERMITTED
+		bool optval = false;
+		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT, 
+				FI_OPT_CUDA_API_PERMITTED, &optval, 
+				sizeof(optval));
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to set FI_OPT_CUDA_API_PERMITTED to false. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			ret = ncclSystemError;
+			goto error;
+		}
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_CUDA_API_PERMITTED. optval: %d", 
+			       optval);
+#else
+		NCCL_OFI_WARN("Using Libfabric 1.18 API with GPUDirect RDMA support, and FI_OPT_CUDA_API_PERMITTED is not declared.");
+		ret = ncclSystemError;
+		goto error;
+#endif
+	}
+	/* Run platform-specific endpoint configuration hook if declared */
+	if (platform_config_endpoint) {
+		ret = platform_config_endpoint(*ep);
+		if (ret != ncclSuccess)
+			goto error;
+	}
+
 	/* Enable endpoint for communication */
 	ret = fi_enable(*ep);
 	if (OFI_UNLIKELY(ret != 0)) {
@@ -777,25 +774,35 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 
 	return ret;
  error:
-	if (*ep)
+	if (*ep) {
 		fi_close((fid_t)*ep);
-	if (*av)
+		*ep = NULL;
+	}
+
+	if (*av) {
 		fi_close((fid_t)*av);
-	if (*cq)
+		*av = NULL;
+	}
+
+	if (*cq) {
 		fi_close((fid_t)*cq);
+		*cq = NULL;
+	}
 
 	return ret;
 }
 
 /*
- * @brief	Release libfabric endpoint and address vector
+ * @brief	Release libfabric endpoint, address vector, and completion queue
  */
 void nccl_ofi_ep_release_ofi(struct fid_ep *ep, struct fid_av *av, struct fid_cq *cq, int dev_id)
 {
 	if (ep)
 		fi_close((fid_t)ep);
+
 	if (av)
 		fi_close((fid_t)av);
+
 	if (cq)
 		fi_close((fid_t)cq);
 
@@ -1011,17 +1018,119 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	   variable to avoid the lookup overhead during execution. */
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	/* Initialize plugin data structure using desired protocol
-	 * initialization routine. */
-	if (0 == strcmp(select_protocol(), "SENDRECV")) {
+
+	/* Select and initialize protocol data structure */
+	if (ofi_nccl_protocol()) {
+		nccl_ofi_selected_protocol = ofi_nccl_protocol();
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
+			      nccl_ofi_selected_protocol);
+	} else {
+		int num_accelerators = ofi_ndevices;
+
+#if HAVE_CUDA
+		if (cudaGetDeviceCount(&num_accelerators) != cudaSuccess) {
+			NCCL_OFI_WARN("Error getting CUDA device count");
+			ret = ncclUnhandledCudaError;
+			goto exit;
+		}
+#endif
+
+		/* We try to use the RDMA protocol if all of the
+		 * following are true:
+		 *
+		 * - Using EFA
+		 * - The number of accelerators is less than the
+		 *   number of ofi devices (ie, we likely want
+		 *   multi-rail)
+		 * - We're using Libfabric API 1.18 or later (because
+		 *   we want to disable CUDA copies and see GDR
+		 *   support is still enabled)
+		 * - RMA is supported (because we need write)
+		 * - FI_CONTEXT/FI_CONTEXT2 are not required
+		 *   (requirement of the RDMA protocol).
+		 *
+		 * Otherwise, we'll use the send/recv protocol.  We
+		 * should at some point in the future drop the EFA
+		 * requirement, but I think we want to hoist the hwloc
+		 * check above this and use that to look for clusters
+		 * of NICs rather than this simplistic count check,
+		 * but we need to finish debugging edge cases in the
+		 * topo_create code before we do that.
+		 */
+		if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) &&
+		    num_accelerators < ofi_ndevices &&
+		    selected_fi_version >= FI_VERSION(1,18) &&
+		    (ofi_info_list->caps & FI_RMA) &&
+		    !(ofi_info_list->mode & FI_CONTEXT || ofi_info_list->mode & FI_CONTEXT2)) {
+			nccl_ofi_selected_protocol = "RDMA";
+		}
+
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
+			      nccl_ofi_selected_protocol);
+	}
+
+	if (0 == strcmp(nccl_ofi_selected_protocol, "SENDRECV")) {
 		ret = nccl_net_ofi_sendrecv_init(ofi_info_list, ofi_ndevices,
 						 provide_own_mr_key);
+		if (ret != ncclSuccess) {
+			NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
+			ret = ncclInternalError;
+			goto exit;
+		}
+	} else if (0 == strcmp(nccl_ofi_selected_protocol, "RDMA")) {
+
+		/* NCCL OFI topology */
+		nccl_ofi_topo_t *topo = NULL;
+
+		/* Create NCCL OFI topology */
+		topo = nccl_ofi_topo_create(ofi_info_list);
+		if (!topo) {
+			NCCL_OFI_WARN("Failed to create NCCL OFI topology");
+			ret = ncclInternalError;
+			goto exit;
+		}
+
+		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key);
+		if (ret != ncclSuccess) {
+			NCCL_OFI_WARN("Failed to initialize rdma protocol");
+			ret = ncclInternalError;
+			goto exit;
+		}
+
+		nccl_ofi_topo_free(topo);
 	} else {
+		NCCL_OFI_WARN("Unable to find plugin protocol %s", nccl_ofi_selected_protocol);
 		ret = ncclInternalError;
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Unable to find plugin protocol");
+		goto exit;
+	}
+
+	/* In order to set endpoint options and potentially NCCL configuration
+	 * options (such as NCCL_PROTO) during the plugin initialization
+	 * process, we need to create an endpoint and call the platform hook
+	 * "platform_config_endpoint" using "get_ep". This code makes the
+	 * assumption that the thread calling "nccl_net_ofi_init" will make
+	 * communication calls. As well, since without this code the endpoint
+	 * would be created the first time "get_ep" in called during a listen or
+	 * connect call, creating the endpoint earlier would not be a waste of
+	 * resources. This initialization happens once per process, and thus it
+	 * does not matter which device is used to create the endpoint.
+	 */
+	int dev_id = 0;
+	nccl_net_ofi_device_t *base_dev = plugin->devs[dev_id];
+	nccl_net_ofi_ep_t *base_ep = NULL;
+
+	ret = plugin->devs[dev_id]->get_ep(base_dev, &base_ep);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		return ret;
+	}
+	ret = base_ep->release_ep(base_ep);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		return ret;
 	}
 
  exit:
+	nccl_net_ofi_free_info_list(ofi_info_list);
+
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
 	}
@@ -1344,7 +1453,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
  * invokes connect() on the endpoint. If this endpoint connect()
  * function returns a value different from ncclSuccess, the callee
  * releases the handle via release_ep(). When connect() succeeds, the
- * function nccl_net_ofi_closeRecv() is responsible for releasing the
+ * function nccl_net_ofi_closeSend() is responsible for releasing the
  * endpoint handle by invoking release_ep().
  *
  * @param	Network Device ID
@@ -1420,42 +1529,6 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 
 }
 
-int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep,
-				    nccl_ofi_mr_keypool_t *key_pool,
-				    flush_buffer_t *flush_buff, int dev_id)
-{
-	int ret = ncclSuccess;
-	const long page_size = sysconf(_SC_PAGESIZE);
-	struct fid_mr *mr_handle = NULL;
-
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
-
-	flush_buff->host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (OFI_UNLIKELY(flush_buff->host_buffer == MAP_FAILED)) {
-		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
-			      errno, strerror(errno));
-		return ncclSystemError;
-	}
-
-	/* Register flush dummy buffer for provider access */
-	ret = register_mr_buffers(domain, ep, key_pool, dev_id, flush_buff->host_buffer,
-				  page_size, NCCL_PTR_HOST, &mr_handle);
-	if (OFI_UNLIKELY(ret != ncclSuccess)) {
-		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-			      dev_id);
-		if (munmap(flush_buff->host_buffer, page_size)) {
-			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
-				      errno, strerror(errno));
-		}
-		flush_buff->host_buffer = MAP_FAILED;
-	}
-
-	flush_buff->mr_handle = mr_handle;
-
-	return ret;
-}
-
 #if HAVE_NEURON
 ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
 #elif HAVE_CUDA
@@ -1494,36 +1567,6 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 	return ret;
 }
 
-#if HAVE_NEURON
-ncclResult_t nccl_net_ofi_reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
-				      nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				      void *data, size_t size, int type,
-#elif HAVE_CUDA
-ncclResult_t nccl_net_ofi_reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
-				      nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				      void *data, int size, int type,
-#endif
-				      void **mhandle)
-{
-	/* Validate type of buffer */
-	bool valid_buffer_type = false;
-	if (type == NCCL_PTR_HOST) valid_buffer_type = true;
-#if HAVE_CUDA
-	if (type == NCCL_PTR_CUDA) valid_buffer_type = true;
-#endif
-#if HAVE_NEURON
-	if (type == NCCL_PTR_NEURON) valid_buffer_type = true;
-#endif
-
-	if(!valid_buffer_type) {
-		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
-		return ncclInternalError;
-	}
-
-	return register_mr_buffers(domain, ep, key_pool, dev_id, data, size, type,
-				   (struct fid_mr **)mhandle);
-}
-
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
 	/* Retrieve and validate comm */
@@ -1554,40 +1597,6 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 		break;
 	}
 
-	return ret;
-}
-
-ncclResult_t nccl_net_ofi_dereg_mr_base_comm(struct fid_mr *mr_handle, nccl_ofi_mr_keypool_t *key_pool, int dev_id)
-{
-	ncclResult_t ret = ncclSuccess;
-	int rc;
-
-	if (OFI_LIKELY(mr_handle == NULL)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
-		goto exit;
-	}
-
-	if (key_pool->mr_keys) {
-		uint64_t key = fi_mr_key(mr_handle);
-		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
-		} else {
-			ret = free_mr_key(key_pool, key);
-			if (OFI_UNLIKELY(ret != ncclSuccess)) {
-				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
-			}
-		}
-	}
-
-	rc = fi_close((fid_t)mr_handle);
-	if (OFI_UNLIKELY(rc != 0)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-			      rc, fi_strerror(-rc));
-	}
-
- exit:
 	return ret;
 }
 
@@ -1751,6 +1760,9 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 	return recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
 }
 
+/*
+ * @brief	Destroy send communicator and invokes release_ep on its endpoint.
+ */
 ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
 	if (OFI_UNLIKELY(sComm == NULL)) {
@@ -1758,11 +1770,24 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 	}
 
 	nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)sComm;
-	return send_comm->close(send_comm);
+
+	/* Retrieve and validate endpoint */
+	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)send_comm->base.ep;
+	if (OFI_UNLIKELY(base_ep == NULL)) {
+		NCCL_OFI_WARN("Invalid endpoint provided");
+		return ncclInternalError;
+	}
+
+	ncclResult_t ret = send_comm->close(send_comm);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	return base_ep->release_ep(base_ep);
 }
 
 /*
- * @brief	Destroys communicator and invokes release_ep on its endpoint.
+ * @brief	Destroy receive communicator and invokes release_ep on its endpoint.
  */
 ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
