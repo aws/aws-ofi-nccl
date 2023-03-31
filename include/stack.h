@@ -38,7 +38,7 @@ exit:
  * @brief	Free given stack
  */
 
-inline void free_stack(stack_t *stack)
+static inline void free_stack(stack_t *stack)
 {
 	if (!stack)
 		return;
