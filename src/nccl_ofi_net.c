@@ -2052,7 +2052,17 @@ ncclResult_t nccl_net_ofi_connect(int dev, void *handle, void **sendComm)
 	};
 
 	*sendComm = sComm;
-	free_nccl_ofi_req(req, false);
+	/*
+	 * Free the request only when connecting to a different remote.
+	 * For self-connecting request, we will free it at the first send. This
+	 * will allow accept() to post a matching receive and let the connect
+	 * request to complete transfer.
+	 */
+	if (sComm->connection_info->connect_to_self != 1) {
+		free_nccl_ofi_req(req, false);
+		free(sComm->connection_info);
+		sComm->connection_info = NULL;
+	}
 
 	return ret;
 }
@@ -2518,6 +2528,40 @@ ncclResult_t nccl_net_ofi_isend(void *sendComm, void* data, int size,
 		goto error;
 	}
 
+	nccl_ofi_comp = sComm->baseComm.ofi_comp;
+	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
+		ret = ncclSystemError;
+		NCCL_OFI_WARN("NCCL OFI component for dev %d is not initialised",
+			     sComm->dev);
+		goto error;
+	}
+
+	/*
+	 * In case, we are connecting to self, ensure that the request has
+	 * completed. If its completed, free the request. If not, progress the
+	 * function to process completions and return NULL request for send to
+	 * retry.
+	 */
+	if (OFI_UNLIKELY(sComm->connection_info && (sComm->connection_info->connect_to_self == 1))) {
+		nccl_ofi_connection_info_t *conn_info = sComm->connection_info;
+		assert(conn_info->req != NULL);
+
+		if (conn_info->req->state == NCCL_OFI_REQ_COMPLETED) {
+			free_nccl_ofi_req(conn_info->req, false);
+			free(conn_info);
+			sComm->connection_info = NULL;
+		} else {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Self-connect request: %p hasn't completed. Current State: %s",
+				       conn_info->req, nccl_ofi_req_state_str(conn_info->req->state));
+
+			ret = nccl_ofi_progress(nccl_ofi_comp);
+
+			*request = NULL;
+			goto exit;
+		}
+	}
+
 	/*
 	 * TODO: Use NCCL provided tags when using grouped receives aka
 	 * props->maxRecvs > 1.
@@ -2535,14 +2579,6 @@ ncclResult_t nccl_net_ofi_isend(void *sendComm, void* data, int size,
 	req->sComm = sComm;
 	req->dev = sComm->dev;
 	req->direction = NCCL_OFI_SEND;
-
-	nccl_ofi_comp = sComm->baseComm.ofi_comp;
-	if (OFI_UNLIKELY(nccl_ofi_comp == NULL)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("NCCL OFI component for dev %d is not initialised",
-			     sComm->dev);
-		goto error;
-	}
 
 	if (mhandle != NULL)
 		desc = fi_mr_desc(mhandle);
