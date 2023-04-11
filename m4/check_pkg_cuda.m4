@@ -13,7 +13,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   check_pkg_LIBS_save="${LIBS}"
 
   AC_ARG_WITH([cuda],
-     [AC_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation])])
+     [AS_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation])])
 
   AS_IF([test -n "${with_cuda}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-cuda=${with_cuda}"])
 
