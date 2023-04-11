@@ -13,7 +13,7 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
   check_pkg_LIBS_save="${LIBS}"
 
   AC_ARG_WITH([libfabric],
-     [AC_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation])])
+     [AS_HELP_STRING([--with-libfabric=PATH], [Path to non-standard libfabric installation])])
 
   AS_IF([test -n "${with_libfabric}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-libfabric=${with_libfabric}"])
 
