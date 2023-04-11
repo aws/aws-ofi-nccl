@@ -38,8 +38,9 @@ int main(int argc, char *argv[])
 	int nrecv = NCCL_OFI_MAX_RECVS;
 	int *sizes = (int *)malloc(sizeof(int)*nrecv);
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
+	int recv_n;
 
-	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
+	for (recv_n = 0; recv_n < nrecv; recv_n++) {
 		sizes[recv_n] = RECV_SIZE;
 		tags[recv_n] = tag;
 	}
