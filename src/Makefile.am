@@ -9,6 +9,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
 sources = \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
+	nccl_ofi_freelist.c \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS

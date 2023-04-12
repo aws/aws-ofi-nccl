@@ -13,6 +13,7 @@ config.h
 tests/nccl_connection
 tests/nccl_message_transfer
 tests/ring
+tests/freelist
 
 # http://www.gnu.org/software/automake
 .deps/
