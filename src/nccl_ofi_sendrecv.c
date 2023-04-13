@@ -11,7 +11,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_sendrecv.h"
-#include "stack.h"
+#include "nccl_ofi_freelist.h"
 #include "tracepoint.h"
 
 static inline ncclResult_t get_properties(int num_devices,
@@ -128,8 +128,7 @@ static const char *req_direction_str(nccl_net_ofi_sendrecv_req_direction_t direc
 static const char *nccl_net_ofi_req_str(nccl_net_ofi_sendrecv_req_t *req)
 {
 	static char buf[256];
-	snprintf(buf, sizeof(buf), "{ buffer_index: %lu, dev: %d, size: %zu, state: %s, direction: %s }",
-		 req->buffer_index,
+	snprintf(buf, sizeof(buf), "{ dev: %d, size: %zu, state: %s, direction: %s }",
 		 req->dev_id,
 		 req->size,
 		 req_state_str(req->state),
@@ -214,7 +213,6 @@ static inline void zero_nccl_ofi_req(nccl_net_ofi_sendrecv_req_t *req)
 {
 	req->comm = NULL;
 
-	req->buffer_index = 0ULL;
 	memset(&req->ctx, 0, sizeof(struct fi_context));
 
 	req->dev_id = -1;
@@ -229,13 +227,12 @@ static inline void zero_nccl_ofi_req(nccl_net_ofi_sendrecv_req_t *req)
  * @brief	Prepares sendrecv request for reuse
  */
 static inline ncclResult_t free_req(uint64_t *num_inflight_reqs,
-					     free_list_t *nccl_ofi_reqs_fl,
+				    nccl_ofi_freelist_t *nccl_ofi_reqs_fl,
 					     int dev_id,
 					     nccl_net_ofi_sendrecv_req_t *req,
 					     bool dec_inflight_reqs)
 {
 	ncclResult_t ret = ncclSuccess;
-	uint64_t buffer_index;
 
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = ncclSystemError;
@@ -251,15 +248,10 @@ static inline ncclResult_t free_req(uint64_t *num_inflight_reqs,
 		goto exit;
 	}
 
-	buffer_index = req->buffer_index;
-
 	/* Zero out buffer */
 	zero_nccl_ofi_req(req);
 
-	ret = stack_push(nccl_ofi_reqs_fl->free_index,
-			 buffer_index);
-	if (OFI_UNLIKELY(ret != ncclSuccess))
-		goto exit;
+	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, req);
 
 	/* Reduce inflight commands */
 	if (OFI_LIKELY(dec_inflight_reqs == true))
@@ -278,7 +270,7 @@ static inline ncclResult_t free_req_send_comm(nccl_net_ofi_sendrecv_send_comm_t 
 						       bool dec_inflight_reqs)
 {
 	uint64_t *num_inflight_reqs = &s_comm->num_inflight_reqs;
-	free_list_t *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
 	return free_req(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -292,7 +284,7 @@ static inline ncclResult_t free_req_recv_comm(nccl_net_ofi_sendrecv_recv_comm_t 
 						       bool dec_inflight_reqs)
 {
 	uint64_t *num_inflight_reqs = &r_comm->num_inflight_reqs;
-	free_list_t *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
 	return free_req(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -519,33 +511,22 @@ static ncclResult_t dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 /*
  * @brief	Assign an allocated sendrecv request buffer
  */
-static inline nccl_net_ofi_sendrecv_req_t *allocate_req(free_list_t *fl)
+static inline nccl_net_ofi_sendrecv_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 {
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
-	uint64_t next_avail_index;
 
-	if (OFI_UNLIKELY(fl == NULL || fl->free_index == NULL)) {
-		NCCL_OFI_WARN("Free list is empty or Free Index stack does not exist.");
+	if (OFI_UNLIKELY(fl == NULL)) {
+		NCCL_OFI_WARN("Freelist not allocated");
 		goto exit;
 	}
 
-	/* Get free index */
-	next_avail_index = stack_pop(fl->free_index);
-	if (OFI_UNLIKELY(next_avail_index >= fl->free_index->size)) {
-		NCCL_OFI_WARN("No pre-allocated buffer is available for use. next_avail_index: %lu and free_index Size: %d",
-			      next_avail_index, fl->free_index->size);
+	req = (nccl_net_ofi_sendrecv_req_t*)nccl_ofi_freelist_entry_alloc(fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("No freelist items available");
 		goto exit;
 	}
 
-	/* Get buffer */
-	if (OFI_UNLIKELY(fl->buffers == NULL)) {
-		NCCL_OFI_WARN("No pre-allocated buffers are present.");
-		goto exit;
-	}
-
-	req = &((nccl_net_ofi_sendrecv_req_t *)fl->buffers)[next_avail_index];
 	req->base.test = test;
-	req->buffer_index = next_avail_index;
 
  exit:
 	return req;
@@ -697,7 +678,7 @@ static ncclResult_t recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		r_comm->flush_buff.host_buffer = MAP_FAILED;
 	}
 
-	free_ofi_fl(r_comm->nccl_ofi_reqs_fl);
+	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
  exit:
 	return ret;
@@ -921,7 +902,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 
 	/* Pre-allocated buffers for data path */
 
-	ret = allocate_ofi_fl(&r_comm->nccl_ofi_reqs_fl, max_reqs, req_size);
+	ret = nccl_ofi_freelist_init(req_size, 16, 16, max_reqs, &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      dev_id);
@@ -1368,9 +1349,8 @@ static ncclResult_t send_close(nccl_net_ofi_send_comm_t *send_comm)
 		goto exit;
 	}
 
-	free_ofi_fl(s_comm->nccl_ofi_reqs_fl);
-
-	ret = base_ep->release_ep(base_ep);
+	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
+	free(s_comm->conn_info);
 	free(send_comm);
  exit:
 	return ret;
@@ -1474,7 +1454,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		(0 == memcmp(ret_s_comm->conn_info->ep_name, remote_ep_addr, ret_s_comm->conn_info->ep_namelen)) ? 1 : 0;
 
 	/* Pre-allocated buffers for data path */
-	ret = allocate_ofi_fl(&ret_s_comm->nccl_ofi_reqs_fl, max_reqs, req_size);
+	ret = nccl_ofi_freelist_init(req_size, 16, 16, max_reqs, &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      device->base.dev_id);
