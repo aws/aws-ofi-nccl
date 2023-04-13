@@ -13,6 +13,7 @@ extern "C" {
 
 #include <rdma/fabric.h>
 #include "nccl_ofi.h"
+#include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
 
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
@@ -38,7 +39,7 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 	nccl_net_ofi_send_comm_t base;
 
 	uint64_t num_inflight_reqs;
-	free_list_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
@@ -55,7 +56,7 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	nccl_net_ofi_recv_comm_t base;
 
 	uint64_t num_inflight_reqs;
-	free_list_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
@@ -188,9 +189,6 @@ typedef struct nccl_net_ofi_sendrecv_req {
 
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
-
-	/* Buffer index */
-	uint64_t buffer_index;
 
 	/* Associated OFI Context */
 	struct fi_context ctx;
