@@ -13,7 +13,7 @@ int main(int argc, char *argv[])
 
 	/* Plugin defines */
 	int ndev, dev, cuda_dev, i;
-	sendComm_t *sComm_prev = NULL, *sComm_next = NULL;
+	sendComm_t *sComm_next = NULL;
 	listenComm_t *lComm = NULL;
 	recvComm_t *rComm = NULL;
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
@@ -133,11 +133,7 @@ int main(int argc, char *argv[])
 	MPI_Recv((void *)src_handle_next, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR,
 		 next, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-	/* Connect to next and prev ranks */
-	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", prev);
-	while (sComm_prev == NULL)
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_prev, (void **)&sComm_prev));
-
+	/* Connect to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
 	while (sComm_next == NULL)
 		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next));
@@ -253,7 +249,6 @@ int main(int argc, char *argv[])
 	}
 
 	/* Close all Comm objects */
-	OFINCCLCHECK(extNet->closeSend((void *)sComm_prev));
 	OFINCCLCHECK(extNet->closeSend((void *)sComm_next));
 	OFINCCLCHECK(extNet->closeRecv((void *)rComm));
 	OFINCCLCHECK(extNet->closeListen((void *)lComm));
