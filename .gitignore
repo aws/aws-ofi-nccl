@@ -15,6 +15,7 @@ tests/nccl_message_transfer
 tests/ring
 tests/msgbuff
 tests/freelist
+tests/deque
 
 # http://www.gnu.org/software/automake
 .deps/
