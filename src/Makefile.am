@@ -12,6 +12,7 @@ sources = \
 	nccl_ofi_topo.c \
 	nccl_ofi_msgbuff.c \
 	nccl_ofi_freelist.c \
+	nccl_ofi_deque.c \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS
