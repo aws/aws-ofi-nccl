@@ -1300,22 +1300,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		goto exit;
 	}
 
-	/* Allow for multiple virtual nics per nic to increase
-	 * throughput for NICs that do not handle single QP situations
-	 * well. */
-	if (nic_dup_conns > 1 && !support_gdr) {
-		ofi_ndevices *= nic_dup_conns;
-
-		// Make the list cyclic to emulate having multiple devices
-		ofi_info_list->next = ofi_info_list;
-		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
-			      nic_dup_conns, ofi_ndevices);
-	} else if (nic_dup_conns > 0) {
-		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-
 	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
 	if (strncmp("tcp", ofi_info_list->fabric_attr->prov_name, strlen("tcp")) == 0) {
 		filter_tcp_info_list();
@@ -1324,6 +1308,79 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 			ret = ncclSystemError;
 			goto exit;
 		}
+	}
+
+	/* Allow for multiple virtual nics per nic to increase
+	 * throughput for NICs that do not handle single QP situations
+	 * well. */
+	if (nic_dup_conns > 1 && !support_gdr) {
+		struct fi_info *input_iter, *tmp, *output_head, *output_tail;
+
+		/* The goal of the next chunk of code is to make
+		 * ofi_info_list contain the existing providr
+		 * structures nic_dup_conns times each.  We start by
+		 * multiplying the number of devices (ie, the size of
+		 * the ofi_info_list array) by nic_dup_conns.  We then
+		 * iterate over a new info list, adding that number of
+		 * devices by repeatedly copying the entries in the
+		 * original list.
+		 *
+		 * If the input list was info objects A, B, C and
+		 * dup_conns was 2, the output array (ie, ofi_info_list
+		 * at the end) will be A, B, C, A, B, C.
+		 *
+		 * Note that this isn't entirely sufficient to get
+		 * NCCL to use all the connections.  We must also fake
+		 * the locality of the info structures so that they
+		 * look like more appealing paths; see the dup_conns
+		 * code in the PCIe path discovery logic.
+		 */
+		ofi_ndevices *= nic_dup_conns;
+
+		input_iter = NULL;
+		output_head = output_tail = NULL;
+		for (size_t i = 0 ; i < ofi_ndevices ; i++) {
+			/* note that because we'll iterate through
+			   ofi_info_list multiple times (because
+			   ofi_ndevices is already multiplied by
+			   nic_dup_conns), this check has to be in the
+			   for loop.  Each time we reach the end of
+			   the list, we'll see iter as NULL and
+			   restart. */
+			if (!input_iter)
+				input_iter = ofi_info_list;
+
+			tmp = fi_dupinfo(input_iter);
+			if (!tmp) {
+				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
+				ret = ncclSystemError;
+				goto exit;
+			}
+			/* just in case */
+			tmp->next = NULL;
+
+			if (!output_head)
+				output_head = tmp;
+
+			if (!output_tail) {
+				output_tail = tmp;
+			} else {
+				output_tail->next = tmp;
+				output_tail = tmp;
+			}
+
+			input_iter = input_iter->next;
+		}
+
+		fi_freeinfo(ofi_info_list);
+		ofi_info_list = output_head;
+
+		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
+			      nic_dup_conns, ofi_ndevices);
+	} else if (nic_dup_conns > 0) {
+		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
+		ret = ncclSystemError;
+		goto exit;
 	}
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
