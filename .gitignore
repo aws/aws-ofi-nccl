@@ -3,20 +3,21 @@
 src/*.o
 src/*.lo
 src/*.la
-tests/*.o
-!tests/*.c
-!tests/*.h
 libnccl-net.so
 tags
 config.h
 
-tests/nccl_connection
-tests/nccl_message_transfer
-tests/ring
-tests/msgbuff
-tests/freelist
-tests/deque
-tests/scheduler
+tests/functional/*.o
+tests/unit/*.o
+tests/unit/*.log
+tests/unit/*.trs
+tests/functional/nccl_connection
+tests/functional/nccl_message_transfer
+tests/functional/ring
+tests/unit/msgbuff
+tests/unit/freelist
+tests/unit/deque
+tests/unit/scheduler
 
 # http://www.gnu.org/software/automake
 .deps/

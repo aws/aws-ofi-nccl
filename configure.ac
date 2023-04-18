@@ -120,6 +120,8 @@ AC_CONFIG_FILES([Makefile
                  include/Makefile
                  src/Makefile
                  tests/Makefile
+                 tests/functional/Makefile
+                 tests/unit/Makefile
                  topology/Makefile])
 AC_OUTPUT
 echo "*"
