@@ -24,19 +24,19 @@ struct ec2_platform_data {
 	int default_dup_conns;
 	bool force_proto_simple;
 } platform_data_map[] = {
-	[0] = {
+	{
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.force_proto_simple = true,
 	},
-	[1] = {
+	{
 		.name = "p4de.24xlarge",
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.force_proto_simple = true,
 	},
-	[2] = {
+	{
 		.name = "p3dn.24xlarge",
 		.topology = NULL,
 		.default_dup_conns = 4,
