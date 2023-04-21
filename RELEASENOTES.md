@@ -14,6 +14,34 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.6.0 release notes
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.17.1-1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) while
+maintaining backward compatibility with older NCCL versions (up to [NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1)).
+It was tested with Libfabric versions up to
+[Libfabric v1.17.1](https://github.com/ofiwg/libfabric/releases/tag/v1.17.1).
+
+New Features:
+* Add AWS platform specific code to `master` branch to support single-branch
+  development and release model. between `aws` and `master` branch.
+* Follow Automake conventions for Makefiles.
+* Remove Travis Support as the plugin is tested using internal AWS CI
+  infrastructure.
+
+Bug Fixes:
+* Avoid topology update if NCCL_TOPO_FILE is already set
+* Inline allocate_stack(..) and free_stack(..) in include/stack.h
+* Shortcut parameter lookup to avoid locks in fast-path.
+* Free self connecting request after network transfer completes.
+* Fix TCP provider on AWS p3dn by filtering the provider list before duplicating
+  info entries.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code and [nccl-tests](https://github.com/NVIDIA/nccl-tests) test suite:
+* efa
+* tcp; ofi_rxm
+
 # v1.5.0 release notes
 
 There was no general 1.5.0 release; it was limited to an AWS release.
