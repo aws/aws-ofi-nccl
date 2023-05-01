@@ -1165,9 +1165,7 @@ static inline ncclResult_t process_completions(
 		}
 
 		comp_flags = cq_entry[comp_idx].flags;
-
 		req = container_of(op_ctx, nccl_ofi_req_t, ctx);
-		update_nccl_ofi_req(req, NCCL_OFI_REQ_COMPLETED, cq_entry[comp_idx].len);
 
 		NCCL_OFI_TRACE_COMPLETIONS(req, &req->ctx);
 
@@ -1178,6 +1176,8 @@ static inline ncclResult_t process_completions(
 				req->lComm->accepted = true;
 			}
 		}
+
+		update_nccl_ofi_req(req, NCCL_OFI_REQ_COMPLETED, cq_entry[comp_idx].len);
 	}
 
 exit:
