@@ -139,6 +139,13 @@ OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
 OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
 
 /*
+ * User defined file path template that is used in case NCCL topology
+ * file is written. The last six characters of the template must be
+ * XXXXXX and will be replaced to make the filename unique.
+ */
+OFI_NCCL_PARAM_STR(topo_file_template, "TOPO_FILE_TEMPLATE", NULL);
+
+/*
  * Disable the native RDMA write support check when using the "RDMA" protocol
  * for send/recv operations on AWS platforms. When the check is disabled, the
  * "RDMA" protocol can be used even on platforms where native RDMA write is not

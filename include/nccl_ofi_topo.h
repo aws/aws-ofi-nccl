@@ -35,11 +35,18 @@ typedef struct nccl_ofi_topo_data {
 	/* Libfabric NIC info list */
 	struct fi_info *info_list;
 
+	/* Length of libfabric NIC info list */
+	int info_list_len;
+
 	/* Temporary data used by grouping algorithms. This member
 	 * tracks the number of groups that are supposed to be created
 	 * from the libfabric NIC info list stored in this struct
 	 * while grouping algorithm is executed. */
 	int num_groups;
+
+	/* One of the GPU topology nodes that is the closest to the
+	 * NICs in `info_list` */
+	hwloc_obj_t gpu_group_node;
 
 	/* Temporary data for grouping algorithm. Indicates whether
 	 * the corresponding topology node of this object has
@@ -84,6 +91,9 @@ typedef struct nccl_ofi_topo {
 	/* Hardware topology. Each topology node stores a pointer to a
 	 * different object of vector 'data_vec'. */
 	hwloc_topology_t topo;
+
+	/* Maximum number of libfabric NICs in a group */
+	int max_group_size;
 
 	/* Vector of topology node user data. The user data objects of
 	 * the vector are the vehicle to store temporary data as well
@@ -254,6 +264,18 @@ ncclResult_t nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
 nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list);
 
 /*
+ * @brief	Write NCCL topology file based on NCCL OFI topology
+ *
+ * @param	topo
+ *		NCCL OFI topology
+ * @param	file
+ *		File to write to
+ * @return	0, on success
+ *		non-zero, on error
+ */
+int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file);
+
+/*
  * @brief	Return number of topology nodes that store a libfabric NIC info
  *		list
  *
@@ -280,6 +302,18 @@ ncclResult_t nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
  *		NULL, if end of vector is reached and no list has been found
  */
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
+
+/*
+ * @brief	Dump NCCL topology into file
+ *
+ * @param	topo
+ * 		The topology
+ * @param	file
+ *		The file
+ * @return	0, on success
+ *		non-zero, on error
+ */
+int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
 
 #ifdef _cplusplus
 }
