@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "nccl-headers/error.h"
 #include "nccl_ofi.h"
@@ -18,6 +19,13 @@
 #include "tracepoint.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
+
+/* Template path used to write temporary NCCL topology file */
+static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
+/* Stores path to NCCL topology file written by ofi plugin for later unlinking */
+static char *topo_file_unlink = NULL;
+/* Locks functions which access `topo_file_unlink` */
+static pthread_mutex_t topo_file_lock;
 
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
@@ -339,6 +347,167 @@ static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
 	assert(ep->rails);
 	assert(rail_id < ep->num_rails);
 	return &ep->rails[rail_id];
+}
+
+/*
+ * @brief	Write topology to NCCL topology file
+ *
+ * This function writes NCCL topology file if environment variable
+ * `NCCL_TOPO_FILE` is not set and if `topo_file_unlink` does not store
+ * a path to a NCCL topology file that has been written before. Use
+ * function `unlink_topo_file()` to unlink the file and to reset
+ * `topo_file_unlink` to `NULL`.
+ *
+ * In case environment variable `OFI_NCCL_TOPO_FILE_TEMPLATE` is set,
+ * write to a unique file using file template provided by
+ * `OFI_NCCL_TOPO_FILE_TEMPLATE`. Otherwise, use file template
+ * `/tmp/aws-ofi-nccl-topo-XXXXXX` and store filename in
+ * `topo_file_unlink`. In both cases, write name of topology file in
+ * environment variable `NCCL_TOPO_FILE`.
+ *
+ * This function is guarded by `topo_file_lock`.
+ *
+ * @param	topo
+ *		hwloc topology. May be NULL
+ * @param	0, on success
+ *		non-zero, on error
+ */
+static int write_topo_file(nccl_ofi_topo_t *topo)
+{
+	int ret = 0;
+	int rc = 0;
+	FILE *file;
+	char *filename;
+	int fd;
+
+	/* No-op since environment variable is already set */
+	if (getenv("NCCL_TOPO_FILE")) {
+		goto exit;
+	}
+
+	rc = pthread_mutex_lock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Locking NCCL topology file lock failed: %s", strerror(rc));
+		ret = -rc;
+		goto exit;
+	}
+
+	if (topo_file_unlink) {
+		/* A topology file has already been written and stored
+		 * such that it can be unlinked later. Do not write
+		 * another topology file since it would end up
+		 * overriding the stored filename. */
+		goto unlock;
+	}
+
+	if (ofi_nccl_topo_file_template()) {
+		filename = strdup(ofi_nccl_topo_file_template());
+	} else {
+		filename = strdup(topo_file_template);
+		/* Store filename to be unlinked later */
+		topo_file_unlink = filename;
+	}
+
+	/* Create file descriptor */
+	fd = mkstemp(filename);
+	if (fd == -1) {
+		NCCL_OFI_WARN("Failed to create NCCL topology file from template %s. ERROR: %s",
+			      filename, strerror(errno));
+		ret = -errno;
+		goto unlock;
+	}
+
+	/* Open file from file descriptor */
+	file = fdopen(fd, "w");
+	if (file == NULL) {
+		NCCL_OFI_WARN("Failed to open NCCL topology file using file descriptor. File name: %s. ERROR %s",
+			      filename, strerror(errno));
+		ret = -errno;
+		goto unlock;
+	}
+
+	ret = nccl_ofi_topo_write(topo, file);
+	if (ret) {
+		NCCL_OFI_WARN("Failed to write NCCL topology using file descriptor. File name: %s",
+			      filename);
+		goto unlock;
+	}
+
+	/* Close file. The file remains accessible as long as file is not unlinked. */
+	if (fclose(file) == EOF) {
+		NCCL_OFI_WARN("Unable to close NCCL topology file. File name: %s. ERROR: %s",
+			      filename, strerror(errno));
+		ret = -errno;
+		goto unlock;
+	}
+
+	/* Set topology file path environment variable `NCCL_TOPO_FILE` */
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+		      "Setting NCCL_TOPO_FILE environment variable to %s",
+		      filename);
+	if (setenv("NCCL_TOPO_FILE", filename, 1) != 0) {
+		NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE.ERROR: %s",
+			      strerror(errno));
+		ret = -errno;
+		goto unlock;
+	}
+
+ unlock:
+	rc = pthread_mutex_unlock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Unlocking NCCL topology file lock failed: %s", strerror(rc));
+		ret = -rc;
+		goto exit;
+	}
+
+ exit:
+	return ret;
+}
+
+/*
+ * @brief	Unlink file stored in `topo_file_unlink` if variable is set
+ *
+ * This function is guarded by `topo_file_lock`.
+ *
+ * @return	0, on success
+ *		non-zero, on error
+ */
+static int unlink_topo_file()
+{
+	int ret = 0;
+	int rc = 0;
+
+	rc = pthread_mutex_lock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Locking NCCL topology filename lock failed: %s", strerror(rc));
+		ret = -rc;
+		goto exit;
+	}
+
+	/* No filename stored to be unlinked */
+	if (topo_file_unlink == NULL) {
+		goto unlock;
+	}
+
+	if (unlink(topo_file_unlink) == -1) {
+		NCCL_OFI_WARN("Failed to unlink NCCL topology file %s: %s", topo_file_unlink, strerror(errno));
+		ret = -errno;
+		goto unlock;
+	}
+
+	/* Unset filename to indicate that file is not linked anymore */
+	free(topo_file_unlink);
+	topo_file_unlink = NULL;
+
+ unlock:
+	rc = pthread_mutex_unlock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Unlocking NCCL topology filename lock failed: %s", strerror(rc));
+		ret = -rc;
+	}
+
+ exit:
+	return ret;
 }
 
 /*
@@ -3834,6 +4003,13 @@ static ncclResult_t listen(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
 	nccl_net_ofi_ep_rail_t *first_rail = get_rail(ep, 0);
 
+	/* Unlink topology file which causes the file to be deleted as
+	 * soon as no reference to the file exists anymore */
+	if (unlink_topo_file()) {
+		NCCL_OFI_WARN("Failed to unlink temporary topology file while listening");
+		return ncclSystemError;
+	}
+
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t*)ep->base.device;
@@ -5010,6 +5186,13 @@ static ncclResult_t connect(nccl_net_ofi_ep_t *base_ep,
 	*send_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
+	
+	/* Unlink topology file which causes the file to be deleted as
+	 * soon as no reference to the file exists anymore */
+	if (unlink_topo_file()) {
+		NCCL_OFI_WARN("Failed to unlink temporary topology file while connecting");
+		return ncclSystemError;
+	}
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
@@ -5626,16 +5809,23 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	ncclResult_t ret = ncclSuccess;
 	int dev_id = 0;
 	nccl_net_ofi_device_t **base_devs = NULL;
-	int num_rails = -1;
+	int num_rails = 0;
 	int num_devs = 0;
 	struct fi_info *info_list = NULL;
 	size_t rr_threshold = ofi_nccl_round_robin_threshold();
+
+	ret = pthread_mutex_init(&topo_file_lock, NULL);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
+		ret = ncclSystemError;
+		goto error;
+	}
 
 	if (ofi_nccl_eager_max_size() < 0 ||
 	    ofi_nccl_eager_max_size() > rr_threshold) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
-		goto exit;
+		goto error;
 	}
 	eager_max_size = (size_t) ofi_nccl_eager_max_size();
 
@@ -5643,31 +5833,54 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		NCCL_OFI_WARN("Failed to initialize rdma protocol. "
 			      "Pointer 'plugin' is not equal to NULL.");
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
 	if (!plugin) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
 		ret = ncclSystemError;
-		goto exit;
+		goto error;
 	}
 
 	ret = nccl_ofi_topo_group(topo);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("Failed to group NICs");
-		goto exit;
+		goto error;
+	}
+
+	num_rails = topo->max_group_size;
+	if (num_rails > MAX_NUM_RAILS) {
+		NCCL_OFI_WARN("Unexpected number of rails of device %i. Maximum is %i but got %i",
+			      dev_id, MAX_NUM_RAILS, num_rails);
+		ret = ncclInternalError;
+		goto error;
+	}
+	if (num_rails < 1) {
+		NCCL_OFI_WARN("Unexpected number of rails of device %i. Expected at least one NIC but got %i",
+			      dev_id, num_rails);
+		ret = ncclInternalError;
+		goto error;
+	}
+
+	/* Only write topology in case RDMA devices will have multiple rails */
+	if (num_rails > 1) {
+		ret = write_topo_file(topo);
+		if (ret != ncclSuccess) {
+			NCCL_OFI_WARN("Failed to write NCCL topology file");
+			goto error;
+		}
 	}
 
 	ret = nccl_ofi_topo_num_info_lists(topo, &num_devs);
 	if (ret != ncclSuccess) {
-		goto exit;
+		goto error;
 	} else if (num_devs <= 0)  {
 		NCCL_OFI_WARN("Topology reported unexpected number of devices. "
 			      "Expected value larger than zero but got %i",
 			      num_devs);
 		ret = ncclInternalError;;
-		goto exit;
+		goto error;
 	}
 
 	base_devs = calloc(num_devs, sizeof(nccl_net_ofi_rdma_device_t *));
@@ -5675,8 +5888,7 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		NCCL_OFI_WARN("Unable to allocate "
 			      "nccl_net_ofi_rdma_device_t pointer array");
 		ret = ncclSystemError;
-		free(plugin);
-		goto exit;
+		goto error;
 	}
 
 	nccl_net_ofi_init_plugin(base_devs, num_devs);
@@ -5710,30 +5922,13 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 			goto error;
 		}
 
-		/* Determine number of rails */
-		if (num_rails == -1) {
-			num_rails = ofi_info_list_length(info_list);
-			if (num_rails > MAX_NUM_RAILS) {
-				NCCL_OFI_WARN("Unexpected number of rails of device %i. Maximum is %i but got %i",
-					      dev_id, MAX_NUM_RAILS, num_rails);
-				ret = ncclInternalError;
-				goto error;
-			}
-			if (num_rails < 1) {
-				NCCL_OFI_WARN("Unexpected number of rails of device %i. Expected at least one NIC but got %i",
-					      dev_id, num_rails);
-				ret = ncclInternalError;
-				goto error;
-			}
-		} else {
-			/* Ensure that number of rails are the same across devices */
-			int length = ofi_info_list_length(info_list);
-			if (num_rails != length) {
-				NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
-					      dev_id, num_rails, length);
-				ret = ncclInternalError;
-				goto error;
-			}
+		/* Ensure that number of rails are the same across devices */
+		int length = ofi_info_list_length(info_list);
+		if (num_rails != length) {
+			NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
+				      dev_id, num_rails, length);
+			ret = ncclInternalError;
+			goto error;
 		}
 
 		/* Verify NIC info list from topology */
@@ -5804,22 +5999,24 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	goto exit;
 
  error:;
-	nccl_net_ofi_device_t **base_dev = base_devs;
-	for (; base_dev != base_devs + num_devs; ++base_dev) {
-		nccl_net_ofi_rdma_device_t *device =
-			(nccl_net_ofi_rdma_device_t *)*base_dev;
+	if (base_devs) {
+		for (nccl_net_ofi_device_t **base_dev = base_devs; base_dev != base_devs + num_devs; ++base_dev) {
+			nccl_net_ofi_rdma_device_t *device =
+				(nccl_net_ofi_rdma_device_t *)*base_dev;
 
-		if (device->device_rails) {
-			release_device_ofi_resources(device);
+			if (device->device_rails) {
+				release_device_ofi_resources(device);
+			}
+			free(device->device_rails);
+			if (device->scheduler) device->scheduler->fini(device->scheduler);
+			free(device->base.name);
+			free(device);
 		}
-		free(device->device_rails);
-		if (device->scheduler) device->scheduler->fini(device->scheduler);
-		free(device->base.name);
-		free(device);
+		free(base_devs);
 	}
-	free(base_devs);
 	free(plugin);
 	plugin = NULL;
+
  exit:
 	return ret;
 }

@@ -182,6 +182,22 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Default: SENDRECV</td>
    </tr>
    <tr>
+      <td><code>OFI_NCCL_TOPO_FILE_TEMPLATE</code></td>
+      <td>Template path to a file to control the location where NCCL
+      topology is written to. In case plugin writes a NCCL topology
+      file and `OFI_NCCL_TOPO_FILE_TEMPLATE` is set, plugin creates a
+      unique file using the provided template and writes topology to
+      that file. The last six characters of the template must be
+      `XXXXXX` and will be replaced to make the filename unique.  In
+      case plugin writes a NCCL topology file and
+      `OFI_NCCL_TOPO_FILE_TEMPLATE` is not set,
+      `/tmp/aws-ofi-nccl-topo-XXXXXX` is used as template path and the
+      NCCL topology is written to a temporary file that is deleted
+      when function `listen()` or `connect()` is invoked.</td>
+      <td>String</td>
+      <td>Default: Unset</td>
+   </tr>
+   <tr>
       <td><code>OFI_NCCL_ROUND_ROBIN_THRESHOLD</code></td>
       <td>Adjust the maximum size of `RDMA` protocol messages that are
       assigned to multi-rail channels in round-robin mode. Messages larger

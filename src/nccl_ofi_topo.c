@@ -8,14 +8,28 @@
 #include <string.h>
 #include <hwloc.h>
 #include <rdma/fabric.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <assert.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi.h"
 #include "nccl-headers/error.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_math.h"
 
 static const uint8_t display_controller_class_id = 0x03;
 static const unsigned short nvidia_vendor_id = 0x10de;
+
+/* Maximum length of the device property read from file by function
+ * get_device_property() */
+#define MAX_DEV_PROPERTY_LENGTH 16
+
+const char *speed_name = "max_link_speed";
+const char *width_name = "max_link_width";
+
+/* `pcie_gen[i]` defines the speed of a PCIe lane of PCIe generation `i+1` */
+const char *pcie_gen[] = {"2.5", "5", "8", "16", "32", "64"};
 
 /*
  * @brief Create vector of nccl_ofi_topo_data_t structs
@@ -212,7 +226,7 @@ static void enable_hwloc_io_types(hwloc_topology_t topo)
 	hwloc_topology_set_io_types_filter(topo, filter);
 #else
 	unsigned long flags = hwloc_topology_get_flags(topo);
-	flags |= HWLOC_TOPOLOGY_FLAG_IO_DEVICES;
+	flags |= HWLOC_TOPOLOGY_FLAG_IO_DEVICES | HWLOC_TOPOLOGY_FLAG_IO_BRIDGES;
 	hwloc_topology_set_flags(topo, flags);
 #endif
 }
@@ -344,8 +358,8 @@ static ncclResult_t get_info_for_node(hwloc_obj_t node, struct fi_info *info_lis
  *		non-zero, on error
  */
 static ncclResult_t count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
-							struct fi_info *info_list,
-							int *count)
+							   struct fi_info *info_list,
+							   int *count)
 {
 	ncclResult_t ret = ncclSuccess;
 	hwloc_obj_t obj = NULL;
@@ -499,10 +513,14 @@ static ncclResult_t set_user_data(nccl_ofi_topo_t *ofi_topo,
 			 * user data of topology node */
 			nccl_ofi_topo_data_t *user_data = (nccl_ofi_topo_data_t *)obj->userdata;
 			user_data->info_list = fi_dupinfo(info);
+			user_data->info_list_len = 1;
+
 			if (!user_data->info_list) {
 				NCCL_OFI_WARN("Unable to duplicate libfabric NIC info");
 				return ncclInvalidArgument;
 			}
+
+			ofi_topo->max_group_size = 1;
 		}
 
 	}
@@ -598,11 +616,12 @@ static ncclResult_t mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
  *		libfabric NIC info struct (marked topology node) in its subtree
  *		and increase its group count by one
  *
- * @param 	node
+ * @param 	gpu_node
  * 		Topology node on which this operation is started
  */
-static ncclResult_t propagate_gpu_count(hwloc_obj_t node)
+static ncclResult_t propagate_gpu_count(hwloc_obj_t gpu_node)
 {
+	hwloc_obj_t node = gpu_node;
 	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
 	if (!userdata) {
 		NCCL_OFI_WARN("Invalid user data pointer");
@@ -623,6 +642,7 @@ static ncclResult_t propagate_gpu_count(hwloc_obj_t node)
 		/* Node found. Increase group count. */
 		if (userdata->is_nic_subtree) {
 			userdata->num_groups++;
+			userdata->gpu_group_node = gpu_node;
 			break;
 		}
 
@@ -666,8 +686,8 @@ static ncclResult_t propagate_gpu_group_counts(hwloc_topology_t topo)
  */
 static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 {
-	nccl_ofi_topo_data_t *data = NULL;
-	nccl_ofi_topo_data_t *user_data = NULL;
+	nccl_ofi_topo_data_t *source_data = NULL;
+	nccl_ofi_topo_data_t *target_data = NULL;
 
 	/* Iterate over user data. Since user data is added to all
 	 * topology nodes that have a "NIC topology nodes" or a
@@ -675,48 +695,50 @@ static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 	 * structs are found. */
 	nccl_ofi_topo_data_iterator_t data_iter;
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
-	while ((data = nccl_ofi_get_user_data(&data_iter))) {
+	while ((source_data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
-		if (!data->info_list) {
+		if (!source_data->info_list) {
 			continue;
 		}
 
-		hwloc_obj_t obj = data->node;
-		if (!obj) {
+		hwloc_obj_t target_obj = source_data->node;
+		if (!target_obj) {
 			NCCL_OFI_WARN("Expected initialized topology");
 			return ncclInternalError;
 		}
 
-		user_data = (nccl_ofi_topo_data_t *)obj->userdata;
+		target_data = (nccl_ofi_topo_data_t *)target_obj->userdata;
 
 		/* Info object is already stored at appropriate node */
-		if (user_data->num_groups > 0) continue;
+		if (target_data->num_groups > 0) continue;
 
 		/* Search for topology nodes towards the root with a
 		 * group count of one or more and add libfabric NIC
 		 * info list to that node. */
-		while (obj) {
-			nccl_ofi_topo_data_t *user_data = (nccl_ofi_topo_data_t *)obj->userdata;
-			if (!user_data) {
+		while (target_obj) {
+			target_data = (nccl_ofi_topo_data_t *)target_obj->userdata;
+			if (!target_data) {
 				NCCL_OFI_WARN("Invalid user data pointer");
 				return ncclInternalError;
 			}
 
-			if (user_data->num_groups > 0) {
+			if (target_data->num_groups > 0) {
 				/* Find end of list */
-				struct fi_info *list_end = data->info_list;
+				struct fi_info *list_end = source_data->info_list;
 				while(list_end->next) {
 					list_end = list_end->next;
 				}
 
 				/* Concatenate lists */
-				list_end->next = user_data->info_list;
-				user_data->info_list = data->info_list;
-				data->info_list = NULL;
+				list_end->next = target_data->info_list;
+				target_data->info_list = source_data->info_list;
+				target_data->info_list_len += source_data->info_list_len;
+				source_data->info_list = NULL;
+				source_data->info_list_len = 0;
 				break;
 			}
-			obj = obj->parent;
-			if (!obj) {
+			target_obj = target_obj->parent;
+			if (!target_obj) {
 				NCCL_OFI_WARN("Unable to attach NIC to GPU.");
 				return ncclInternalError;
 			}
@@ -734,6 +756,10 @@ static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
  *		The topology
  * @param	info_list
  *		Libfabric NIC info list
+ * @param	num_infos
+ *		Length of `info_list`
+ * @param	gpu_group_node
+ *		One GPU topology node that is the closest to the NICs in `info_list`
  * @param	num_group
  *		Number of groups to create
  *
@@ -742,28 +768,20 @@ static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
  */
 static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 						 struct fi_info **info_list,
+						 int num_infos,
+						 hwloc_obj_t gpu_group_node,
 						 int num_groups)
 {
 	ncclResult_t ret = ncclSuccess;
 	int group_idx = 0;
 
-	/* Calculate length of input list */
-	int size = 0;
-	{
-		struct fi_info *curr = *info_list;
-		while (curr) {
-			curr = curr->next;
-			++size;
-		}
-	}
-
 	/* Adjust number of groups if input list does not provide enough members */
-	num_groups = nccl_ofi_min_int(num_groups, size);
+	num_groups = nccl_ofi_min_int(num_groups, num_infos);
 	/* Number of groups with one additional member. Handles the
 	 * case where list size is not a multiple of number of
 	 * groups */
-	const int num_large_groups = size % num_groups;
-	int group_size = size / num_groups + 1;
+	const int num_large_groups = num_infos % num_groups;
+	int group_size = num_infos / num_groups + 1;
 
 	for (; group_idx < num_groups; ++group_idx) {
 		hwloc_obj_t obj;
@@ -803,6 +821,11 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 
 		/* Add list topology node */
 		user_data->info_list = *info_list;
+		user_data->info_list_len = group_size;
+		user_data->gpu_group_node = gpu_group_node;
+
+		/* Track maximum group size */
+		topo->max_group_size = nccl_ofi_max_int(topo->max_group_size, group_size);
 
 		/* Cut list into two lists after group size list elements */
 		struct fi_info *end = user_data->info_list;
@@ -847,11 +870,17 @@ static ncclResult_t create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 
 		struct fi_info *info_list = data->info_list;
 		data->info_list = NULL;
+		int info_list_len = data->info_list_len;
+		data->info_list_len = 0;
 		int num_groups = data->num_groups;
 		data->num_groups = 0;
 
 		/* Create groups from list */
-		ncclResult_t ret = create_groups_from_info_list(topo, &info_list, num_groups);
+		ncclResult_t ret = create_groups_from_info_list(topo,
+								&info_list,
+								info_list_len,
+								data->gpu_group_node,
+								num_groups);
 		if (ret != ncclSuccess) {
 			data->info_list = info_list;
 			return ret;
@@ -863,7 +892,7 @@ static ncclResult_t create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 
 /*
  * @brief	Print libfabric NIC info lists stored in user data of topology nodes
-*/
+ */
 static void print_nic_groups(nccl_ofi_topo_t *topo) {
 	nccl_ofi_topo_data_t *data = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
@@ -921,6 +950,580 @@ ncclResult_t nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 	}
 
 	print_nic_groups(topo);
+	return ret;
+}
+
+/*
+ * @brief	Return NUMA node child from memory children list of `node`
+ *
+ *  Since HWLOC 2.0, NUMA topology nodes are stored in a specific
+ *  memory children list. Scan this list and return the first NUMA
+ *  child node that is found that does not store user data.
+ *
+ * @param	node
+ *		Topology node whose memory children list is to be scanned
+ * @return	NUMA node topology node, if found
+ *		NULL, otherwise
+ */
+static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
+{
+	hwloc_obj_t child = NULL;
+
+#if (HWLOC_API_VERSION >= 0x00020000)
+	/* Recurse on memory children */
+	if (node->memory_arity > 0) {
+		child = node->memory_first_child;
+		while (child != NULL) {
+			nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)child->userdata;
+			if (child->type == HWLOC_OBJ_NUMANODE && topo_data == NULL) {
+				break;
+			}
+			child = child->next_sibling;
+		}
+	}
+#endif
+
+	return child;
+}
+
+/* 
+ * @brief	Return PCI device property of PCI device
+ *
+ * This function reads first `MAX_DEV_PROPERTY_LENGTH` characters from
+ * device property file
+ * `/sys/bus/pci/devices/{domain}:{bus}:{dev}.{func}/{prop_name}`. Reading
+ * may stop after a newline character is read or if the file
+ * ends.
+ *
+ * @param	domain
+ *		Domain of the PCI BUS ID
+ * @param	bus
+ *		Bus of the PCI BUS ID
+ * @param	dev
+ *		Device of the PCI BUS ID
+ * @param	func
+ *		Function of the PCI BUS ID
+ * @param	prop_name
+ *		File name of the device property
+ * @return	Pointer to an element of a char array to write device property to.
+ *		The array has to be allocated by the caller of this function.
+ *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH` 
+ *		characters in addition to the delimiting `\0`.
+ * @return	0, on sucess
+ *		non-zero, on error
+ */
+static int get_device_property(unsigned domain, unsigned bus,
+			       unsigned dev, unsigned func,
+			       const char *prop_name, char *prop)
+{
+	int ret = 0;
+	FILE *file;
+	char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
+	size_t path_len;
+	char *path = NULL;
+
+        if ((path_len = snprintf(NULL, 0, path_format, domain, bus, dev, func, prop_name)) < 0) {
+		NCCL_OFI_WARN("Failed to determine device property path length of property %s. ERROR: %s",
+			      prop_name, strerror(errno));
+		ret = -errno;
+		goto error;
+	}
+	path = malloc(path_len + 1);
+	if (!path) {
+		NCCL_OFI_WARN("Device property file path malloc failed: %s", strerror(errno));
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	/* Create file path */
+	if (snprintf(path, path_len + 1, path_format, domain, bus, dev, func, prop_name) < 0) {
+		NCCL_OFI_WARN("Failed to create device property path for property %s. ERROR: %s",
+			      prop_name, strerror(errno));
+		ret = -errno;
+		goto error;
+	}
+
+	/* Open file and read property */
+	if ((file = fopen(path, "r")) != NULL) {
+		char *rc = fgets(prop, MAX_DEV_PROPERTY_LENGTH + 1, file);
+		if (feof(file) && !rc) {
+			/* No bytes has been read. Let caller decide
+			 * whether this is an error or not. */
+			prop[0] = '\0';
+		} else if (ferror(file)) {
+			NCCL_OFI_WARN("Failed to read device property file %s. ERROR: %s",
+				      path, strerror(errno));
+			ret = -errno;
+			goto exit;
+		}
+	} else {
+		NCCL_OFI_WARN("Failed to open device property file %s. ERROR: %s",
+			      path, strerror(errno));
+		ret = -errno;
+		goto error;
+	}
+
+ exit:
+	if (fclose(file)) {
+		NCCL_OFI_WARN("Failed to close device property file %s. ERROR: %s",
+			      path, strerror(errno));
+		ret = -errno;
+	}
+ error:
+	if (path) free(path);
+
+	return ret;
+}
+
+/*
+ * @brief	Read link speed and width of PCI device or bridge from file system
+ *
+ * @param	node
+ *		PCI device or bridge topology node
+ * @return	Link speed index into `pcie_gen`, on success.
+ * @return	Link width, on success.
+ * @return	0, on sucess
+ *		non-zero, on error
+ */
+static int get_pci_device_speed(hwloc_obj_t node,
+				size_t *speed_idx, size_t *width)
+{
+	struct hwloc_pcidev_attr_s attr;
+
+	if (node->type == HWLOC_OBJ_BRIDGE) {
+		attr = node->attr->bridge.upstream.pci;
+	} else if (node->type == HWLOC_OBJ_PCI_DEVICE) {
+		attr = node->attr->pcidev;
+	} else {
+		NCCL_OFI_WARN("Expected topology node to be a PCI device or bridge");
+		return ncclInternalError;
+	}
+
+	int ret;
+	char prop_str[MAX_DEV_PROPERTY_LENGTH + 1];
+	/* Size of the PCI speed lookup table `pcie_gen` */
+	size_t num_pcie_gens = sizeof(pcie_gen) / sizeof(pcie_gen[0]);
+
+	/* Read link speed */
+	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
+				       speed_name, prop_str))) {
+		return ret;
+	}
+
+	/* Search reported PCI speed in `pcie_gen` lookup table */
+	*speed_idx = 0;
+	while (*speed_idx < num_pcie_gens && strncmp(prop_str, pcie_gen[*speed_idx], strlen(pcie_gen[*speed_idx])) != 0) {
+		++(*speed_idx);
+	}
+	if (*speed_idx == num_pcie_gens) {
+		NCCL_OFI_WARN("Unknown link speed \"%s\" of device %04x:%02x:%02x.%01x",
+			      prop_str, attr.domain, attr.bus, attr.dev, attr.func);
+		return ncclSystemError;
+	}
+
+	/* Read link width */
+	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
+				       width_name, prop_str))) {
+		return ret;
+	}
+
+	*width = strtol(prop_str, NULL, 0);
+	if (errno == ERANGE) {
+		NCCL_OFI_WARN("Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a valid link width. Error: %s",
+			      prop_str,
+			      attr.domain, attr.bus, attr.dev, attr.func, strerror(errno));
+		return -errno;
+	} else if (*width == 0) {
+		NCCL_OFI_WARN("Unknown link width \"%s\" of device %04x:%02x:%02x.%01x",
+			      prop_str,
+			      attr.domain, attr.bus, attr.dev, attr.func);
+		return ncclSystemError;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Read link speed and width of topology node and its parent topology node from file system and return minimum
+ *
+ * @param	node
+ *		PCI device or bridge topology node. Parent of `node` must be a bridge topology node.
+ * @return	Link speed index into `pci_gen`, on success.
+ * @return	Link width, on success.
+ * @return	0, on sucess
+ *		non-zero, on error
+ */
+static int get_pci_device_min_speed(hwloc_obj_t node, size_t *speed_idx,
+				    size_t *width)
+{
+	int ret;
+	hwloc_obj_t parent_node = node->parent;
+
+	size_t device_width, port_width;
+	size_t device_speed_idx, port_speed_idx;
+
+	/* Read speed and width */
+	if ((ret = get_pci_device_speed(node, &device_speed_idx, &device_width))) {
+		return ret;
+	}
+
+	/* Read speed and width of parent topology node to retrieve port speed and width. */
+	if ((ret = get_pci_device_speed(parent_node, &port_speed_idx, &port_width))) {
+		return ret;
+	}
+
+	*speed_idx = nccl_ofi_min_size_t(device_speed_idx, port_speed_idx);
+	*width = nccl_ofi_min_size_t(device_width, port_width);
+
+	return 0;
+}
+
+/*
+ * @brief	Write cpu opening tag to NCCL topology file
+ *
+ * @param	node
+ *		Topology node of type `HWLOC_OBJ_NUMANODE`
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ */
+static int write_cpu_opening_tag(hwloc_obj_t node, FILE *file, int indent)
+{
+
+	/* Write NUMA node opening tag including `numaid` and
+	 * `affinity`. Fields `arch`, `vendor`, `familyid`, and
+	 * `modelid` are added by NCCL later. */
+	if (fprintf(file,
+		    "%*s"
+		    "<cpu "
+		    "numaid=\"%u\""
+		    ">\n",
+		    indent, "", node->os_index) < 0) {
+		NCCL_OFI_WARN("Failed to print opening CPU tag. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Write cpu closing tag to NCCL topology file
+ *
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ */
+static int write_cpu_closing_tag(FILE *file, int indent)
+{
+	if (fprintf(file, "%*s</cpu>\n", indent, "") < 0) {
+		NCCL_OFI_WARN("Failed to print closing CPU tag. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Write pci tag to NCCL topology file
+ *
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ * @param	pcidev
+ *		Pointer to pci device struct
+ * @param	speed_idx
+ *		Index into link speed lookup table `pcie_gen`
+ * @param	width
+ *		link width
+ */
+static int write_pci_tag(FILE *file, int indent,
+			 struct hwloc_pcidev_attr_s *pcidev,
+			 size_t speed_idx, size_t width)
+{
+	int rc = fprintf(file,
+			 "%*s"
+			 "<pci "
+			 "busid=\"%04x:%02x:%02x.%01x\" "
+			 "link_speed=\"%s GT/s PCIe/s\" "
+			 "link_width=\"%ld\"/>\n",
+			 indent, "",
+			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func,
+			 pcie_gen[speed_idx],
+			 width);
+
+	if (rc < 0) {
+		NCCL_OFI_WARN("Failed to print PCI tag. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Write NIC pci tag to NCCL topology file
+ *
+ * @param	node
+ *		Topology node of type ``HWLOC_OBJ_PCI_DEVICE`
+ *		that stores a list of libfabric NIC info structs in its user data
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ */
+static int write_nic(hwloc_obj_t node, FILE *file, int indent)
+{
+	int ret = 0;
+	size_t width;
+	size_t speed_idx;
+	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
+	int group_size = userdata->info_list_len;
+	struct hwloc_pcidev_attr_s *pcidev = &node->attr->pcidev;
+
+	/* Retrieve link speed and width of NIC */
+	if ((ret = get_pci_device_min_speed(node, &speed_idx, &width))) {
+		NCCL_OFI_WARN("Failed to retrieve PCI speed and width of NIC");
+		return ret;
+	}
+
+	/* Scale NIC speed and width up to the speed of the GPU. Since
+	 * NICs are grouped, GPU topology node is attached to the NIC
+	 * topology node. */
+	if (group_size > 1) {
+		hwloc_obj_t gpu = userdata->gpu_group_node;
+		size_t gpu_width;
+		size_t gpu_speed_idx;
+		assert(gpu);
+
+		/* Retrieve link speed and width of GPU */
+		if ((ret = get_pci_device_min_speed(gpu, &gpu_speed_idx, &gpu_width))) {
+			NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
+			return ret;
+		}
+
+		/* In case we have multiple NICs in the group,
+		 * increase link speed if possible and decrease NIC
+		 * group size */
+		while (group_size > 1 && speed_idx < gpu_speed_idx) {
+			++speed_idx;
+			group_size /= 2;
+		}
+
+		/* In case we still have multiple NICs in the group,
+		 * increase link width if possible */
+		while (group_size > 1 && 2 * width <= gpu_width) {
+			width *= 2;
+			group_size /= 2;
+		}
+	}
+
+	if ((ret = write_pci_tag(file, indent, pcidev, speed_idx, width)) != 0) {
+		NCCL_OFI_WARN("Failed to write PCI NIC tag");
+	}
+
+	return ret;
+}
+
+/*
+ * @brief	Write pci opening tag to NCCL topology file
+ *
+ * @param	file
+ *		Output file
+ * @param	pcidev
+ *		Pointer to pci device struct
+ * @param	indent
+ *		Indentation
+ */
+static int write_pci_opening_tag(FILE *file, struct hwloc_pcidev_attr_s *pcidev, int indent)
+{
+	int rc = fprintf(file,
+			 "%*s"
+			 "<pci "
+			 "busid=\"%04x:%02x:%02x.%01x\">\n",
+			 indent, "",
+			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func);
+	if (rc < 0) {
+		NCCL_OFI_WARN("Failed to print opening PCI tag. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Write bridge pci opening tag to NCCL topology file
+ *
+ * @param	node
+ *		Topology node of type `HWLOC_OBJ_BRIDGE`
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ */
+static int write_bridge_opening_tag(hwloc_obj_t node, FILE *file, int indent)
+{
+	struct hwloc_pcidev_attr_s *pcidev = &node->attr->bridge.upstream.pci;
+
+	if (write_pci_opening_tag(file, pcidev, indent) < 0) {
+		NCCL_OFI_WARN("Failed to print opening PCI bridge tag");
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Write pci closing tag to NCCL topology file
+ *
+ * @param	file
+ *		Output file
+ * @param	indent
+ *		Indentation
+ */
+static int write_pci_closing_tag(FILE *file, int indent)
+{
+	if (fprintf(file, "%*s</pci>\n", indent, "") < 0) {
+		NCCL_OFI_WARN("Failed to write closing PCI bridge tag. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Helper function to write NCCL topology file recursively based on NCCL OFI topology
+ *
+ * @param	topo
+ *		Hwloc topology
+ * @param	node
+ *		Current hwloc topology node
+ * @param	file
+ *		The file to print to
+ * @param	indent
+ * @param	Number of bridges upstream of this node
+ *		Indicate current indentation level
+ * @param	bridge_depth
+ *		Number of PCI bridges upstream of this topology node
+ * @return	0, on success
+ *		non-zero, on error
+ */
+static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *file, int indent, int bridge_depth)
+{
+	int ret = 0;
+	int indent_offset = 2;
+	bool close_numanode = false;
+	bool close_bridge = false;
+	hwloc_obj_t numa_mem_child = NULL;
+	hwloc_obj_t child = NULL;
+	nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)node->userdata;
+
+	/* Only nodes with NICs or Nvidia GPUs in its subtree store
+	 * store userdata. Use this information to avoid printing
+	 * parts of the topology without NICs and Nvidia GPUs. */
+	if (!topo_data) return ret;
+
+	if (node->type == HWLOC_OBJ_BRIDGE) {
+		if (!node->attr) {
+			NCCL_OFI_WARN("Bridge is missing attribute struct");
+			return ncclInternalError;
+		}
+
+		/* Do not print Host PCIe switch, represented by the
+		 * two PCI bridges on depth 0 and 1. Print remaining
+		 * PCIe switches, represented by two devices each */
+		if (bridge_depth >= 2 && bridge_depth % 2 == 0) {
+			if ((ret = write_bridge_opening_tag(node, file, indent))) {
+				return ret;
+			}
+			close_bridge = true;
+			indent += indent_offset;
+		}
+
+		++bridge_depth;
+	} else if (node->type == HWLOC_OBJ_PCI_DEVICE &&
+		   topo_data->info_list) {
+			/* Topology nodes which store NIC info lists
+			 * are topology nodes of leader NICs. The
+			 * leader NIC is the first NIC in the list. */
+			if ((ret = write_nic(node, file, indent))) {
+				return ret;
+			}
+			indent += indent_offset;
+	} else if (node->type == HWLOC_OBJ_NUMANODE) {
+		/* Before HWLOC 2.0, NUMA topology nodes are stored in
+		 * the normal topology tree */
+		if ((ret = write_cpu_opening_tag(node, file, indent))) {
+			return ret;
+		}
+		close_numanode = true;
+		indent += indent_offset;
+	} else if ((numa_mem_child = get_numa_mem_child(node))) {
+		/* HWLOC 2.0 moved NUMA nodes from the normal topology
+		 * tree to list of memory children. The consequence is
+		 * that NUMA nodes may "float" in a package, and thus,
+		 * no NUMA node will be found on the path from the
+		 * root to a PCI device that needs to be
+		 * written. Collect those NUMA nodes and write
+		 * them. However, in case a NUMA node is found in the memory
+		 * children list and the NUMA node stores user data,
+		 * the NUMA node is on the path to a PCI device and
+		 * will be printed in the next recursion. */
+		if (!numa_mem_child->userdata) {
+			if ((ret = write_cpu_opening_tag(numa_mem_child, file, indent))) {
+				return ret;
+			}
+			close_numanode = true;
+			indent += indent_offset;
+		}
+	}
+
+	/* Recurse */
+	while ((child = hwloc_get_next_child(topo, node, child))) {
+		if ((ret = write_nccl_topo_rec(topo, child,
+					       file, indent,
+					       bridge_depth))) {
+			return ret;
+		}
+	}
+
+	if (close_numanode) ret = write_cpu_closing_tag(file, indent - indent_offset);
+	else if (close_bridge) ret = write_pci_closing_tag(file, indent - indent_offset);
+
+	return ret;
+}
+
+int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file)
+{
+	int ret = 0;
+	int bridge_depth = 0;
+	int indent = 2;
+
+	if (fprintf(file, "<system version=\"1\">\n") < 0) {
+		NCCL_OFI_WARN("Failed to write topology to NCCL topology file. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
+	ret = write_nccl_topo_rec(topo->topo, hwloc_get_root_obj(topo->topo),
+				   file, indent, bridge_depth);
+	if (ret) {
+		NCCL_OFI_WARN("Failed to write topology to NCCL topology file");
+		return ret;
+	}
+
+	if (fprintf(file, "</system>") < 0) {
+		NCCL_OFI_WARN("Failed to write topology to NCCL topology file. ERROR: %s",
+			      strerror(errno));
+		return -errno;
+	}
+
 	return ret;
 }
 

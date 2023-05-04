@@ -1082,7 +1082,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 			goto exit;
 		}
 	} else if (0 == strcmp(nccl_ofi_selected_protocol, "RDMA")) {
-
 		/* NCCL OFI topology */
 		nccl_ofi_topo_t *topo = NULL;
 

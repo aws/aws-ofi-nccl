@@ -24,6 +24,7 @@ extern "C" {
 #include "nccl-headers/net.h"
 #endif
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_topo.h"
 
 #ifdef __GNUC__
 #define OFI_LIKELY(x)	__builtin_expect((x), 1)
