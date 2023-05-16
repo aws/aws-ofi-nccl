@@ -76,6 +76,16 @@ dependencies with the following flags:
   --with-mpi=PATH         Path to non-standard MPI installation
 ```
 
+By default, the configure script attempts to auto-detect whether it is running
+on an AWS EC2 instance, and if so enables AWS-specific optimizations. These
+optimizations can be enabled regardless of build machine with the following
+config option:
+
+```
+  --enable-platform-aws   Enable AWS-specific configuration and optimizations.
+                          (default: Enabled if on EC2 instance)
+```
+
 To enable trace messages for debugging (disabled by default), use the
 following config option:
 
