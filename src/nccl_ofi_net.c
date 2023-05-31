@@ -79,6 +79,9 @@ bool virt_addr_mr = false;
 /* Selected communication protocol. */
 const char *nccl_ofi_selected_protocol = "SENDRECV";
 
+/* Internode network latency. */
+float net_latency = .0;
+
 /*
  * @brief	Free list of libfabric NIC info structs
  *
@@ -877,6 +880,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 #endif
 
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
+	net_latency = (float)ofi_nccl_net_latency();
 
 	if (platform_init) {
 		ret = platform_init();
@@ -1209,20 +1213,7 @@ static ncclResult_t set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	props->maxComms = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev_id;
 
-	if (IS_EFA_PROVIDER(nic_prov->fabric_attr->prov_name)) {
-		/*
-		 * Sets intranode latency for EFA networks.
-		 *
-		 * This value is chosen by measuring all reduce latency for
-		 * different NCCL algorithms and using that to calculate intra node
-		 * latency based on NCCL's tuning algorithm.
-		 *
-		 * A few different values around this value were tried to see which
-		 * chose the correct algorithm (tree or ring) most times across
-		 * different message and cluster sizes.
-		 */
-		props->latency = 150;
-	}
+	props->latency = net_latency >= .0 ? net_latency : .0;
 
 	/*
 	 * Maximum number of grouped receives. Currently, we set it to 1 to

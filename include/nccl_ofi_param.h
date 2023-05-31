@@ -167,6 +167,12 @@ OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFE
 OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
 
 /*
+ * Internode network latency reported to NCCL. Defaults to 0, unless the configured
+ * platform sets a specific value.
+ */
+OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
+
+/*
  * Eager message size limit when using RDMA protocol. Message sizes greater than
  * this limit will always be sent using RDMA write instead of eagerly.
  */
