@@ -27,26 +27,31 @@ struct ec2_platform_data {
 	const char* name;
 	const char* topology;
 	int default_dup_conns;
+	float latency;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
+		.latency = 75.0,
 	},
 	{
 		.name = "p4de.24xlarge",
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
+		.latency = 75.0,
 	},
 	{
 		.name = "p3dn.24xlarge",
 		.topology = NULL,
 		.default_dup_conns = 4,
+		.latency = 150.0,
 	},
 	{
 		.name = "p5.48xlarge",
 		.topology = NULL,
 		.default_dup_conns = 0,
+		.latency = 75.0,
 	},
 };
 
@@ -411,6 +416,17 @@ ncclResult_t platform_init(void)
 		nic_dup_conns = platform_data->default_dup_conns;
 
 	disable_native_rdma_check = (bool) ofi_nccl_disable_native_rdma_check();
+
+	if (ofi_nccl_net_latency() < 0) {
+		if (platform_data && platform_data->latency >= 0.0) {
+			net_latency = platform_data->latency;
+		} else {
+			/* For historical reasons, default value for EFA is 150 us */
+			net_latency = 150.0;
+		}
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
+				net_latency);
+	}
 
 exit:
 	return ret;

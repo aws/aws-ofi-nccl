@@ -133,6 +133,8 @@ extern bool virt_addr_mr;
  */
 extern const char *nccl_ofi_selected_protocol;
 
+/* Internode network latency reported to NCCL. */
+extern float net_latency;
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;

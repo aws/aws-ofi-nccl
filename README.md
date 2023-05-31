@@ -158,9 +158,9 @@ The plugin allows to configure the following variables at run-time according to 
    <tr>
       <td><code>OFI_NCCL_CQ_READ_COUNT</code></td>
       <td>Adjust the maximum number of completion entries that will
-	  be read in a single Libfabric polling loop.  In general, users
-	  should not have to adjust this value.  An array of completion
-	  queue entry structures is created on the stack, so large (over
+      be read in a single Libfabric polling loop.  In general, users
+      should not have to adjust this value.  An array of completion
+      queue entry structures is created on the stack, so large (over
       16-32) values of this parameter may cause stack overflows.</td>
       <td>Integer</td>
       <td>Default: 4</td>
@@ -184,14 +184,22 @@ The plugin allows to configure the following variables at run-time according to 
    <tr>
       <td><code>OFI_NCCL_ROUND_ROBIN_THRESHOLD</code></td>
       <td>Adjust the maximum size of `RDMA` protocol messages that are
-	  assigned to multi-rail channels in round-robin mode. Messages larger
-	  than the threshold are multiplexed over all channels to increase
-	  network throughput. In general, users should not have to adjust this
-	  value. A very small threshold may cause the `RDMA` protocol
-	  initialization fail since RDMA protocol control messages
-	  shall not be multiplexed.</td>
+      assigned to multi-rail channels in round-robin mode. Messages larger
+      than the threshold are multiplexed over all channels to increase
+      network throughput. In general, users should not have to adjust this
+      value. A very small threshold may cause the `RDMA` protocol
+      initialization fail since RDMA protocol control messages
+      shall not be multiplexed.</td>
       <td>Integer</td>
       <td>Default: 8192</td>
+   </tr>
+   <tr>
+      <td><code>OFI_NCCL_NET_LATENCY</code></td>
+      <td>Internode network latency in us reported to NCCL.</td>
+      <td>Integer</td>
+      <td>Any non-negative integer. Defaults to 0, unless the configured
+      platform sets a specific value.
+      </td>
    </tr>
    <tr>
       <td><code>OFI_NCCL_EAGER_MAX_SIZE</code></td>
