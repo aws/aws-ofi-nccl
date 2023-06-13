@@ -5863,13 +5863,10 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		goto error;
 	}
 
-	/* Only write topology in case RDMA devices will have multiple rails */
-	if (num_rails > 1) {
-		ret = write_topo_file(topo);
-		if (ret != ncclSuccess) {
-			NCCL_OFI_WARN("Failed to write NCCL topology file");
-			goto error;
-		}
+	ret = write_topo_file(topo);
+	if (ret != ncclSuccess) {
+		NCCL_OFI_WARN("Failed to write NCCL topology file");
+		goto error;
 	}
 
 	ret = nccl_ofi_topo_num_info_lists(topo, &num_devs);
