@@ -1080,15 +1080,22 @@ static int get_device_property(unsigned domain, unsigned bus,
  *
  * @param	node
  *		PCI device or bridge topology node
+ * @param	is_nic
+ *		True if device is a libfabric NIC
  * @return	Link speed index into `pcie_gen`, on success.
  * @return	Link width, on success.
  * @return	0, on sucess
  *		non-zero, on error
  */
-static int get_pci_device_speed(hwloc_obj_t node,
+static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 				size_t *speed_idx, size_t *width)
 {
 	struct hwloc_pcidev_attr_s attr;
+	/* Override the following PCI width and speed of libfabric NICs with fallback values */
+	char *override_width = "255";
+	char *override_speed = "Unknown";
+	size_t fallback_width = 8;
+	size_t fallback_speed_idx = 3;
 
 	if (node->type == HWLOC_OBJ_BRIDGE) {
 		attr = node->attr->bridge.upstream.pci;
@@ -1115,6 +1122,14 @@ static int get_pci_device_speed(hwloc_obj_t node,
 	while (*speed_idx < num_pcie_gens && strncmp(prop_str, pcie_gen[*speed_idx], strlen(pcie_gen[*speed_idx])) != 0) {
 		++(*speed_idx);
 	}
+
+	if (is_nic && strncmp(override_speed, prop_str, strlen(override_speed)) == 0) {
+		/* Override speed */
+		*speed_idx = fallback_speed_idx;
+		NCCL_OFI_INFO(NCCL_INIT,
+			      "Override link speed \"%s\" of NIC %04x:%02x:%02x.%01x with speed \"%s\"",
+			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, pcie_gen[*speed_idx]);
+	}
 	if (*speed_idx == num_pcie_gens) {
 		NCCL_OFI_WARN("Unknown link speed \"%s\" of device %04x:%02x:%02x.%01x",
 			      prop_str, attr.domain, attr.bus, attr.dev, attr.func);
@@ -1127,7 +1142,15 @@ static int get_pci_device_speed(hwloc_obj_t node,
 		return ret;
 	}
 
-	*width = strtol(prop_str, NULL, 0);
+	if (is_nic && strncmp(override_width, prop_str, strlen(override_width)) == 0) {
+		/* Override width */
+		*width = fallback_width;
+		NCCL_OFI_INFO(NCCL_INIT,
+			      "Override link width \"%s\" of NIC %04x:%02x:%02x.%01x with width \"%zu\"",
+			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, *width);
+	} else {
+		*width = strtol(prop_str, NULL, 0);
+	}
 	if (errno == ERANGE) {
 		NCCL_OFI_WARN("Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a valid link width. Error: %s",
 			      prop_str,
@@ -1148,12 +1171,14 @@ static int get_pci_device_speed(hwloc_obj_t node,
  *
  * @param	node
  *		PCI device or bridge topology node. Parent of `node` must be a bridge topology node.
+ * @param	is_nic
+ *		True if device is a libfabric NIC
  * @return	Link speed index into `pci_gen`, on success.
  * @return	Link width, on success.
  * @return	0, on sucess
  *		non-zero, on error
  */
-static int get_pci_device_min_speed(hwloc_obj_t node, size_t *speed_idx,
+static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed_idx,
 				    size_t *width)
 {
 	int ret;
@@ -1163,12 +1188,12 @@ static int get_pci_device_min_speed(hwloc_obj_t node, size_t *speed_idx,
 	size_t device_speed_idx, port_speed_idx;
 
 	/* Read speed and width */
-	if ((ret = get_pci_device_speed(node, &device_speed_idx, &device_width))) {
+	if ((ret = get_pci_device_speed(node, is_nic, &device_speed_idx, &device_width))) {
 		return ret;
 	}
 
 	/* Read speed and width of parent topology node to retrieve port speed and width. */
-	if ((ret = get_pci_device_speed(parent_node, &port_speed_idx, &port_width))) {
+	if ((ret = get_pci_device_speed(parent_node, is_nic, &port_speed_idx, &port_width))) {
 		return ret;
 	}
 
@@ -1286,7 +1311,7 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 	struct hwloc_pcidev_attr_s *pcidev = &node->attr->pcidev;
 
 	/* Retrieve link speed and width of NIC */
-	if ((ret = get_pci_device_min_speed(node, &speed_idx, &width))) {
+	if ((ret = get_pci_device_min_speed(node, true, &speed_idx, &width))) {
 		NCCL_OFI_WARN("Failed to retrieve PCI speed and width of NIC");
 		return ret;
 	}
@@ -1301,7 +1326,7 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 		assert(gpu);
 
 		/* Retrieve link speed and width of GPU */
-		if ((ret = get_pci_device_min_speed(gpu, &gpu_speed_idx, &gpu_width))) {
+		if ((ret = get_pci_device_min_speed(gpu, false, &gpu_speed_idx, &gpu_width))) {
 			NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
 			return ret;
 		}
