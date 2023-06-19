@@ -2,8 +2,8 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_OFI_MATH_H
-#define NCCL_OFI_MATH_H
+#ifndef NCCL_OFI_MATH_H_
+#define NCCL_OFI_MATH_H_
 
 #ifdef _cplusplus
 extern "C" {
@@ -57,4 +57,4 @@ static inline size_t nccl_ofi_min_size_t(size_t x, size_t y)
 } // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_MATH_H
+#endif // End NCCL_OFI_MATH_H_
