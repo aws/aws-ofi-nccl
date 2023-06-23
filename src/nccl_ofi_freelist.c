@@ -8,16 +8,7 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
-
-static inline size_t MIN(size_t a, size_t b)
-{
-	return (a < b) ? a : b;
-}
-
-static inline size_t MAX(size_t a, size_t b)
-{
-	return (a > b) ? a : b;
-}
+#include "nccl_ofi_math.h"
 
 #define ROUND_UP(x, y) (((x) + (y)-1)  & (~((y)-1)) )
 
@@ -41,7 +32,7 @@ static int freelist_init_internal(size_t entry_size,
 		return -ENOMEM;
 	}
 
-	freelist->entry_size = ROUND_UP(MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
+	freelist->entry_size = ROUND_UP(nccl_ofi_max_size_t(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
 	freelist->num_allocated_entries = 0;
 	freelist->max_entry_count = max_entry_count;
 	freelist->increase_entry_count = increase_entry_count;

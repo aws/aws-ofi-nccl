@@ -758,7 +758,7 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	}
 
 	/* Adjust number of groups if input list does not provide enough members */
-	num_groups = num_groups < size ? num_groups : size;
+	num_groups = nccl_ofi_min_int(num_groups, size);
 	/* Number of groups with one additional member. Handles the
 	 * case where list size is not a multiple of number of
 	 * groups */

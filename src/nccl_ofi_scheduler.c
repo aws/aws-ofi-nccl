@@ -9,6 +9,7 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_scheduler.h"
+#include "nccl_ofi_math.h"
 
 /*
  * @brief	Size of s schedule struct capable to store `num_rails' xfer info objects
@@ -17,11 +18,6 @@ static inline size_t sizeof_schedule(int num_rails)
 {
 	return sizeof (nccl_net_ofi_schedule_t)
 		+ num_rails * sizeof(nccl_net_ofi_xfer_info_t);
-}
-
-static inline size_t div_ceil(size_t x, size_t y)
-{
-	return x == 0 ? 0 : 1 + ((x - 1) / y);
 }
 
 void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
@@ -39,11 +35,11 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
 
 	if (OFI_UNLIKELY(num_rails == 0)) return;
 
-	max_stripe_size = div_ceil(div_ceil(size, num_rails), align) * align;
+	max_stripe_size = nccl_ofi_div_ceil(nccl_ofi_div_ceil(size, num_rails), align) * align;
 
 	/* Compute stripes and assign to rails */
 	for (int rail_id = 0; rail_id != num_rails && left > 0; ++rail_id) {
-		size_t stripe_size = left < max_stripe_size ? left : max_stripe_size;
+		size_t stripe_size = nccl_ofi_min_size_t(left, max_stripe_size);
 
 		schedule->rail_xfer_infos[rail_id].rail_id = rail_id;
 		schedule->rail_xfer_infos[rail_id].offset = offset;

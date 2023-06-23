@@ -22,11 +22,35 @@ static inline size_t nccl_ofi_div_ceil(size_t x, size_t y)
 }
 
 /*
+ * @brief	Max of two int values
+ */
+static inline int nccl_ofi_max_int(int x, int y)
+{
+	return (x < y ? y : x);
+}
+
+/*
+ * @brief	Min of two int values
+ */
+static inline int nccl_ofi_min_int(int x, int y)
+{
+	return (x < y ? x : y);
+}
+
+/*
  * @brief	Max of two size_t values
  */
 static inline size_t nccl_ofi_max_size_t(size_t x, size_t y)
 {
 	return (x < y ? y : x);
+}
+
+/*
+ * @brief	Min of two size_t values
+ */
+static inline size_t nccl_ofi_min_size_t(size_t x, size_t y)
+{
+	return (x < y ? x : y);
 }
 
 #ifdef _cplusplus
