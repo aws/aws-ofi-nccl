@@ -1066,6 +1066,19 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 	nccl_net_ofi_rdma_req_t *recv_req = elem;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
+	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
+	if (bounce_data->recv_len == 0) {
+		/* Special case: for zero-sized messages, we can skip the local read */
+		/* Re-post bounce buffer */
+		int r = repost_bounce_buff(bounce_data->ep, bounce_req);
+		if (r != 0) {
+			NCCL_OFI_WARN("Failed call to repost_bounce_buff");
+			return ncclSystemError;
+		}
+		r = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
+		return (r == 0 ? ncclSuccess : ncclSystemError);
+	}
+
 	ssize_t rc = alloc_eager_copy_req(recv_req, r_comm, bounce_req);
 	if (rc != 0) {
 		NCCL_OFI_WARN("Failed call to alloc_eager_copy_req");
@@ -4464,7 +4477,8 @@ static ncclResult_t send(nccl_net_ofi_send_comm_t *send_comm, void *data, int si
 
 	/* Determine if this should be sent eagerly. */
 	bool eager = false;
-	if (!have_ctrl && size <= eager_max_size) {
+	if ((!have_ctrl && size <= eager_max_size) ||
+		 (size == 0)) {
 		eager = true;
 	}
 
