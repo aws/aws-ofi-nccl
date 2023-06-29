@@ -593,6 +593,18 @@ int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep,
 				    nccl_ofi_mr_keypool_t *key_pool,
 				    flush_buffer_t *flush_buff, int dev_id);
 
+
+
+/*
+ * @brief	Free libfabric NIC info list.
+ *
+ * Frees each node of the list. No operation if list is NULL.
+ *
+ * @param	info_list
+ *		List or circular list of libfabric NIC infos
+ */
+void nccl_net_ofi_free_info_list(struct fi_info *info_list);
+
 /* Declare a platform-specific initialization hook that can be
  * provided by platform-specific source files (such as the optionally
  * compiled platform_aws.c).  The function is declared as a weak
