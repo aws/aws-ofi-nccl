@@ -80,6 +80,26 @@ static inline const char* select_protocol()
 	return str;
 }
 
+void nccl_net_ofi_free_info_list(struct fi_info *info_list)
+{
+	if (!info_list) return;
+
+	struct fi_info *info = info_list;
+	struct fi_info *next = NULL;
+	while (info) {
+		next = info->next;
+		info->next = NULL;
+		fi_freeinfo(info);
+		info = next;
+
+		/* End info list traversal when next info struct
+		 * closes loop to list head */
+		if (next == info_list) {
+			break;
+		}
+	}
+}
+
 /*
  * @brief	Allocate a memory registration key
  */

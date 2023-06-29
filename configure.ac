@@ -76,6 +76,10 @@ CHECK_PKG_CUDA([have_device_interface=cuda])
 AS_IF([test "${have_device_interface}" = "no"],
       [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
 
+CHECK_PKG_HWLOC([],
+                [AS_IF([test "${have_device_interface}" = "cuda"],
+                       [AC_MSG_ERROR([HWLOC package required for CUDA builds])])])
+
 # do we want our tests?
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
