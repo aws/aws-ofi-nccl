@@ -10,6 +10,9 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
+#if HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 #include "nccl-headers/error.h"
 #include "nccl_ofi.h"
