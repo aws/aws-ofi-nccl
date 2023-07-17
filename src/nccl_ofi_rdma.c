@@ -1639,6 +1639,7 @@ static ssize_t process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 			case NCCL_OFI_RDMA_SEND_CTRL:
 			case NCCL_OFI_RDMA_FLUSH:
 				rc = receive_progress(req, false);
+				break;
 			default:
 				NCCL_OFI_WARN("Unexpected type: %d", req->type);
 				return -EINVAL;
