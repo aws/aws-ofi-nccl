@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#if HAVE_CUDA
+#include <cuda_runtime.h>
+#endif
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
