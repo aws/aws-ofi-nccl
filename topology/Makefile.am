@@ -5,4 +5,4 @@
 #
 
 xmldir = ${pkgdatadir}/xml
-dist_xml_DATA = p4d-24xl-topo.xml p4de-24xl-topo.xml
+dist_xml_DATA = p4d-24xl-topo.xml p4de-24xl-topo.xml p5.48xl-topo.xml
