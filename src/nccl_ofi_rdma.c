@@ -9,6 +9,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <stdlib.h>
 
 #include "nccl-headers/error.h"
 #include "nccl_ofi.h"
@@ -350,20 +351,58 @@ static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
 }
 
 /*
+ * @brief	Unlink temporary NCCL topology file written by `write_topo_file()`
+ *
+ * This function is guarded by `topo_file_lock`.
+ */
+static void unlink_topo_file()
+{
+	int rc = 0;
+
+	rc = pthread_mutex_lock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Locking NCCL topology filename lock failed: %s", strerror(rc));
+		return;
+	}
+
+	/* No filename stored to be unlinked */
+	if (topo_file_unlink == NULL) {
+		goto unlock;
+	}
+
+	if (unlink(topo_file_unlink) == -1) {
+		NCCL_OFI_WARN("Failed to unlink NCCL topology file %s: %s", topo_file_unlink, strerror(errno));
+		goto unlock;
+	}
+
+	/* Clean up `topo_file_unlink` */
+	free(topo_file_unlink);
+	topo_file_unlink = NULL;
+
+ unlock:
+	rc = pthread_mutex_unlock(&topo_file_lock);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Unlocking NCCL topology filename lock failed: %s", strerror(rc));
+	}
+}
+
+/*
  * @brief	Write topology to NCCL topology file
  *
- * This function writes NCCL topology file if environment variable
- * `NCCL_TOPO_FILE` is not set and if `topo_file_unlink` does not store
- * a path to a NCCL topology file that has been written before. Use
- * function `unlink_topo_file()` to unlink the file and to reset
- * `topo_file_unlink` to `NULL`.
+ * If environment variable `NCCL_TOPO_FILE` is not set, this function
+ * writes a NCCL topology file and registers function
+ * `unlink_topo_file()` to be called at process termination to unlink
+ * the written topology file.
  *
  * In case environment variable `OFI_NCCL_TOPO_FILE_TEMPLATE` is set,
- * write to a unique file using file template provided by
- * `OFI_NCCL_TOPO_FILE_TEMPLATE`. Otherwise, use file template
- * `/tmp/aws-ofi-nccl-topo-XXXXXX` and store filename in
- * `topo_file_unlink`. In both cases, write name of topology file in
- * environment variable `NCCL_TOPO_FILE`.
+ * this function writes to a unique file using file template provided
+ * by `OFI_NCCL_TOPO_FILE_TEMPLATE`. Note that
+ * `OFI_NCCL_TOPO_FILE_TEMPLATE` needs to end with suffix `XXXXXX`. In
+ * case `OFI_NCCL_TOPO_FILE_TEMPLATE` is not set, file template
+ * `/tmp/aws-ofi-nccl-topo-XXXXXX` is used to write a temporary file
+ * and an invokation of `unlink_topo_file()` will unlink the temporary
+ * file. In both cases, set environment variable `NCCL_TOPO_FILE` to
+ * filename path of topology file.
  *
  * This function is guarded by `topo_file_lock`.
  *
@@ -452,58 +491,20 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 		goto unlock;
 	}
 
- unlock:
-	rc = pthread_mutex_unlock(&topo_file_lock);
+	rc = atexit(unlink_topo_file);
 	if (rc != 0) {
-		NCCL_OFI_WARN("Unlocking NCCL topology file lock failed: %s", strerror(rc));
-		ret = -rc;
+		NCCL_OFI_WARN("Failed to set exit function");
+		ret = -1;
 		goto exit;
+
 	}
-
- exit:
-	return ret;
-}
-
-/*
- * @brief	Unlink file stored in `topo_file_unlink` if variable is set
- *
- * This function is guarded by `topo_file_lock`.
- *
- * @return	0, on success
- *		non-zero, on error
- */
-static int unlink_topo_file()
-{
-	int ret = 0;
-	int rc = 0;
-
-	rc = pthread_mutex_lock(&topo_file_lock);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Locking NCCL topology filename lock failed: %s", strerror(rc));
-		ret = -rc;
-		goto exit;
-	}
-
-	/* No filename stored to be unlinked */
-	if (topo_file_unlink == NULL) {
-		goto unlock;
-	}
-
-	if (unlink(topo_file_unlink) == -1) {
-		NCCL_OFI_WARN("Failed to unlink NCCL topology file %s: %s", topo_file_unlink, strerror(errno));
-		ret = -errno;
-		goto unlock;
-	}
-
-	/* Unset filename to indicate that file is not linked anymore */
-	free(topo_file_unlink);
-	topo_file_unlink = NULL;
 
  unlock:
 	rc = pthread_mutex_unlock(&topo_file_lock);
 	if (rc != 0) {
 		NCCL_OFI_WARN("Unlocking NCCL topology filename lock failed: %s", strerror(rc));
 		ret = -rc;
+		goto exit;
 	}
 
  exit:
@@ -4004,13 +4005,6 @@ static ncclResult_t listen(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
 	nccl_net_ofi_ep_rail_t *first_rail = get_rail(ep, 0);
 
-	/* Unlink topology file which causes the file to be deleted as
-	 * soon as no reference to the file exists anymore */
-	if (unlink_topo_file()) {
-		NCCL_OFI_WARN("Failed to unlink temporary topology file while listening");
-		return ncclSystemError;
-	}
-
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t*)ep->base.device;
@@ -5187,13 +5181,6 @@ static ncclResult_t connect(nccl_net_ofi_ep_t *base_ep,
 	*send_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
-	
-	/* Unlink topology file which causes the file to be deleted as
-	 * soon as no reference to the file exists anymore */
-	if (unlink_topo_file()) {
-		NCCL_OFI_WARN("Failed to unlink temporary topology file while connecting");
-		return ncclSystemError;
-	}
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
