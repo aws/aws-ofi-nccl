@@ -378,7 +378,7 @@ static void filter_tcp_info_list(struct fi_info **info_list, int *num_infos)
 			if (prev != NULL) {
 				prev->next = curr->next;
 			}
-			num_infos--;
+			(*num_infos)--;
 
 			delete_info = curr;
 			curr = curr->next;
