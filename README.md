@@ -182,18 +182,28 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Default: SENDRECV</td>
    </tr>
    <tr>
+      <td><code>OFI_NCCL_TOPO_FILE_WRITE_ENABLE</code></td>
+      <td> When enabled and RDMA communication protocol is used, write
+      NCCL topology file and set environment variable
+      `NCCL_TOPO_FILE`. By default, plugin writes the NCCL topology
+      file to a unique temporary file using file path template
+      `/tmp/aws-ofi-nccl-topo-XXXXXX` and the file is deleted at
+      normal process termination. See environment variable
+      `OFI_NCCL_TOPO_FILE_TEMPLATE` to control the file
+      destination.</td>
+      <td>Boolean</td>
+      <td>0/1 (Default: 0)</td>
+   </tr>
+   <tr>
       <td><code>OFI_NCCL_TOPO_FILE_TEMPLATE</code></td>
       <td>Template path to a file to control the location where NCCL
       topology is written to. In case plugin writes a NCCL topology
       file and `OFI_NCCL_TOPO_FILE_TEMPLATE` is set, plugin creates a
       unique file using the provided template and writes topology to
       that file. The last six characters of the template must be
-      `XXXXXX` and will be replaced to make the filename unique.  In
-      case plugin writes a NCCL topology file and
-      `OFI_NCCL_TOPO_FILE_TEMPLATE` is not set,
-      `/tmp/aws-ofi-nccl-topo-XXXXXX` is used as template path and the
-      NCCL topology is written to a temporary file that is deleted
-      when function `listen()` or `connect()` is invoked.</td>
+      `XXXXXX` and will be replaced to make the filename unique. Note
+      that the unique topology file will not be deleted at process
+      termination in this case.</td>
       <td>String</td>
       <td>Default: Unset</td>
    </tr>

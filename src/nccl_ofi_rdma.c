@@ -389,8 +389,8 @@ static void unlink_topo_file()
 /*
  * @brief	Write topology to NCCL topology file
  *
- * If environment variable `NCCL_TOPO_FILE` is not set, this function
- * writes a NCCL topology file and registers function
+ * If environment variable `OFI_NCCL_TOPO_FILE_WRITE_ENABLE` is set,
+ * this function writes a NCCL topology file and registers function
  * `unlink_topo_file()` to be called at process termination to unlink
  * the written topology file.
  *
@@ -419,8 +419,8 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	char *filename;
 	int fd;
 
-	/* No-op since environment variable is already set */
-	if (getenv("NCCL_TOPO_FILE")) {
+	/* This function is a no-op in case writing topology file is not enabled explicitly */
+	if (!ofi_nccl_topo_file_write_enable()) {
 		goto exit;
 	}
 
