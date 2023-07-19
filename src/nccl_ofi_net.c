@@ -32,7 +32,7 @@
 nccl_net_ofi_plugin_t *plugin = NULL;
 
 /* Indicates if GPUDirect is supported by libfabric provider */
-bool support_gdr = true;
+enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
 
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
@@ -526,6 +526,14 @@ static int find_ofi_provider(struct fi_info **providers)
 	if (rc == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
+		/* The 1.18 API allows providers to use CUDA to
+		 * support HMEM pointers, so just having HMEM doesn't
+		 * tell us anything about the usability of CUDA
+		 * pointers with NCCL.  So leave the state unknown
+		 * until we create an endpoint and try to disable
+		 * CUDA
+		 */
+		support_gdr = GDR_UNKNOWN;
 		selected_fi_version = FI_VERSION(1, 18);
 		goto exit;
 	}
@@ -534,6 +542,7 @@ static int find_ofi_provider(struct fi_info **providers)
 	if (rc == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Using Libfabric 1.6 API, with GPUDirect RDMA support");
+		support_gdr = GDR_SUPPORTED;
 		selected_fi_version = FI_VERSION(1, 6);
 		goto exit;
 	}
@@ -542,7 +551,7 @@ static int find_ofi_provider(struct fi_info **providers)
 			       "Could not find any optimal provider supporting GPUDirect RDMA");
 
 		/* Indicate that plugin doesn't support transfers using GPU buffers */
-		support_gdr = false;
+		support_gdr = GDR_UNSUPPORTED;
 #if !HAVE_NEURON
 		/* Functioning without GDR support is not a valid use case for neuron */
 		/* Re-try finding non-GPUDirect capable provider */
@@ -739,20 +748,40 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
 	 * using the Libfabric 1.18 API with HMEM support.
 	 */
-	if (selected_fi_version == FI_VERSION(1,18) && support_gdr) {
+	if (selected_fi_version == FI_VERSION(1,18) && support_gdr != GDR_UNSUPPORTED) {
 #if HAVE_DECL_FI_OPT_CUDA_API_PERMITTED
 		bool optval = false;
-		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT, 
-				FI_OPT_CUDA_API_PERMITTED, &optval, 
+		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
+				FI_OPT_CUDA_API_PERMITTED, &optval,
 				sizeof(optval));
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to set FI_OPT_CUDA_API_PERMITTED to false. RC: %d, ERROR: %s",
+		if (ret == -FI_EOPNOTSUPP) {
+			if (support_gdr == GDR_SUPPORTED) {
+				/* If we got here, that means we previously said
+				 * we definitely had GDR support, but now don't.
+				 * Since we may have already told NCCL that we
+				 * support GDR, we should just abort.
+				 */
+				NCCL_OFI_WARN("GDR support reported to NCCL but then couldn't be configured on an endpoint.  Cannot continue.");
+				ret = ncclSystemError;
+				goto error;
+			} else {
+				NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Could not disable CUDA API usage for HMEM, disabling GDR");
+				/* If we can't disable CUDA, then we don't really
+				 * have GDR, so disable GDR  support from the NCCL
+				 * point of view.
+				 */
+				support_gdr = GDR_UNSUPPORTED;
+			}
+		} else if (ret == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_CUDA_API_PERMITTED. GDR Supported");
+			/* we were able to disable CUDA, so we can do GDR */
+			support_gdr = GDR_SUPPORTED;
+		} else {
+			NCCL_OFI_WARN("Failed to set FI_OPT_CUDA_API_PERMITTED. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
 			ret = ncclSystemError;
 			goto error;
 		}
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_CUDA_API_PERMITTED. optval: %d", 
-			       optval);
 #else
 		NCCL_OFI_WARN("Using Libfabric 1.18 API with GPUDirect RDMA support, and FI_OPT_CUDA_API_PERMITTED is not declared.");
 		ret = ncclSystemError;
@@ -908,7 +937,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	/* Allow for multiple virtual nics per nic to increase
 	 * throughput for NICs that do not handle single QP situations
 	 * well. */
-	if (nic_dup_conns > 1 && !support_gdr) {
+	if (nic_dup_conns > 1) {
 		struct fi_info *input_iter, *tmp, *output_head, *output_tail;
 
 		/* The goal of the next chunk of code is to make
@@ -972,10 +1001,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
 			      nic_dup_conns, ofi_ndevices);
-	} else if (nic_dup_conns > 0) {
-		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
-		ret = ncclSystemError;
-		goto exit;
 	}
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
@@ -1131,6 +1156,18 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		goto exit;
 	}
 
+	assert(support_gdr != GDR_UNKNOWN);
+
+	/* we don't actually know if GDR is supported until we've
+	 * created the first endpoint, so this check needs to be way
+	 * down here
+	 */
+	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
+		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+
  exit:
 	nccl_net_ofi_free_info_list(ofi_info_list);
 
@@ -1227,7 +1264,7 @@ static ncclResult_t set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	props->maxRecvs = NCCL_OFI_MAX_RECVS;
 
 	props->ptrSupport = NCCL_PTR_HOST;
-	if (support_gdr) {
+	if (support_gdr == GDR_SUPPORTED) {
 		/* Supports message transfer from both CUDA and HOST buffers */
 #if HAVE_CUDA
 		props->ptrSupport |= NCCL_PTR_CUDA;

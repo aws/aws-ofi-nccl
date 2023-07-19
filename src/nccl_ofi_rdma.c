@@ -3169,7 +3169,7 @@ static ncclResult_t recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buff
 
 static inline bool is_flush_buff_enabled(void)
 {
-	return !ofi_nccl_gdr_flush_disable() && support_gdr && !cuda_flush;
+	return !ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush;
 }
 
 /*
@@ -3356,7 +3356,7 @@ static ncclResult_t flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buf
 		goto error;
 	}
 
-	if (ofi_nccl_gdr_flush_disable() || !support_gdr)
+	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
 
 #if CUDART_VERSION >= 11030
