@@ -790,7 +790,7 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 	}
 	/* Run platform-specific endpoint configuration hook if declared */
 	if (platform_config_endpoint) {
-		ret = platform_config_endpoint(*ep);
+		ret = platform_config_endpoint(info, *ep);
 		if (ret != ncclSuccess)
 			goto error;
 	}

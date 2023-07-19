@@ -164,13 +164,12 @@ exit:
 	return ret;
 }
 
-static ncclResult_t validate_rdma_write(void* endpoint)
+static ncclResult_t validate_rdma_write(struct fid_ep *ep)
 {
 	int ret = ncclSuccess;
 #if HAVE_DECL_FI_OPT_EFA_EMULATED_WRITE
 	bool optval;
 	size_t optlen = 0;
-	struct fid_ep *ep = (struct fid_ep *) endpoint;
 
 	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_EFA_EMULATED_WRITE, &optval, &optlen);
 	if(ret != 0 || optlen != sizeof(bool)) {
@@ -198,12 +197,11 @@ exit:
 	return ret;
 }
 
-static ncclResult_t configure_sendrecv_inorder(void* endpoint, bool is_init)
+static ncclResult_t configure_sendrecv_inorder(struct fid_ep *ep, bool is_init)
 {
 	int ret = ncclSuccess;
 #if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
 	bool optval = true;
-	struct fid_ep *ep = (struct fid_ep *) endpoint;
 
 	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
 			FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES, 
@@ -249,12 +247,11 @@ exit:
 	return ret;
 }
 
-static ncclResult_t configure_write_inorder(void* endpoint, bool is_init)
+static ncclResult_t configure_write_inorder(struct fid_ep *ep, bool is_init)
 {
 	int ret = ncclSuccess;
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
 	bool optval = true;
-	struct fid_ep *ep = (struct fid_ep *) endpoint;
 
 	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
 			FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES,
@@ -432,7 +429,7 @@ exit:
 	return ret;
 }
 
-ncclResult_t platform_config_endpoint(void* endpoint) {
+ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	static bool is_init = true;
 	int ret = ncclSuccess;
 
@@ -441,6 +438,13 @@ ncclResult_t platform_config_endpoint(void* endpoint) {
 		ret = ncclSystemError;
 		goto exit;
 	}
+
+	/* short circuit when not using EFA */
+	if (0 != strcmp(info->fabric_attr->prov_name, "efa")) {
+		ret = ncclSuccess;
+		goto exit;
+	}
+
 	/* If the selected communication protocol is RDMA write and the user did
 	 * not disable the native RDMA support check, validate that the
 	 * FI_OPT_EFA_EMULATED_WRITE endpoint option can be accessed, and that
