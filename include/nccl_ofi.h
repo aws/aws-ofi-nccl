@@ -597,7 +597,7 @@ ncclResult_t platform_init(void) __attribute__((weak));
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_config_endpoint will be NULL at runtime.
  */
-ncclResult_t platform_config_endpoint(void* ep) __attribute__((weak));
+ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
 
 #ifdef _cplusplus
 } // End extern "C"
