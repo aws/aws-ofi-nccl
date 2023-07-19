@@ -1124,11 +1124,11 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	ret = plugin->devs[dev_id]->get_ep(base_dev, &base_ep);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
-		return ret;
+		goto exit;
 	}
 	ret = base_ep->release_ep(base_ep);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
-		return ret;
+		goto exit;
 	}
 
  exit:
