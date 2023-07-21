@@ -12,6 +12,9 @@
 #include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
+#ifdef HAVE_RDMA_FI_EXT_H
+#include <rdma/fi_ext.h>
+#endif
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
