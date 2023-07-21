@@ -31,9 +31,26 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_SEARCH_LIBS([fi_getinfo], [fabric], [], [check_pkg_found=no])])
 
-  AC_CHECK_HEADERS([rdma/fi_ext.h])
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_MSG_CHECKING([for Libfabric 1.11.0 or later])
+	 AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+[[#include <rdma/fabric.h>
+]],
+[[#if !defined(FI_MAJOR_VERSION)
+#error "we cannot check the version -- sad panda"
+#elif FI_VERSION_LT(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), FI_VERSION(1,11))
+#error "version is too low -- nopes"
+#endif
+]])],
+                      [AC_MSG_RESULT([yes])],
+                      [AC_MSG_RESULT([no])
+                       check_pkg_found=no])])
 
-  AC_CHECK_DECLS([FI_OPT_CUDA_API_PERMITTED,
+  AS_IF([test "${check_pkg_found}" = "yes"],
+	[AC_CHECK_HEADERS([rdma/fi_ext.h])])
+
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_DECLS([FI_OPT_CUDA_API_PERMITTED,
                   FI_OPT_EFA_USE_DEVICE_RDMA,
                   FI_OPT_EFA_EMULATED_WRITE,
                   FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES,
@@ -42,7 +59,7 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 [#include <rdma/fi_endpoint.h>
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
-#endif]])
+#endif]])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [$1],
