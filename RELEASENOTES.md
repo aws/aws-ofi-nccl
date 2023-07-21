@@ -14,6 +14,24 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.7.0-aws release notes
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.18.1-1](https://github.com/NVIDIA/nccl/releases/tag/v2.18.1-1) while
+maintaining backward compatibility with older NCCL versions ([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+It was tested with Libfabric versions up to
+[Libfabric v1.18.1](https://github.com/ofiwg/libfabric/releases/tag/v1.18.1).
+
+New Features:
+* Add RDMA-write based transport with support for AWS's new P5 instance
+
+Bug Fixes:
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code and [nccl-tests](https://github.com/NVIDIA/nccl-tests) test suite:
+* efa
+* tcp
+
 # v1.6.0 release notes
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
 or later and supports [NCCL v2.17.1-1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) while
