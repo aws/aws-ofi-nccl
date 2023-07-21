@@ -17,7 +17,6 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
-#include <rdma/fi_ext.h>
 #if HAVE_NEURON
 #include "nccl-headers/net_neuron.h"
 #else
