@@ -84,12 +84,15 @@ CHECK_PKG_HWLOC([],
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
 AC_ARG_ENABLE([tests],
-   [AS_HELP_STRING([--disable-tests], [Disable build of test binaries])])
+   [AS_HELP_STRING([--disable-tests], [Disable build of functional test binaries])])
 AS_IF([test "${enable_tests}" != "no" -a "${enable_neuron}" = "yes"],
       [AC_MSG_WARN([Disabling tests due to Neuron configuration.])
        enable_tests=no],
       [test "${enable_tests}" = "yes" -a "${found_mpi}" = "no"],
-      [AC_MSG_ERROR([Tests requested, but MPI not found.  Aborting.])])
+      [AC_MSG_ERROR([Tests requested, but MPI not found.  Aborting.])],
+      [test "${found_mpi}" = "no"],
+      [AC_MSG_WARN([Disabling tests due to no MPI.])
+       enable_tests=no])
 AM_CONDITIONAL([ENABLE_TESTS], [test "$enable_tests" != "no"])
 
 # Enable output at the TRACE level for unit tests.
