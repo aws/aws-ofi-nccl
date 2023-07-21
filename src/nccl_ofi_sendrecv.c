@@ -1848,7 +1848,7 @@ static ncclResult_t connect(nccl_net_ofi_ep_t *base_ep,
 
 	case COMM_SEND_CONN:
 		/* Send "connect" message to remote EP */
-		send_connect_message(s_comm, device, ep, req);
+		rc = send_connect_message(s_comm, device, ep, req);
 		if (rc == -FI_EAGAIN) {
 			/* Save connection state */
 			comm_state->comm = &s_comm->base.base;
