@@ -474,6 +474,11 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
 	if ((local_mr != true) && (type == NCCL_PTR_HOST)) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Skip registering host buffer. local_mr: %d", local_mr);
+		/* the mr handle will still be threaded through NCCL,
+		 * so we still need some sentinal to tell us not to try
+		 * and use the registration.  NULL is as good as any.
+		 */
+		*mr_handle = NULL;
 		goto exit;
 	}
 
