@@ -3488,7 +3488,7 @@ static ncclResult_t flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buf
 static inline nccl_net_ofi_rdma_recv_comm_t *calloc_rdma_recv_comm(int num_rails)
 {
 	return calloc(1, sizeof(nccl_net_ofi_rdma_recv_comm_t)
-		      + num_rails * sizeof(nccl_net_ofi_rdma_recv_comm_t));
+		      + num_rails * sizeof(nccl_net_ofi_rdma_recv_comm_rail_t));
 }
 
 /*
@@ -4852,7 +4852,7 @@ static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep,
 static inline nccl_net_ofi_rdma_send_comm_t *calloc_rdma_send_comm(int num_rails)
 {
 	return calloc(1, sizeof(nccl_net_ofi_rdma_send_comm_t)
-		      + num_rails * sizeof(nccl_net_ofi_rdma_send_comm_t));
+		      + num_rails * sizeof(nccl_net_ofi_rdma_send_comm_rail_t));
 }
 
 /*
