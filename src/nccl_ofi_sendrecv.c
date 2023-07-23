@@ -706,6 +706,7 @@ static inline nccl_net_ofi_sendrecv_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 	}
 
 	req->base.test = test;
+	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
 
  exit:
 	return req;
