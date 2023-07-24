@@ -5992,18 +5992,23 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 			nccl_net_ofi_rdma_device_t *device =
 				(nccl_net_ofi_rdma_device_t *)*base_dev;
 
+			if (!device) continue;
+
 			if (device->device_rails) {
 				release_device_ofi_resources(device);
+				free(device->device_rails);
 			}
-			free(device->device_rails);
 			if (device->scheduler) device->scheduler->fini(device->scheduler);
-			free(device->base.name);
+			if (device->base.name) free(device->base.name);
+
 			free(device);
 		}
 		free(base_devs);
 	}
-	free(plugin);
-	plugin = NULL;
+	if (plugin) {
+		free(plugin);
+		plugin = NULL;
+	}
 
  exit:
 	return ret;
