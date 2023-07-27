@@ -19,6 +19,7 @@
 #endif
 
 #include "stack.h"
+#include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
 #include "nccl_ofi_sendrecv.h"
