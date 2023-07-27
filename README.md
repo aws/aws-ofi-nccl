@@ -26,9 +26,15 @@ The plug-in currently supports the following distributions:
 * Ubuntu 18.04 and 20.04 LTS
 * CentOS 7 and 8
 
-It requires [Libfabric](http://github.com/ofiwg/libfabric/). Please see the
+It requires [Libfabric](http://github.com/ofiwg/libfabric/),
+[NCCL](https://github.com/NVIDIA/nccl),
+[HWLOC](https://www.open-mpi.org/projects/hwloc/), and (if you want to
+run tests) an MPI Implementation. Please see the
 [Release notes](http://github.com/aws/aws-ofi-nccl/releases) for
-information on version compatibility.
+information on version compatibility.  We recommend using the
+distribution version of hwloc, which can be installed with `yum
+install hwloc-devel` on many RPM based distributions and `apt install
+libhwloc-dev` on many DPKG based distibutions.
 
 Libfabric supports various providers. The plug-in can choose only those which
 support the following features as defined in the
@@ -47,6 +53,9 @@ GPUDirect RDMA support.
 * Transfers to/from device memory (`FI_HMEM`)
 * Remote memory operations (`FI_RMA`, `FI_READ`)
 
+For multi-rail support, it requires `FI_WRITE` in addition to
+`FI_READ`.
+
 ## Getting Started
 
 ### Dependencies
@@ -57,10 +66,13 @@ find the instructions for installing libfabric at
 
 ### Build Instructions
 
-The plugin uses GNU autotools for its build system. You can build it as follows:
+We recommend that most users start with a release tarball available on
+the
+[GitHub Release Page](https://github.com/aws/aws-ofi-nccl/releases).
+The plugin uses GNU autotools for its build system. You can build it
+as follows:
 
 ```
-$ ./autogen.sh
 $ ./configure
 $ make
 $ sudo make install
@@ -74,6 +86,7 @@ dependencies with the following flags:
   --with-libfabric=PATH   Path to non-standard libfabric installation
   --with-cuda=PATH        Path to non-standard CUDA installation
   --with-mpi=PATH         Path to non-standard MPI installation
+  --with-hwloc=PATH       Path to non-standard HWLOC installation
 ```
 
 By default, the configure script attempts to auto-detect whether it is running
@@ -110,6 +123,15 @@ config option:
 ```
 
 ### Plugin Configurations
+
+Similar to NCCL or Libfabric, the plugin dynamically loads CUDA
+dependencies at runtime, specifically `libcudart.so`.  Like NCCL and
+Libfabric, the plugin does not find CUDA libraries with the
+`CUDA_HOME` environment variable.  `dlopen()` will use the
+`LD_LIBRARY_PATH` environment variable and then your system's
+default search path to find `libcudart.so`.  We do this to match NCCL
+and Libfabric behaviors so that all three components find the same
+CUDA installation.
 
 The plugin allows to configure the following variables at run-time according to your environment.
 
