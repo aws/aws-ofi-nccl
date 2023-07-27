@@ -14,14 +14,14 @@
 #include <inttypes.h>
 #include <sys/mman.h>
 #include <ctype.h>
-#if HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
 
 #include "stack.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_topo.h"
@@ -411,33 +411,6 @@ static void filter_tcp_info_list(struct fi_info **info_list, int *num_infos)
 	}
 }
 
-#if HAVE_CUDA
-ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
-{
-	ncclResult_t ret = ncclSuccess;
-	int cuda_device = -1;
-	struct cudaPointerAttributes attr;
-	cudaError_t cuda_ret = cudaPointerGetAttributes(&attr, data);
-
-	if (cuda_ret != cudaSuccess) {
-		ret = ncclUnhandledCudaError;
-		NCCL_OFI_WARN("Invalid buffer pointer provided");
-		goto exit;
-	}
-
-	if (attr.type == cudaMemoryTypeDevice) {
-		cuda_device = attr.device;
-	}
-	else {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid type of buffer provided. Only device memory is expected for NCCL_PTR_CUDA type");
-	}
-
- exit:
-	*dev_id = cuda_device;
-	return ret;
-}
-#endif
 
 /*
  * @brief	Returns hints info structure depending on GPUDirect support requirement
@@ -895,17 +868,31 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	/* Number of NICs */
 	int ofi_ndevices = -1;
 
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using " PACKAGE_STRING);
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
 #if HAVE_CUDA
+	if (nccl_net_ofi_cuda_init() != 0) {
+		NCCL_OFI_WARN("CUDA initialization failed.");
+		ret = ncclSystemError;
+		goto exit;
+	}
+
+	int cuda_version;
+	if (nccl_net_ofi_cudaRuntimeGetVersion(&cuda_version) != cudaSuccess) {
+		NCCL_OFI_WARN("cudaRuntimeGetVersion failed");
+		ret = ncclSystemError;
+		goto exit;
+	}
+
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA runtime version %d", cuda_version);
 	if (ofi_nccl_cuda_flush_enable()) {
-#if CUDART_VERSION < 11030
-		NCCL_OFI_WARN("CUDA flush requested, but CUDART_VERSION %ld < 11030", CUDART_VERSION);
-		cuda_flush = false;
-#else
-		NCCL_OFI_WARN("CUDA flush enabled");
-		cuda_flush = true;
-#endif
+		if (nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites == NULL) {
+			NCCL_OFI_WARN("CUDA flush requested, but cudaDeviceFlushGPUDIrectRDMAWrite not found.");
+			cuda_flush = false;
+		} else {
+			NCCL_OFI_WARN("CUDA flush enabled");
+			cuda_flush = true;
+		}
 	}
 #endif
 
@@ -1058,7 +1045,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		int num_accelerators = ofi_ndevices;
 
 #if HAVE_CUDA
-		if (cudaGetDeviceCount(&num_accelerators) != cudaSuccess) {
+		if (nccl_net_ofi_cudaGetDeviceCount(&num_accelerators) != cudaSuccess) {
 			NCCL_OFI_WARN("Error getting CUDA device count");
 			ret = ncclUnhandledCudaError;
 			goto exit;
@@ -1320,13 +1307,13 @@ ncclResult_t nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, 
 		int num_gpus_visible, active_cuda_device, gpus_per_conn;
 		size_t c;
 
-		if (cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
+		if (nccl_net_ofi_cudaGetDeviceCount(&num_gpus_visible) != cudaSuccess) {
 			NCCL_OFI_WARN("Error getting CUDA device count");
 			ret = ncclUnhandledCudaError;
 			goto error;
 		}
 
-		if (cudaGetDevice(&active_cuda_device) != cudaSuccess) {
+		if (nccl_net_ofi_cudaGetDevice(&active_cuda_device) != cudaSuccess) {
 			NCCL_OFI_WARN("Error getting current CUDA device");
 			ret = ncclUnhandledCudaError;
 			goto error;

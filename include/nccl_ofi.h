@@ -553,21 +553,6 @@ ncclResult_t nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *sen
  */
 ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key);
 
-#if HAVE_CUDA
-/*
- * @brief	Gets the CUDA device associated with the buffer
- *
- * @param	data
- *		Pointer to CUDA buffer.
- *
- * @return	Valid CUDA device ID on success
- *		-1 on error
- * @return	0 on success
- *		non-zero on error
- */
-ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
-#endif
-
 /*
  * @brief	Allocate a memory registration key
  */

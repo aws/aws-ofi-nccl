@@ -14,6 +14,7 @@ tests/unit/*.trs
 tests/functional/nccl_connection
 tests/functional/nccl_message_transfer
 tests/functional/ring
+tests/functional/cuda_check
 tests/unit/msgbuff
 tests/unit/freelist
 tests/unit/deque
@@ -60,4 +61,3 @@ m4/ltoptions.m4
 m4/ltsugar.m4
 m4/ltversion.m4
 m4/lt~obsolete.m4
-
