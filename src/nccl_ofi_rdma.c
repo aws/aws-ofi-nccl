@@ -10,12 +10,12 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
-#if HAVE_CUDA
-#include <cuda_runtime.h>
-#endif
 
 #include "nccl-headers/error.h"
 #include "nccl_ofi.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_math.h"
@@ -3361,7 +3361,7 @@ static ncclResult_t flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buf
 
 #if CUDART_VERSION >= 11030
 	if (cuda_flush) {
-		cudaError_t cuda_ret = cudaDeviceFlushGPUDirectRDMAWrites(
+		cudaError_t cuda_ret = nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites(
 			cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
 			cudaFlushGPUDirectRDMAWritesToOwner);
 

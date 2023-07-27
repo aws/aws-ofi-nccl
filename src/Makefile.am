@@ -17,6 +17,10 @@ sources = \
 	nccl_ofi_deque.c \
 	tracepoint.c
 
+if HAVE_CUDA
+sources += nccl_ofi_cuda.c
+endif
+
 if WANT_PLATFORM_AWS
 sources += platform-aws.c
 endif
