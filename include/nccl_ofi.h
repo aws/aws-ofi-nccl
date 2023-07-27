@@ -90,7 +90,8 @@ extern int max_reqs;
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
-enum gdr_support_level_t support_gdr;
+extern enum gdr_support_level_t support_gdr;
+
 
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
