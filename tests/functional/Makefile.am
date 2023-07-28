@@ -13,7 +13,8 @@ CC = $(MPICC)
 noinst_HEADERS = test-common.h
 
 if ENABLE_TESTS
-bin_PROGRAMS = nccl_connection nccl_message_transfer ring cuda_check
+bin_PROGRAMS = nccl_connection nccl_message_transfer ring
+noinst_PROGRAMS = cuda_check
 endif
 
 nccl_connection_SOURCES = nccl_connection.c
