@@ -6,6 +6,7 @@
 
 noinst_HEADERS = \
 	nccl_ofi.h \
+	nccl_ofi_cuda.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_rdma.h \
 	nccl_ofi_scheduler.h \
