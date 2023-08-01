@@ -182,7 +182,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 					 &block->mr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("freelist extension registration failed: %d", ret);
-			free(block);
+			free(block->memory);
 			return ret;
 		}
 	} else {
