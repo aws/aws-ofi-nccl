@@ -38,5 +38,10 @@ AC_DEFUN([CHECK_ENABLE_SANITIZE_EXPAND_SANITIZER], [
 AC_DEFUN([CHECK_ENABLE_SANITIZER], [
   CHECK_ENABLE_SANITIZE_EXPAND_SANITIZER([ubsan],
        [Enable undefined behavior checks with UBSAN], [-fsanitize=undefined])
+  CHECK_ENABLE_SANITIZE_EXPAND_SANITIZER([asan],
+       [Enable address checking with ASAN], [-fsanitize=address])
   AC_CONFIG_COMMANDS_PRE([CHECK_ENABLE_SANITIZER_HANDLER])
+
+  AC_DEFINE_UNQUOTED([ENABLE_ASAN], [`test "${enable_asan}" = "yes" && echo 1 || echo 0`],
+                     [Defined to 1 if ASAN is enabled])
 ])

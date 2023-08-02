@@ -112,6 +112,38 @@ To enable UBSAN (Undefined Behaviour Sanitizer), use the following config option
    --enable-ubsan         Enable undefined behaviour checks with UBSAN
 ```
 
+To enable memory access checks with ASAN (disabled by default), use
+the following config option:
+
+```
+   --enable-asan           Enable ASAN memory access checks
+```
+
+In case plugin is configured with `--enable-asan` and the executable
+binary is not compiled and linked with ASAN support, it is required to
+preload the ASAN library, i.e., run the application with `export
+LD_PRELOAD=<path to libasan.so>`.
+
+In case plugin is configured with `--enable-asan` and the plugin is
+run within a CUDA application, environment variable `ASAN_OPTIONS`
+needs to include `protect_shadow_gap=0`. Otherwise, ASAN will crash on
+out-of-memory.
+NCCL currently has some memory leaks and ASAN reports memory leaks by
+default on process exit. To avoid warnings on such memory leaks, e.g.,
+only invalid memory accesses are of interest, add `detect_leaks=0` to
+`ASAN_OPTIONS`.
+
+To enable memory access checks with valgrind (disabled by default),
+use the following config option:
+
+```
+   -with-valgrind[=PATH]  Enable valgrind memory access checks
+```
+
+Use optional parameter `PATH` to point the build to a custom path
+where valgrind is installed. The memory access checkers ASAN and
+valgrind are mutually exclusive.
+
 LTTNG tracing is documented in the doc/tracing.md file.
 
 To enable LTTNG tracing, use the following configuration option:

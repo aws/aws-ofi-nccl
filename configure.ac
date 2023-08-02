@@ -84,6 +84,8 @@ CHECK_PKG_HWLOC([],
                 [AS_IF([test "${have_device_interface}" = "cuda"],
                        [AC_MSG_ERROR([HWLOC package required for CUDA builds])])])
 
+CHECK_PKG_VALGRIND()
+
 # do we want our tests?
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
@@ -122,6 +124,9 @@ NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
 
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
+
+AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
+      [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
 
 AC_CONFIG_FILES([Makefile
                  include/Makefile
