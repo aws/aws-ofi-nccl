@@ -90,6 +90,9 @@ struct nccl_ofi_freelist_reginfo_t {
 };
 typedef struct nccl_ofi_freelist_reginfo_t nccl_ofi_freelist_reginfo_t;
 
+_Static_assert(offsetof(nccl_ofi_freelist_reginfo_t, elem) == 0,
+	       "elem is not the first member of the structure nccl_ofi_freelist_reginfo_t");
+
 /*
  * Freelist structure
  *
