@@ -22,6 +22,7 @@
 #include "tracepoint.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_memcheck.h"
 
 /* Template path used to write temporary NCCL topology file */
 static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
@@ -4351,6 +4352,13 @@ static ssize_t post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = bounce_data->bounce_fl_item;
 	freelist_regmr_fn_handle_t *fl_mr_handle = bounce_fl_item->fl_reginfo.mr_handle;
 	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[bounce_data->bounce_rail_id]);
+
+	/* Reset memcheck guards of bounce buffer freelist entry to
+	 * accessible but undefined to cover cases where the buffer
+	 * gets re-posted */
+ 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
+	nccl_ofi_freelist_entry_set_undefined(ep->bounce_buff_fl,
+					      bounce_fl_item);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 	ssize_t rc = fi_trecv(ep_rail->ofi_ep, &bounce_fl_item->bounce_msg,

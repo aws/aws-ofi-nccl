@@ -26,6 +26,13 @@ extern "C" {
 #endif
 
 /**
+ * MEMCHECK_REDZONE_SIZE defines the size of redzones prefixing each
+ * entry. Redzones are required to be a multiple of 8 due to ASAN
+ * shadow-map granularity */
+_Static_assert(MEMCHECK_REDZONE_SIZE % MEMCHECK_GRANULARITY == 0,
+	       "Size of redzone is not a multiple of ASAN shadow-map granularity");
+
+/**
  * @file
  * This module defines the interface for providing hints about the
  * expected state of a memory region.  This can be used to detect
@@ -73,35 +80,35 @@ static inline void nccl_net_ofi_mem_undefined(void *data, size_t size);
 static inline void nccl_net_ofi_mem_noaccess(void *data, size_t size);
 
 /**
- * Same as nccl_net_ofi_mem_defined() except that hint is applied to
- * memory region [FLOOR(data, MEMCHECK_GRANULARITY), data + size).
+ * Same as nccl_net_ofi_mem_defined() except that guard is applied to
+ * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
 static inline void nccl_net_ofi_mem_defined_unaligned(void *data, size_t size)
 {
-	void *p_prefix = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - p_prefix;
+	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
+	size_t offset = data - aligned;
 	nccl_net_ofi_mem_defined(data - offset, size + offset);
 }
 
 /**
- * Same as nccl_net_ofi_mem_undefined() except that hint is applied to
- * memory region [FLOOR(data, MEMCHECK_GRANULARITY), data + size).
+ * Same as nccl_net_ofi_mem_undefined() except that guard is applied to
+ * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
 static inline void nccl_net_ofi_mem_undefined_unaligned(void *data, size_t size)
 {
-	void *p_prefix = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - p_prefix;
+	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
+	size_t offset = data - aligned;
 	nccl_net_ofi_mem_undefined(data - offset, size + offset);
 }
 
 /**
- * Same as nccl_net_ofi_mem_noaccess() except that hint is applied to
- * memory region [FLOOR(data, MEMCHECK_GRANULARITY), data + size).
+ * Same as nccl_net_ofi_mem_noaccess() except that guard is applied to
+ * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
 static inline void nccl_net_ofi_mem_noaccess_unaligned(void *data, size_t size)
 {
-	void *p_prefix = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - p_prefix;
+	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
+	size_t offset = data - aligned;
 	nccl_net_ofi_mem_noaccess(data - offset, size + offset);
 }
 

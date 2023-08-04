@@ -85,6 +85,7 @@ CHECK_PKG_HWLOC([],
                        [AC_MSG_ERROR([HWLOC package required for CUDA builds])])])
 
 CHECK_PKG_VALGRIND()
+CHECK_VAR_REDZONE()
 
 # do we want our tests?
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
