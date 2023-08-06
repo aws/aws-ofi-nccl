@@ -1107,13 +1107,14 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		}
 
 		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key);
+
+		nccl_ofi_topo_free(topo);
+
 		if (ret != ncclSuccess) {
 			NCCL_OFI_WARN("Failed to initialize rdma protocol");
 			ret = ncclInternalError;
 			goto exit;
 		}
-
-		nccl_ofi_topo_free(topo);
 	} else {
 		NCCL_OFI_WARN("Unable to find plugin protocol %s", nccl_ofi_selected_protocol);
 		ret = ncclInternalError;
