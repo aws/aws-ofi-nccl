@@ -532,7 +532,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
  * @return	Populated I/O vector, on success
  * @return	0 on success
  *		non-zero on error
- */ 
+ */
 static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 				    void *data, size_t size, int type,
 				    struct fi_mr_attr *mr_attr, struct iovec *iov)
@@ -546,20 +546,32 @@ static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 	/* Initialize MR attributes */
 	mr_attr->mr_iov = iov;
 	mr_attr->iov_count = 1;
-	mr_attr->access = FI_SEND | FI_RECV;
 
-	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
-	   for RDMA send/recv buffers */
+	/*
+	 * Communication buffer is used as a message source when sending data eagerly.
+	 * Bounce buffer is used as a message target when receiving eager data or control message.
+	 * Control message is used as a message source.
+	 */
+	mr_attr->access = FI_SEND | FI_RECV;
+	/* Communication buffer is used as a source/target of RMA writes */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
 
 	switch (type) {
 	case NCCL_PTR_HOST:
-		mr_attr->access |= FI_READ;
+		/*
+		 * Host buffer is used as a RMA read source on eager local copy
+		 * and a RMA read target on GPU flush.
+		 */
+		mr_attr->access |= FI_READ | FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
-		mr_attr->access |= FI_REMOTE_READ;
+		/*
+		 * CUDA buffer is used as a RMA read source on GPU flush
+		 * and a RMA read target on eager local copy.
+		 */
+		mr_attr->access |= FI_READ | FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -571,7 +583,8 @@ static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 #endif
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
-		mr_attr->access |= FI_REMOTE_READ;
+		/* Neuron buffer is used as a RMA read target on eager local copy */
+		mr_attr->access |= FI_READ;
 		mr_attr->iface = FI_HMEM_NEURON;
 		/*
 		 * Store a sentinel; libfabric requires this to be initialized Libfabric

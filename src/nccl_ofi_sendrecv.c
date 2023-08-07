@@ -489,15 +489,19 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
 	/* Initialize MR attributes */
 	mr_attr.mr_iov = &iov;
 	mr_attr.iov_count = 1;
+
+	/* Communication buffer is used as a message source/target */
 	mr_attr.access = FI_SEND | FI_RECV;
 
 	switch (type) {
 	case NCCL_PTR_HOST:
+		/* Host buffer is used as a RMA read target on GPU flush */
 		mr_attr.access |= FI_READ;
 		mr_attr.iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
+		/* CUDA buffer is used as a RMA read source on GPU flush */
 		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_CUDA;
 
@@ -510,7 +514,6 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
 #endif
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
-		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_NEURON;
 		/*
 		 * Store a sentinel; libfabric requires this to be initialized Libfabric
