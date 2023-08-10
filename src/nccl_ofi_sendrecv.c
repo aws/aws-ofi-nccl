@@ -852,7 +852,7 @@ static ncclResult_t recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 				goto exit;
 			}
 		}
-		if (munmap(r_comm->flush_buff.host_buffer, sysconf(_SC_PAGESIZE))) {
+		if (munmap(r_comm->flush_buff.host_buffer, system_page_size)) {
 			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
 		}
 		r_comm->flush_buff.host_buffer = MAP_FAILED;
@@ -1045,12 +1045,11 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 				    nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff, int dev_id)
 {
 	int ret = ncclSuccess;
-	const long page_size = sysconf(_SC_PAGESIZE);
 	struct fid_mr *mr_handle = NULL;
 
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 
-	flush_buff->host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+	flush_buff->host_buffer = mmap(NULL, system_page_size, PROT_READ | PROT_WRITE,
 				       MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (OFI_UNLIKELY(flush_buff->host_buffer == MAP_FAILED)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
@@ -1060,11 +1059,11 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 
 	/* Register flush dummy buffer for provider access */
 	ret = register_mr_buffers(domain, ep, key_pool, dev_id, flush_buff->host_buffer,
-				  page_size, NCCL_PTR_HOST, &mr_handle);
+				  system_page_size, NCCL_PTR_HOST, &mr_handle);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);
-		if (munmap(flush_buff->host_buffer, page_size)) {
+		if (munmap(flush_buff->host_buffer, system_page_size)) {
 			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
 				      errno, strerror(errno));
 		}

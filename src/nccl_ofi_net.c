@@ -25,6 +25,7 @@
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_math.h"
 
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
@@ -82,6 +83,9 @@ const char *nccl_ofi_selected_protocol = "SENDRECV";
 
 /* Internode network latency. */
 float net_latency = .0;
+
+/* Size of a memory page */
+long system_page_size = -1;
 
 /*
  * @brief	Free list of libfabric NIC info structs
@@ -869,6 +873,15 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	int ofi_ndevices = -1;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
+
+	system_page_size = sysconf(_SC_PAGESIZE);
+	if (OFI_UNLIKELY(system_page_size == -1)) {
+		NCCL_OFI_WARN("Failed to get system page size (%d %s)", errno, strerror(errno));
+		ret = ncclSystemError;
+		goto exit;
+	}
+	assert(NCCL_OFI_IS_POWER_OF_TWO(system_page_size));
+	assert(system_page_size > 0);
 
 #if HAVE_CUDA
 	if (nccl_net_ofi_cuda_init() != 0) {

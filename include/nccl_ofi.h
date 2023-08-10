@@ -138,6 +138,9 @@ extern const char *nccl_ofi_selected_protocol;
 /* Internode network latency reported to NCCL. */
 extern float net_latency;
 
+/* Size of system memory pages */
+extern long system_page_size;
+
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;
 struct nccl_net_ofi_ep;

@@ -3202,7 +3202,7 @@ static inline ncclResult_t dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_c
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
 		goto exit;
 	}
-	if (munmap(r_comm->flush_buff.host_buffer, sysconf(_SC_PAGESIZE))) {
+	if (munmap(r_comm->flush_buff.host_buffer, system_page_size)) {
 		NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
 	}
 	r_comm->flush_buff.host_buffer = MAP_FAILED;
@@ -3227,14 +3227,13 @@ static inline ncclResult_t dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_c
 static ncclResult_t alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int dev_id)
 {
 	int ret = ncclSuccess;
-	const long page_size = sysconf(_SC_PAGESIZE);
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
 	nccl_net_ofi_rdma_flush_buffer_t *flush_buff = &r_comm->flush_buff;
 
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 
 	flush_buff->size = NCCL_OFI_FLUSH_SIZE;
-	flush_buff->host_buffer = mmap(NULL, page_size, PROT_READ | PROT_WRITE,
+	flush_buff->host_buffer = mmap(NULL, system_page_size, PROT_READ | PROT_WRITE,
 				       MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (OFI_UNLIKELY(flush_buff->host_buffer == MAP_FAILED)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
@@ -3245,12 +3244,12 @@ static ncclResult_t alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_co
 	/* Check if provider requires registration of local buffers */
 	if (local_mr == true) {
 		/* Register flush dummy buffer for provider access */
-		reg_mr_ep((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep, flush_buff->host_buffer, page_size,
+		reg_mr_ep((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep, flush_buff->host_buffer, system_page_size,
 			  NCCL_PTR_HOST, &mr_handle);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 				      dev_id);
-			if (munmap(flush_buff->host_buffer, page_size)) {
+			if (munmap(flush_buff->host_buffer, system_page_size)) {
 				NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
 					      errno, strerror(errno));
 			}

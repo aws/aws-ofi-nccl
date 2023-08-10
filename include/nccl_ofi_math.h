@@ -27,6 +27,11 @@ extern "C" {
  */
 #define  NCCL_OFI_MIN(x, y) ((x) < (y) ? (x) : (y))
 
+/*
+ * @brief	Returns true if and only if size_t value is a power of two
+ */
+#define NCCL_OFI_IS_POWER_OF_TWO(x) ((x) && (((x) & ((x) - 1)) == 0))
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
