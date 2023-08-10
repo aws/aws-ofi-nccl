@@ -88,6 +88,66 @@ float net_latency = .0;
 long system_page_size = -1;
 
 /*
+ * @brief	Allocate memory region for memory registration
+ *
+ * This function allocates memory that covers full page aligned.
+ *
+ * Internally allocated memory that is registered is required to cover
+ * full memory pages. For more information, see functions
+ * `register_internal_mr_buffers()` and `reg_internal_mr_ep()`.
+ *
+ * To free deallocate the memory region, function
+ * nccl_net_ofi_dealloc_mr_buffer() must be used.
+ *
+ * @param	size
+ *		Size of the memory region. Must be a multiple of system memory page size.
+ * @return	Pointer to memory region. Memory region is aligned to system memory page size.
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_alloc_mr_buffer(size_t size, void **ptr)
+{
+	assert(system_page_size > 0);
+	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+	*ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (OFI_UNLIKELY(*ptr == MAP_FAILED)) {
+		NCCL_OFI_WARN("Unable to map MR buffer (%d %s)",
+			      errno, strerror(errno));
+		*ptr = NULL;
+		return -errno;
+	}
+	assert(NCCL_OFI_IS_PTR_ALIGNED(*ptr, system_page_size));
+	return 0;
+}
+
+/*
+ * @brief	Deallocate memory region allocated by function nccl_net_ofi_alloc_mr_buffer()
+ *
+ * @return	Pointer to memory region
+ * @param	size
+ *		Size of the memory region
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
+{
+	int ret = 0;
+
+	assert(NCCL_OFI_IS_PTR_ALIGNED(ptr, system_page_size));
+	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+	ret = munmap(ptr, size);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to unmap MR buffer (%d %s)",
+			      errno, strerror(errno));
+		ret = -errno;
+	}
+	return ret;
+}
+
+/*
  * @brief	Free list of libfabric NIC info structs
  *
  * This function frees all elements of the input list. The input list

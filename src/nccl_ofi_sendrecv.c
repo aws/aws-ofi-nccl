@@ -17,6 +17,7 @@
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_freelist.h"
 #include "tracepoint.h"
+#include "nccl_ofi_math.h"
 
 static inline ncclResult_t get_properties(int num_devices,
 						   nccl_net_ofi_device_t *base_dev,
@@ -567,6 +568,69 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
  exit:
 	return ret;
 }
+/*
+ * @brief	Registers memory region (both HOST and CUDA)
+ *
+ * When a process executes the fork() syscall, all process memory pages
+ * are marked as CoW (copy-on-write) such that the virtual pages are
+ * read-only on both parent and child processes and when one of them
+ * writes to a page, a page-fault is triggered which cause OS to copy the
+ * page to a new physical page and change virtual page to be mapped to
+ * the new physical page with writable access.
+ *
+ * In order for MRs to properly be used as device DMA source/target,
+ * their physical pages must be pinned. In order to avoid changing MRs
+ * physical pages after a fork(), rdma-core historically
+ * madvice(MADV_DONTFORK) their buffers. fork() handles memory pages
+ * marked with MADV_DONTFORK by keeping them writable on parent and
+ * providing new zeroed physical pages on child.
+ *
+ * This assumes that the content of a page marked with MADV_DONTFORK is
+ * not used by the child. However, this assumption is wrong when a MR do
+ * not cover the entire page, because the remainder of the page may
+ * contain content that the child intends to use. Which may lead to
+ * various hard to debug issues in the child process (e.g. memory
+ * corruption on CRT heap).
+ *
+ * To address this issue, kernel 5.15 introduced copy-on-fork support to
+ * not require userspace to mark any memory page MADV_DONTFORK but
+ * instead kernel copy the content of pinned memory pages from parent to
+ * child immediately when fork() is executed.
+ *
+ * In attempt to avoid this issue in old kernels without copy-on-fork,
+ * we enlarge our MRs to cover full memory pages and assert that this
+ * is the case to avoid introducing such hard to debug issues in the
+ * future. Note that we can only do this though on internal MRs and
+ * NCCL is still allowed to register MRs which do not cover full
+ * memory pages.
+ *
+ * It's worth emphasizing that registering a MR which does not cover a
+ * full memory page on a kernel without copy-on-fork won't necessarily
+ * result in an issue. Because fork() may never be executed, or an
+ * execve() may immediately be executed after fork() such that the above
+ * mentioned issue is not encountered.
+ *
+ * @param	data
+ *		Pointer to MR. MR must be aligned to system memory page size.
+ * @param	size
+ *		Size of MR. Size must be a multiple of system memory page size.
+ *
+ * @return	OFI memory handle for data transfer operations
+ * @return	0 on success
+ *		non-zero on error
+ */
+static ncclResult_t register_internal_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
+					nccl_ofi_mr_keypool_t *key_pool, int dev_id,
+					void *data, size_t size,
+					int type, struct fid_mr **mr_handle)
+{
+	assert(system_page_size > 0);
+	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
+	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+	return register_mr_buffers(domain, ep, key_pool, dev_id, data, size,
+				   type, mr_handle);
+}
 
 static ncclResult_t reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 				nccl_ofi_mr_keypool_t *key_pool, int dev_id,
@@ -852,8 +916,12 @@ static ncclResult_t recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 				goto exit;
 			}
 		}
-		if (munmap(r_comm->flush_buff.host_buffer, system_page_size)) {
-			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)", errno, strerror(errno));
+		rc = nccl_net_ofi_dealloc_mr_buffer(r_comm->flush_buff.host_buffer,
+						    system_page_size);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+			ret = ncclSystemError;
+			goto exit;
 		}
 		r_comm->flush_buff.host_buffer = MAP_FAILED;
 	}
@@ -1045,27 +1113,33 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 				    nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff, int dev_id)
 {
 	int ret = ncclSuccess;
+	int rc;
 	struct fid_mr *mr_handle = NULL;
+
+	/* Verify that flush won't read more than the flush buffer size */
+	assert(flush_buff->size <= system_page_size);
 
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
 
-	flush_buff->host_buffer = mmap(NULL, system_page_size, PROT_READ | PROT_WRITE,
-				       MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (OFI_UNLIKELY(flush_buff->host_buffer == MAP_FAILED)) {
-		NCCL_OFI_WARN("Unable to allocate flush buffer (%d %s)",
-			      errno, strerror(errno));
+	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(flush_buff->host_buffer));
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ncclSystemError;
 	}
 
 	/* Register flush dummy buffer for provider access */
-	ret = register_mr_buffers(domain, ep, key_pool, dev_id, flush_buff->host_buffer,
-				  system_page_size, NCCL_PTR_HOST, &mr_handle);
+	ret = register_internal_mr_buffers(domain, ep, key_pool, dev_id,
+					   flush_buff->host_buffer,
+					   system_page_size,
+					   NCCL_PTR_HOST, &mr_handle);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);
-		if (munmap(flush_buff->host_buffer, system_page_size)) {
-			NCCL_OFI_WARN("Unable to unmap flush buffer (%d %s)",
-				      errno, strerror(errno));
+		rc = nccl_net_ofi_dealloc_mr_buffer(flush_buff->host_buffer,
+						    system_page_size);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
+				      rc);
 		}
 		flush_buff->host_buffer = MAP_FAILED;
 	}

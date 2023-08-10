@@ -562,6 +562,37 @@ ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t 
 uint64_t nccl_net_ofi_allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool);
 
 /*
+ * @brief	Allocate memory region for memory registration
+ *
+ * This function allocates memory that covers full page aligned.
+ *
+ * Internally allocated memory that is registered is required to cover
+ * full memory pages. For more information, see functions
+ * `register_internal_mr_buffers()` and `reg_internal_mr_ep()`.
+ *
+ * To free deallocate the memory region, function
+ * nccl_net_ofi_dealloc_mr_buffer() must be used.
+ *
+ * @param	size
+ *		Size of the memory region. Must be a multiple of system memory page size.
+ * @return	Pointer to memory region. Memory region is aligned to system memory page size.
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_alloc_mr_buffer(size_t size, void **ptr);
+
+/*
+ * @brief	Deallocate memory region allocated by function nccl_net_ofi_alloc_mr_buffer()
+ *
+ * @return	Pointer to memory region
+ * @param	size
+ *		Size of the memory region
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
+
+/*
  * @brief	Free libfabric NIC info list.
  *
  * Frees each node of the list. No operation if list is NULL.
