@@ -49,6 +49,14 @@ struct nccl_ofi_freelist_block_t {
  *
  * Note that the freelist lock will be held during this function.  The
  * caller must avoid a deadlock situation with this behavior.
+ *
+ * The registered memory region must cover full memory pages. For more
+ * information, see function reg_internal_mr_ep().
+ *
+ * @param	data
+ *		Pointer to MR. MR must be aligned to system memory page size.
+ * @param	size
+ *		Size of MR. Size must be a multiple of system memory page size.
  */
 typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque, void *data, size_t size,
 					  void **handle);

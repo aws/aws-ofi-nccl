@@ -5,7 +5,6 @@
 #include "config.h"
 
 #include <assert.h>
-#include <sys/mman.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
@@ -167,11 +166,9 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 			}
 		}
 
-		ret = munmap(block->memory, block->memory_size);
+		ret = nccl_net_ofi_dealloc_mr_buffer(block->memory, block->memory_size);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to unmap MR buffer (%d %s)",
-				      errno, strerror(errno));
-			ret = -errno;
+			NCCL_OFI_WARN("Unable to deallocate MR buffer(%d)", ret);
 		}
 	}
 
@@ -211,13 +208,10 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	   buffers are more likely to be page aligned (or aligned to
 	   their size, as the case may be). */
 	block_mem_size = freelist_block_mem_size_full_pages(freelist->entry_size, allocation_count);
-	buffer = mmap(NULL, block_mem_size, PROT_READ | PROT_WRITE,
-		    MAP_PRIVATE | MAP_ANON, -1, 0);
-	if (OFI_UNLIKELY(buffer == MAP_FAILED)) {
-		NCCL_OFI_WARN("Unable to map MR buffer (%d %s)",
-			      errno, strerror(errno));
-		buffer = NULL;
-		return -errno;
+	ret = nccl_net_ofi_alloc_mr_buffer(block_mem_size, (void **)&buffer);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("freelist extension allocation failed (%d)", ret);
+		return ret;
 	}
 
 	block = (struct nccl_ofi_freelist_block_t*)(buffer + (freelist->entry_size * allocation_count));
