@@ -445,7 +445,7 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 	 */
 	hints->caps |= FI_DIRECTED_RECV | FI_RMA | FI_WRITE | FI_REMOTE_WRITE;
 
-	hints->mode = FI_CONTEXT;
+	hints->mode = FI_CONTEXT | FI_CONTEXT2;
 
 	hints->ep_attr->type = FI_EP_RDM;
 

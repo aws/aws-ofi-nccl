@@ -41,7 +41,7 @@ support the following features as defined in the
 [libfabric API documentation](https://github.com/ofiwg/libfabric/tree/master/man/).
 
 * Tagged messaging (`FI_TAGGED`, `FI_MSG`)
-* Data transfer context structures (`FI_CONTEXT`)
+* Data transfer context structures (`FI_CONTEXT`, `FI_CONTEXT2`)
 * Reliable datagram endpoints (`FI_EP_RDM`)
 * Send after Send ordering semantics (`FI_ORDER_SAS`)
 * Communication with remote endpoints (`FI_REMOTE_COMM`)

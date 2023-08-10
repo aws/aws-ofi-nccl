@@ -217,7 +217,7 @@ static inline void zero_nccl_ofi_req(nccl_net_ofi_sendrecv_req_t *req)
 {
 	req->comm = NULL;
 
-	memset(&req->ctx, 0, sizeof(struct fi_context));
+	memset(&req->ctx, 0, sizeof(req->ctx));
 
 	req->dev_id = -1;
 	req->size = 0;
