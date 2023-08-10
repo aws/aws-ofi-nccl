@@ -377,22 +377,6 @@ ncclResult_t platform_init(void)
 			goto exit;
 		}
 	}
-
-	/* Disable NVLS topology discovery.  There's a bug with EFA
-	 * and NCCL 2.17/2.18 that is still under investigation that
-	 * causes random failures due to memory corruption during
-	 * initialization.  For now, skip that code.  We need to come
-	 * back to this when the bug is fixed.
-	 */
-	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support when using Libfabric on AWS.");
-		rc = setenv("NCCL_NVLS_ENABLE", "0", 1);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
-			ret = ncclSystemError;
-			goto exit;
-		}
-	}
 #endif
 
 	/*
