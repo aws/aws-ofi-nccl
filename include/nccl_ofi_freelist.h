@@ -34,6 +34,7 @@ struct nccl_ofi_freelist_elem_t {
 struct nccl_ofi_freelist_block_t {
 	struct nccl_ofi_freelist_block_t *next;
 	void *memory;
+	size_t memory_size;
 	void *mr_handle;
 };
 
