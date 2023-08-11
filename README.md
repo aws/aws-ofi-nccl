@@ -106,6 +106,12 @@ following config option:
    --enable-trace         Enable printing trace messages
 ```
 
+To enable UBSAN (Undefined Behaviour Sanitizer), use the following config option:
+
+```
+   --enable-ubsan         Enable undefined behaviour checks with UBSAN
+```
+
 
 LTTNG tracing is documented in the doc/tracing.md file.
 
