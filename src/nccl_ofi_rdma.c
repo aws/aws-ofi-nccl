@@ -1050,11 +1050,8 @@ static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
  * @brief	Decrement the number of bounce buffers posted for the rail
  *		corresponding to bounce_req
  */
-static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_req_t *bounce_req)
+static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
 {
-	int rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
-	nccl_net_ofi_rdma_ep_t *ep = get_bounce_data(bounce_req)->ep;
-
 	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
 	int ret = pthread_mutex_lock(&rail->bounce_mutex);
@@ -1085,6 +1082,8 @@ static inline ncclResult_t handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_com
 					    nccl_net_ofi_rdma_req_t *bounce_req,
 					    nccl_net_ofi_rdma_ep_t *ep)
 {
+	int bounce_rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
+
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(s_comm->msgbuff, msg_seq_num,
 		bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
@@ -1092,7 +1091,7 @@ static inline ncclResult_t handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_com
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case sender has not yet called send() for this message, so
 		   return success and initiate RDMA write when sender calls send(). */
-		int iret = decrease_bounce_buff_cnt(bounce_req);
+		int iret = decrease_bounce_buff_cnt(ep, bounce_rail_id);
 		if (iret != 0) {
 			return ncclSystemError;
 		} else {
@@ -1204,6 +1203,8 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 					     nccl_net_ofi_rdma_req_t *bounce_req,
 					     nccl_net_ofi_rdma_ep_t *ep)
 {
+	int bounce_rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
+
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, msg_seq_num,
 		bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
@@ -1211,7 +1212,7 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case receiver has not yet called recv() for this message, so
 		   return success and initiate eager read when sender calls send(). */
-		int iret = decrease_bounce_buff_cnt(bounce_req);
+		int iret = decrease_bounce_buff_cnt(ep, bounce_rail_id);
 		if (iret != 0) {
 			return ncclSystemError;
 		} else {
