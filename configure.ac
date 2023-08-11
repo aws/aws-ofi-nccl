@@ -36,6 +36,8 @@ dnl bunch of debugging flags, so there's no ordering requirement
 dnl between this and AC_PROG_CC.
 AS_IF([test "${ax_enable_debug}" = "no"], [CFLAGS="${CFLAGS} -O3"])
 
+CHECK_ENABLE_SANITIZER()
+
 
 # Checks for header files
 AC_HEADER_STDBOOL
