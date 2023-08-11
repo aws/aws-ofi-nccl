@@ -5,10 +5,42 @@
 #include "config.h"
 
 #include <assert.h>
+#include <sys/mman.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_math.h"
+
+/*
+ * @brief	Returns size of block memory
+ *
+ * The block memory stores entry_count entries as well as a
+ * nccl_ofi_freelist_block_t structure. Since the block memory needs
+ * to cover full memory pages, the size assessed by the structures is
+ * rounded up to page size.
+ */
+static inline size_t freelist_block_mem_size_full_pages(size_t entry_size, size_t entry_count)
+{
+	size_t block_mem_size =
+		(entry_size * entry_count) + sizeof(struct nccl_ofi_freelist_block_t);
+	return NCCL_OFI_ROUND_UP(block_mem_size, system_page_size);
+}
+
+/*
+ * @brief	Returns maximum number of entries that fit into block memory of
+ * a block for `entry_count` entries while the block memory covers full pages
+ *
+ * @brief	entry_size
+ *		Memory footprint in bytes of a single entry
+ * @brief	entry_count
+ *		Number of requested entries
+ *
+ * @return	Maximum number of entries
+ */
+static inline size_t freelist_page_padded_entry_count(size_t entry_size, size_t entry_count) {
+	size_t covered_pages_size = freelist_block_mem_size_full_pages(entry_size, entry_count);
+	return (covered_pages_size - sizeof(struct nccl_ofi_freelist_block_t)) / entry_count;
+}
 
 static int freelist_init_internal(size_t entry_size,
 				  size_t initial_entry_count,
@@ -31,6 +63,16 @@ static int freelist_init_internal(size_t entry_size,
 	}
 
 	freelist->entry_size = NCCL_OFI_ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
+
+	/* Use initial_entry_count and increase_entry_count as lower
+	 * bounds and increase values such that allocations that cover
+	 * full system memory pages do not have unused space for
+	 * additional entries. */
+	initial_entry_count = freelist_page_padded_entry_count(freelist->entry_size,
+							       initial_entry_count);
+	increase_entry_count = freelist_page_padded_entry_count(freelist->entry_size,
+								increase_entry_count);
+
 	freelist->num_allocated_entries = 0;
 	freelist->max_entry_count = max_entry_count;
 	freelist->increase_entry_count = increase_entry_count;
@@ -125,7 +167,12 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 			}
 		}
 
-		free(block->memory);
+		ret = munmap(block->memory, block->memory_size);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unable to unmap MR buffer (%d %s)",
+				      errno, strerror(errno));
+			ret = -errno;
+		}
 	}
 
 	freelist->entry_size = 0;
@@ -143,6 +190,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 {
 	int ret;
 	size_t allocation_count = num_entries;
+	size_t block_mem_size = 0;
 	char *buffer;
 	struct nccl_ofi_freelist_block_t *block;
 
@@ -162,20 +210,32 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	   structure at the end of the allocation so that large
 	   buffers are more likely to be page aligned (or aligned to
 	   their size, as the case may be). */
-	buffer = malloc(sizeof(struct nccl_ofi_freelist_block_t) +
-			(freelist->entry_size * allocation_count));
-	if (!buffer) {
-		NCCL_OFI_WARN("freelist extension malloc failed: %s", strerror(errno));
-		return -ENOMEM;
+	block_mem_size = freelist_block_mem_size_full_pages(freelist->entry_size, allocation_count);
+	buffer = mmap(NULL, block_mem_size, PROT_READ | PROT_WRITE,
+		    MAP_PRIVATE | MAP_ANON, -1, 0);
+	if (OFI_UNLIKELY(buffer == MAP_FAILED)) {
+		NCCL_OFI_WARN("Unable to map MR buffer (%d %s)",
+			      errno, strerror(errno));
+		buffer = NULL;
+		return -errno;
 	}
 
 	block = (struct nccl_ofi_freelist_block_t*)(buffer + (freelist->entry_size * allocation_count));
 	block->memory = buffer;
+	block->memory_size = block_mem_size;
 	block->next = freelist->blocks;
 
 	if (freelist->regmr_fn) {
-		ret = freelist->regmr_fn(freelist->regmr_opaque, block->memory,
-					 freelist->entry_size * allocation_count,
+		/*
+		 * Note that we are registering the entire block
+		 * memory buffer rather than only its entries,
+		 * including the block metadata structure.  Because we
+		 * require all internally registered memory regions
+		 * buffers cover full system memory pages. For more
+		 * information, see reg_internal_mr_ep().
+		 */
+		ret = freelist->regmr_fn(freelist->regmr_opaque, buffer,
+					 block_mem_size,
 					 &block->mr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("freelist extension registration failed: %d", ret);

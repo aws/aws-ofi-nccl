@@ -11,6 +11,7 @@ extern "C" {
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdint.h>
 
 /*
  * @brief	Returns the ceil of x/y.
@@ -31,6 +32,22 @@ extern "C" {
  * @brief	Returns true if and only if size_t value is a power of two
  */
 #define NCCL_OFI_IS_POWER_OF_TWO(x) ((x) && (((x) & ((x) - 1)) == 0))
+
+/*
+ * @brief	Return true if and only if `x` is a multiple of `a`
+ *
+ * @param	a
+ *		Must be a power of two
+ */
+#define NCCL_OFI_IS_ALIGNED(x, a) (((x) & ((typeof(x))(a) - 1)) == 0)
+
+/*
+ * @brief	Return true if and only if pointer `p` is `a`-byte aligned
+ *
+ * @param	a
+ *		Must be a power of two
+ */
+#define NCCL_OFI_IS_PTR_ALIGNED(p, a) NCCL_OFI_IS_ALIGNED((uintptr_t)(p), (uintptr_t)(a))
 
 /*
  * @brief	Round value down to be a multiple of alignment
