@@ -32,6 +32,22 @@ extern "C" {
  */
 #define NCCL_OFI_IS_POWER_OF_TWO(x) ((x) && (((x) & ((x) - 1)) == 0))
 
+/*
+ * @brief	Round value down to be a multiple of alignment
+ *
+ * @param	y
+ *		Must be a power of two
+ */
+#define NCCL_OFI_ROUND_DOWN(x, y) ((x) & (~((y) - 1)))
+
+/*
+ * @brief	Round value up to be a multiple of alignment
+ *
+ * @param	y
+ *		Must be a power of two
+ */
+#define NCCL_OFI_ROUND_UP(x, y) NCCL_OFI_ROUND_DOWN((x) + ((y) - 1), (y))
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif

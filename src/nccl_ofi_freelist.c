@@ -10,8 +10,6 @@
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_math.h"
 
-#define ROUND_UP(x, y) (((x) + (y)-1)  & (~((y)-1)) )
-
 static int freelist_init_internal(size_t entry_size,
 				  size_t initial_entry_count,
 				  size_t increase_entry_count,
@@ -32,7 +30,7 @@ static int freelist_init_internal(size_t entry_size,
 		return -ENOMEM;
 	}
 
-	freelist->entry_size = ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
+	freelist->entry_size = NCCL_OFI_ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
 	freelist->num_allocated_entries = 0;
 	freelist->max_entry_count = max_entry_count;
 	freelist->increase_entry_count = increase_entry_count;
