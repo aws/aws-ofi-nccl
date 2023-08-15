@@ -19,6 +19,7 @@ static int freelist_init_internal(size_t entry_size,
 				  bool have_reginfo,
 				  nccl_ofi_freelist_regmr_fn regmr_fn,
 				  nccl_ofi_freelist_deregmr_fn deregmr_fn,
+				  uint64_t mr_access,
 				  void *regmr_opaque,
 				  size_t reginfo_offset,
 				  nccl_ofi_freelist_t **freelist_p)
@@ -42,6 +43,7 @@ static int freelist_init_internal(size_t entry_size,
 	freelist->have_reginfo = have_reginfo;
 	freelist->regmr_fn = regmr_fn;
 	freelist->deregmr_fn = deregmr_fn;
+	freelist->mr_access = mr_access;
 	freelist->regmr_opaque = regmr_opaque;
 	freelist->reginfo_offset = reginfo_offset;
 
@@ -78,6 +80,7 @@ int nccl_ofi_freelist_init(size_t entry_size,
 				      false,
 				      NULL,
 				      NULL,
+				      0,
 				      NULL,
 				      0,
 				      freelist_p);
@@ -89,6 +92,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      size_t max_entry_count,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
+			      uint64_t mr_access,
 			      void *regmr_opaque,
 			      size_t reginfo_offset,
 			      nccl_ofi_freelist_t **freelist_p)
@@ -100,6 +104,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 				      true,
 				      regmr_fn,
 				      deregmr_fn,
+				      mr_access,
 				      regmr_opaque,
 				      reginfo_offset,
 				      freelist_p);
@@ -176,8 +181,9 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	block->next = freelist->blocks;
 
 	if (freelist->regmr_fn) {
-		ret = freelist->regmr_fn(freelist->regmr_opaque, block->memory,
-					 freelist->entry_size * allocation_count,
+		ret = freelist->regmr_fn(freelist->regmr_opaque,
+					 block->memory, freelist->entry_size * allocation_count,
+					 freelist->mr_access,
 					 &block->mr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("freelist extension registration failed: %d", ret);

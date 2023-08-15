@@ -534,7 +534,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
  *		non-zero on error
  */
 static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				    void *data, size_t size, int type,
+				    void *data, size_t size, int type, uint64_t access,
 				    struct fi_mr_attr *mr_attr, struct iovec *iov)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -547,31 +547,14 @@ static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 	mr_attr->mr_iov = iov;
 	mr_attr->iov_count = 1;
 
-	/*
-	 * Communication buffer is used as a message source when sending data eagerly.
-	 * Bounce buffer is used as a message target when receiving eager data or control message.
-	 * Control message is used as a message source.
-	 */
-	mr_attr->access = FI_SEND | FI_RECV;
-	/* Communication buffer is used as a source/target of RMA writes */
-	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
+	mr_attr->access = access;
 
 	switch (type) {
 	case NCCL_PTR_HOST:
-		/*
-		 * Host buffer is used as a RMA read source on eager local copy
-		 * and a RMA read target on GPU flush.
-		 */
-		mr_attr->access |= FI_READ | FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
-		/*
-		 * CUDA buffer is used as a RMA read source on GPU flush
-		 * and a RMA read target on eager local copy.
-		 */
-		mr_attr->access |= FI_READ | FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -583,8 +566,6 @@ static ncclResult_t set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 #endif
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
-		/* Neuron buffer is used as a RMA read target on eager local copy */
-		mr_attr->access |= FI_READ;
 		mr_attr->iface = FI_HMEM_NEURON;
 		/*
 		 * Store a sentinel; libfabric requires this to be initialized Libfabric
@@ -2561,7 +2542,8 @@ bool valid_mr_buff_type(int type)
 }
 
 static ncclResult_t reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
-			      size_t size, int type, nccl_net_ofi_rdma_mr_handle_t **mhandle)
+			      size_t size, int type, uint64_t access,
+			      nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	ncclResult_t ret = ncclSuccess;
 	struct fi_mr_attr mr_attr = {0};
@@ -2599,7 +2581,7 @@ static ncclResult_t reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(key_pool, dev_id, data, size, type, &mr_attr, &iov);
+	ret = set_mr_req_attr(key_pool, dev_id, data, size, type, access, &mr_attr, &iov);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			dev_id);
@@ -2635,14 +2617,32 @@ static ncclResult_t reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm, void *
 					      size_t size, int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) send_comm->base.ep;
-	return reg_mr_ep(ep, data, size, type, (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+	/* Send buffer is used as a RMA write source
+	 * or a tagged message source in case it is sent eagerly */
+	const uint64_t access = FI_WRITE | FI_SEND;
+
+	return reg_mr_ep(ep, data,
+			 size, type, access,
+			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 static ncclResult_t reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) recv_comm->base.ep;
-	return reg_mr_ep(ep, data, size, type, (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+	/* Recv buffer is used as a RMA write target
+	 * or a RMA read target in case of local eager copy */
+	uint64_t access = FI_REMOTE_WRITE | FI_READ;
+
+	/* GPU flush target is registered as recv communication buffer
+	 * and is used as RMA read source */
+	if (type == NCCL_PTR_CUDA) {
+		access |= FI_REMOTE_READ;
+	}
+
+	return reg_mr_ep(ep, data,
+			 size, type, access,
+			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 static ncclResult_t dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
@@ -2691,12 +2691,14 @@ typedef struct {
  *
  * This interface is suitable for use with freelist_init_mr.
  */
-static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, void **handle)
+static int freelist_regmr_host_fn(void *ep_void_ptr,
+				  void *data, size_t size, uint64_t access,
+				  void **handle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = ep_void_ptr;
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	ncclResult_t ret = reg_mr_ep(ep, data, size, NCCL_PTR_HOST, &mr_handle);
+	ncclResult_t ret = reg_mr_ep(ep, data, size, NCCL_PTR_HOST, access, &mr_handle);
 
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("Failed call to reg_mr_ep: %d", ret);
@@ -3254,8 +3256,10 @@ static ncclResult_t alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_co
 	/* Check if provider requires registration of local buffers */
 	if (local_mr == true) {
 		/* Register flush dummy buffer for provider access */
-		reg_mr_ep((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep, flush_buff->host_buffer, page_size,
-			  NCCL_PTR_HOST, &mr_handle);
+		reg_mr_ep((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep,
+			  flush_buff->host_buffer, page_size,
+			  NCCL_PTR_HOST, FI_READ,
+			  &mr_handle);
 		if (OFI_UNLIKELY(ret != ncclSuccess)) {
 			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 				      dev_id);
@@ -3625,9 +3629,9 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	}
 
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_ctrl_fl_item_t), 8, 8,
-					NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-					freelist_deregmr_host_fn, ep, 0,
-					&r_comm->ctrl_buff_fl);
+					NCCL_OFI_MAX_REQUESTS,
+					freelist_regmr_host_fn, freelist_deregmr_host_fn,
+					FI_SEND, ep, 0, &r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
 		return NULL;
@@ -4894,7 +4898,7 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) + ep->bounce_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, 0, &ep->bounce_buff_fl);
+					FI_RECV | FI_REMOTE_READ, ep, 0, &ep->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_fl");
 		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl))

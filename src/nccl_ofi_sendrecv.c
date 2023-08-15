@@ -462,7 +462,7 @@ static ssize_t post_recv_conn(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
  */
 static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 					nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-					void *data, size_t size,
+					void *data, size_t size, uint64_t access,
 					int type, struct fid_mr **mr_handle)
 {
 	ncclResult_t ret = ncclSuccess;
@@ -489,20 +489,14 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
 	/* Initialize MR attributes */
 	mr_attr.mr_iov = &iov;
 	mr_attr.iov_count = 1;
-
-	/* Communication buffer is used as a message source/target */
-	mr_attr.access = FI_SEND | FI_RECV;
+	mr_attr.access = access;
 
 	switch (type) {
 	case NCCL_PTR_HOST:
-		/* Host buffer is used as a RMA read target on GPU flush */
-		mr_attr.access |= FI_READ;
 		mr_attr.iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
-		/* CUDA buffer is used as a RMA read source on GPU flush */
-		mr_attr.access |= FI_REMOTE_READ;
 		mr_attr.iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -573,7 +567,7 @@ static ncclResult_t register_mr_buffers(struct fid_domain *domain, struct fid_ep
 
 static ncclResult_t reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 				nccl_ofi_mr_keypool_t *key_pool, int dev_id,
-				void *data, size_t size, int type,
+				void *data, size_t size, int type, uint64_t access,
 				void **mhandle)
 {
 	/* Validate type of buffer */
@@ -591,12 +585,15 @@ static ncclResult_t reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 		return ncclInternalError;
 	}
 
-	return register_mr_buffers(domain, ep, key_pool, dev_id, data, size, type,
-				   (struct fid_mr **)mhandle);
+	return register_mr_buffers(domain, ep,
+				   key_pool, dev_id,
+				   data, size, access,
+				   type, (struct fid_mr **)mhandle);
 }
 
 static ncclResult_t reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
-					      size_t size, int type, void **mhandle)
+				     size_t size, int type, uint64_t access,
+				     void **mhandle)
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
@@ -616,20 +613,30 @@ static ncclResult_t reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	int dev_id = device->base.dev_id;
 
 	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
-	return reg_mr_base(device->domain, ep->ofi_ep, key_pool,
-			   dev_id, data, size, type, mhandle);
+	return reg_mr_base(device->domain, ep->ofi_ep,
+			   key_pool, dev_id,
+			   data, size, type, access,
+			   mhandle);
 }
 
 static ncclResult_t reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
-	return reg_mr_base_comm(&send_comm->base, data, size, type, mhandle);
+	return reg_mr_base_comm(&send_comm->base, data, size, type, FI_SEND, mhandle);
 }
 
 static ncclResult_t reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
-	return reg_mr_base_comm(&recv_comm->base, data, size, type, mhandle);
+	uint64_t access = FI_RECV;
+
+	/* GPU flush target is registered as recv communication buffer
+	 * and is used as RMA read source */
+	if (type == NCCL_PTR_CUDA) {
+		access |= FI_REMOTE_READ;
+	}
+
+	return reg_mr_base_comm(&recv_comm->base, data, size, type, access, mhandle);
 }
 
 static ncclResult_t dereg_mr_base_comm(struct fid_mr *mr_handle,
@@ -1062,8 +1069,10 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 	}
 
 	/* Register flush dummy buffer for provider access */
-	ret = register_mr_buffers(domain, ep, key_pool, dev_id, flush_buff->host_buffer,
-				  page_size, NCCL_PTR_HOST, &mr_handle);
+	ret = register_mr_buffers(domain, ep,
+				  key_pool, dev_id,
+				  flush_buff->host_buffer, page_size, FI_READ,
+				  NCCL_PTR_HOST, &mr_handle);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);

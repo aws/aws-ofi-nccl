@@ -5,19 +5,24 @@
 #include "config.h"
 
 #include <stdio.h>
+#include <rdma/fabric.h>
 
 #include "test-common.h"
 #include "nccl_ofi_freelist.h"
 
 void *simple_base;
 size_t simple_size;
+uint64_t simple_access;
 void *simple_handle;
 
-int regmr_simple(void *opaque, void *data, size_t size, void **handle)
+int regmr_simple(void *opaque,
+		 void *data, size_t size, uint64_t access,
+		 void **handle)
 {
 	*handle = simple_handle = opaque;
 	simple_base = data;
 	simple_size = size;
+	simple_access = access;
 
 	return ncclSuccess;
 }
@@ -29,6 +34,7 @@ int deregmr_simple(void *handle)
 
 	simple_base = NULL;
 	simple_size = 0;
+	simple_access = 0;
 	simple_handle = NULL;
 
 	return ncclSuccess;
@@ -172,6 +178,7 @@ int main(int argc, char *argv[])
 					32,
 					regmr_simple,
 					deregmr_simple,
+					FI_REMOTE_WRITE,
 					(void *)0xdeadbeaf,
 					offsetof(struct random_freelisted_item, reginfo),
 					&freelist);
@@ -199,6 +206,12 @@ int main(int argc, char *argv[])
 			NCCL_OFI_WARN("base_offset was wrong %p %p %lu %lu",
 				      item, simple_base, (char *)item - (char *)simple_base,
 				      item->reginfo.base_offset);
+			exit(1);
+		}
+
+		if (simple_access != FI_REMOTE_WRITE) {
+			NCCL_OFI_WARN("MR access mismatch got=%lu expected=%lu",
+				      simple_access, FI_REMOTE_WRITE);
 			exit(1);
 		}
 	}

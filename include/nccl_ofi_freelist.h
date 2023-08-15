@@ -49,7 +49,8 @@ struct nccl_ofi_freelist_block_t {
  * Note that the freelist lock will be held during this function.  The
  * caller must avoid a deadlock situation with this behavior.
  */
-typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque, void *data, size_t size,
+typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque,
+					  void *data, size_t size, uint64_t access,
 					  void **handle);
 
 /*
@@ -100,6 +101,7 @@ struct nccl_ofi_freelist_t {
 	bool have_reginfo;
 	nccl_ofi_freelist_regmr_fn regmr_fn;
 	nccl_ofi_freelist_deregmr_fn deregmr_fn;
+	uint64_t mr_access;
 	void *regmr_opaque;
 	size_t reginfo_offset;
 
@@ -152,6 +154,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      size_t max_entry_count,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
+			      uint64_t mr_access,
 			      void *regmr_opaque,
 			      size_t reginfo_offset,
 			      nccl_ofi_freelist_t **freelist_p);
