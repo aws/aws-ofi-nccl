@@ -1986,7 +1986,9 @@ static inline ncclResult_t free_bounce_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 	/* Free buffer */
-	nccl_ofi_freelist_entry_free(ep->bounce_buff_fl, bounce_data->bounce_fl_item);
+	if (bounce_data->bounce_fl_item) {
+		nccl_ofi_freelist_entry_free(ep->bounce_buff_fl, bounce_data->bounce_fl_item);
+	}
 	return free_base_req(NULL, ep->bounce_buff_reqs_fl, req, false);
 }
 
