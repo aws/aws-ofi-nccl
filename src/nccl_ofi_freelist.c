@@ -174,7 +174,6 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	block = (struct nccl_ofi_freelist_block_t*)(buffer + (freelist->entry_size * allocation_count));
 	block->memory = buffer;
 	block->next = freelist->blocks;
-	freelist->blocks = block;
 
 	if (freelist->regmr_fn) {
 		ret = freelist->regmr_fn(freelist->regmr_opaque, block->memory,
@@ -188,6 +187,8 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	} else {
 		block->mr_handle = NULL;
 	}
+
+	freelist->blocks = block;
 
 	for (size_t i = 0 ; i < allocation_count ; ++i) {
 		struct nccl_ofi_freelist_elem_t *entry;
