@@ -222,6 +222,8 @@ static inline ncclResult_t free_base_req(uint64_t *num_inflight_reqs,
 					 nccl_net_ofi_rdma_req_t *req,
 					 bool dec_inflight_reqs);
 
+static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
+
 /*
  * @brief	Get endpoint communicator with given tag
  */
@@ -849,10 +851,10 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(eager_copy_data->eager_bounce_req);
 	size_t size = bounce_data->recv_len;
 
-	/* Re-post bounce buffer */
-	ret = repost_bounce_buff(bounce_data->ep, eager_copy_data->eager_bounce_req);
+	/* Check posted count and re-post bounce buffer if needed */
+	ret = check_post_bounce_req(eager_copy_data->eager_bounce_req);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to repost_bounce_buff");
+		NCCL_OFI_WARN("Failed call to check_post_bounce_req");
 		return ret;
 	}
 
@@ -1205,6 +1207,12 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 {
 	int bounce_rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
 
+	/* Decrease bounce buffer count. It will be incremented again when reposting */
+	int iret = decrease_bounce_buff_cnt(ep, bounce_rail_id);
+	if (iret != 0) {
+		return ncclSystemError;
+	}
+
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, msg_seq_num,
 		bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
@@ -1212,12 +1220,7 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case receiver has not yet called recv() for this message, so
 		   return success and initiate eager read when sender calls send(). */
-		int iret = decrease_bounce_buff_cnt(ep, bounce_rail_id);
-		if (iret != 0) {
-			return ncclSystemError;
-		} else {
-			return ncclSuccess;
-		}
+		return ncclSuccess;
 	}
 	if (mb_res != NCCL_OFI_MSGBUFF_INVALID_IDX) {
 		NCCL_OFI_WARN("Unexpected message insert result (%d) (eager recv)", (int)mb_res);
@@ -1244,9 +1247,9 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 	if (bounce_data->recv_len == 0) {
 		/* Special case: for zero-sized messages, we can skip the local read */
 		/* Re-post bounce buffer */
-		int r = repost_bounce_buff(bounce_data->ep, bounce_req);
+		int r = check_post_bounce_req(bounce_req);
 		if (r != 0) {
-			NCCL_OFI_WARN("Failed call to repost_bounce_buff");
+			NCCL_OFI_WARN("Failed call to check_post_bounce_req");
 			return ncclSystemError;
 		}
 		r = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
