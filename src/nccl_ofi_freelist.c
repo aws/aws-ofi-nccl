@@ -32,7 +32,7 @@ static int freelist_init_internal(size_t entry_size,
 		return -ENOMEM;
 	}
 
-	freelist->entry_size = ROUND_UP(nccl_ofi_max_size_t(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
+	freelist->entry_size = ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)), 8);
 	freelist->num_allocated_entries = 0;
 	freelist->max_entry_count = max_entry_count;
 	freelist->increase_entry_count = increase_entry_count;

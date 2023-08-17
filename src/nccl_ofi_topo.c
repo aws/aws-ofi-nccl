@@ -776,7 +776,7 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	int group_idx = 0;
 
 	/* Adjust number of groups if input list does not provide enough members */
-	num_groups = nccl_ofi_min_int(num_groups, num_infos);
+	num_groups = NCCL_OFI_MIN(num_groups, num_infos);
 	/* Number of groups with one additional member. Handles the
 	 * case where list size is not a multiple of number of
 	 * groups */
@@ -825,7 +825,7 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 		user_data->gpu_group_node = gpu_group_node;
 
 		/* Track maximum group size */
-		topo->max_group_size = nccl_ofi_max_int(topo->max_group_size, group_size);
+		topo->max_group_size = NCCL_OFI_MAX(topo->max_group_size, group_size);
 
 		/* Cut list into two lists after group size list elements */
 		struct fi_info *end = user_data->info_list;
@@ -1197,8 +1197,8 @@ static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed
 		return ret;
 	}
 
-	*speed_idx = nccl_ofi_min_size_t(device_speed_idx, port_speed_idx);
-	*width = nccl_ofi_min_size_t(device_width, port_width);
+	*speed_idx = NCCL_OFI_MIN(device_speed_idx, port_speed_idx);
+	*width = NCCL_OFI_MIN(device_width, port_width);
 
 	return 0;
 }
