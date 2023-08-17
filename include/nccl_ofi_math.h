@@ -15,43 +15,17 @@ extern "C" {
 /*
  * @brief	Returns the ceil of x/y.
  */
-static inline size_t nccl_ofi_div_ceil(size_t x, size_t y)
-{
-	assert(y != 0);
-	return x == 0 ? 0 : 1 + ((x - 1) / y);
-}
+#define NCCL_OFI_DIV_CEIL(x, y) ((x) == 0 ? 0 : 1 + (((x) - 1) / (y)))
 
 /*
  * @brief	Max of two int values
  */
-static inline int nccl_ofi_max_int(int x, int y)
-{
-	return (x < y ? y : x);
-}
+#define NCCL_OFI_MAX(x, y) ((x) < (y) ? (y) : (x))
 
 /*
  * @brief	Min of two int values
  */
-static inline int nccl_ofi_min_int(int x, int y)
-{
-	return (x < y ? x : y);
-}
-
-/*
- * @brief	Max of two size_t values
- */
-static inline size_t nccl_ofi_max_size_t(size_t x, size_t y)
-{
-	return (x < y ? y : x);
-}
-
-/*
- * @brief	Min of two size_t values
- */
-static inline size_t nccl_ofi_min_size_t(size_t x, size_t y)
-{
-	return (x < y ? x : y);
-}
+#define  NCCL_OFI_MIN(x, y) ((x) < (y) ? (x) : (y))
 
 #ifdef _cplusplus
 } // End extern "C"

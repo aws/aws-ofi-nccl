@@ -4895,10 +4895,10 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-		rail->min_bounce_posted = nccl_ofi_div_ceil(
+		rail->min_bounce_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
 		);
-		rail->max_bounce_posted = nccl_ofi_div_ceil(
+		rail->max_bounce_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
 		);
 		ret = pthread_mutex_init(&rail->bounce_mutex, NULL);
@@ -5554,7 +5554,7 @@ static ncclResult_t get_ep(nccl_net_ofi_device_t *base_dev,
 		/* Initialize reference count */
 		ep->ref_cnt = 0;
 
-		ep->bounce_buff_size = nccl_ofi_max_size_t(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+		ep->bounce_buff_size = NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
 			eager_max_size);
 
 		/* Store endpoint in thread-local variable */

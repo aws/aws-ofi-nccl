@@ -35,11 +35,11 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
 
 	if (OFI_UNLIKELY(num_rails == 0)) return;
 
-	max_stripe_size = nccl_ofi_div_ceil(nccl_ofi_div_ceil(size, num_rails), align) * align;
+	max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_rails), align) * align;
 
 	/* Compute stripes and assign to rails */
 	for (int rail_id = 0; rail_id != num_rails && left > 0; ++rail_id) {
-		size_t stripe_size = nccl_ofi_min_size_t(left, max_stripe_size);
+		size_t stripe_size = NCCL_OFI_MIN(left, max_stripe_size);
 
 		schedule->rail_xfer_infos[rail_id].rail_id = rail_id;
 		schedule->rail_xfer_infos[rail_id].offset = offset;
