@@ -14,8 +14,12 @@ cudaError_t (*nccl_net_ofi_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
 cudaError_t (*nccl_net_ofi_cudaPointerGetAttributes)(struct cudaPointerAttributes* attributes, const void* ptr) = NULL;
 cudaError_t (*nccl_net_ofi_cudaGetDevice)(int* device) = NULL;
 cudaError_t (*nccl_net_ofi_cudaGetDeviceCount)(int* count) = NULL;
+#if CUDART_VERSION >= 11030
 cudaError_t (*nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites)(enum cudaFlushGPUDirectRDMAWritesTarget target,
 							   enum cudaFlushGPUDirectRDMAWritesScope scope) = NULL;
+#else
+void *nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites = NULL;
+#endif
 
 #define STRINGIFY(sym) # sym
 
@@ -45,7 +49,9 @@ nccl_net_ofi_cuda_init(void)
 	LOAD_SYM(cudaPointerGetAttributes);
 	LOAD_SYM(cudaGetDevice);
 	LOAD_SYM(cudaGetDeviceCount);
+#if CUDART_VERSION >= 11030
 	LOAD_SYM(cudaDeviceFlushGPUDirectRDMAWrites);
+#endif
 
 error:
 	return ret;
