@@ -1,10 +1,9 @@
 # AWS OFI NCCL Release notes
 
 # Supported Distributions
-* Amazon Linux
 * Amazon Linux 2
 * Redhat Enterprise Linux 7.0 and 8.0
-* Ubuntu 18.04 and 20.04 LTS
+* Ubuntu 20.04 LTS
 * CentOS 7 and 8
 
 For releases before v1.6.0, there were generally two slightly
@@ -14,6 +13,27 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+
+# v1.7.2-aws release notes
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.18.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.18.3-1) while
+maintaining backward compatibility with older NCCL versions ([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+It was tested with Libfabric versions up to
+[Libfabric v1.18.1](https://github.com/ofiwg/libfabric/releases/tag/v1.18.1).
+
+New Features:
+
+Bug Fixes:
+* Fix compilation against CUDA versions prior to 11.3.
+* Fix allocation of free lists to avoid accidently registering user
+  data, which can cause corruption on fork() with older Linux kernels.
+* Fix memory leak with registered bounce buffers.
+* Numerous memory cleanup fixes.
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code and [nccl-tests](https://github.com/NVIDIA/nccl-tests) test suite:
+* efa
 
 # v1.7.1-aws release notes
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
