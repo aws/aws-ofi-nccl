@@ -134,31 +134,46 @@ exit:
 }
 
 /*
- * @brief	Returns static topology filename for given platform type, if found
+ * @brief	Returns platform data for current platform type, if found
  *
  * @input	Platform type
  *
  * @return	NULL, if no topology found
- * 		Topology filename, if match found
+ * 		platform data, if match found
  */
 struct ec2_platform_data *get_platform_data()
 {
+	static bool init = false;
+	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	static struct ec2_platform_data *platform_data = NULL;
 	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
+	const char* platform_type = NULL;
 
-	const char* platform_type = get_platform_type();
+	pthread_mutex_lock(&mutex);
+
+	if (init) {
+		pthread_mutex_unlock(&mutex);
+		return platform_data;
+	}
+	init = true;
+
+	platform_type = get_platform_type();
 	if (platform_type == NULL) {
+		pthread_mutex_unlock(&mutex);
 		return NULL;
 	}
 
 	for (size_t idx = 0; idx < platform_n; idx++) {
 		if (strcmp(platform_type, platform_data_map[idx].name) == 0)
-			return &platform_data_map[idx];
+			platform_data = &platform_data_map[idx];
 	}
 
-	return NULL;
+	pthread_mutex_unlock(&mutex);
+
+	return platform_data;
 }
 
-static ncclResult_t configure_nccl_proto(struct ec2_platform_data *platform_data)
+static ncclResult_t configure_nccl_proto(void)
 {
 	int ret = ncclSuccess;
 	
@@ -524,8 +539,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	 * the LL/LL128 NCCL protocols.
 	 */
 	if (is_init) {
-		struct ec2_platform_data *platform_data = get_platform_data();
-		ret = configure_nccl_proto(platform_data);
+		ret = configure_nccl_proto();
 		if (ret != 0) {
 			goto exit;
 		}
