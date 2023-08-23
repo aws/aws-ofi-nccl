@@ -366,6 +366,7 @@ int main(int argc, char *argv[])
 {
 	int ret = 0;
 	ofi_log_function = logger;
+	system_page_size = 4096;
 
 	ret = test_multiplexing_schedule() || test_threshold_scheduler();
 
