@@ -19,6 +19,10 @@ int regmr_simple(void *opaque, void *data, size_t size, void **handle)
 	simple_base = data;
 	simple_size = size;
 
+	if (size % system_page_size != 0) {
+		return ncclSystemError;
+	}
+
 	return ncclSuccess;
 }
 
@@ -47,6 +51,7 @@ int main(int argc, char *argv[])
 	int ret;
 	size_t i;
 
+	system_page_size = 4096;
 	ofi_log_function = logger;
 
 	/* initial size larger than max size */
