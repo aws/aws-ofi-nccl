@@ -17,7 +17,6 @@ noinst_HEADERS = \
 	nccl_ofi_freelist.h \
 	nccl_ofi_param.h \
 	nccl_ofi_math.h \
-	stack.h \
 	tracepoint.h \
 	nccl-headers/error.h \
 	nccl-headers/net.h \

@@ -15,7 +15,6 @@
 #include <sys/mman.h>
 #include <ctype.h>
 
-#include "stack.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
@@ -251,101 +250,6 @@ ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t 
 	pthread_mutex_unlock(lock);
 
 	return ncclSuccess;
-}
-
-/*
- * @brief	Allocates free list for NCCL OFI requests
- */
-ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_size,
-				    size_t buffer_size)
-{
-	ncclResult_t ret = ncclSuccess, idx;
-	free_list_t *fl = NULL;
-	size_t alloc_size = sizeof(free_list_t) + fl_size * buffer_size;
-
-	/* Validate free list size and buffer size */
-	if (fl_size < 1 || buffer_size < 1) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Invalid free list size and/or buffer size. Provided fl_size: %zu and buffer size: %zu",
-			      fl_size, buffer_size);
-		goto error;
-	}
-
-	/* Allocate free list structure */
-	fl = (free_list_t *)malloc(alloc_size);
-	if (fl == NULL) {
-		NCCL_OFI_WARN("Unable to allocate free list");
-		ret = ncclSystemError;
-		goto error;
-	}
-	memset(fl, 0, alloc_size);
-
-	fl->size = fl_size;
-
-	/* Allocate stack of free indexes */
-	fl->free_index = allocate_stack(fl->size);
-	if (fl->free_index == NULL) {
-		NCCL_OFI_WARN("Couldn't allocate free index stack");
-		ret = ncclSystemError;
-		goto error;
-	}
-
-	/* Initialise stack */
-	for (idx = 0; idx < fl->free_index->size; idx++) {
-		ret = stack_push(fl->free_index, idx);
-		if (ret != 0)
-			goto error;
-	}
-
-	*nccl_ofi_req_fl = fl;
-
-	goto exit;
-
- error:
-	if (fl->free_index)
-		free_stack(fl->free_index);
-	if (fl)
-		free(fl);
- exit:
-	return ret;
-}
-
-/*
- * @brief	Release free list for NCCL OFI requests
- */
-void free_ofi_fl(free_list_t *nccl_ofi_req_fl)
-{
-	if (!nccl_ofi_req_fl)
-		return;
-
-	if (nccl_ofi_req_fl->free_index)
-		free_stack(nccl_ofi_req_fl->free_index);
-
-	free(nccl_ofi_req_fl);
-}
-
-void *allocate_fl_buff(free_list_t *fl, size_t buff_sz, uint64_t *next_avail_index)
-{
-	if (OFI_UNLIKELY(fl == NULL || fl->free_index == NULL)) {
-		NCCL_OFI_WARN("Free list is empty or Free Index stack does not exist.");
-		return NULL;
-	}
-
-	/* Get free index */
-	*next_avail_index = stack_pop(fl->free_index);
-	if (OFI_UNLIKELY(*next_avail_index >= fl->free_index->size)) {
-		NCCL_OFI_WARN("No pre-allocated buffer is available for use. next_avail_index: %lu and free_index Size: %d",
-			      *next_avail_index, fl->free_index->size);
-		return NULL;
-	}
-
-	/* Get buffer */
-	if (OFI_UNLIKELY(fl->buffers == NULL)) {
-		NCCL_OFI_WARN("No pre-allocated buffers are present.");
-		return NULL;
-	}
-
-	return &(((char *)fl->buffers)[*next_avail_index * buff_sz]);
 }
 
 static int in_list(const char *item, const char *list)

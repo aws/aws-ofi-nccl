@@ -19,7 +19,6 @@
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_math.h"
-#include "stack.h"
 #include "tracepoint.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"

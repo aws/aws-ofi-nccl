@@ -176,32 +176,6 @@ struct nccl_net_ofi_req {
 	ncclResult_t (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
 };
 
-typedef struct stack {
-	int top;
-	int size;
-
-	/*
-	 * Array of stack entries comes after stack structure. size field
-	 * indicates the size of the array.
-	 * NOTE: no more field is allowed beyond this point.
-	 */
-	int array[];
-} stack_t;
-
-typedef struct free_list {
-	/* Stack of free buffer indexes */
-	stack_t *free_index;
-
-	/* Size of buffers array */
-	uint64_t size;
-
-	/*
-	 * Array of free buffers comes after list head.
-	 * NOTE: no more field is allowed beyond this point.
-	 */
-	void *buffers[];
-} free_list_t;
-
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
@@ -503,22 +477,6 @@ ncclResult_t nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, 
  */
 ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
-
-/*
- * @brief	Allocates free list for NCCL OFI requests
- */
-ncclResult_t allocate_ofi_fl(free_list_t **nccl_ofi_req_fl, size_t fl_size,
-				    size_t buffer_size);
-
-/*
- * @brief	Release free list for NCCL OFI requests
- */
-void free_ofi_fl(free_list_t *nccl_ofi_req_fl);
-
-/*
- * @brief	Allocate a element from free_list fl.
- */
-void *allocate_fl_buff(free_list_t *fl, size_t buff_sz, uint64_t *next_avail_index);
 
 /*
  * @brief	Initialize memory registration keypool
