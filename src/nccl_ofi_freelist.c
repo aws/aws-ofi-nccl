@@ -199,7 +199,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		allocation_count = freelist->max_entry_count - freelist->num_allocated_entries;
 	}
 
-	if (allocation_count <= 0) {
+	if (allocation_count == 0) {
 		NCCL_OFI_WARN("freelist %p is full", freelist);
 		return -ENOMEM;
 	}
