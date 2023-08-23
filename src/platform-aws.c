@@ -21,9 +21,6 @@
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
 
-static bool sendrecv_support_ll128 = false;
-static bool write_support_ll128 = false;
-
 struct ec2_platform_data {
 	const char* name;
 	const char* topology;
@@ -172,36 +169,6 @@ struct ec2_platform_data *get_platform_data()
 	return platform_data;
 }
 
-static ncclResult_t configure_nccl_proto(void)
-{
-	int ret = ncclSuccess;
-	
-	/* Explicitly set the simple protocol using the "NCCL_PROTO" environment
-	 * variable whenever we know that the LL/LL128 protocols are not safe,
-	 * such as on P4d/P4e.
-	 *
-	 * This only has impact on the Nvidia CUDA case, as the
-	 * Tranium code does not use the LL/LL128 protocols.
-	 */
-	bool support_ll128_proto = sendrecv_support_ll128 || write_support_ll128;
-	if (!support_ll128_proto) {
-		if (!getenv("NCCL_PROTO")) {
-			NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
-			int rc = setenv("NCCL_PROTO", "simple", 0);
-			if (rc) {
-				NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %d", rc);
-				ret = ncclSystemError;
-				goto exit;
-			}
-		} else if (strcmp(getenv("NCCL_PROTO"), "simple")) {
-			NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
-		}
-	}
-
-exit:
-	return ret;
-}
-
 /*
  * validate that EFA is using RDMA write natively and not in an
  * emulated fasion.
@@ -240,104 +207,64 @@ exit:
 	return ret;
 }
 
-static ncclResult_t configure_sendrecv_inorder(struct fid_ep *ep, bool is_init)
+
+#if HAVE_CUDA
+static int configure_nccl_proto(void)
 {
-	int ret = ncclSuccess;
-#if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
-	bool optval = true;
+	int ret;
 
-	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
-			FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES, 
-			&optval, sizeof(optval));
-	if (ret != 0 && ret != -FI_EOPNOTSUPP) {
-		NCCL_OFI_WARN("Couldn't set FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	/* If this is called during plugin initialization, set the global flag
-	 * sendrecv_support_ll128 to true if
-	 * FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES could be set to true,
-	 * otherwise keep it at its default value of false.
-	 */
-	if (is_init) {
-		if (ret == 0) {
-			sendrecv_support_ll128 = true;
+	if (!getenv("NCCL_PROTO")) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
+		ret = setenv("NCCL_PROTO", "simple", 0);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
+				      strerror(errno));
+			return -errno;
 		}
+	} else if (strcmp(getenv("NCCL_PROTO"), "simple") != 0) {
+		NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
 	}
-	/* If an endpoint supported SENDRECV LL128 during plugin initialization
-	 * but does not support it now, throw an error.
-	 */
-	else if (sendrecv_support_ll128 && ret == -FI_EOPNOTSUPP) {
-		NCCL_OFI_WARN("SENDRECV LL128 not supported while it was supported during initialization.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-	/* If an endpoint did not support SENDRECV LL128 during plugin
-	 * initialization but supports it now, throw an error.
-	 */
-	else if (!sendrecv_support_ll128 && ret == 0) {
-		NCCL_OFI_WARN("SENDRECV LL128 supported while it not supported during initialization.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES. optval: %d, RC: %d, ERROR: %s", 
-		       optval, ret, fi_strerror(-ret));
-	ret = ncclSuccess;
-exit:
-#endif
-	return ret;
+
+	return 0;
 }
 
-static ncclResult_t configure_write_inorder(struct fid_ep *ep, bool is_init)
+/*
+ * Try to set one of the in-order flags for either send/recv or rdma
+ * on the current endpoint to true.  have_ordering will be the
+ * returned value on output.
+ *
+ * Returns 0 on success (ie, have_ordering is in a sane state) or
+ * -error code on unexpected failure.
+ */
+static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name,
+				bool *have_ordering)
 {
-	int ret = ncclSuccess;
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
+	int ret = ncclSuccess;
 	bool optval = true;
 
+	*have_ordering = false;
+
 	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
-			FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES,
-			&optval, sizeof(optval));
-	if (ret != 0 && ret != -FI_EOPNOTSUPP) {
-		NCCL_OFI_WARN("Couldn't set FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		ret = ncclSystemError;
-		goto exit;
+			optname, &optval, sizeof(optval));
+	if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting %s not supported.", optname_name);
+	} else if (ret != 0) {
+		NCCL_OFI_WARN("Could not set %s. RC: %d, ERROR: %s",
+			      optname_name, ret, fi_strerror(-ret));
+		return ret;
+	} else {
+		*have_ordering = true;
 	}
-	/* If this is called during plugin initialization, set the global flag
-	 * write_support_ll128 to true if
-	 * FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES could be set to true,
-	 * otherwise keep it at its default value of false.
-	 */
-	if (is_init) {
-		if (ret == 0) {
-			write_support_ll128 = true;
-		}
-	}
-	/* If an endpoint supported WRITE LL128 during plugin initialization but
-	 * does not support it now, throw an error.
-	 */
-	else if (write_support_ll128 && ret == -FI_EOPNOTSUPP) {
-		NCCL_OFI_WARN("WRITE LL128 not supported while it was supported during initialization.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-	/* If an endpoint did not support SENDRECV LL128 during plugin
-	 * initialization but supports it now, throw an error.
-	 */
-	else if (!write_support_ll128 && ret == 0) {
-		NCCL_OFI_WARN("WRITE LL128 supported while it not supported during initialization.");
-		ret = ncclSystemError;
-		goto exit;
-	}
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES. optval: %d, RC: %d, ERROR: %s", 
-		       optval, ret, fi_strerror(-ret));
-	ret = ncclSuccess;
-exit:
+
+	NCCL_OFI_TRACE(NCCL_INIT, "fi_setopt(%s) ordering result %s, error code %d",
+		       optname_name, have_ordering ? "yes" : "no", ret);
+#else
+	*have_ordering = false;
 #endif
-	return ret;
+	return 0;
 }
+#endif /* HAVE_CUDA */
 
 /*
  * @brief	Update NCCL's system topology using static pre-configured topology
@@ -481,8 +408,12 @@ exit:
 }
 
 ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
-	static bool is_init = true;
+	static bool nccl_proto_configured = false;
+	static bool need_ordering = false;
+	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	int ret = ncclSuccess;
+	int optname = -1;
+	const char *optname_name = "none";
 
 	if (endpoint == NULL) {
 		NCCL_OFI_WARN("Unable to configure invalid endpoint");
@@ -512,51 +443,77 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	}
 
 #if HAVE_CUDA
-	/* During initialization, if the chosen communication protocol is
-	 * SENDRECV, try to set FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
-	 * to true to see if the LL/LL128 protocol is supported. After
-	 * initialization, try to set the option to true again and if the
-	 * LL/LL128 protocols are not supported for SENDRECV and were supported
-	 * in initialization, throw an error.
+	/* During initialization, try to set
+	 * FI_OPT_EFA_{SENDRECV,WRTIE}_IN_ORDER_ALIGNED_128_BYTES to
+	 * true to see if the LL/LL128 protocol is supported. After
+	 * initialization, try to set the option to true again if it
+	 * was previously set and error if we can't set them the same
+	 * way later.
 	 */
 	if (0 == strcmp("SENDRECV", nccl_ofi_selected_protocol)) {
-		ret = configure_sendrecv_inorder(endpoint, is_init);
-		if (ret != 0) {
-			goto exit;
-		}
+#if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
+		optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
+		optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
+#endif
+	} else if (0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
+#if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
+		optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
+		optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
+#endif
+	} else {
+		NCCL_OFI_WARN("unkonwn transport %s", nccl_ofi_selected_protocol);
+		ret = ncclSystemError;
+		goto exit;
 	}
 
-	/* During initialization, if the chosen communication protocol is RDMA, try to
-	 * set FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES to true to see if the
-	 * LL/LL128 protocol is supported. After initialization, try to set the option
-	 * to true again and if the LL/LL128 protocols are not supported for RDMA and
-	 * were supported in initialization, throw an error.
+	pthread_mutex_lock(&mutex);
+	/* If we know we need byte delivery ordering (need_ordering ==
+	 * true) or this is the first time that we're configuring an
+	 * endpoint (nccl_proto_configured == false), then try to
+	 * configure ordering on the endpoint.  The only time we care
+	 * about ordering is if we don't set NCCL_PROTO=simple,
+	 * because previous endpoints were able to be configured with
+	 * ordering.  If we're not expecting ordering, we don't really
+	 * care if ordering is on or off for the endpoint.
 	 */
-	else if (0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
-		ret = configure_write_inorder(endpoint, is_init);
-		if (ret != 0) {
-			goto exit;
-		}
-	}
+	if (need_ordering || !nccl_proto_configured) {
+		bool have_ordering = false;
 
-	/* if this is called during the plugin initialization, determine whether
-	 * to explicitly set NCCL_PROTO to "simple" based on whether we support
-	 * the LL/LL128 NCCL protocols.
-	 */
-	if (is_init) {
-		ret = configure_nccl_proto();
-		if (ret != 0) {
-			goto exit;
+		if (optname != -1) {
+			ret = configure_ep_inorder(endpoint, optname, optname_name,
+						   &have_ordering);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Unexpected failure setting inorder %d", ret);
+				ret = ncclSystemError;
+				goto unlock;
+			}
+		}
+
+		if (need_ordering && !have_ordering) {
+			NCCL_OFI_WARN("Setting %s option failed after succeeding during initialization",
+				      optname_name);
+			ret = ncclSystemError;
+			goto unlock;
+		}
+
+		if (!nccl_proto_configured) {
+			need_ordering = have_ordering;
+			nccl_proto_configured = true;
+
+			if (!have_ordering) {
+				ret = configure_nccl_proto();
+				if (ret != 0) {
+					NCCL_OFI_WARN("Failed to set NCCL_PROTO: %d", ret);
+					ret = ncclSystemError;
+					goto unlock;
+				}
+			}
 		}
 	}
+unlock:
+	pthread_mutex_unlock(&mutex);
 #endif // HAVE_CUDA
-exit:
-	/* if this is called during the plugin initialization, indicate that the
-	 * intialzation has already completed and should not be done again 
-	 */
-	if (is_init) {
-		is_init = false;
-	}
 
+exit:
 	return ret;
 }
