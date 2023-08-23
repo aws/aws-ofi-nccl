@@ -30,15 +30,16 @@ static inline size_t freelist_block_mem_size_full_pages(size_t entry_size, size_
  * a block for `entry_count` entries while the block memory covers full pages
  *
  * @brief	entry_size
- *		Memory footprint in bytes of a single entry
+ *		Memory footprint in bytes of a single entry. Must be larger than 0.
  * @brief	entry_count
  *		Number of requested entries
  *
  * @return	Maximum number of entries
  */
 static inline size_t freelist_page_padded_entry_count(size_t entry_size, size_t entry_count) {
+	assert(entry_size > 0);
 	size_t covered_pages_size = freelist_block_mem_size_full_pages(entry_size, entry_count);
-	return (covered_pages_size - sizeof(struct nccl_ofi_freelist_block_t)) / entry_count;
+	return (covered_pages_size - sizeof(struct nccl_ofi_freelist_block_t)) / entry_size;
 }
 
 static int freelist_init_internal(size_t entry_size,
