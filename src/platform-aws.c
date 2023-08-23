@@ -23,7 +23,6 @@
 
 static bool sendrecv_support_ll128 = false;
 static bool write_support_ll128 = false;
-static bool disable_native_rdma_check;
 
 struct ec2_platform_data {
 	const char* name;
@@ -461,8 +460,6 @@ ncclResult_t platform_init(void)
 	if (nic_dup_conns == 0 && platform_data)
 		nic_dup_conns = platform_data->default_dup_conns;
 
-	disable_native_rdma_check = (bool) ofi_nccl_disable_native_rdma_check();
-
 	if (ofi_nccl_net_latency() < 0) {
 		if (platform_data && platform_data->latency >= 0.0) {
 			net_latency = platform_data->latency;
@@ -499,7 +496,9 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	 * FI_OPT_EFA_EMULATED_WRITE endpoint option can be accessed, and that
 	 * emulated writes are disabled.
 	 */
-	if (0 == strcmp("RDMA", nccl_ofi_selected_protocol) && !disable_native_rdma_check) {
+
+	if (0 == strcmp("RDMA", nccl_ofi_selected_protocol) &&
+	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
 			goto exit;
