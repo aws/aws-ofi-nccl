@@ -24,7 +24,6 @@
 static bool sendrecv_support_ll128 = false;
 static bool write_support_ll128 = false;
 static bool disable_native_rdma_check;
-const char *platform_type;
 
 struct ec2_platform_data {
 	const char* name;
@@ -75,7 +74,18 @@ static const char* get_platform_type(void)
 	char ch;
 	size_t len = 0;
 	size_t platform_type_len = 64;
-	char *platform_type = NULL;
+	static bool init = false;
+	static char *platform_type = NULL;
+	static pthread_mutex_t platform_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	pthread_mutex_lock(&platform_mutex);
+
+	if (init) {
+		pthread_mutex_unlock(&platform_mutex);
+		return platform_type;
+	}
+
+	init = true;
 
 	fd = fopen(file, "r");
 	if (fd == NULL) {
@@ -97,23 +107,29 @@ static const char* get_platform_type(void)
 		}
 	}
 
+	platform_type[len] = '\0';
+
 	if (ferror(fd)) {
 		NCCL_OFI_WARN("Error reading file: %s", file);
 		goto error;
 	}
 
-	platform_type[len] = '\0';
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "EC2 platform type is %s", platform_type);
 
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Read %d bytes. EC2 platform type is %s", len, platform_type);
-
-	fclose(fd);
-	return platform_type;
+	goto exit;
 
 error:
-	if (platform_type)
+	if (platform_type) {
 		free(platform_type);
+		platform_type = NULL;
+	}
+
+exit:
 	if (fd)
 		fclose(fd);
+
+	pthread_mutex_unlock(&platform_mutex);
+
 	return platform_type;
 }
 
@@ -125,9 +141,14 @@ error:
  * @return	NULL, if no topology found
  * 		Topology filename, if match found
  */
-struct ec2_platform_data *get_platform_data(const char *platform_type)
+struct ec2_platform_data *get_platform_data()
 {
 	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
+
+	const char* platform_type = get_platform_type();
+	if (platform_type == NULL) {
+		return NULL;
+	}
 
 	for (size_t idx = 0; idx < platform_n; idx++) {
 		if (strcmp(platform_type, platform_data_map[idx].name) == 0)
@@ -316,13 +337,7 @@ ncclResult_t platform_init(void)
 
 	NCCL_OFI_INFO(NCCL_INIT, "Configuring AWS-specific options");
 
-	platform_type = get_platform_type();
-	if (platform_type == NULL) {
-		ret = ncclSystemError;
-		goto exit;
-	}
-
-	platform_data = get_platform_data(platform_type);
+	platform_data = get_platform_data();
 
 	/* if we're here, we think we're on an EC2 instance, so force
 	 * EFA provider (for platforms without EFA, this will cause a
@@ -402,7 +417,7 @@ ncclResult_t platform_init(void)
 	if (getenv("NCCL_TOPO_FILE")) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "Running on %s platform, NCCL_TOPO_FILE environment variable is already set to %s",
-			      platform_type, getenv("NCCL_TOPO_FILE"));
+			      get_platform_type(), getenv("NCCL_TOPO_FILE"));
 	} else if (platform_data && platform_data->topology) {
 		char topology_path[PATH_MAX];
 
@@ -417,7 +432,7 @@ ncclResult_t platform_init(void)
 
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
-				platform_type, topology_path);
+				get_platform_type(), topology_path);
 
 		rc = setenv("NCCL_TOPO_FILE", topology_path, 1);
 		if (rc != 0) {
@@ -509,7 +524,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	 * the LL/LL128 NCCL protocols.
 	 */
 	if (is_init) {
-		struct ec2_platform_data *platform_data = get_platform_data(platform_type);
+		struct ec2_platform_data *platform_data = get_platform_data();
 		ret = configure_nccl_proto(platform_data);
 		if (ret != 0) {
 			goto exit;
