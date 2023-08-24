@@ -28,6 +28,7 @@ Bug Fixes:
 * Fix allocation of free lists to avoid accidently registering user
   data, which can cause corruption on fork() with older Linux kernels.
 * Fix memory leak with registered bounce buffers.
+* Fix improper usage of optlen in call to fi\_getopt().
 * Numerous memory cleanup fixes.
 
 Testing:
