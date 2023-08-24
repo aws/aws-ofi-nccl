@@ -19,7 +19,6 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
-#include "tracepoint.h"
 
 struct ec2_platform_data {
 	const char* name;
