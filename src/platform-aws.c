@@ -202,35 +202,40 @@ exit:
 	return ret;
 }
 
-static ncclResult_t validate_rdma_write(struct fid_ep *ep)
+/*
+ * validate that EFA is using RDMA write natively and not in an
+ * emulated fasion.
+ */
+static int validate_rdma_write(struct fid_ep *ep)
 {
-	int ret = ncclSuccess;
+	int ret = 0;
 #if HAVE_DECL_FI_OPT_EFA_EMULATED_WRITE
 	bool optval;
 	size_t optlen = sizeof(optval);
 
 	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_EFA_EMULATED_WRITE, &optval, &optlen);
-	if(ret != 0 || optlen != sizeof(optval)) {
-		NCCL_OFI_WARN("Couldn't get FI_OPT_EFA_EMULATED_WRITE. optlen: %lu, RC: %d, ERROR: %s",
-			      optlen, ret, fi_strerror(-ret));
-		ret = ncclSystemError;
+	if (ret != 0) {
+		NCCL_OFI_WARN("Couldn't get FI_OPT_EFA_EMULATED_WRITE. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
 		goto exit;
-	}
-	/* If the selected protocol is RDMA write and RDMA write is not
-	 * supported for the endpoint, throw an error 
-	 */
-	else if (optval && 0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
+	} else if (optlen != sizeof(optval)) {
+		NCCL_OFI_WARN("Unexpected response size when checking FI_OPT_EFA_EMULATED_WRITE.  Expected %lu, got %lu",
+			      sizeof(optval), optlen);
+		ret = -EINVAL;
+		goto exit;
+	} else if (optval) {
 		NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE is true when the communication protocol is RDMA write.");
-		ret = ncclSystemError;
+		ret = -EINVAL;
 		goto exit;
 	}
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d", 
 		       optval);
 #else
 	NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA write.");
-	ret = ncclSystemError;
+	ret = -EINVAL;
 	goto exit;
 #endif
+
 exit:
 	return ret;
 }
@@ -501,6 +506,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
+			ret = ncclSystemError;
 			goto exit;
 		}
 	}
