@@ -172,10 +172,10 @@ static ncclResult_t validate_rdma_write(struct fid_ep *ep)
 	int ret = ncclSuccess;
 #if HAVE_DECL_FI_OPT_EFA_EMULATED_WRITE
 	bool optval;
-	size_t optlen = 0;
+	size_t optlen = sizeof(optval);
 
 	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_EFA_EMULATED_WRITE, &optval, &optlen);
-	if(ret != 0 || optlen != sizeof(bool)) {
+	if(ret != 0 || optlen != sizeof(optval)) {
 		NCCL_OFI_WARN("Couldn't get FI_OPT_EFA_EMULATED_WRITE. optlen: %lu, RC: %d, ERROR: %s",
 			      optlen, ret, fi_strerror(-ret));
 		ret = ncclSystemError;
