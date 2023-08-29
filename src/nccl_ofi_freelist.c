@@ -178,6 +178,8 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 
 	pthread_mutex_destroy(&freelist->lock);
 
+	free(freelist);
+
 	return 0;
 }
 
