@@ -288,12 +288,12 @@ git clone https://github.com/NVIDIA/nccl-tests.git
 2. Build the tests
 ```
 cd  nccl-tests/
-make NCCL_HOME=~/nccl/build/
+make MPI=1 MPI_HOME=/path/to/mpi CUDA_HOME=/path/to/cuda NCCL_HOME=/path/to/nccl
 ```
 
 3. Run perf tests
 ```
-NCCL_DEBUG=INFO build/all_reduce_perf -b 8 -f 2 -e 32M -c 1
+NCCL_DEBUG=INFO mpirun -np 2 build/all_reduce_perf -b 8 -f 2 -e 32M -c 1 -g 1
 ```
 
 If you installed the AWS libfabric plugin in a custom prefix, ensure
