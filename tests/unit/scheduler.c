@@ -273,6 +273,8 @@ int test_multiplexing_schedule()
 	}
 	free(schedule);
 
+	free(ref_schedule);
+
 	return 0;
 }
 
@@ -358,6 +360,12 @@ int test_threshold_scheduler()
 		return ret;
 	}
 	nccl_net_ofi_release_schedule(scheduler, schedule);
+
+	ret = scheduler->fini(scheduler);
+	if (ret) {
+		NCCL_OFI_WARN("Failed to destroy threshold scheduler");
+	}
+	free(ref_schedule);
 
 	return 0;
 }
