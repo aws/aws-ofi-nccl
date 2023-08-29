@@ -168,6 +168,11 @@ int main(int argc, char *argv[])
 		}
 		last_buff = entry;
 	}
+	ret = nccl_ofi_freelist_fini(freelist);
+	if (ret != ncclSuccess) {
+		NCCL_OFI_WARN("freelist_fini failed: %d", ret);
+		exit(1);
+	}
 
 	/* and now with registrations... */
 	simple_base = NULL;
