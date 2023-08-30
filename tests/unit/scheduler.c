@@ -6,9 +6,15 @@
 
 #include <stdint.h>
 
-#include "nccl-headers/error.h"
-#include "nccl-headers/net.h"
 #include "nccl_ofi_log.h"
+#include "nccl-headers/error.h"
+
+#if HAVE_NEURON
+#include "nccl-headers/net_neuron.h"
+#else
+#include "nccl-headers/net.h"
+#endif
+
 #include "test-common.h"
 #include "nccl_ofi_scheduler.h"
 

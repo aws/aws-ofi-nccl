@@ -70,8 +70,10 @@ have_device_interface=no
 CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
                         [AC_MSG_ERROR([Cannot enable both CUDA and neuron.])],
                         [want_cuda=no])
-                  have_device_interface=neuon])
-CHECK_PKG_CUDA([have_device_interface=cuda])
+                  have_device_interface=neuon]
+                  AC_SUBST([OFI_NCCL_ARCHIVE], [nccom-net]))
+CHECK_PKG_CUDA([have_device_interface=cuda]
+               AC_SUBST([OFI_NCCL_ARCHIVE], [nccl-net]))
 
 AS_IF([test "${have_device_interface}" = "no"],
       [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
