@@ -9,11 +9,13 @@ LDADD = $(top_builddir)/src/libnccl-net.la
 
 noinst_HEADERS = test-common.h
 
+if ENABLE_TESTS
 noinst_PROGRAMS = \
 	deque \
 	freelist \
 	msgbuff \
 	scheduler
+endif
 
 TESTS = $(noinst_PROGRAMS)
 
