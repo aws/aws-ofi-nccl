@@ -15,6 +15,7 @@
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
+#include <dlfcn.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
@@ -263,6 +264,49 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 #endif
 	return 0;
 }
+
+int configure_nvls_option(void)
+{
+	/* Disable NVLS topology discovery.  There's a bug with EFA
+	 * and NCCL version 2.18.3 and earlier on platforms with
+	 * NVLink Switch support.  We selectively disable NVLS support
+	 * to avoid the bug, which was fixed in 2.18.5.
+	 */
+	ncclResult_t (*nccl_get_version)(int *version);
+	int version = 0;
+	ncclResult_t nccl_ret;
+	int ret;
+
+	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
+		nccl_get_version = dlsym(RTLD_DEFAULT, "ncclGetVersion");
+		if (nccl_get_version == NULL) {
+			NCCL_OFI_WARN("Could not find ncclGetVersion symbol");
+		} else {
+			nccl_ret = nccl_get_version(&version);
+			if (nccl_ret != ncclSuccess) {
+				NCCL_OFI_WARN("ncclGetVersion returned %d", nccl_ret);
+				return nccl_ret;
+			}
+
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %lu", version);
+		}
+
+		/* 2.18.5 */
+		if (version < 21805) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %lu", version);
+			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
+				return ret;
+			}
+		} else {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %lu", version);
+		}
+	}
+
+	return 0;
+}
+
 #endif /* HAVE_CUDA */
 
 /*
@@ -338,20 +382,11 @@ ncclResult_t platform_init(void)
 		}
 	}
 
-	/* Disable NVLS topology discovery.  There's a bug with EFA
-	 * and NCCL 2.17/2.18 that is still under investigation that
-	 * causes random failures due to memory corruption during
-	 * initialization.  For now, skip that code.  We need to come
-	 * back to this when the bug is fixed.
-	 */
-	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support when using Libfabric on AWS.");
-		rc = setenv("NCCL_NVLS_ENABLE", "0", 1);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
-			ret = ncclSystemError;
-			goto exit;
-		}
+	rc = configure_nvls_option();
+	if (rc != 0) {
+		NCCL_OFI_WARN("Unable to configure NVLS option");
+		ret = ncclSystemError;
+		goto exit;
 	}
 #endif
 
