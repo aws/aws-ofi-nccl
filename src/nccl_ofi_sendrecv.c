@@ -2200,19 +2200,14 @@ static ncclResult_t device_init_thread_local(nccl_net_ofi_sendrecv_device_t *dev
 
 ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 					int num_infos,
-					bool provide_own_mr_key)
+					bool provide_own_mr_key,
+					nccl_net_ofi_plugin_t **plugin_p)
 {
 	ncclResult_t ret = ncclSuccess;
 	int dev_id = 0;
 	struct fi_info *info = ofi_info_list;
 	nccl_net_ofi_device_t **base_devs = NULL;
-
-	if (plugin) {
-		NCCL_OFI_WARN("Failed to initialize sendrecv protocol. "
-			      "Pointer 'plugin' is not equal to NULL.");
-		ret = ncclSystemError;
-		goto exit;
-	}
+	nccl_net_ofi_plugin_t *plugin = NULL;
 
 	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
 	if (!plugin) {
@@ -2229,7 +2224,7 @@ ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 		goto exit;
 	}
 
-	nccl_net_ofi_init_plugin(base_devs, num_infos);
+	nccl_net_ofi_init_plugin(plugin, base_devs, num_infos);
 
 	/* Allocate and initialize nccl_net devices */
 
@@ -2313,6 +2308,9 @@ ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 	free(base_devs);
 	free(plugin);
 	plugin = NULL;
+
  exit:
+	*plugin_p = plugin;
+
 	return ret;
 }

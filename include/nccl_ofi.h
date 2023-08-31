@@ -161,9 +161,6 @@ typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
 typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
 typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
 
-/* nccl_net_ofi plugin */
-extern nccl_net_ofi_plugin_t *plugin;
-
 /**
  * Request - handle for an outstanding non-blocking communication
  *
@@ -459,8 +456,9 @@ struct nccl_net_ofi_plugin {
  * Initialize plugin. This function sets properties of the global plugin variable
  * defined below.
  */
-void nccl_net_ofi_init_plugin(nccl_net_ofi_device_t **base_devs,
-				     int num_infos);
+void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
+			      nccl_net_ofi_device_t **base_devs,
+			      int num_infos);
 
 /*
  * @brief	Set properties obtained from libfabric NIC Info.
