@@ -1074,7 +1074,8 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	if (0 == strcmp(nccl_ofi_selected_protocol, "SENDRECV")) {
 		ret = nccl_net_ofi_sendrecv_init(ofi_info_list, ofi_ndevices,
-						 provide_own_mr_key);
+						 provide_own_mr_key,
+						 &plugin);
 		if (ret != ncclSuccess) {
 			NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 			ret = ncclInternalError;
@@ -1092,7 +1093,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 			goto exit;
 		}
 
-		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key);
+		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key, &plugin);
 
 		nccl_ofi_topo_free(topo);
 
@@ -1826,8 +1827,10 @@ ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 	return listen_comm->close(listen_comm);
 }
 
-void nccl_net_ofi_init_plugin(nccl_net_ofi_device_t **base_devs,
-				     int num_infos) {
+void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
+			      nccl_net_ofi_device_t **base_devs,
+			      int num_infos)
+{
 	plugin->devs = base_devs;
 	plugin->num_devs = num_infos;
 }

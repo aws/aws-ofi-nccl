@@ -5903,7 +5903,8 @@ static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info 
 }
 
 ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
-				    bool provide_own_mr_key)
+				    bool provide_own_mr_key,
+				    nccl_net_ofi_plugin_t **plugin_p)
 {
 	ncclResult_t ret = ncclSuccess;
 	int dev_id = 0;
@@ -5912,6 +5913,7 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	int num_devs = 0;
 	struct fi_info *info_list = NULL;
 	size_t rr_threshold = ofi_nccl_round_robin_threshold();
+	nccl_net_ofi_plugin_t *plugin = NULL;
 
 	ret = pthread_mutex_init(&topo_file_lock, NULL);
 	if (ret != 0) {
@@ -5927,13 +5929,6 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		goto error;
 	}
 	eager_max_size = (size_t) ofi_nccl_eager_max_size();
-
-	if (plugin) {
-		NCCL_OFI_WARN("Failed to initialize rdma protocol. "
-			      "Pointer 'plugin' is not equal to NULL.");
-		ret = ncclSystemError;
-		goto error;
-	}
 
 	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
 	if (!plugin) {
@@ -5987,7 +5982,7 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		goto error;
 	}
 
-	nccl_net_ofi_init_plugin(base_devs, num_devs);
+	nccl_net_ofi_init_plugin(plugin, base_devs, num_devs);
 
 	/* Initialize user data iterator */
 	nccl_ofi_topo_data_iterator_t data_iter;
@@ -6119,5 +6114,7 @@ ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	}
 
  exit:
+	*plugin_p = plugin;
+
 	return ret;
 }
