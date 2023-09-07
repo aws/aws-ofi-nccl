@@ -25,7 +25,7 @@ int nccl_net_ofi_cuda_init(void);
  * @return	0 on success
  *		non-zero on error
  */
-ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
+int nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
 
 extern cudaError_t (*nccl_net_ofi_cudaRuntimeGetVersion)(int *runtimeVersion);
 

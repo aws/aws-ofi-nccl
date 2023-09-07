@@ -244,7 +244,7 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 				bool *have_ordering)
 {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
-	int ret = ncclSuccess;
+	int ret = 0;
 	bool optval = true;
 
 	*have_ordering = false;
@@ -289,7 +289,7 @@ int configure_nvls_option(void)
 			nccl_ret = nccl_get_version(&version);
 			if (nccl_ret != ncclSuccess) {
 				NCCL_OFI_WARN("ncclGetVersion returned %d", nccl_ret);
-				return nccl_ret;
+				return -ENOTSUP;
 			}
 
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %lu", version);
@@ -301,7 +301,7 @@ int configure_nvls_option(void)
 			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
-				return ret;
+				return -errno;
 			}
 		} else {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %lu", version);
@@ -321,10 +321,9 @@ int configure_nvls_option(void)
  * 		   if we find no match
  * 		error, on failure
  */
-ncclResult_t platform_init(void)
+int platform_init(void)
 {
 	int ret = ncclSuccess;
-	int rc = 0;
 	struct ec2_platform_data *platform_data;
 
 	NCCL_OFI_INFO(NCCL_INIT, "Configuring AWS-specific options");
@@ -377,18 +376,17 @@ ncclResult_t platform_init(void)
 		: "RDMAV_FORK_SAFE";
 	if (!getenv(fork_safe_var_name)) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting %s environment variable to 1", fork_safe_var_name);
-		rc = setenv(fork_safe_var_name, "1", 1);
-		if (rc != 0) {
+		ret = setenv(fork_safe_var_name, "1", 1);
+		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to set %s", fork_safe_var_name);
-			ret = ncclSystemError;
+			ret = -errno;
 			goto exit;
 		}
 	}
 
-	rc = configure_nvls_option();
-	if (rc != 0) {
+	ret = configure_nvls_option();
+	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to configure NVLS option");
-		ret = ncclSystemError;
 		goto exit;
 	}
 #endif
@@ -404,12 +402,12 @@ ncclResult_t platform_init(void)
 	} else if (platform_data && platform_data->topology) {
 		char topology_path[PATH_MAX];
 
-		rc = snprintf(topology_path, sizeof(topology_path), "%s/%s",
-				XML_DIR, platform_data->topology);
-		if (rc < 0 || rc >= sizeof(topology_path)) {
+		ret = snprintf(topology_path, sizeof(topology_path), "%s/%s",
+			       XML_DIR, platform_data->topology);
+		if (ret < 0 || ret >= sizeof(topology_path)) {
 			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s, Topology file: %s",
-					rc, PATH_MAX, XML_DIR, platform_data->topology);
-			ret = ncclSystemError;
+				      ret, PATH_MAX, XML_DIR, platform_data->topology);
+			ret = -ENOMEM;
 			goto exit;
 		}
 
@@ -417,10 +415,10 @@ ncclResult_t platform_init(void)
 				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
 				get_platform_type(), topology_path);
 
-		rc = setenv("NCCL_TOPO_FILE", topology_path, 1);
-		if (rc != 0) {
+		ret = setenv("NCCL_TOPO_FILE", topology_path, 1);
+		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE");
-			ret = ncclSystemError;
+			ret = -errno;
 			goto exit;
 		}
 
@@ -444,18 +442,18 @@ exit:
 	return ret;
 }
 
-ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
-	int ret = ncclSuccess;
+int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
+	int ret = 0;
 
 	if (endpoint == NULL) {
 		NCCL_OFI_WARN("Unable to configure invalid endpoint");
-		ret = ncclSystemError;
+		ret = -EINVAL;
 		goto exit;
 	}
 
 	/* short circuit when not using EFA */
 	if (0 != strcmp(info->fabric_attr->prov_name, "efa")) {
-		ret = ncclSuccess;
+		ret = 0;
 		goto exit;
 	}
 
@@ -469,7 +467,6 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
-			ret = ncclSystemError;
 			goto exit;
 		}
 	}
@@ -500,7 +497,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 #endif
 	} else {
 		NCCL_OFI_WARN("unkonwn transport %s", nccl_ofi_selected_protocol);
-		ret = ncclSystemError;
+		ret = -EINVAL;
 		goto exit;
 	}
 
@@ -522,7 +519,6 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 						   &have_ordering);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unexpected failure setting inorder %d", ret);
-				ret = ncclSystemError;
 				goto unlock;
 			}
 		}
@@ -530,7 +526,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 		if (need_ordering && !have_ordering) {
 			NCCL_OFI_WARN("Setting %s option failed after succeeding during initialization",
 				      optname_name);
-			ret = ncclSystemError;
+			ret = -ENOTSUP;
 			goto unlock;
 		}
 
@@ -542,7 +538,7 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 				ret = configure_nccl_proto();
 				if (ret != 0) {
 					NCCL_OFI_WARN("Failed to set NCCL_PROTO: %d", ret);
-					ret = ncclSystemError;
+					ret = -ENOTSUP;
 					goto unlock;
 				}
 			}

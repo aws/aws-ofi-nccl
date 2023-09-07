@@ -64,22 +64,22 @@ static nccl_ofi_topo_data_vec_t *nccl_ofi_topo_data_vec_create(size_t size)
 	return vec;
 }
 
-ncclResult_t nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter)
+int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter)
 {
 	if (!topo) {
 		NCCL_OFI_WARN("Invalid NCCL OFI topology");
-		return ncclInternalError;
+		return -EINVAL;
 	}
 
 	if (!topo->data_vec) {
 		NCCL_OFI_WARN("Invalid NCCL OFI topology user data");
-		return ncclInternalError;
+		return -EINVAL;
 	}
 
 	iter->begin = topo->data_vec->data;
 	iter->end = topo->data_vec->data + topo->data_vec->size;
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -135,7 +135,7 @@ static struct fi_pci_attr *ofi_info_get_pci_attr(struct fi_info *info) {
 /*
  * @brief 	Test whether topology node represents an NVIDIA GPU PCI device
  */
-static ncclResult_t is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
+static int is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
 {
 	uint8_t class_code;
 	bool class_match;
@@ -143,12 +143,12 @@ static ncclResult_t is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
 
 	if (obj->type != HWLOC_OBJ_PCI_DEVICE) {
                 *res = false;
-                return ncclSuccess;
+                return 0;
         }
 
         if (!obj->attr) {
                 NCCL_OFI_WARN("Invalid hwloc object attribute pointer. Expected pointer to pcidev, but got NULL");
-                return ncclInternalError;
+                return -EINVAL;
         }
 
 	/* The HWLOC class id is a 16 bit integer of format class
@@ -160,7 +160,7 @@ static ncclResult_t is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
 	vendor_match = obj->attr->pcidev.vendor_id == nvidia_vendor_id;
 
         *res = class_match && vendor_match;
-        return ncclSuccess;
+        return 0;
 }
 
 void nccl_ofi_topo_free(nccl_ofi_topo_t *topo)
@@ -246,11 +246,11 @@ static void enable_hwloc_io_types(hwloc_topology_t topo)
  *		Libfabric NIC info struct
  * @return	topology node, if a corresponding topology node is found.
  *		NULL, on others
- * @return	ncclSuccess, if a corresponding topology node is found
+ * @return	0, if a corresponding topology node is found
  * 		or if no topology node is found for the bus ID reported by `info`
  *		ncclInternalError, on others
  */
-static ncclResult_t get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
+static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 						struct fi_info *info,
 						hwloc_obj_t *obj) {
 	*obj = NULL;
@@ -273,7 +273,7 @@ static ncclResult_t get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 		 * info struct does not mean that something is going
 		 * wrong. E.g., the NIC might just be removed manually from
 		 * hwloc topology file. */
-		return ncclSuccess;
+		return 0;
 	}
 
 	if (!ret_obj->attr) {
@@ -282,7 +282,7 @@ static ncclResult_t get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 	}
 
 	*obj = ret_obj;
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -294,10 +294,10 @@ static ncclResult_t get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
  *		List of Libfabric NIC info structs
  * @return	Info struct that corresponds to topology node if found in info list
  *		NULL, otherwise
- * @return	ncclSuccess, on success
+ * @return	0, on success
  *		non-zero, on error
  */
-static ncclResult_t get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct fi_info **ret_info)
+static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct fi_info **ret_info)
 {
 	*ret_info = NULL;
 	union hwloc_obj_attr_u *node_attr;
@@ -315,7 +315,7 @@ static ncclResult_t get_info_for_node(hwloc_obj_t node, struct fi_info *info_lis
 	}
 
 	if (node->type != HWLOC_OBJ_PCI_DEVICE) {
-		return ncclSuccess;
+		return 0;
 	}
 
 	/* Iterate through list, return info struct if found */
@@ -335,14 +335,14 @@ static ncclResult_t get_info_for_node(hwloc_obj_t node, struct fi_info *info_lis
 		    node_attr->pcidev.dev == attr->device_id &&
 		    node_attr->pcidev.func == attr->function_id) {
 			*ret_info = info;
-			return ncclSuccess;
+			return 0;
 		}
 
 		/* Stop loop if end of list is reached or if info
 		 * struct closes loop to list head */
 	} while (next && next != info_list);
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -354,14 +354,14 @@ static ncclResult_t get_info_for_node(hwloc_obj_t node, struct fi_info *info_lis
  * @param	info_list
  *		Libfabric NIC info list to identify the NICs
  * @return	Number of nodes
- * @return	ncclSuccess, on success
+ * @return	0, on success
  *		non-zero, on error
  */
-static ncclResult_t count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
+static int count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
 							   struct fi_info *info_list,
 							   int *count)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	hwloc_obj_t obj = NULL;
 
 	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
@@ -369,13 +369,13 @@ static ncclResult_t count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo
 		struct fi_info *info;
 
 		ret = is_nvidia_pci_dev(obj, &is_gpu);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
 			return ncclInternalError;
 		}
 
 		ret = get_info_for_node(obj, info_list, &info);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ncclInternalError;
 		}
@@ -402,7 +402,7 @@ static ncclResult_t count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo
 	 * twice. Afterwards, invoke this function another time to
 	 * clear the user data pointers. */
 	if (count != NULL) return count_nodes_with_gpu_or_nic_in_subtree(topo, info_list, NULL);
-	else return ncclSuccess;
+	else return 0;
 }
 
 /*
@@ -418,10 +418,10 @@ static ncclResult_t count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo
  * 		Input topology node
  * @param	data_iter
  *		Data iterator from which the user data objects are extracted.
- * @return	ncclSuccess, on error
+ * @return	0, on error
  *		ncclInternalError, if data iterator does not provide enough user data objects
  */
-static ncclResult_t set_userdata_to_root(hwloc_obj_t node,
+static int set_userdata_to_root(hwloc_obj_t node,
 					 nccl_ofi_topo_data_iterator_t *data_iter)
 {
 	nccl_ofi_topo_data_t * user_data;
@@ -444,7 +444,7 @@ static ncclResult_t set_userdata_to_root(hwloc_obj_t node,
 		node = node->parent;
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -457,17 +457,17 @@ static ncclResult_t set_userdata_to_root(hwloc_obj_t node,
  *		List of libfabric NIC info structs used to identify topology nodes corresponding to NICs
  * @return
  */
-static ncclResult_t set_user_data(nccl_ofi_topo_t *ofi_topo,
+static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 				  struct fi_info *info_list)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	hwloc_obj_t obj = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
 
 	/* Retrieve number of topology nodes that have a Nvidia GPU or a NIC in their subtree */
 	int num_nodes = 0;
 	ret = count_nodes_with_gpu_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
 		return ncclInternalError;
 	}
@@ -489,20 +489,20 @@ static ncclResult_t set_user_data(nccl_ofi_topo_t *ofi_topo,
 		struct fi_info *info;
 
 		ret = is_nvidia_pci_dev(obj, &is_gpu);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
 			return ncclInternalError;
 		}
 
 		ret = get_info_for_node(obj, info_list, &info);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ncclInternalError;
 		}
 
 		if (is_gpu || info) {
 			ret = set_userdata_to_root(obj, &data_iter);
-			if (ret != ncclSuccess) {
+			if (ret != 0) {
 				NCCL_OFI_WARN("Error while setting user data on path to root");
 				return ncclInternalError;
 			}
@@ -525,12 +525,12 @@ static ncclResult_t set_user_data(nccl_ofi_topo_t *ofi_topo,
 
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
 	/* Allocate NCCL OFI topology */
 	nccl_ofi_topo_t *ofi_topo = calloc(1, sizeof(nccl_ofi_topo_t));
@@ -560,7 +560,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	 * GPU in their subtree. Also, add libfabric NIC info structs
 	 * to user data to topology nodes corresponding to the NICs. */
 	ret = set_user_data(ofi_topo, info_list);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		NCCL_OFI_WARN("Data decoration failed.");
 		goto error;
 	}
@@ -576,7 +576,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
  * @brief	Mark all topology nodes that store a libfabric NIC info
  *		struct in their subtrees
  */
-static ncclResult_t mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
+static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
 {
 	nccl_ofi_topo_data_t *data = NULL;
 
@@ -608,7 +608,7 @@ static ncclResult_t mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
 		}
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -619,7 +619,7 @@ static ncclResult_t mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
  * @param 	gpu_node
  * 		Topology node on which this operation is started
  */
-static ncclResult_t propagate_gpu_count(hwloc_obj_t gpu_node)
+static int propagate_gpu_count(hwloc_obj_t gpu_node)
 {
 	hwloc_obj_t node = gpu_node;
 	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
@@ -628,7 +628,7 @@ static ncclResult_t propagate_gpu_count(hwloc_obj_t gpu_node)
 		return ncclInternalError;
 	}
 
-	if (userdata->contributed_gpu) return ncclSuccess;
+	if (userdata->contributed_gpu) return 0;
 	userdata->contributed_gpu = true;
 
 	/* Walk towards root */
@@ -649,15 +649,15 @@ static ncclResult_t propagate_gpu_count(hwloc_obj_t gpu_node)
 		node = node->parent;
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
  * @brief	Propagate GPU counts from NVIDIA topology nodes to marked topology nodes.
  */
-static ncclResult_t propagate_gpu_group_counts(hwloc_topology_t topo)
+static int propagate_gpu_group_counts(hwloc_topology_t topo)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	hwloc_obj_t obj = NULL;
 
 	/* Iterate over all PCI topology nodes and find nodes
@@ -667,7 +667,7 @@ static ncclResult_t propagate_gpu_group_counts(hwloc_topology_t topo)
 		bool is_gpu = false;
 
 		ret = is_nvidia_pci_dev(obj, &is_gpu);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
 			return ncclInternalError;
 		}
@@ -677,14 +677,14 @@ static ncclResult_t propagate_gpu_group_counts(hwloc_topology_t topo)
 		}
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
  * @brief	Lift libfabric NIC info objects, stored in the user data of
  *		topology nodes, up to nodes with group count of one or more
  */
-static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
+static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 {
 	nccl_ofi_topo_data_t *source_data = NULL;
 	nccl_ofi_topo_data_t *target_data = NULL;
@@ -745,7 +745,7 @@ static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 		}
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -763,16 +763,16 @@ static ncclResult_t lift_up_ofi_infos(nccl_ofi_topo_t *topo)
  * @param	num_group
  *		Number of groups to create
  *
- * @return	ncclSuccess, on success
+ * @return	0, on success
  * 		ncclInternalError, on others
  */
-static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
+static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 						 struct fi_info **info_list,
 						 int num_infos,
 						 hwloc_obj_t gpu_group_node,
 						 int num_groups)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	int group_idx = 0;
 
 	/* Adjust number of groups if input list does not provide enough members */
@@ -793,7 +793,7 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
 
 		/* Retrieve topology node of leader */
 		ret = get_hwloc_pcidev_by_fi_info(topo->topo, *info_list, &obj);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Retrieval of topology node corresponding to libfabric NIC failed with error");
 			break;
 		}
@@ -848,10 +848,10 @@ static ncclResult_t create_groups_from_info_list(nccl_ofi_topo_t *topo,
  *		to the corresponding topology nodes of their leaders (first
  *		NIC of the list).
  *
- * @return	ncclSuccess, on success
+ * @return	0, on success
  * 		ncclInternalError, on others
  */
-static ncclResult_t create_groups_from_info_lists(nccl_ofi_topo_t *topo)
+static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 {
 	nccl_ofi_topo_data_t *data = NULL;
 
@@ -876,18 +876,18 @@ static ncclResult_t create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 		data->num_groups = 0;
 
 		/* Create groups from list */
-		ncclResult_t ret = create_groups_from_info_list(topo,
+		int ret = create_groups_from_info_list(topo,
 								&info_list,
 								info_list_len,
 								data->gpu_group_node,
 								num_groups);
-		if (ret != ncclSuccess) {
+		if (ret != 0) {
 			data->info_list = info_list;
 			return ret;
 		}
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 /*
@@ -926,26 +926,26 @@ static void print_nic_groups(nccl_ofi_topo_t *topo) {
 	}
 }
 
-ncclResult_t nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
+int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
         ret = mark_topo_nodes_with_ofi_info_subtree(topo);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		return ret;
 	}
 
 	ret = propagate_gpu_group_counts(topo->topo);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		return ret;
 	}
 	ret = lift_up_ofi_infos(topo);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		return ret;
 	}
 
 	ret = create_groups_from_info_lists(topo);
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		return ret;
 	}
 
@@ -1133,7 +1133,7 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 	if (*speed_idx == num_pcie_gens) {
 		NCCL_OFI_WARN("Unknown link speed \"%s\" of device %04x:%02x:%02x.%01x",
 			      prop_str, attr.domain, attr.bus, attr.dev, attr.func);
-		return ncclSystemError;
+		return -EINVAL;
 	}
 
 	/* Read link width */
@@ -1160,7 +1160,7 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 		NCCL_OFI_WARN("Unknown link width \"%s\" of device %04x:%02x:%02x.%01x",
 			      prop_str,
 			      attr.domain, attr.bus, attr.dev, attr.func);
-		return ncclSystemError;
+		return -EINVAL;
 	}
 
 	return 0;
@@ -1457,7 +1457,7 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	if (node->type == HWLOC_OBJ_BRIDGE) {
 		if (!node->attr) {
 			NCCL_OFI_WARN("Bridge is missing attribute struct");
-			return ncclInternalError;
+			return -EINVAL;
 		}
 
 		/* Do not print Host PCIe switch, represented by the
@@ -1552,11 +1552,11 @@ int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file)
 	return ret;
 }
 
-ncclResult_t nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
+int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
 {
 	if (!topo || !topo->data_vec) {
 		NCCL_OFI_WARN("Invalid topology. Topology is not initialized.");
-		return ncclInvalidArgument;
+		return -EINVAL;
 	}
 
 	nccl_ofi_topo_data_t *data = NULL;
@@ -1569,7 +1569,7 @@ ncclResult_t nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
 		*num_lists += (!data->info_list) ? 0 : 1;
 	}
 
-	return ncclSuccess;
+	return 0;
 }
 
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter)

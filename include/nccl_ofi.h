@@ -159,7 +159,7 @@ typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
  * is complete.
  */
 struct nccl_net_ofi_req {
-	ncclResult_t (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
+	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
 };
 
 /* Various stages of connection establishment */
@@ -229,7 +229,7 @@ struct nccl_net_ofi_device {
 	   that point. */
 	char *name;
 
-	ncclResult_t (*get_properties)(int num_devices,
+	int (*get_properties)(int num_devices,
 				       nccl_net_ofi_device_t *base_dev,
 				       ncclNetProperties_t *props);
 
@@ -243,7 +243,7 @@ struct nccl_net_ofi_device {
 	 * 		called once per process using one of the instantiated device structs
 	 * 		to create and configure the endpoint of the initializing thread.
 	 */
-	ncclResult_t (*get_ep)(nccl_net_ofi_device_t *base_dev,
+	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
 			       nccl_net_ofi_ep_t **ep);
 };
 
@@ -276,7 +276,7 @@ struct nccl_net_ofi_ep {
 	 * The callee has to guarantee that the state stage of the
 	 * handle is set to COMM_CREATE_START.
 	 */
-	ncclResult_t (*listen)(nccl_net_ofi_ep_t *ep,
+	int (*listen)(nccl_net_ofi_ep_t *ep,
 			       nccl_net_ofi_conn_handle_t *handle,
 			       nccl_net_ofi_listen_comm_t **listen_comm);
 
@@ -295,7 +295,7 @@ struct nccl_net_ofi_ep {
 	 *
 	 * The callee must allocate memory for send_comm.
 	 */
-	ncclResult_t (*connect)(nccl_net_ofi_ep_t *ep,
+	int (*connect)(nccl_net_ofi_ep_t *ep,
 				nccl_net_ofi_conn_handle_t *handle,
 				nccl_net_ofi_send_comm_t **send_comm);
 
@@ -306,7 +306,7 @@ struct nccl_net_ofi_ep {
 	 * endpoint if reference counter becomes zero. Must be
 	 * protected by lock stored in base_dev.
 	 */
-	ncclResult_t (*release_ep)(nccl_net_ofi_ep_t *ep);
+	int (*release_ep)(nccl_net_ofi_ep_t *ep);
 };
 
 enum nccl_net_ofi_comm_type_t {
@@ -336,9 +336,9 @@ struct nccl_net_ofi_comm {
 struct nccl_net_ofi_listen_comm {
 	nccl_net_ofi_comm_t base;
 
-	ncclResult_t (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
+	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
 			       nccl_net_ofi_recv_comm_t **recv_comm);
-	ncclResult_t (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
+	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
 };
 
 struct nccl_net_ofi_send_comm {
@@ -351,7 +351,7 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	ncclResult_t (*regMr)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int type,
+	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int type,
 			      void **mhandle);
 
 	/*
@@ -362,7 +362,7 @@ struct nccl_net_ofi_send_comm {
 	 * @return	Memory handle for data send operations
 	 * @return	ncclInternalError
 	 */
-	ncclResult_t (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size,
+	int (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size,
 				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
 
 	/*
@@ -372,12 +372,12 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	ncclResult_t (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	ncclResult_t (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
+	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
 			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
 
-	ncclResult_t (*close)(nccl_net_ofi_send_comm_t *send_comm);
+	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
 };
 
 struct nccl_net_ofi_recv_comm {
@@ -390,7 +390,7 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	ncclResult_t (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size, int type,
+	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size, int type,
 			      void **mhandle);
 
 	/*
@@ -401,7 +401,7 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	Memory handle for data recv operations
 	 * @return	ncclInternalError
 	 */
-	ncclResult_t (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size,
+	int (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size,
 				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
 
 	/*
@@ -411,15 +411,15 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	ncclResult_t (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	ncclResult_t (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes, int *tags,
+	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes, int *tags,
 			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
 
-	ncclResult_t (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
+	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
 			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
 
-	ncclResult_t (*close)(nccl_net_ofi_recv_comm_t *recv_comm);
+	int (*close)(nccl_net_ofi_recv_comm_t *recv_comm);
 };
 
 /**
@@ -447,14 +447,14 @@ void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
 			      nccl_net_ofi_device_t **base_devs,
 			      int num_infos);
 
-ncclResult_t nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
+int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
 
 /*
  * @brief	Set properties obtained from libfabric NIC Info.
  *
  * @return	Populated props structure
  */
-ncclResult_t nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, ncclNetProperties_t *props);
+int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, ncclNetProperties_t *props);
 
 /*
  * @brief	Allocates and initialises libfabric endpoint and AV.
@@ -462,13 +462,13 @@ ncclResult_t nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, 
  * @return	Endpoint ep
  * @return	Address vector av
  */
-ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
+int nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
 
 /*
  * @brief	Initialize memory registration keypool
  */
-ncclResult_t nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys);
+int nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys);
 
 /*
  * @brief	Returns provider info structure for the given NIC ID.
@@ -483,23 +483,23 @@ void nccl_ofi_ep_release_ofi(struct fid_ep *ep, struct fid_av *av, struct fid_cq
 /*
  * @brief	Register DMA buffer for send comm. Unimplemented.
  */
-ncclResult_t nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-						   void *data, size_t size,
-						   int type, uint64_t offset, int fd,
-						   nccl_net_ofi_mr_handle_t **handle);
+int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
+					  void *data, size_t size,
+					  int type, uint64_t offset, int fd,
+					  nccl_net_ofi_mr_handle_t **handle);
 
 /*
  * @brief	Register DMA buffer for recv comm. Unimplemented.
  */
-ncclResult_t nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-						   void *data, size_t size,
-						   int type, uint64_t offset, int fd,
-						   nccl_net_ofi_mr_handle_t **handle);
+int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
+					  void *data, size_t size,
+					  int type, uint64_t offset, int fd,
+					  nccl_net_ofi_mr_handle_t **handle);
 
 /*
  * @brief	Free a memory registration key
  */
-ncclResult_t nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key);
+int nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key);
 
 /*
  * @brief	Allocate a memory registration key
@@ -553,7 +553,7 @@ void nccl_net_ofi_free_info_list(struct fi_info *info_list);
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_init will be NULL at runtime.
  */
-ncclResult_t platform_init(void) __attribute__((weak));
+int platform_init(void) __attribute__((weak));
 
 /* Declare a platform-specific endpoint configuration hook that can be
  * provided by platform-specific source files (such as the optionally
@@ -561,7 +561,7 @@ ncclResult_t platform_init(void) __attribute__((weak));
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_config_endpoint will be NULL at runtime.
  */
-ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
+int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
 
 #ifdef _cplusplus
 } // End extern "C"

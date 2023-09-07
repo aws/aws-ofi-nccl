@@ -267,8 +267,8 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	ncclResult_t (*free)(nccl_net_ofi_rdma_req_t *req,
-			     bool dec_inflight_reqs);
+	int (*free)(nccl_net_ofi_rdma_req_t *req,
+		    bool dec_inflight_reqs);
 
 } nccl_net_ofi_rdma_req_t;
 
@@ -622,9 +622,9 @@ typedef struct nccl_net_ofi_rdma_device {
 /*
  * @brief	Initialize plugin with rdma protocol structures
  */
-ncclResult_t nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
-				    bool provide_own_mr_key,
-				    nccl_net_ofi_plugin_t **plugin_p);
+int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
+			   bool provide_own_mr_key,
+			   nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus
 } // End extern "C"
