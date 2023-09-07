@@ -220,10 +220,10 @@ typedef struct nccl_net_ofi_sendrecv_req {
 /*
  * @brief	Initialize plugin with sendrecv protocol structures
  */
-ncclResult_t nccl_net_ofi_sendrecv_init(struct fi_info *ofi_info_list,
-					int num_ofi_infos,
-					bool provide_own_mr_key,
-					nccl_net_ofi_plugin_t **plugin_p);
+int nccl_net_ofi_sendrecv_init(struct fi_info *ofi_info_list,
+			       int num_ofi_infos,
+			       bool provide_own_mr_key,
+			       nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus
 } // End extern "C"

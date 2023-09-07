@@ -58,15 +58,15 @@ error:
 }
 
 
-ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
+int nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	int cuda_device = -1;
 	struct cudaPointerAttributes attr;
 	cudaError_t cuda_ret = nccl_net_ofi_cudaPointerGetAttributes(&attr, data);
 
 	if (cuda_ret != cudaSuccess) {
-		ret = ncclUnhandledCudaError;
+		ret = -ENOTSUP;
 		NCCL_OFI_WARN("Invalid buffer pointer provided");
 		goto exit;
 	}
@@ -74,7 +74,7 @@ ncclResult_t nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
 	if (attr.type == cudaMemoryTypeDevice) {
 		cuda_device = attr.device;
 	} else {
-		ret = ncclInternalError;
+		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid type of buffer provided. Only device memory is expected for NCCL_PTR_CUDA type");
 	}
 

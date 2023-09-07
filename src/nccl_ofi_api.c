@@ -22,9 +22,27 @@ nccl_net_ofi_plugin_t *plugin = NULL;
 ncclDebugLogger_t ofi_log_function;
 
 
+static ncclResult_t nccl_net_ofi_retval_translate(int retval)
+{
+	switch (retval) {
+	case 0:
+		return ncclSuccess;
+		break;
+	case -EINVAL:
+		return ncclInvalidUsage;
+		break;
+	default:
+		return ncclSystemError;
+		break;
+	}
+
+	return ncclSystemError;
+}
+
+
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
-	ncclResult_t ret;
+	int ret;
 
 	ofi_log_function = logFunction;
 
@@ -32,7 +50,7 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	ret = nccl_net_ofi_create_plugin(&plugin);
 
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -43,7 +61,9 @@ ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction)
 #ifdef NCCL_NET_MAX_REQUESTS_V3
 	max_reqs = NCCL_NET_MAX_REQUESTS_V3;
 #endif
-	return nccl_net_ofi_init(logFunction);
+	int ret = nccl_net_ofi_init(logFunction);
+
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -87,7 +107,9 @@ ncclResult_t nccl_net_ofi_getProperties(int dev_id, ncclNetProperties_t *props)
 	}
 
 	int num_devices = plugin->num_devs;
-	return plugin->devs[dev_id]->get_properties(num_devices, plugin->devs[dev_id], props);
+	int ret = plugin->devs[dev_id]->get_properties(num_devices, plugin->devs[dev_id], props);
+
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -193,21 +215,23 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 	if (ret != ncclSuccess) {
 		base_ep->release_ep(base_ep);
 	}
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 {
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
-        ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
         ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
-        if (ret != ncclSuccess)
+        if (ret != 0) {
                 return ret;
+	}
 
         memcpy(handle, &nccl_net_ofi_handle, NCCL_NET_HANDLE_MAXSIZE_V4);
-        return ret;
+
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -290,14 +314,13 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	/* Connect */
 	nccl_net_ofi_send_comm_t **send_comm =
 		(nccl_net_ofi_send_comm_t **)sComm;
-	ncclResult_t ret = base_ep->connect(base_ep, handle, send_comm);
+	int ret = base_ep->connect(base_ep, handle, send_comm);
 
-	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+	if (ret != 0) {
 		base_ep->release_ep(base_ep);
 	}
 
-	return ret;
-
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -329,7 +352,7 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
@@ -345,11 +368,11 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
 			      base_comm->type);
-		ret = ncclInvalidUsage;
+		ret = -EINVAL;
 		break;
 	}
 
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -364,7 +387,7 @@ ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int t
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
@@ -380,11 +403,11 @@ ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int t
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
 			      base_comm->type);
-		ret = ncclInvalidUsage;
+		ret = -EINVAL;
 		break;
 	}
 
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -398,7 +421,7 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
@@ -414,11 +437,11 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
 			      base_comm->type);
-		ret = ncclInvalidUsage;
+		ret = -EINVAL;
 		break;
 	}
 
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -434,7 +457,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	nccl_net_ofi_mr_handle_t **handle = (nccl_net_ofi_mr_handle_t **)mhandle;
 
 	switch (base_comm->type) {
@@ -451,11 +474,11 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
 			      base_comm->type);
-		ret = ncclInvalidUsage;
+		ret = -EINVAL;
 		break;
 	}
 
-	return ret;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -487,35 +510,39 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 		(nccl_net_ofi_listen_comm_t *)lComm;
 	nccl_net_ofi_recv_comm_t **recv_comm =
 		(nccl_net_ofi_recv_comm_t **)rComm;
-	ncclResult_t ret = listen_comm->accept(listen_comm, recv_comm);
+	int ret = listen_comm->accept(listen_comm, recv_comm);
 
 	/* Invoke release_ep() on listen comm's endpoint since accept failed */
-	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+	if (ret != 0) {
 		/* Retrieve and validate endpoint */
 		nccl_net_ofi_ep_t *ep =
 			listen_comm->base.ep;
 		if (OFI_UNLIKELY(ep == NULL)) {
 			NCCL_OFI_WARN("Invalid endpoint provided");
-			return ret;
+			ret = -EINVAL;
+			goto error;
 		}
 		ep->release_ep(ep);
 	}
 
-	return ret;
+error:
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_accept_v4(void* listenComm, void** recvComm)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 
 	while (*recvComm == NULL) {
 		ret = nccl_net_ofi_accept(listenComm, recvComm);
-		if (ret != ncclSuccess)
-			return ret;
+		if (ret != 0) {
+			goto error;
+		}
 	}
 
-	return ret;
+error:
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -533,14 +560,16 @@ ncclResult_t nccl_net_ofi_isend(void *sComm, void* data, int size,
 	nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
-	return send_comm->send(send_comm, data, size, tag, handle, base_req);
+	int ret = send_comm->send(send_comm, data, size, tag, handle, base_req);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
 			  void* mhandle, void** request)
 {
-	return nccl_net_ofi_isend(sendComm, data, size, 0, mhandle, request);
+	int ret = nccl_net_ofi_isend(sendComm, data, size, 0, mhandle, request);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -558,7 +587,8 @@ ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, int* sizes,
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
-	return recv_comm->recv(recv_comm, n, buffers, sizes, tags, handles, base_req);
+	int ret = recv_comm->recv(recv_comm, n, buffers, sizes, tags, handles, base_req);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -567,7 +597,8 @@ ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
 {
 	int tag = 0;
 
-	return nccl_net_ofi_irecv(recvComm, 1, &data, &size, &tag, &mhandle, request);
+	int ret = nccl_net_ofi_irecv(recvComm, 1, &data, &size, &tag, &mhandle, request);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -579,7 +610,8 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 	}
 
 	nccl_net_ofi_req_t *base_req = (nccl_net_ofi_req_t *)req;
-	return base_req->test(base_req, done, size);
+	int ret = base_req->test(base_req, done, size);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -598,34 +630,39 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
-	return recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
+	int ret = recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* mhandle)
 {
 	void *req = NULL;
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	int done = 0;
 
 	ret = nccl_net_ofi_iflush_v4(recvComm, data, size, mhandle, &req);
-	if ((ret != ncclSuccess) || (req == NULL))
-		return ret;
+	if ((ret != 0) || (req == NULL)) {
+		goto error;
+	}
 
 	while (done == 0) {
 		ret = nccl_net_ofi_test(req, &done, &size);
-		if (ret != ncclSuccess)
-			return ret;
+		if (ret != 0) {
+			goto error;
+		}
 	}
 
-	return ret;
+error:
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size,
 			   void* mhandle, void** request)
 {
-	return nccl_net_ofi_iflush(recvComm, 1, &data, &size, &mhandle, request);
+	int ret = nccl_net_ofi_iflush(recvComm, 1, &data, &size, &mhandle, request);
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -647,12 +684,15 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = send_comm->close(send_comm);
-	if (ret != ncclSuccess) {
-		return ret;
+	int ret = send_comm->close(send_comm);
+	if (ret != 0) {
+		goto error;
 	}
 
-	return base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep);
+
+error:
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -674,12 +714,15 @@ ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 		return ncclInternalError;
 	}
 
-	ncclResult_t ret = recv_comm->close(recv_comm);
-	if (ret != ncclSuccess) {
-		return ret;
+	int ret = recv_comm->close(recv_comm);
+	if (ret != 0) {
+		goto error;
 	}
 
-	return base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep);
+
+error:
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -692,5 +735,6 @@ ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 	nccl_net_ofi_listen_comm_t *listen_comm =
 		(nccl_net_ofi_listen_comm_t *)lComm;
 
-	return listen_comm->close(listen_comm);
+	int ret = listen_comm->close(listen_comm);
+	return nccl_net_ofi_retval_translate(ret);
 }

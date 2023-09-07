@@ -107,8 +107,8 @@ typedef struct nccl_ofi_topo {
  * @brief	Set topology user data iterator to the first element of NCCL OFI
  *		topologies's user data array
  */
-ncclResult_t nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo,
-					nccl_ofi_topo_data_iterator_t *iter);
+int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo,
+			       nccl_ofi_topo_data_iterator_t *iter);
 
 /*
  * @brief 	Free NCCL OFI topology
@@ -246,7 +246,7 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * 		NIC info from topology via bus id
  * 		ncclInternalError, on others
  */
-ncclResult_t nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
+int nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
 
 /*
  * @brief	Allocate and initialize nccl_ofi_topo_t struct
@@ -288,7 +288,7 @@ int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file);
  *		ncclSuccess, on success
  *
  */
-ncclResult_t nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists);
+int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists);
 
 /*
  * @brief	Return next libfabric NIC info list from NCCL OFI topology
