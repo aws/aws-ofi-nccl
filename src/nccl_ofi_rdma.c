@@ -1263,7 +1263,7 @@ static inline ncclResult_t handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_co
 	}
 
 	rc = receive_progress(recv_data->eager_copy_req, true);
-	if (rc != 0 && rc != -FI_EAGAIN) {
+	if (rc != 0) {
 		NCCL_OFI_WARN("Failed to post eager read: %zd", rc);
 		return ncclSystemError;
 	}
@@ -3233,7 +3233,7 @@ static ncclResult_t recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buff
 	rdma_req_recv_data_t *recv_data = get_recv_data(req);
 
 	rc = receive_progress(recv_data->send_ctrl_req, true);
-	if (OFI_UNLIKELY(rc != 0 && rc != -FI_EAGAIN)) {
+	if (OFI_UNLIKELY(rc != 0)) {
 		/* TODO: Remove req from message buffer */
 		ret = ncclSystemError;
 		goto error;
@@ -3548,11 +3548,12 @@ static ncclResult_t flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buf
 
 	if (!network_busy) {
 		rc = receive_progress(req, true);
+		if (OFI_UNLIKELY(rc != 0)) {
+			NCCL_OFI_WARN("Call to receive_progress failed: %zd", rc);
+			ret = ncclSystemError;
+			goto error;
+		}
 	} else {
-		rc = -FI_EAGAIN;
-	}
-
-	if (network_busy) {
 		/* Add to pending reqs queue */
 		int r = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
 		if (r != 0) {
@@ -3561,10 +3562,6 @@ static ncclResult_t flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buf
 			goto error;
 		}
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
-	} else if (OFI_UNLIKELY(rc != 0 && rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Call to receive_progress failed: %zd", rc);
-		ret = ncclSystemError;
-		goto error;
 	}
 
 	(r_comm->num_inflight_reqs)++;
