@@ -1574,7 +1574,14 @@ static ssize_t post_eager_copy(nccl_net_ofi_rdma_req_t *req);
 
 /*
  * Progress a request associated with recv
- * @param add_to_pending whether to add to pending reqs queue on EAGAIN
+ *
+ * Post request associated with a receive. If `add_to_pending` is true
+ * and request could not be posted due to FI_EAGAIN, add request to
+ * pending requests queue.
+ *
+ * @param add_to_pending	whether to add to pending reqs queue on EAGAIN
+ * @return 			0, if request is successfully posted or added to pending requests queue
+ *	   			negative errno, otherwise
  */
 static ssize_t receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 {
@@ -1603,6 +1610,8 @@ static ssize_t receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pendin
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 			return ret;
+		} else {
+			rc = 0;
 		}
 
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
