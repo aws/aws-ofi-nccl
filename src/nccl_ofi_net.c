@@ -691,7 +691,7 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 	 * using the Libfabric 1.18 API with HMEM support.
 	 */
 	if (selected_fi_version == FI_VERSION(1,18) && support_gdr != GDR_UNSUPPORTED) {
-#if HAVE_DECL_FI_OPT_CUDA_API_PERMITTED
+#if (HAVE_CUDA && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
 		bool optval = false;
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
 				FI_OPT_CUDA_API_PERMITTED, &optval,
@@ -724,6 +724,15 @@ ncclResult_t nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *d
 			ret = ncclSystemError;
 			goto error;
 		}
+#elif HAVE_NEURON
+		/*
+		 * Provider discovery for Neuron will have been successful only
+		 * if HMEM capabilities were guaranteed by the libfabric
+		 * provider. Unlike CUDA, we do not need to handle the
+		 * runtime/endpoint deadlock with fi_setopt(), so move the flag
+		 * to supported.
+		 */
+		support_gdr = GDR_SUPPORTED;
 #else
 		NCCL_OFI_WARN("Using Libfabric 1.18 API with GPUDirect RDMA support, and FI_OPT_CUDA_API_PERMITTED is not declared.");
 		ret = ncclSystemError;
