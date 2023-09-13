@@ -51,6 +51,10 @@ struct ec2_platform_data {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 	},
+	{
+		.name = "g5.48xlarge",
+		.topology = "g5.48xl-topo.xml",
+	},
 };
 
 /*
