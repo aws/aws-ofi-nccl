@@ -1,0 +1,25 @@
+<!--
+Copyright (c) 2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+See LICENSE.txt for license information
+
+Static pre-configured topology for `g5.48xlarge` platform type.
+This topology is ingested into NCCL using `NCCL_TOPO_FILE` environment
+variable when the underlying system is detected as `g5.48xlarge`.
+
+Note: The PCI IDs of PCI switches and NICs needs to match the PCI IDs on the
+virtual machine.
+-->
+<system version="1">
+  <cpu numaid="0">
+    <pci busid="0000:00:16.0"/>
+    <pci busid="0000:00:17.0"/>
+    <pci busid="0000:00:18.0"/>
+    <pci busid="0000:00:19.0"/>
+  </cpu>
+  <cpu numaid="1">
+    <pci busid="0000:00:1a.0"/>
+    <pci busid="0000:00:1b.0"/>
+    <pci busid="0000:00:1c.0"/>
+    <pci busid="0000:00:1d.0"/>
+  </cpu>
+</system>
