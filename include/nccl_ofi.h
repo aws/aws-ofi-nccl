@@ -17,11 +17,7 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
-#if HAVE_NEURON
-#include "nccl-headers/net_neuron.h"
-#else
 #include "nccl-headers/net.h"
-#endif
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 
@@ -71,11 +67,6 @@ extern "C" {
  * depth changes in NCCL and Neuron.
  */
 #define NCCL_OFI_MAX_REQUESTS	(128)
-#if HAVE_NEURON
-_Static_assert(NCCL_NET_NEURON_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less than what Neuron requires");
-#else
-_Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS, "Maximum outstanding requests for plugin is less than what NCCL requires");
-#endif
 
 /* Maximum length of directory path */
 #define PATH_MAX	4096
@@ -202,8 +193,6 @@ typedef struct nccl_net_ofi_conn_handle {
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
-
-_Static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE, "Size of OFI Handle is too large");
 
 /*
  * Memory registration key-pool for one rail.
