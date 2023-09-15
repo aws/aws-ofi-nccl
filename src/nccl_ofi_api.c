@@ -19,13 +19,18 @@ _Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS,
 
 /* nccl_net_ofi plugin */
 nccl_net_ofi_plugin_t *plugin = NULL;
+ncclDebugLogger_t ofi_log_function;
 
 
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	ncclResult_t ret;
 
-	ret = nccl_net_ofi_create_plugin(logFunction, &plugin);
+	ofi_log_function = logFunction;
+
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
+
+	ret = nccl_net_ofi_create_plugin(&plugin);
 
 	return ret;
 }
