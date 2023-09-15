@@ -4,34 +4,7 @@
 
 #include "config.h"
 
-#include "nccl_ofi.h"
-
-// To handle the difference in maximum number of requests that
-// can be sent over the network
-ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction)
-{
-	max_reqs = NCCL_NET_MAX_REQUESTS_V3;
-	return nccl_net_ofi_init(logFunction);
-}
-
-ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* mhandle)
-{
-	void *req = NULL;
-	ncclResult_t ret = ncclSuccess;
-	int done = 0;
-
-	ret = nccl_net_ofi_iflush_v4(recvComm, data, size, mhandle, &req);
-	if ((ret != ncclSuccess) || (req == NULL))
-		return ret;
-
-	while (done == 0) {
-		ret = nccl_net_ofi_test(req, &done, &size);
-		if (ret != ncclSuccess)
-			return ret;
-	}
-
-	return ret;
-}
+#include "nccl_ofi_api.h"
 
 const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.name = "AWS Libfabric",

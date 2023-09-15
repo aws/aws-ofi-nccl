@@ -460,6 +460,9 @@ void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
 			      nccl_net_ofi_device_t **base_devs,
 			      int num_infos);
 
+ncclResult_t nccl_net_ofi_create_plugin(ncclDebugLogger_t logFunction,
+				      nccl_net_ofi_plugin_t **plugin_p);
+
 /*
  * @brief	Set properties obtained from libfabric NIC Info.
  *

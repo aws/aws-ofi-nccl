@@ -10,7 +10,7 @@
 
 #include "config.h"
 
-#include "nccl-headers/net.h"
+#include "nccl_ofi_api.h"
 
 void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	    int line, const char *fmt, ...)
