@@ -6,11 +6,7 @@
 #ifndef NET_OFI_API_H_
 #define NET_OFI_API_H_
 
-#if HAVE_NEURON
-#include "nccl-headers/net_neuron.h"
-#else
 #include "nccl-headers/net.h"
-#endif
 #include "nccl-headers/error.h"
 
 #ifdef _cplusplus
