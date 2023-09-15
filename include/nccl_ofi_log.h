@@ -10,7 +10,10 @@
 extern "C" {
 #endif
 
-#include "nccl_ofi.h"
+#include "nccl-headers/net.h"
+
+// Logger Function
+extern ncclDebugLogger_t ofi_log_function;
 
 #define NCCL_OFI_WARN(fmt, ...)							\
 	(*ofi_log_function)(NCCL_LOG_WARN, NCCL_ALL, __PRETTY_FUNCTION__,	\

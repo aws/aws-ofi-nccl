@@ -832,12 +832,10 @@ ncclResult_t check_own_mr_keys_required(struct fi_info* ofi_info_list, bool *pro
 	}
 }
 
-ncclResult_t nccl_net_ofi_create_plugin(ncclDebugLogger_t logFunction,
-					nccl_net_ofi_plugin_t **plugin_p)
+ncclResult_t nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 {
 	ncclResult_t ret = ncclSuccess;
 
-	ofi_log_function = logFunction;
 	/* NICs info list for a provider */
 	struct fi_info* ofi_info_list = NULL;
 	/* Number of NICs */
