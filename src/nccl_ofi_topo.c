@@ -18,8 +18,13 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 
-static const uint8_t display_controller_class_id = 0x03;
-static const unsigned short nvidia_vendor_id = 0x10de;
+#if HAVE_CUDA
+static const uint8_t target_class_id = 0x03;		/* Display controller class */
+static const unsigned short target_vendor_id = 0x10de;	/* NVIDIA */
+#else
+static const uint8_t target_class_id = 0x08;		/* System peripheral */
+static const unsigned short target_vendor_id = 0x1d0f;	/* Amazon */
+#endif
 
 /* Maximum length of the device property read from file by function
  * get_device_property() */
@@ -135,7 +140,7 @@ static struct fi_pci_attr *ofi_info_get_pci_attr(struct fi_info *info) {
 /*
  * @brief 	Test whether topology node represents an NVIDIA GPU PCI device
  */
-static int is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
+static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
 {
 	uint8_t class_code;
 	bool class_match;
@@ -156,8 +161,18 @@ static int is_nvidia_pci_dev(hwloc_obj_t obj, bool *res)
 	   the class code. */
 	class_code = obj->attr->pcidev.class_id >> 8;
 
-	class_match = display_controller_class_id == class_code;
-	vendor_match = obj->attr->pcidev.vendor_id == nvidia_vendor_id;
+	/*
+	 * TODO: This is still a broad match that assumes any Amazon device
+	 * registered with class "System Peripheral" is a Neuron device.  While
+	 * this is true today, it might not be in the future.  Filtering on this
+	 * is better than statically matching against the supported device IDs,
+	 * which we would have to manually update as newer generations get released.
+	 * In the future, we should update this to dynamically query Neuron
+	 * devices on the instance and match the hwloc node against the
+	 * discovered Neuron device BDFs.
+	 */
+	class_match = target_class_id == class_code;
+	vendor_match = obj->attr->pcidev.vendor_id == target_vendor_id;
 
         *res = class_match && vendor_match;
         return 0;
@@ -357,7 +372,7 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
  * @return	0, on success
  *		non-zero, on error
  */
-static int count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
+static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 							   struct fi_info *info_list,
 							   int *count)
 {
@@ -365,10 +380,10 @@ static int count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
 	hwloc_obj_t obj = NULL;
 
 	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
-		bool is_gpu = false;
+		bool is_accel = false;
 		struct fi_info *info;
 
-		ret = is_nvidia_pci_dev(obj, &is_gpu);
+		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
 			return ncclInternalError;
@@ -380,7 +395,7 @@ static int count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
 			return ncclInternalError;
 		}
 
-		if (is_gpu || info) {
+		if (is_accel || info) {
 			/* Walk towards root, set counter and increment counter each time counter is set */
 			hwloc_obj_t node = obj;
 			while (node) {
@@ -401,7 +416,7 @@ static int count_nodes_with_gpu_or_nic_in_subtree(hwloc_topology_t topo,
 	 * the topology nodes to avoid counting nodes
 	 * twice. Afterwards, invoke this function another time to
 	 * clear the user data pointers. */
-	if (count != NULL) return count_nodes_with_gpu_or_nic_in_subtree(topo, info_list, NULL);
+	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, NULL);
 	else return 0;
 }
 
@@ -466,7 +481,7 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 
 	/* Retrieve number of topology nodes that have a Nvidia GPU or a NIC in their subtree */
 	int num_nodes = 0;
-	ret = count_nodes_with_gpu_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
+	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
 		return ncclInternalError;
@@ -485,10 +500,10 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	 * corresponding to NICs and Nvidia GPUs. From those nodes,
 	 * walk up towards the root and set user data. */
 	while ((obj = hwloc_get_next_pcidev(ofi_topo->topo, obj))) {
-		bool is_gpu = false;
+		bool is_accel = false;
 		struct fi_info *info;
 
-		ret = is_nvidia_pci_dev(obj, &is_gpu);
+		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
 			return ncclInternalError;
@@ -500,7 +515,7 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 			return ncclInternalError;
 		}
 
-		if (is_gpu || info) {
+		if (is_accel || info) {
 			ret = set_userdata_to_root(obj, &data_iter);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error while setting user data on path to root");
@@ -619,7 +634,7 @@ static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
  * @param 	gpu_node
  * 		Topology node on which this operation is started
  */
-static int propagate_gpu_count(hwloc_obj_t gpu_node)
+static int propoagate_accel_count(hwloc_obj_t gpu_node)
 {
 	hwloc_obj_t node = gpu_node;
 	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
@@ -653,27 +668,27 @@ static int propagate_gpu_count(hwloc_obj_t gpu_node)
 }
 
 /*
- * @brief	Propagate GPU counts from NVIDIA topology nodes to marked topology nodes.
+ * @brief	Propagate counts from accelerator topology nodes to marked topology nodes.
  */
-static int propagate_gpu_group_counts(hwloc_topology_t topo)
+static int propoagate_accel_group_counts(hwloc_topology_t topo)
 {
 	int ret = 0;
 	hwloc_obj_t obj = NULL;
 
 	/* Iterate over all PCI topology nodes and find nodes
-	 * corresponding to NICs and Nvidia GPUs. From those nodes,
-	 * walk up towards the root and set user data. */
+	 * corresponding to NICs and Nvidia GPUs or Amazon Neuron devices. From
+	 * those nodes, walk up towards the root and set user data. */
 	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
-		bool is_gpu = false;
+		bool is_accel = false;
 
-		ret = is_nvidia_pci_dev(obj, &is_gpu);
+		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
+			NCCL_OFI_WARN("Error while checking whether hwloc topology node is an accelerator");
 			return ncclInternalError;
 		}
 
-		if (is_gpu) {
-			propagate_gpu_count(obj);
+		if (is_accel) {
+			propoagate_accel_count(obj);
 		}
 	}
 
@@ -691,7 +706,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 
 	/* Iterate over user data. Since user data is added to all
 	 * topology nodes that have a "NIC topology nodes" or a
-	 * "Nvidia GPU topology nodes" it their subtree, all info
+	 * "accelerator topology nodes" it their subtree, all info
 	 * structs are found. */
 	nccl_ofi_topo_data_iterator_t data_iter;
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
@@ -739,7 +754,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 			}
 			target_obj = target_obj->parent;
 			if (!target_obj) {
-				NCCL_OFI_WARN("Unable to attach NIC to GPU.");
+				NCCL_OFI_WARN("Unable to attach NIC to accelerator.");
 				return ncclInternalError;
 			}
 		}
@@ -935,7 +950,7 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 		return ret;
 	}
 
-	ret = propagate_gpu_group_counts(topo->topo);
+	ret = propoagate_accel_group_counts(topo->topo);
 	if (ret != 0) {
 		return ret;
 	}
