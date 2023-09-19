@@ -326,7 +326,6 @@ ncclResult_t platform_init(void)
 	int ret = ncclSuccess;
 	int rc = 0;
 	struct ec2_platform_data *platform_data;
-	uint32_t libversion = 0;
 
 	NCCL_OFI_INFO(NCCL_INIT, "Configuring AWS-specific options");
 
@@ -371,7 +370,7 @@ ncclResult_t platform_init(void)
 	 * environment variable on Neuron platforms, so we only do
 	 * this for Nvidia platforms.
 	 */
-	libversion = fi_version();
+	uint32_t libversion = fi_version();
 	const char * fork_safe_var_name =
 		(FI_MAJOR(libversion) > 1 || (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
 		? "FI_EFA_FORK_SAFE"
@@ -446,12 +445,7 @@ exit:
 }
 
 ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
-	static bool nccl_proto_configured = false;
-	static bool need_ordering = false;
-	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	int ret = ncclSuccess;
-	int optname = -1;
-	const char *optname_name = "none";
 
 	if (endpoint == NULL) {
 		NCCL_OFI_WARN("Unable to configure invalid endpoint");
@@ -481,6 +475,12 @@ ncclResult_t platform_config_endpoint(struct fi_info *info, struct fid_ep* endpo
 	}
 
 #if HAVE_CUDA
+	static bool nccl_proto_configured = false;
+	static bool need_ordering = false;
+	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+	int optname = -1;
+	const char *optname_name = "none";
+
 	/* During initialization, try to set
 	 * FI_OPT_EFA_{SENDRECV,WRTIE}_IN_ORDER_ALIGNED_128_BYTES to
 	 * true to see if the LL/LL128 protocol is supported. After
