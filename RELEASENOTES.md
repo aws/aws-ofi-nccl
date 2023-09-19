@@ -14,6 +14,27 @@ release) was only available in one of the two variants, we note that
 in the release notes.
 
 
+# v1.7.3-aws release notes
+This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
+or later and supports [NCCL v2.18.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.18.3-1) while
+maintaining backward compatibility with older NCCL versions ([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+It was tested with Libfabric versions up to
+[Libfabric v1.18.1](https://github.com/ofiwg/libfabric/releases/tag/v1.18.1).
+
+New Features:
+
+Bug Fixes:
+* Add support for g5.48xlarge instance types.
+* Fix a block in use leak in the freelist implementation.
+* For NCCL 2.18.5 or later, don't disable NVLS support.
+* Fix bug in handling retry error issues from Libfabric in the RDMA
+  transport (P5 instance types).
+
+Testing:
+The plugin has been tested with following libfabric providers using unit tests
+bundled in the source code and [nccl-tests](https://github.com/NVIDIA/nccl-tests) test suite:
+* efa
+
 # v1.7.2-aws release notes
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
 or later and supports [NCCL v2.18.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.18.3-1) while
