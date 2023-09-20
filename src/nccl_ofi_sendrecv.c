@@ -703,7 +703,6 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 	if (key_pool->mr_keys) {
 		uint64_t key = fi_mr_key(mr_handle);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
-			ret = -EINVAL;
 			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
 		} else {
 			ret = nccl_net_ofi_free_mr_key(key_pool, key);
