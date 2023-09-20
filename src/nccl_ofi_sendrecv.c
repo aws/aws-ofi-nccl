@@ -1236,8 +1236,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	/* Extract communicator state from listen communicator object */
 	save_comm_state_t *comm_state = &l_comm->state;
-	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
-		(nccl_net_ofi_sendrecv_recv_comm_t *)comm_state->comm;
+	nccl_net_ofi_sendrecv_recv_comm_t *r_comm;
 	nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)comm_state->req;
 
 	/* Extract peer address from listen communicator's buffer */
