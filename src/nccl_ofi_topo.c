@@ -552,7 +552,6 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	if (!ofi_topo) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Unable to allocate nccl_ofi_topo");
-		ret = ncclInternalError;
 		goto error;
 	}
 
