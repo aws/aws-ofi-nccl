@@ -5095,11 +5095,13 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	if (!IS_TAG_VALID(handle->tag, device->max_tag)) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", handle->tag,
 			      dev_id);
+		free(ret_s_comm);
 		return ncclSystemError;
 	}
 	ret_s_comm->remote_tag = handle->tag;
 
 	if (increment_tag(ep, device)) {
+		free(ret_s_comm);
 		return ncclSystemError;
 	}
 	ret_s_comm->local_tag = ep->tag;

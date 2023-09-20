@@ -1703,6 +1703,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	fi_addr_t remote_addr;
 	nccl_net_ofi_sendrecv_send_comm_t *ret_s_comm = NULL;
 	*s_comm = NULL;
+	int ret = 0;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
@@ -1721,8 +1722,6 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 			      device->base.dev_id);
 		return -EINVAL;
 	}
-
-	int ret = 0;
 
 	/* Insert remote address into AV */
 	ret = fi_av_insert(ep->av,
@@ -1767,11 +1766,11 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	if (ret == -FI_ETOOSMALL) {
 		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
 			      ret_s_comm->conn_info->ep_namelen, MAX_EP_ADDR);
-		return ret;
+		goto out;
 	} else if (ret != 0) {
 		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
-		return ret;
+		goto out;
 	}
 
 	ret_s_comm->conn_info->connect_to_self =
@@ -1782,11 +1781,14 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      device->base.dev_id);
-		free(ret_s_comm);
-		return ret;
+		goto out;
 	}
 
 	*s_comm = ret_s_comm;
+out:
+	if (ret)
+		free(ret_s_comm);
+
 	return ret;
 }
 
