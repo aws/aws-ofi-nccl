@@ -3612,7 +3612,6 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 
 	if (num_rails < 1) {
 		NCCL_OFI_WARN("Invalid number of rails. Expected at least one rail");
-		ret = ncclInternalError;
 		goto error;
 	}
 
