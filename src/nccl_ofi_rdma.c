@@ -1213,7 +1213,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case receiver has not yet called recv() for this message, so
 		   return success and initiate eager read when sender calls send(). */
-		return -ENOSPC;
+		return 0;
 	}
 	if (mb_res != NCCL_OFI_MSGBUFF_INVALID_IDX) {
 		NCCL_OFI_WARN("Unexpected message insert result (%d) (eager recv)", (int)mb_res);
@@ -3121,6 +3121,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (ret == -EAGAIN) {
 		/* Network is still busy. Return NULL to NCCL. */
 		*base_req = NULL;
+		ret = 0;
 		goto error;
 	} else if (ret != 0) {
 		goto error;
@@ -4683,6 +4684,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	if (ret == -EAGAIN) {
 		/* Network is still busy. Return NULL to NCCL. */
 		*base_req = NULL;
+		ret = 0;
 		goto error;
 	} else if (ret != 0) {
 		goto error;
