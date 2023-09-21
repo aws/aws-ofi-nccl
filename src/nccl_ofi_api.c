@@ -19,7 +19,7 @@ _Static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS,
 
 /* nccl_net_ofi plugin */
 nccl_net_ofi_plugin_t *plugin = NULL;
-ncclDebugLogger_t ofi_log_function;
+ncclDebugLogger_t ofi_log_function = NULL;
 
 
 static ncclResult_t nccl_net_ofi_retval_translate(int retval)

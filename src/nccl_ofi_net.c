@@ -52,8 +52,6 @@ int nic_dup_conns = 0;
    read in the polling loop without protection of a lock. */
 size_t cq_read_count = 1;
 
-// Logger Function
-ncclDebugLogger_t ofi_log_function = NULL;
 /*
  * Maximum numbers of requests supported per communicator by
  * plugin. Since NCCL Net v5, one NCCL request can correspond to
