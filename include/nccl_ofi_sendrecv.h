@@ -126,6 +126,8 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	 * zero. sendrecv_release_ep() releases the resources if the
 	 * reference counter is decreased down to zero. */
 	int ref_cnt;
+
+	nccl_ofi_freelist_t *inline_buff_fl;
 } nccl_net_ofi_sendrecv_ep_t;
 
 /**
@@ -197,6 +199,9 @@ typedef struct nccl_net_ofi_sendrecv_req {
 
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
+
+	/* Associated inline buffer */
+	void *inline_buffer;
 
 	/* Associated OFI Context */
 	struct fi_context ctx[2];

@@ -41,6 +41,7 @@ const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.accept = nccl_net_ofi_accept_v4,
 	.regMr = nccl_net_ofi_regMr_sizet,
 	.deregMr = nccl_net_ofi_deregMr,
+	.write_inline = nccl_net_ofi_write_inline,
 	.isend = nccl_net_ofi_isend_v4,
 	.irecv = nccl_net_ofi_irecv_v4,
 	.iflush = nccl_net_ofi_iflush_v4,

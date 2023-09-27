@@ -31,6 +31,7 @@ ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int t
 				void **mhandle);
 ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size, int type, uint64_t offset, int fd, void** mhandle);
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle);
+ncclResult_t nccl_net_ofi_write_inline(void* sendComm, void* data, int size, void* dest, void *mhandle, void** request);
 ncclResult_t nccl_net_ofi_isend(void *sendComm, void* data, int size, int tag, void *mhandle, void** request);
 ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size, void* mhandle, void** request);
 ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n, void** buffers, int* sizes, int *tags, void** mhandles, void** request);

@@ -332,6 +332,14 @@ struct nccl_net_ofi_ep {
 				nccl_net_ofi_send_comm_t **send_comm);
 
 	/*
+	 * @brief 	Inline write to a peer address
+	 *
+	 * Perform write to peer address.  There is no request because return is immediate.
+	 *
+	 */
+	int (*write_inline)(nccl_net_ofi_comm_t *comm, void *data, int size, void *dest, void *mhandle);
+
+	/*
 	 * @brief	Release nccl_ofi_ep.
 	 *
 	 * Decrease reference counter. Release resources and free
@@ -359,6 +367,8 @@ enum nccl_net_ofi_comm_type_t {
 struct nccl_net_ofi_comm {
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
+
+
 	int dev_id;
 };
 

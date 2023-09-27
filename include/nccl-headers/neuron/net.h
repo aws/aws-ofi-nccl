@@ -83,6 +83,7 @@ typedef struct {
 	// Type is either NCCL_PTR_HOST or NCCL_PTR_CUDA.
 	ncclResult_t (*regMr)(void* comm, void* data, size_t size, int type, void** mhandle);
 	ncclResult_t (*deregMr)(void* comm, void* mhandle);
+	ncclResult_t (*write_inline)(void* rComm, void* data, int size, void* dest, void *mhandle, void** request);
 	// Asynchronous send to a peer.
 	// May return request == NULL if the call cannot be performed (or would block)
 	ncclResult_t (*isend)(void* sendComm, void* data, int size, void* mhandle, void** request);

@@ -257,6 +257,7 @@ static inline int free_req(uint64_t *num_inflight_reqs,
 
 	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, req);
 
+
 	/* Reduce inflight commands */
 	if (OFI_LIKELY(dec_inflight_reqs == true))
 		(*num_inflight_reqs)--;
@@ -275,6 +276,7 @@ static inline int free_req_send_comm(nccl_net_ofi_sendrecv_send_comm_t *s_comm,
 {
 	uint64_t *num_inflight_reqs = &s_comm->num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
+
 	return free_req(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -289,6 +291,8 @@ static inline int free_req_recv_comm(nccl_net_ofi_sendrecv_recv_comm_t *r_comm,
 {
 	uint64_t *num_inflight_reqs = &r_comm->num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
+
+
 	return free_req(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -1137,6 +1141,7 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 	return ret;
 }
 
+
 /*
  * @brief	Allocate and setup receive communicator object for a peer. This
  * 		prepares plugin to receive messages from the given peer.
@@ -1656,6 +1661,77 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	return ret;
 }
 
+typedef struct {
+	nccl_ofi_freelist_reginfo_t reginfo;
+	uint64_t value;
+} sendrecv_write_inline_fl_item_t;
+
+typedef struct {
+	nccl_ofi_mr_keypool_t *key_pool;
+	void *mr_handle;
+	int dev_id;
+} sendrecv_write_inline_fl_handle_t;
+
+static int write_inline(nccl_net_ofi_comm_t *comm, void *data, int size, void *dest, void *mhandle)
+{
+	nccl_net_ofi_ep_t *ep = comm->ep;
+	nccl_net_ofi_sendrecv_ep_t *sendrecv_ep = (nccl_net_ofi_sendrecv_ep_t *)ep;
+	struct fid_ep *local_ep = NULL;
+	fi_addr_t remote_ep = 0;
+	sendrecv_write_inline_fl_item_t *item = NULL;
+
+	if (OFI_UNLIKELY(ep == NULL)) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Invalid endpoint provided");
+		goto exit;
+	}
+
+	/* Retrieve and validate device */
+	nccl_net_ofi_sendrecv_device_t *device =
+		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	if (OFI_UNLIKELY(device == NULL)) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Invalid device provided");
+		goto exit;
+	}
+	if (size <= 0 || size >= NCCL_OFI_MAX_INLINE_WRITE_BYTES) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Can not support %d inline bytes.  Requested: %d",
+			NCCL_OFI_MAX_INLINE_WRITE_BYTES, size);
+		goto exit;
+	}
+
+
+	if (comm->type == NCCL_NET_OFI_SEND_COMM) {
+		nccl_net_ofi_sendrecv_send_comm_t *s_comm = (nccl_net_ofi_sendrecv_send_comm_t *)s_comm;
+		local_ep = s_comm->local_ep;
+		remote_ep = s_comm->remote_ep;
+	} else if (comm->type == NCCL_NET_OFI_RECV_COMM) {
+		nccl_net_ofi_sendrecv_recv_comm_t *r_comm = (nccl_net_ofi_sendrecv_recv_comm_t *)r_comm;
+		local_ep = r_comm->local_ep;
+		remote_ep = r_comm->remote_ep;
+	}
+
+	item = nccl_ofi_freelist_entry_alloc(sendrecv_ep->inline_buff_fl);
+	void *mr_handle = item->reginfo.mr_handle;
+
+	memcpy(&item->value, data, size);
+	rc = fi_write(local_ep,
+		       &item->value,
+		       size,
+		       fi_mr_desc(mr_handle),
+		       remote_ep,
+		       (uint64_t)dest,
+		       fi_mr_key(mhandle),
+		       0);
+
+exit:
+	if (item) {
+		nccl_ofi_freelist_entry_free(sendrecv_ep->inline_buff_fl, item);
+	}
+	return rc;
+}
+
 static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 {
 	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
@@ -1675,6 +1751,70 @@ static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 	free(send_comm);
  exit:
 	return ret;
+}
+
+/**
+ * Register host memory for use with the given communicator
+ *
+ * This interface is suitable for use with freelist_init_mr.
+ *
+ * @param       ep_void_ptr
+ *              Pointer to endpoint.
+ * @param       data
+ *              Pointer to memory region. Must be aligned to page size.
+ * @param       size
+ *              Size of memory region. Must be a multiple of page size.
+ * @param       handle
+ *              Returned handled to sendrecv_write_inline_fl_handle_t
+ */
+static int inline_write_freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, void **handle)
+{
+	int dev_id;
+
+	nccl_net_ofi_sendrecv_ep_t *ep = ep_void_ptr;
+	nccl_net_ofi_mr_handle_t *mr_handle;
+	sendrecv_write_inline_fl_handle_t *freelist_handle =
+		malloc(sizeof(sendrecv_write_inline_fl_handle_t));
+	if (freelist_handle == NULL) {
+		NCCL_OFI_WARN("Unable to allocate write_inline handle");
+		return -ENOMEM;
+	}
+
+	nccl_net_ofi_sendrecv_device_t *device =
+                (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
+	dev_id = device->base.dev_id;
+
+	int ret = register_mr_buffers(device->domain, ep->ofi_ep,
+				      key_pool, dev_id, data, size,
+				      NCCL_PTR_NEURON, (struct fid_mr **)&mr_handle);
+	if (ret != 0) {
+                NCCL_OFI_WARN("Failed call to reg_mr_ep: %d", ret);
+                return -EIO;
+        }
+
+	freelist_handle->mr_handle = mr_handle;
+	freelist_handle->key_pool = key_pool;
+	freelist_handle->dev_id = dev_id;
+
+	*handle = freelist_handle;
+
+	return 0;
+}
+
+/**
+ * Deregister host memory registered with inline_write_freelist_regmr_host_fn
+ *
+ * This interface is suitable for use with a freelist.
+ */
+static int inline_write_freelist_deregmr_host_fn(void *handle)
+{
+	sendrecv_write_inline_fl_handle_t *freelist_handle = handle;
+	int rv = dereg_mr_base_comm(freelist_handle->mr_handle,
+				    freelist_handle->key_pool,
+				    freelist_handle->dev_id);
+	free(handle);
+	return  rv;
 }
 
 /*
@@ -2023,7 +2163,12 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	 * reallocated. In a separate CR we may provide endpoint
 	 * deallocation.
 	 */
+
 	if (ep->ref_cnt == 0) {
+#ifdef HAVE_NEURON
+		nccl_ofi_freelist_fini(ep->inline_buff_fl);
+#endif /* HAVE_NEURON */
+
 		nccl_ofi_ep_release_ofi(ep->ofi_ep, ep->av, ep->cq,
 					device->base.dev_id);
 		ep->ofi_ep = NULL;
@@ -2072,6 +2217,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		ep->base.device = &device->base;
 		ep->base.listen = listen;
 		ep->base.connect = connect;
+		ep->base.write_inline = write_inline;
 		ep->base.release_ep = release_ep;
 
 		/* Initialize endpoint tag */
@@ -2090,8 +2236,22 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	if (ep->ref_cnt == 0) {
+#ifdef HAVE_NEURON
+		ret = nccl_ofi_freelist_init_mr(sizeof(sendrecv_write_inline_fl_item_t),
+						64,
+						64,
+						1024,
+						inline_write_freelist_regmr_host_fn,
+						inline_write_freelist_deregmr_host_fn,
+						ep, /* regmr_opaque */
+						0,  /* reginfo_offset */
+						0,
+						&ep->inline_buff_fl);
+#endif /* HAVE_NEURON */
+
 		ret = nccl_ofi_init_connection(device->info, device->domain, &ep->ofi_ep,
 						   &ep->av, &ep->cq);
+
 		if (ret != 0) {
 			goto unlock;
 		}
