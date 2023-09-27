@@ -21,9 +21,20 @@ maintaining backward compatibility with older NCCL versions ([NCCL v2.4.8](https
 It was tested with Libfabric versions up to
 [Libfabric v1.18.1](https://github.com/ofiwg/libfabric/releases/tag/v1.18.1).
 
+With NCCL 2.18.5 and v1.7.3-aws of the plugin,
+[NVLink SHARP](https://developer.nvidia.com/blog/upgrading-multi-gpu-interconnectivity-with-the-third-generation-nvidia-nvswitch/)
+is enabled for the first time on AWS platforms.  NVLink SHARP offloads
+the computation part of Allreduce collectives to the NVLink fabric,
+and involves a different set of algorithms for multi-node parallelism
+than previously used.  We have seen NVLink SHARP both help and hurt
+performance of applications.  While NVLink SHARP is enabled by default
+if NCCL 2.18.5 or later is used, users may wish to disable it by
+setting `NCCL_NVLS_ENABLE=0` in the environment of your job.
+
 New Features:
 
 Bug Fixes:
+* Do not disable LL and LL128 protocols on P5 instances.
 * Add support for g5.48xlarge instance types.
 * Fix a block in use leak in the freelist implementation.
 * For NCCL 2.18.5 or later, don't disable NVLS support.
