@@ -655,7 +655,7 @@ static inline int ofi_info_list_length(struct fi_info *info_list)
 }
 
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
-					  ncclNetProperties_t *props)
+				 nccl_ofi_properties_t *props)
 {
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)base_dev;
@@ -668,7 +668,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
-		props->speed *= device->num_rails;
+		props->port_speed *= device->num_rails;
 	}
 	return ret;
 }

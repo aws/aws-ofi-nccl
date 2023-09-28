@@ -1183,7 +1183,7 @@ static int get_device_pci_path(struct fid_nic *nic_info, char** path)
  * @brief	Set default properties for libfabric NIC info.
  */
 static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
-					  ncclNetProperties_t *props)
+				 nccl_ofi_properties_t *props)
 {
 	props->name = strdup(nic_prov->domain_attr->name);
 
@@ -1192,8 +1192,9 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 * objects for devices with multiple ports. So, safely assume port number
 	 * to be always 1.
 	 */
-	props->port = 1;
-	props->maxComms = nic_prov->domain_attr->ep_cnt;
+	props->port_number = 1;
+	/* FIXME: this is wrong */
+	props->max_communicators = nic_prov->domain_attr->ep_cnt;
 	props->guid = dev_id;
 
 	props->latency = net_latency >= .0 ? net_latency : .0;
@@ -1208,17 +1209,15 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 * impacted with this feature as NCCL doesn't aggregate receives from
 	 * same source.
 	 */
-	props->maxRecvs = NCCL_OFI_MAX_RECVS;
+	props->max_group_receives = NCCL_OFI_MAX_RECVS;
 
-	props->ptrSupport = NCCL_PTR_HOST;
 	if (support_gdr == GDR_SUPPORTED) {
-		/* Supports message transfer from both CUDA and HOST buffers */
-#if HAVE_CUDA
-		props->ptrSupport |= NCCL_PTR_CUDA;
-#elif HAVE_NEURON
-		props->ptrSupport |= NCCL_PTR_NEURON;
-#endif
+		props->hmem_support = true;
+	} else {
+		props->hmem_support = false;
 	}
+
+	props->dmabuf_support = false;
 
 	/* Should be successful for ptrSupport invocation */
 	return 0;
@@ -1229,10 +1228,11 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, ncclNetProperties_t *props)
+int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices,
+				 nccl_ofi_properties_t *props)
 {
 	int ret = 0;
-	ncclNetProperties_t dev_props = {0};
+	nccl_ofi_properties_t dev_props = {0};
 	struct fid_nic *nic_info = NULL;
 
 	ret = set_nic_props_default(dev_id, nic_prov, &dev_props);
@@ -1256,12 +1256,12 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	}
 
 	/* Speed reported in Mbps */
-	dev_props.speed = nic_info->link_attr->speed / (1e6);
+	dev_props.port_speed = nic_info->link_attr->speed / (1e6);
 
-	ret = get_device_pci_path(nic_info, &(dev_props.pciPath));
+	ret = get_device_pci_path(nic_info, &(dev_props.pci_path));
 	if (ret != ncclSuccess) {
 		ret = 0;
-		props->pciPath = NULL;
+		props->pci_path = NULL;
 	}
 
 	if (nic_dup_conns > 1) {
@@ -1288,7 +1288,7 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		 * system think that any given virtual nic is the one
 		 * that they should use, and that it is different than
 		 * the other NICs in the system.  We do this by only
-		 * leaving a valid device id in pciPath when
+		 * leaving a valid device id in pci_path when
 		 * active_cuda_device / gpus_per_comm is equal to the
 		 * NIC dev index we're currently querying.  For the
 		 * others, we provide a PCIPath that points at the PCI
@@ -1304,13 +1304,13 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		 * bouncing through host buffers anyway.
 		 */
 		if (active_cuda_device / gpus_per_conn  != dev_id) {
-			for (c=strlen(dev_props.pciPath); c && dev_props.pciPath[c] != '/'; c--) {
-				dev_props.pciPath[c] = '\0';
+			for (c=strlen(dev_props.pci_path); c && dev_props.pci_path[c] != '/'; c--) {
+				dev_props.pci_path[c] = '\0';
 			}
-			dev_props.pciPath[c] = '\0';
+			dev_props.pci_path[c] = '\0';
 		}
 		NCCL_OFI_TRACE(NCCL_INIT, "Returning synthetic PCI path for device %d of  %s",
-			       dev_id, dev_props.pciPath);
+			       dev_id, dev_props.pci_path);
 
 		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s-%x", nic_info->device_attr->name, dev_id);
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Adjusted dev %d device name to %s",

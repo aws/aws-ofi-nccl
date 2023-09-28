@@ -13,13 +13,12 @@
 extern "C" {
 #endif
 
+struct nccl_ofi_properties;
+
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction);
 ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction);
 ncclResult_t nccl_net_ofi_devices(int *ndev);
-ncclResult_t nccl_net_ofi_getProperties(int dev, ncclNetProperties_v6_t *props);
-ncclResult_t nccl_net_ofi_pciPath_v2(int dev, char** path);
-ncclResult_t nccl_net_ofi_ptrSupport_v2(int dev, int *supportedTypes);
-ncclResult_t nccl_net_ofi_getProperties_v4(int dev, ncclNetProperties_v4_t* props);
+ncclResult_t nccl_net_ofi_get_properties(int dev, struct nccl_ofi_properties *ofi_properties);
 ncclResult_t nccl_net_ofi_listen(int dev, void *handle, void **listenComm);
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm);
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle, void** sendComm);

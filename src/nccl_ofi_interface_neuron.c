@@ -4,13 +4,37 @@
 
 #include "config.h"
 
+#include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+
+static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
+{
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_NEURON;
+	}
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->maxComms = ofi_properties.max_communicators;
+
+	return ncclSuccess;
+}
+
 
 const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
-	.getProperties = nccl_net_ofi_getProperties_v4,
+	.getProperties = getProperties_v4,
 	.listen = nccl_net_ofi_listen_v4,
 	.connect = nccl_net_ofi_connect_v4,
 	.accept = nccl_net_ofi_accept_v4,
