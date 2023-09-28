@@ -209,6 +209,32 @@ typedef struct nccl_ofi_mr_keypool {
 	/* Lock for concurrency on memory registration keys */
 	pthread_mutex_t lock;
 } nccl_ofi_mr_keypool_t;
+
+/**
+ * Properties structure
+ */
+typedef struct nccl_ofi_properties {
+	char *name;
+	/** Path to the device in /sys */
+	char *pci_path;
+	/** globally unique identifier for NIC */
+	uint64_t guid;
+	/** support device memory */
+	bool hmem_support;
+	/** support dmabuf interface */
+	bool dmabuf_support;
+	/** Port number */
+	int port_number;
+	/** Port speed in Mbps */
+	int port_speed;
+	/** Port latency */
+	float latency;
+	/** Maximum number of comms supported */
+	unsigned int max_communicators;
+	/** Maximum number of grouped receives */
+	unsigned int max_group_receives;
+} nccl_ofi_properties_t;
+
 /**
  * Device Data
  *
@@ -232,7 +258,7 @@ struct nccl_net_ofi_device {
 	char *name;
 
 	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
-				       ncclNetProperties_t *props);
+			      nccl_ofi_properties_t *props);
 
 	/*
 	 * @brief	Get nccl_ofi_ep for given
@@ -447,7 +473,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, ncclNetProperties_t *props);
+int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
 /*
  * @brief	Allocates and initialises libfabric endpoint and AV.

@@ -20,7 +20,7 @@
 #include "nccl_ofi_math.h"
 
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
-				 ncclNetProperties_t *props)
+				 nccl_ofi_properties_t *props)
 {
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)base_dev;

@@ -80,7 +80,7 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 }
 
 
-ncclResult_t nccl_net_ofi_getProperties(int dev_id, ncclNetProperties_t *props)
+ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_properties)
 {
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
@@ -106,58 +106,8 @@ ncclResult_t nccl_net_ofi_getProperties(int dev_id, ncclNetProperties_t *props)
 		return ncclInternalError;
 	}
 
-	int ret = plugin->devs[dev_id]->get_properties(plugin->devs[dev_id], props);
-
+	int ret = plugin->devs[dev_id]->get_properties(plugin->devs[dev_id], ofi_properties);
 	return nccl_net_ofi_retval_translate(ret);
-}
-
-
-ncclResult_t nccl_net_ofi_pciPath_v2(int dev, char** path)
-{
-	ncclNetProperties_t props_latest;
-	ncclResult_t ret = ncclSuccess;
-
-	ret = nccl_net_ofi_getProperties(dev, &props_latest);
-
-	if (ret == ncclSuccess)
-		*path = props_latest.pciPath;
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_ptrSupport_v2(int dev, int *supportedTypes)
-{
-	ncclNetProperties_t props_latest;
-	ncclResult_t ret = ncclSuccess;
-
-	ret = nccl_net_ofi_getProperties(dev, &props_latest);
-
-	if (ret == ncclSuccess)
-		*supportedTypes = props_latest.ptrSupport;
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_getProperties_v4(int dev, ncclNetProperties_v4_t* props)
-{
-	ncclNetProperties_t props_latest;
-	ncclResult_t ret = ncclSuccess;
-
-	ret = nccl_net_ofi_getProperties(dev, &props_latest);
-	if (ret != ncclSuccess)
-		return ret;
-
-	props->name = props_latest.name;
-	props->pciPath = props_latest.pciPath;
-	props->guid = props_latest.guid;
-	props->ptrSupport = props_latest.ptrSupport;
-	props->speed = props_latest.speed;
-	props->port = props_latest.port;
-	props->maxComms = props_latest.maxComms;
-
-	return ret;
 }
 
 
