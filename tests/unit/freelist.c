@@ -184,6 +184,7 @@ int main(int argc, char *argv[])
 					deregmr_simple,
 					(void *)0xdeadbeaf,
 					offsetof(struct random_freelisted_item, reginfo),
+					1,
 					&freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);

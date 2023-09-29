@@ -87,9 +87,14 @@ typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
 	nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
 } nccl_net_ofi_rdma_ctrl_fl_item_t;
 
+/* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
+#define BOUNCE_BUFFER_ALIGNMENT 128
+
 /* Structure used to store bounce buffers in a free list */
 typedef struct nccl_net_ofi_rdma_bounce_fl_item {
 	nccl_ofi_freelist_reginfo_t fl_reginfo;
+#define PADDING_SIZE (BOUNCE_BUFFER_ALIGNMENT - (sizeof(nccl_ofi_freelist_reginfo_t) % BOUNCE_BUFFER_ALIGNMENT))
+	char padding[PADDING_SIZE];
 	char bounce_msg[];
 } nccl_net_ofi_rdma_bounce_fl_item_t;
 
