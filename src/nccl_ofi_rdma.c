@@ -2018,6 +2018,7 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 		req->free(req, false);
 		return NULL;
 	}
+	assert(NCCL_OFI_IS_PTR_ALIGNED(&bounce_fl_item->bounce_msg, BOUNCE_BUFFER_ALIGNMENT));
 
 	bounce_data->bounce_fl_item = bounce_fl_item;
 	bounce_data->buff_len = ep->bounce_buff_size;
@@ -3704,7 +3705,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_ctrl_fl_item_t), 8, 8,
 					NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-					freelist_deregmr_host_fn, ep, 0,
+					freelist_deregmr_host_fn, ep, 0, 1,
 					&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
@@ -4974,7 +4975,7 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) + ep->bounce_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, 0, &ep->bounce_buff_fl);
+					ep, 0, BOUNCE_BUFFER_ALIGNMENT, &ep->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_fl");
 		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl))

@@ -51,6 +51,7 @@ static int freelist_init_internal(size_t entry_size,
 				  nccl_ofi_freelist_deregmr_fn deregmr_fn,
 				  void *regmr_opaque,
 				  size_t reginfo_offset,
+				  size_t entry_alignment,
 				  nccl_ofi_freelist_t **freelist_p)
 {
 	int ret;
@@ -62,9 +63,13 @@ static int freelist_init_internal(size_t entry_size,
 		return -ENOMEM;
 	}
 
+	assert(NCCL_OFI_IS_POWER_OF_TWO(entry_alignment));
+
+	freelist->memcheck_redzone_size = NCCL_OFI_ROUND_UP(MEMCHECK_REDZONE_SIZE, entry_alignment);
+
 	freelist->entry_size = NCCL_OFI_ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)),
-						 NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY));
-	freelist->entry_size += MEMCHECK_REDZONE_SIZE;
+						 NCCL_OFI_MAX(entry_alignment, NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY)));
+	freelist->entry_size += freelist->memcheck_redzone_size;
 
 	/* Use initial_entry_count and increase_entry_count as lower
 	 * bounds and increase values such that allocations that cover
@@ -122,6 +127,7 @@ int nccl_ofi_freelist_init(size_t entry_size,
 				      NULL,
 				      NULL,
 				      0,
+				      1,
 				      freelist_p);
 }
 
@@ -133,6 +139,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
 			      size_t reginfo_offset,
+			      size_t entry_alignment,
 			      nccl_ofi_freelist_t **freelist_p)
 {
 	return freelist_init_internal(entry_size,
@@ -144,6 +151,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 				      deregmr_fn,
 				      regmr_opaque,
 				      reginfo_offset,
+				      entry_alignment,
 				      freelist_p);
 }
 
@@ -265,11 +273,11 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 
 	for (size_t i = 0 ; i < allocation_count ; ++i) {
 		struct nccl_ofi_freelist_elem_t *entry;
-		size_t user_entry_size = freelist->entry_size - MEMCHECK_REDZONE_SIZE;
+		size_t user_entry_size = freelist->entry_size - freelist->memcheck_redzone_size;
 
 		/* Add redzone before entry */
-		nccl_net_ofi_mem_noaccess(buffer, MEMCHECK_REDZONE_SIZE);
-		buffer += MEMCHECK_REDZONE_SIZE;
+		nccl_net_ofi_mem_noaccess(buffer, freelist->memcheck_redzone_size);
+		buffer += freelist->memcheck_redzone_size;
 
 		if (freelist->have_reginfo) {
 			struct nccl_ofi_freelist_reginfo_t *reginfo =
