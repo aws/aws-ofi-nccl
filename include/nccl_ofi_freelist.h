@@ -163,6 +163,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
 			      size_t reginfo_offset,
+			      size_t entry_alignment,
 			      nccl_ofi_freelist_t **freelist_p);
 
 /*
