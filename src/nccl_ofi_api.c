@@ -29,7 +29,7 @@ static ncclResult_t nccl_net_ofi_retval_translate(int retval)
 		return ncclSuccess;
 		break;
 	case -EINVAL:
-		return ncclInvalidUsage;
+		return ncclInvalidArgument;
 		break;
 	default:
 		return ncclSystemError;
@@ -72,7 +72,7 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
-		return ncclInvalidUsage;
+		return ncclInvalidArgument;
 	}
 
 	*num_devices = plugin->num_devs;
@@ -85,7 +85,7 @@ ncclResult_t nccl_net_ofi_getProperties(int dev_id, ncclNetProperties_t *props)
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
-		return ncclInvalidUsage;
+		return ncclInvalidArgument;
 	}
 
 	/* Validate dev parameter */
@@ -173,7 +173,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
-		return ncclInvalidUsage;
+		return ncclInvalidArgument;
 	}
 
 	/* Validate dev_id parameter */
