@@ -19,9 +19,8 @@
 #include "tracepoint.h"
 #include "nccl_ofi_math.h"
 
-static inline int get_properties(int num_devices,
-						   nccl_net_ofi_device_t *base_dev,
-						   ncclNetProperties_t *props)
+static inline int get_properties(nccl_net_ofi_device_t *base_dev,
+				 ncclNetProperties_t *props)
 {
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)base_dev;
@@ -35,7 +34,7 @@ static inline int get_properties(int num_devices,
 		return -EINVAL;
 	}
 
-	return nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
+	return nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
 }
 
 /*
@@ -2215,7 +2214,8 @@ int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 		goto exit;
 	}
 
-	nccl_net_ofi_init_plugin(plugin, base_devs, num_infos);
+	plugin->devs = base_devs;
+	plugin->num_devs = num_infos;
 
 	/* Allocate and initialize nccl_net devices */
 
@@ -2233,6 +2233,8 @@ int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 			ret = -ENOMEM;
 			goto error;
 		}
+
+		device->base.plugin = plugin;
 
 		/* Set device index */
 		device->base.dev_id = dev_id;
