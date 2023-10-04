@@ -654,8 +654,7 @@ static inline int ofi_info_list_length(struct fi_info *info_list)
 	return length;
 }
 
-static inline int get_properties(int num_devices,
-					  nccl_net_ofi_device_t *base_dev,
+static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 					  ncclNetProperties_t *props)
 {
 	nccl_net_ofi_rdma_device_t *device =
@@ -664,7 +663,7 @@ static inline int get_properties(int num_devices,
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = device->device_rails[0].info;
-	int ret =  nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
+	int ret =  nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
@@ -5971,7 +5970,8 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		goto error;
 	}
 
-	nccl_net_ofi_init_plugin(plugin, base_devs, num_devs);
+	plugin->devs = base_devs;
+	plugin->num_devs = num_devs;
 
 	/* Initialize user data iterator */
 	nccl_ofi_topo_data_iterator_t data_iter;
@@ -6026,6 +6026,8 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 			goto error;
 		}
 		base_devs[dev_id] = &device->base;
+
+		device->base.plugin = plugin;
 
 		/* Set device index */
 		device->base.dev_id = dev_id;

@@ -220,6 +220,8 @@ typedef struct nccl_ofi_mr_keypool {
  * instead of an endpoint.
  */
 struct nccl_net_ofi_device {
+	struct nccl_net_ofi_plugin *plugin;
+
 	/* this device's index in the plugin's devices array */
 	int dev_id;
 
@@ -229,8 +231,7 @@ struct nccl_net_ofi_device {
 	   that point. */
 	char *name;
 
-	int (*get_properties)(int num_devices,
-				       nccl_net_ofi_device_t *base_dev,
+	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
 				       ncclNetProperties_t *props);
 
 	/*
@@ -438,14 +439,6 @@ struct nccl_net_ofi_plugin {
 	/* Number of devices in devs array */
 	int num_devs;
 };
-
-/**
- * Initialize plugin. This function sets properties of the global plugin variable
- * defined below.
- */
-void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
-			      nccl_net_ofi_device_t **base_devs,
-			      int num_infos);
 
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
 

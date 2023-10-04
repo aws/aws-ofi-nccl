@@ -106,8 +106,7 @@ ncclResult_t nccl_net_ofi_getProperties(int dev_id, ncclNetProperties_t *props)
 		return ncclInternalError;
 	}
 
-	int num_devices = plugin->num_devs;
-	int ret = plugin->devs[dev_id]->get_properties(num_devices, plugin->devs[dev_id], props);
+	int ret = plugin->devs[dev_id]->get_properties(plugin->devs[dev_id], props);
 
 	return nccl_net_ofi_retval_translate(ret);
 }

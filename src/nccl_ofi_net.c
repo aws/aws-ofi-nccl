@@ -1355,14 +1355,6 @@ int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	return -ENOTSUP;
 }
 
-void nccl_net_ofi_init_plugin(nccl_net_ofi_plugin_t *plugin,
-			      nccl_net_ofi_device_t **base_devs,
-			      int num_infos)
-{
-	plugin->devs = base_devs;
-	plugin->num_devs = num_infos;
-}
-
 int nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys)
 {
 	if (provide_mr_keys) {
