@@ -166,6 +166,13 @@ OFI_NCCL_PARAM_STR(topo_file_template, "TOPO_FILE_TEMPLATE", NULL);
 OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
 
 /*
+ * Disable the check for required GDR support on EC2 instances. When this check
+ * is disabled, the plugin can be used without GDR support even on platforms
+ * that support GDR (P4d and later). By default, the plugin performs the check.
+ */
+OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
+
+/*
  * Maximum size of a message in bytes before message is multiplexed
  */
 OFI_NCCL_PARAM_INT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", 8192);
