@@ -696,7 +696,7 @@ int nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
 				NCCL_OFI_WARN("GDR support reported to NCCL but then couldn't be configured on an endpoint.  Cannot continue.");
 				goto error;
 			} else {
-				NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Could not disable CUDA API usage for HMEM, disabling GDR");
+				NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Could not disable CUDA API usage for HMEM, disabling GDR");
 				/* If we can't disable CUDA, then we don't really
 				 * have GDR, so disable GDR  support from the NCCL
 				 * point of view.
