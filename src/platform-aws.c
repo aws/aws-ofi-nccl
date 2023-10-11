@@ -26,34 +26,40 @@ struct ec2_platform_data {
 	const char* topology;
 	int default_dup_conns;
 	float latency;
+	bool gdr_required;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
+		.gdr_required = true,
 	},
 	{
 		.name = "p4de.24xlarge",
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
+		.gdr_required = true,
 	},
 	{
 		.name = "p3dn.24xlarge",
 		.topology = NULL,
 		.default_dup_conns = 4,
 		.latency = 150.0,
+		.gdr_required = false,
 	},
 	{
 		.name = "p5.48xlarge",
 		.topology = "p5.48xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
+		.gdr_required = true,
 	},
 	{
 		.name = "g5.48xlarge",
 		.topology = "g5.48xl-topo.xml",
+		.gdr_required = false,
 	},
 };
 
@@ -455,6 +461,16 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	if (0 != strcmp(info->fabric_attr->prov_name, "efa")) {
 		ret = 0;
 		goto exit;
+	}
+
+	if (ofi_nccl_disable_gdr_required_check() == 0) {
+		/* Ensure GDR is enabled on GDR-supported instances */
+		struct ec2_platform_data *platform_data = get_platform_data();
+		if (platform_data && platform_data->gdr_required && support_gdr != GDR_SUPPORTED) {
+			NCCL_OFI_WARN("GDR disabled on GDR-supported instance type %s", platform_data->name);
+			ret = -EINVAL;
+			goto exit;
+		}
 	}
 
 	/* If the selected communication protocol is RDMA write and the user did

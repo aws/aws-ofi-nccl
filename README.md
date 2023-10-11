@@ -310,6 +310,14 @@ The plugin allows to configure the following variables at run-time according to 
       <td>Any non-negative integer, though must be <= ROUND_ROBIN_THRESHOLD. Defaults to 8KiB.
       </td>
    </tr>
+   <tr>
+      <td><code>OFI_NCCL_DISABLE_GDR_REQUIRED_CHECK</code></td>
+      <td>Disable the check for required GDR support on EC2 instances. When this check
+      is disabled, the plugin can be used without GDR support even on platforms
+      that support GDR (P4d and later). By default, the plugin performs the check.</td>
+      <td>Boolean</td>
+      <td>0/1 (Default: 0)</td>
+   </tr>
 </table>
 
 
