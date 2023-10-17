@@ -381,7 +381,7 @@ static void filter_tcp_info_list(struct fi_info **info_list, int *num_infos)
 static void get_hints(struct fi_info *hints, int req_gdr)
 {
 	if (req_gdr) {
-		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM | FI_REMOTE_COMM;
+		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM;
 		if (!cuda_flush)
 			hints->caps |= FI_RMA | FI_READ;
 		/*
@@ -393,13 +393,15 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 		hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	}
 	else {
-		hints->caps = FI_TAGGED | FI_MSG | FI_REMOTE_COMM;
+		hints->caps = FI_TAGGED | FI_MSG;
 		/*
 		 * Set MR mode bits to indicate that application allows
 		 * registration of both local memory buffers
 		 */
 		hints->domain_attr->mr_mode = FI_MR_LOCAL;
 	}
+
+	hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
 
 	/*
 	 * Add capabilities needed for RDMA protcol:
