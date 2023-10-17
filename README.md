@@ -44,7 +44,7 @@ support the following features as defined in the
 * Data transfer context structures (`FI_CONTEXT`, `FI_CONTEXT2`)
 * Reliable datagram endpoints (`FI_EP_RDM`)
 * Send after Send ordering semantics (`FI_ORDER_SAS`)
-* Communication with remote endpoints (`FI_REMOTE_COMM`)
+* Communication with local and remote endpoints (`FI_LOCAL_COMM` and `FI_REMOTE_COMM`)
 
 For GPUDirect RDMA support, it requires these additional features from libfabric
 providers. If these are not supported by any provider on system, plug-in turns off
