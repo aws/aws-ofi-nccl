@@ -60,6 +60,9 @@ extern "C" {
 /* Maximum number of grouped receives */
 #define NCCL_OFI_MAX_RECVS	1
 
+/* Maximum length of inline write in bytes */
+#define NCCL_OFI_MAX_INLINE_WRITE_BYTES 8
+
 /*
  * This defines a higher value than maximum inflight requests supported by NCCL
  * while not putting a lot of memory pressure. This higher number ensures that
@@ -233,6 +236,8 @@ typedef struct nccl_ofi_properties {
 	unsigned int max_communicators;
 	/** Maximum number of grouped receives */
 	unsigned int max_group_receives;
+	/** Maximum length of inline write */
+	unsigned int max_inline_write_length;
 } nccl_ofi_properties_t;
 
 /**

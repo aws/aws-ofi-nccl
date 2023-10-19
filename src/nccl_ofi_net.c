@@ -1211,6 +1211,8 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 */
 	props->max_group_receives = NCCL_OFI_MAX_RECVS;
 
+	props->max_inline_write_length = NCCL_OFI_MAX_INLINE_WRITE_BYTES;
+
 	if (support_gdr == GDR_SUPPORTED) {
 		props->hmem_support = true;
 	} else {

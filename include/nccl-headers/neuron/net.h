@@ -59,6 +59,7 @@ typedef struct {
 	int speed;      // Port speed in Mbps.
 	int port;       // Port number.
 	int maxComms;   // Maximum number of comms we can create
+	int maxInlineWriteLength; // Maximum length of inline write in bytes
 } ncclNetProperties_v4_t;
 
 typedef struct {

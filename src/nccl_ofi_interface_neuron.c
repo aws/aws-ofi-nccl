@@ -25,6 +25,7 @@ static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
 	props->speed = ofi_properties.port_speed;
 	props->port = ofi_properties.port_number;
 	props->maxComms = ofi_properties.max_communicators;
+	props->maxInlineWriteLength = ofi_properties.max_inline_write_length;
 
 	return ncclSuccess;
 }
