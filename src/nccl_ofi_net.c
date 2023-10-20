@@ -1247,7 +1247,7 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "No NIC info for dev %d. Supplying default values for NIC properties.",
 			      dev_id);
-		ret = -ENOTSUP;
+		ret = 0;
 		goto exit;
 	}
 
