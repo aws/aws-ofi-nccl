@@ -279,8 +279,8 @@ for running any test of your choice.
 mpirun -n 2 --host <host-1>,<host-2> $INSTALL_PREFIX/bin/nccl_message_transfer
 ```
 
-**Note:** All tests require 2 MPI ranks to run except [ring.c](tests/ring.c)
-which requires atleast 3 ranks.
+**Note:** All tests require exactly 2 MPI ranks to run except [ring.c](tests/ring.c)
+which requires at least 2 ranks.
 
 ### Running nccl-perf tests
 
