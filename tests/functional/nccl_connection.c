@@ -27,6 +27,14 @@ int main(int argc, char* argv[])
 
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+	int size;
+	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	if (size != 2) {
+		NCCL_OFI_WARN("Expected two ranks but got %d. "
+			"The nccl_connection functional test should be run with exactly two ranks.",
+			size);
+		return -1;
+	}
 	MPI_Get_processor_name(name, &proc_name);
 
 	/* Get external Network from NCCL-OFI library */
