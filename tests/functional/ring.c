@@ -52,6 +52,12 @@ int main(int argc, char *argv[])
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
+	if (size < 2) {
+		NCCL_OFI_WARN("Expected at least two ranks but got %d. "
+			"The ring functional test should be run with at least two ranks.",
+			size);
+		return -1;
+	}
 
 	char all_proc_name[size][MPI_MAX_PROCESSOR_NAME];
 
