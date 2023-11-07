@@ -354,12 +354,25 @@ make MPI=1 MPI_HOME=/path/to/mpi CUDA_HOME=/path/to/cuda NCCL_HOME=/path/to/nccl
 
 3. Run perf tests
 ```
-NCCL_DEBUG=INFO mpirun -np 2 build/all_reduce_perf -b 8 -f 2 -e 32M -c 1 -g 1
+NCCL_DEBUG=INFO mpirun -np 2 --bind-to none build/all_reduce_perf -b 8 -f 2 -e 32M -c 1 -g 1
 ```
 
 If you installed the AWS libfabric plugin in a custom prefix, ensure
 `LD_LIBRARY_PATH` is set to include that prefix so the perf test binaries can
 find the plugin.
+
+### Remark about CPU binding
+
+When running workloads using NCCL and this plugin, we recommend disabling CPU binding,
+so that every process on the node has a CPU mask that includes all CPUs.
+
+When running with Open MPI, this is achieved by using the `--bind-to none` argument
+to `mpirun`. In Slurm, this is achieved using a combination of two things:
+1. Request enough processors-per-task for your job, using either `-c $((TOTAL_PROCS/PROCS_PER_NODE))`,
+or using the `--exclusive` flag, which requests all processors on all nodes of the job
+
+2. Disabling CPU binding, using the `--cpu-bind=none` option to srun, or the `--bind-to-none`
+option to mpirun
 
 ## Getting Help
 
