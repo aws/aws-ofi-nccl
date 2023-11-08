@@ -243,7 +243,10 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 					 &block->mr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("freelist extension registration failed: %d", ret);
-			free(block->memory);
+			int dret = nccl_net_ofi_dealloc_mr_buffer(block->memory, block_mem_size);
+			if (dret != 0) {
+				NCCL_OFI_WARN("Unable to deallocate MR buffer(%d)", ret);
+			}
 			return ret;
 		}
 	} else {
