@@ -175,7 +175,7 @@ ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int 
 		break;
 	default:
 		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
-		return -1;
+		return ncclInvalidArgument;
 	}
 
 	return ncclSuccess;
