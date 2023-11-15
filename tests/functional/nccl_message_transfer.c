@@ -53,7 +53,7 @@ int main(int argc, char* argv[])
 		NCCL_OFI_WARN("Expected two ranks but got %d. "
 			"The nccl_message_transfer functional test should be run with exactly two ranks.",
 			num_ranks);
-		return -1;
+		return 1;
 	}
 
 	char all_proc_name[num_ranks][MPI_MAX_PROCESSOR_NAME];
@@ -79,7 +79,7 @@ int main(int argc, char* argv[])
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
 	if (extNet == NULL)
-		return -1;
+		return 1;
 
 	/* Init API */
 	OFINCCLCHECK(extNet->init(&logger));
