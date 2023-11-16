@@ -234,14 +234,21 @@ static void enable_hwloc_io_types(hwloc_topology_t topo)
 {
 	/* HWLOC API changes introduced in version 2.0.0 */
 #if (HWLOC_API_VERSION >= 0x00020000)
-	/* HWLOC_TOPOLOGY_FLAG_IO_DEVICES has been removed in favor of
-	 * hwloc_topology_set_io_types_filter() with
-	 * HWLOC_TYPE_FILTER_KEEP_ALL or HWLOC_TYPE_FILTER_KEEP_IMPORTANT */
+	/*
+	 * HWLOC_TOPOLOGY_FLAG_WHOLE_IO has been removed in favor of
+	 * hwloc_topology_set_io_types_filter() with HWLOC_TYPE_FILTER_KEEP_ALL
+	 * or HWLOC_TYPE_FILTER_KEEP_IMPORTANT
+	 */
 	enum hwloc_type_filter_e filter = HWLOC_TYPE_FILTER_KEEP_ALL;
 	hwloc_topology_set_io_types_filter(topo, filter);
 #else
 	unsigned long flags = hwloc_topology_get_flags(topo);
-	flags |= HWLOC_TOPOLOGY_FLAG_IO_DEVICES | HWLOC_TOPOLOGY_FLAG_IO_BRIDGES;
+	/*
+	 * We want to detect I/O devices, DMA buses, and bridges in the PCIe
+	 * topology in addition to the default system components such as CPU,
+	 * memory, etc.
+	 */
+	flags |= HWLOC_TOPOLOGY_FLAG_WHOLE_IO;
 	hwloc_topology_set_flags(topo, flags);
 #endif
 }
