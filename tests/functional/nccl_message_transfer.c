@@ -21,7 +21,7 @@ int main(int argc, char* argv[])
 	nccl_net_ofi_send_comm_t *sComm = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
-	ncclNet_t *extNet = NULL;
+	test_nccl_net_t *extNet = NULL;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 
 	ofi_log_function = logger;
@@ -95,7 +95,7 @@ int main(int argc, char* argv[])
 
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
-		ncclNetProperties_t props = {0};
+		test_nccl_properties_t props = {0};
 		OFINCCLCHECK(extNet->getProperties(dev, &props));
 		print_dev_props(dev, &props);
 
