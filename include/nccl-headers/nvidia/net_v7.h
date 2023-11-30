@@ -2,21 +2,27 @@
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
  */
 
-#ifndef NCCL_NET_V6_H_
-#define NCCL_NET_V6_H_
+#ifndef NCCL_NET_V7_H_
+#define NCCL_NET_V7_H_
+
+#include "net_device.h"
 
 typedef struct {
-  char* name;     // Used mostly for logging.
-  char* pciPath;  // Path to the PCI device in /sys.
-  uint64_t guid;  // Unique identifier for the NIC chip. Important for
-                  // cards with multiple PCI functions (Physical or virtual).
-  int ptrSupport; // [NCCL_PTR_HOST|NCCL_PTR_CUDA|NCCL_PTR_DMABUF]
-  int speed;      // Port speed in Mbps.
-  int port;       // Port number.
-  float latency;  // Network latency
-  int maxComms;   // Maximum number of comms we can create
-  int maxRecvs;   // Maximum number of grouped receives.
-}ncclNetProperties_v6_t;
+  char* name;                      // Used mostly for logging.
+  char* pciPath;                   // Path to the PCI device in /sys.
+  uint64_t guid;                   // Unique identifier for the NIC chip. Important for
+                                   // cards with multiple PCI functions (Physical or virtual).
+  int ptrSupport;                  // [NCCL_PTR_HOST|NCCL_PTR_CUDA|NCCL_PTR_DMABUF]
+  int speed;                       // Port speed in Mbps.
+  int port;                        // Port number.
+  float latency;                   // Network latency
+  int maxComms;                    // Maximum number of comms we can create
+  int maxRecvs;                    // Maximum number of grouped receives.
+  ncclNetDeviceType netDeviceType; // Network offload type
+  int netDeviceVersion;            // Version number for network offload
+} ncclNetProperties_v7_t;
+
+typedef ncclNetProperties_v7_t ncclNetProperties_t;
 
 typedef struct {
   // Name of the network (mainly for logs)
@@ -26,7 +32,7 @@ typedef struct {
   // Return the number of adapters.
   ncclResult_t (*devices)(int* ndev);
   // Get various device properties.
-  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v6_t* props);
+  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v7_t* props);
   // Create a receiving object and provide a handle to connect to it. The
   // handle can be up to NCCL_NET_HANDLE_MAXSIZE bytes and will be exchanged
   // between ranks to create a connection.
@@ -35,12 +41,12 @@ typedef struct {
   // This call must not block for the connection to be established, and instead
   // should return successfully with sendComm == NULL with the expectation that
   // it will be called again until sendComm != NULL.
-  ncclResult_t (*connect)(int dev, void* handle, void** sendComm);
+  ncclResult_t (*connect)(int dev, void* handle, void** sendComm, ncclNetDeviceHandle_v7_t** sendDevComm);
   // Finalize connection establishment after remote peer has called connect.
   // This call must not block for the connection to be established, and instead
   // should return successfully with recvComm == NULL with the expectation that
   // it will be called again until recvComm != NULL.
-  ncclResult_t (*accept)(void* listenComm, void** recvComm);
+  ncclResult_t (*accept)(void* listenComm, void** recvComm, ncclNetDeviceHandle_v7_t** recvDevComm);
   // Register/Deregister memory. Comm can be either a sendComm or a recvComm.
   // Type is either NCCL_PTR_HOST or NCCL_PTR_CUDA.
   ncclResult_t (*regMr)(void* comm, void* data, int size, int type, void** mhandle);
@@ -63,6 +69,11 @@ typedef struct {
   ncclResult_t (*closeSend)(void* sendComm);
   ncclResult_t (*closeRecv)(void* recvComm);
   ncclResult_t (*closeListen)(void* listenComm);
-} ncclNet_v6_t;
+  // Copy the given mhandle to a dptr in a format usable by this plugin's device code
+  ncclResult_t (*getDeviceMr)(void* comm, void* mhandle, void** dptr_mhandle);
+
+  // Notify the plugin that a recv has completed by the device
+  ncclResult_t (*irecvConsumed)(void* recvComm, int n, void* request);
+} ncclNet_v7_t;
 
 #endif // end include guard
