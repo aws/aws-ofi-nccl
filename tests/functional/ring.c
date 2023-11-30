@@ -20,6 +20,7 @@ int main(int argc, char *argv[])
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {0};
+	ncclNetDeviceHandle_v7_t *s_ignore, *r_ignore;
 	test_nccl_net_t *extNet = NULL;
 
 	ofi_log_function = logger;
@@ -143,7 +144,7 @@ int main(int argc, char *argv[])
 	/* Connect to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
 	while (sComm_next == NULL)
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next));
+		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next, &s_ignore));
 
 	/*
 	 * Accept API: accept connection from prev rank as the data flow is
@@ -151,7 +152,7 @@ int main(int argc, char *argv[])
 	 */
 	NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 	while (rComm == NULL)
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm));
+		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
 	NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
 
 	/* Send NUM_REQUESTS to next rank */
