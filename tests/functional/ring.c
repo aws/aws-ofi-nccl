@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {0};
-	ncclNet_t *extNet = NULL;
+	test_nccl_net_t *extNet = NULL;
 
 	ofi_log_function = logger;
 
@@ -106,7 +106,7 @@ int main(int argc, char *argv[])
 
         /* Get Properties for the device */
         for (dev = 0; dev < ndev; dev++) {
-                ncclNetProperties_t props = {0};
+                test_nccl_properties_t props = {0};
                 OFINCCLCHECK(extNet->getProperties(dev, &props));
                 print_dev_props(dev, &props);
 

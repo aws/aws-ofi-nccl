@@ -44,7 +44,9 @@
 
 // Can be changed when porting new versions to the plugin
 #define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v6
-typedef ncclNet_v6_t ncclNet_t;
+
+typedef ncclNet_v6_t test_nccl_net_t;
+typedef ncclNetProperties_v6_t test_nccl_properties_t;
 
 void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	    int line, const char *fmt, ...)
@@ -75,7 +77,7 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 	va_end(vargs);
 }
 
-void print_dev_props(int dev, ncclNetProperties_t *props)
+void print_dev_props(int dev, test_nccl_properties_t *props)
 {
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
         NCCL_OFI_TRACE(NCCL_NET, "%s: PCIe Path: %s", props->name, props->pciPath);
@@ -181,10 +183,10 @@ ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int 
 	return ncclSuccess;
 }
 
-ncclNet_t *get_extNet(void)
+test_nccl_net_t *get_extNet(void)
 {
 	void *netPluginLib = NULL;
-	ncclNet_t *extNet = NULL;
+	test_nccl_net_t *extNet = NULL;
 
 	netPluginLib = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
 	if (netPluginLib == NULL) {
@@ -192,7 +194,7 @@ ncclNet_t *get_extNet(void)
 		return NULL;
 	}
 
-	extNet = (ncclNet_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
+	extNet = (test_nccl_net_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
 	if (extNet == NULL) {
 		NCCL_OFI_WARN("NetPlugin, could not find %s symbol",
 			      STR(NCCL_PLUGIN_SYMBOL));
