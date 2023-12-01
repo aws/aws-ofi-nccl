@@ -669,6 +669,9 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	 * reails have the same speed. */
 	if (ret == 0) {
 		props->port_speed *= device->num_rails;
+		_Static_assert(NUM_TAG_VALUE_BITS < 31,
+			       "NUM_TAG_VALUE_BITS must be less than 31 so max_communicators fits in an integer");
+		props->max_communicators = (1 << NUM_TAG_VALUE_BITS);
 	}
 	return ret;
 }
