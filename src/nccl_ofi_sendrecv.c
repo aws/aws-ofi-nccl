@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -26,6 +27,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		(nccl_net_ofi_sendrecv_device_t *)base_dev;
 	struct fi_info *info = device->info;
 	int dev_id = device->base.dev_id;
+	int ret;
 
 	/* Validate libfabric NIC info */
 	if (OFI_UNLIKELY(info == NULL)) {
@@ -34,7 +36,14 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		return -EINVAL;
 	}
 
-	return nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
+	ret = nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
+	if (ret == 0) {
+		/* make sure max_communicators can safely be copied
+		into an int */
+		props->max_communicators = NCCL_OFI_MIN(device->max_tag, INT_MAX);
+	}
+
+	return ret;
 }
 
 /*

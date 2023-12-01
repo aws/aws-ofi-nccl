@@ -1190,7 +1190,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 * to be always 1.
 	 */
 	props->port_number = 1;
-	props->max_communicators = nic_prov->domain_attr->ep_cnt;
+	props->max_communicators = 0;
 	props->guid = dev_id;
 
 	props->latency = net_latency >= .0 ? net_latency : .0;
