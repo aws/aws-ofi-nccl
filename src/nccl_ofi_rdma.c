@@ -3136,11 +3136,11 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto exit;
 	}
 
-	/* Support only max_reqs inflight reqs. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == max_reqs)) {
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -ENOSPC;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
 
@@ -3502,10 +3502,10 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	data = buffers[flush_n];
 
 	/* Support only max_requests inflight requests. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == max_reqs)) {
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = ncclSystemError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_REQUESTS);
 		goto exit;
 	}
 
@@ -3674,9 +3674,10 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	}
 
 	/* Allocate request freelist */
-	/* Maximum freelist entries is 4*max_reqs because each receive request
+	/* Maximum freelist entries is 4*NCCL_OFI_MAX_REQUESTS because each receive request
 	   can have associated reqs for send_ctrl, recv_segms, and eager_copy */
-	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16, 4 * max_reqs, &r_comm->nccl_ofi_reqs_fl);
+	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
+				     4 * NCCL_OFI_MAX_REQUESTS, &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 				  dev_id);
@@ -4689,11 +4690,11 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		goto error;
 	}
 
-	/* Support only max_reqs inflight requests. */
-	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == max_reqs)) {
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
 		ret = ncclInternalError;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_SEND_REQUESTS);
 		goto error;
 	}
 
@@ -5132,7 +5133,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->num_init_rails = 1;
 
 	/* Allocate request free list */
-	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16, max_reqs, &ret_s_comm->nccl_ofi_reqs_fl);
+	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
+				     NCCL_OFI_MAX_SEND_REQUESTS, &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI request free list for dev %d rail %d",
 			      dev_id, rail_id);

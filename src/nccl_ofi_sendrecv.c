@@ -798,11 +798,11 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto exit;
 	}
 
-	/* Support only max_reqs inflight reqs. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == max_reqs)) {
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
 
@@ -986,10 +986,10 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	data = buffers[flush_n];
 
 	/* Support only max_requests inflight requests. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == max_reqs)) {
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -ENOSPC;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_REQUESTS);
 		goto exit;
 	}
 
@@ -1192,7 +1192,8 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 
 	/* Pre-allocated buffers for data path */
 
-	ret = nccl_ofi_freelist_init(req_size, 16, 16, max_reqs, &r_comm->nccl_ofi_reqs_fl);
+	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_REQUESTS,
+				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      dev_id);
@@ -1564,11 +1565,11 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		goto exit;
 	}
 
-	/* Support only max_reqs inflight requests. */
-	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == max_reqs)) {
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      max_reqs);
+			      NCCL_OFI_MAX_SEND_REQUESTS);
 		goto error;
 	}
 
@@ -1774,7 +1775,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		(0 == memcmp(ret_s_comm->conn_info->ep_name, remote_ep_addr, ret_s_comm->conn_info->ep_namelen)) ? 1 : 0;
 
 	/* Pre-allocated buffers for data path */
-	ret = nccl_ofi_freelist_init(req_size, 16, 16, max_reqs, &ret_s_comm->nccl_ofi_reqs_fl);
+	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_SEND_REQUESTS,
+				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 			      device->base.dev_id);
