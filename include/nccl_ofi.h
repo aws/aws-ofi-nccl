@@ -68,14 +68,20 @@ extern "C" {
  */
 #define NCCL_OFI_MAX_REQUESTS	(128)
 
+/*
+ * Number of send requests that can be active at any given time.  In
+ * the case of supporting NCCL_OFI_MAX_RECVS grouped receives for each
+ * receive request, which means the number of send requests that must
+ * be supported is actually larger than the number of receive
+ * requests.
+ */
+#define NCCL_OFI_MAX_SEND_REQUESTS (NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS)
+
 /* Maximum length of directory path */
 #define PATH_MAX	4096
 
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4
-
-// Maximum numbers of requests supported by plugin
-extern int max_reqs;
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};

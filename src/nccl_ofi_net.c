@@ -52,16 +52,6 @@ int nic_dup_conns = 0;
    read in the polling loop without protection of a lock. */
 size_t cq_read_count = 1;
 
-/*
- * Maximum numbers of requests supported per communicator by
- * plugin. Since NCCL Net v5, one NCCL request can correspond to
- * multiple network requests with `n` identifier passed to
- * irecv(). Therefore, the total number of requests that plugin should
- * support is product of number of NCCL requests and maximum number of
- * recvs supported by plugin.
- */
-int max_reqs = NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS;
-
 const char *provider_filter = NULL;
 
 /* Indicates if memory registration of local buffers is required */
