@@ -2277,20 +2277,11 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm = req->comm;
-	if (OFI_UNLIKELY(base_comm == NULL)) {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid comm object provided");
-		goto exit;
-	}
+	assert(base_comm != NULL);
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep =
-		(nccl_net_ofi_rdma_ep_t *)base_comm->ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
-	}
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
+	assert(ep != NULL);
 
 	/* Process more completions unless the current request is
 	 * completed */
@@ -2540,23 +2531,6 @@ static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails
 }
 
 /*
- * @brief	Check that buffer type is valid and supports memory registration
- */
-bool valid_mr_buff_type(int type)
-{
-	/* Validate type of buffer */
-	bool valid_buffer_type = false;
-	if (type == NCCL_PTR_HOST) valid_buffer_type = true;
-#if HAVE_CUDA
-	if (type == NCCL_PTR_CUDA) valid_buffer_type = true;
-#endif
-#if HAVE_NEURON
-	if (type == NCCL_PTR_NEURON) valid_buffer_type = true;
-#endif
-	return valid_buffer_type;
-}
-
-/*
  * @brief	Register memory region on RDMA endpoint
  *
  * @param	ep
@@ -2582,23 +2556,12 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	assert(ep);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t *)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		ret = ncclInternalError;
-		goto exit;
-	}
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
 	int dev_id = device->base.dev_id;
 	int num_rails = device->num_rails;
 	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
-
-	/* Validate type of buffer */
-	if (OFI_UNLIKELY(!valid_mr_buff_type(type))) {
-		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
-		ret = ncclInternalError;
-		goto exit;
-	}
 
 	/* Allocate rdma memory registration handle */
 	ret_handle = calloc_rdma_mr_handle(num_rails);
@@ -2816,20 +2779,13 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 						nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep =
-		(nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return ncclInternalError;
-	}
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
+	assert(ep != NULL);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t *)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		return ncclInternalError;
-	}
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	return dereg_mr_ep(mr_handle, &device->key_pool);
 }
@@ -2839,10 +2795,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
  */
 static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 {
-	if (OFI_UNLIKELY(fl == NULL)) {
-		NCCL_OFI_WARN("Freelist not allocated");
-		return NULL;
-	}
+	assert(fl != NULL);
 
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t*)nccl_ofi_freelist_entry_alloc(fl);
 	if (OFI_UNLIKELY(req == NULL)) {
@@ -3109,16 +3062,23 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
-	int dev_id = r_comm->base.base.dev_id;
 
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t * ep =
-		(nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid endpoint provided");
+	assert(r_comm != NULL);
+
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+		ret = -ENOSPC;
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			      NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
+
+	int dev_id = r_comm->base.base.dev_id;
+
+	nccl_net_ofi_rdma_ep_t * ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	assert(ep != NULL);
+
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t*)ep->base.device;
+	assert(device != NULL);
 
 	ret = process_cq_if_pending(ep);
 	if (ret == -EAGAIN) {
@@ -3127,42 +3087,6 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		ret = 0;
 		goto error;
 	} else if (ret != 0) {
-		goto error;
-	}
-
-	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t*)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
-	}
-
-	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
-		ret = -ENOSPC;
-		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      NCCL_OFI_MAX_REQUESTS);
-		goto error;
-	}
-
-	/* Currently, plugin doesn't support grouped receives */
-	if (n > NCCL_OFI_MAX_RECVS) {
-		NCCL_OFI_WARN("Group receives are not supported!");
-		ret = -ENOTSUP;
-		goto error;
-	}
-
-	if (OFI_UNLIKELY(mr_handles == NULL)) {
-		NCCL_OFI_WARN("Memory handles array is NULL");
-		ret = -EINVAL;
-		goto error;
-	}
-
-	if (mr_handles[0] == NULL) {
-		NCCL_OFI_WARN("Receive buffer must be registered!");
-		ret = -EINVAL;
 		goto error;
 	}
 
@@ -3431,19 +3355,25 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	rdma_req_flush_data_t *flush_data = NULL;
 	ssize_t rc = 0;
 	void *data = NULL;
-	int dev_id = recv_comm->base.dev_id;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
 
-	/* Validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep =
-		(nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid endpoint provided");
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+		ret = -ENOSPC;
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			      NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
+
+	int dev_id = recv_comm->base.dev_id;
+
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	assert(ep != NULL);
+
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+	assert(scheduler != NULL);
 
 	/* Process any pending requests */
 	bool network_busy = false;
@@ -3478,9 +3408,6 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	assert(r_comm->flush_buff.host_buffer);
 	assert(r_comm->flush_buff.mr_handle);
 
-	/* Plugin only supports one receive per request */
-	assert(n <= NCCL_OFI_MAX_RECVS);
-
 	/*
 	 * Find the non-zero request for which we will issue flush.
 	 * A single operation can flush all request at once.
@@ -3503,14 +3430,6 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	data = buffers[flush_n];
-
-	/* Support only max_requests inflight requests. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
-		ret = ncclSystemError;
-		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      NCCL_OFI_MAX_REQUESTS);
-		goto exit;
-	}
 
 	/* Allocate NCCL OFI request */
 	req = allocate_req(r_comm->nccl_ofi_reqs_fl);
@@ -3868,22 +3787,13 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_ofi_rdma_connection_info_t *conn_msg = &l_comm->conn_msg;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep =
-		(nccl_net_ofi_rdma_ep_t *)l_comm->base.base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		ret = ncclInternalError;
-		goto exit;
-	}
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)l_comm->base.base.ep;
+	assert(ep != NULL);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t *)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		ret = ncclInternalError;
-		goto exit;
-	}
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
 	int dev_id = device->base.dev_id;
 
 	if (l_comm->stage == COMM_CONNECTED) {
@@ -4063,10 +3973,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_ep_t *base_ep = l_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return ncclInternalError;
-	}
+	assert(base_ep != NULL);
 
 	if (l_comm->req.state == NCCL_OFI_RDMA_REQ_PENDING) {
 		NCCL_OFI_WARN("Unable to free request of listen communicator. Request is still pending. Leaking memory.");
@@ -4103,13 +4010,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	nccl_net_ofi_ep_rail_t *first_rail = get_rail(ep, 0);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t*)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
-	}
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t*)ep->base.device;
+	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
 
@@ -4176,20 +4078,12 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 				       nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep =
-		(nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return ncclInternalError;
-	}
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
+	assert(ep != NULL);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t *)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		return ncclInternalError;
-	}
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
@@ -4385,10 +4279,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	ssize_t ret = 0;;
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
 
-	if (OFI_UNLIKELY(req == NULL)) {
-		NCCL_OFI_WARN("Request sent for progressing is NULL");
-		return -EINVAL;
-	}
+	assert(req != NULL);
 
 	if (req->type == NCCL_OFI_RDMA_SEND) { // Post RDMA write
 		rdma_req_send_data_t *send_data = get_send_data(req);
@@ -4453,10 +4344,8 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 	nccl_net_ofi_schedule_t *schedule = send_ctrl_data->ctrl_schedule;
-	if (OFI_UNLIKELY(schedule == NULL)) {
-		NCCL_OFI_WARN("Schedule for req %p is NULL", req);
-		return -1;
-	}
+
+	assert(schedule != NULL);
 
 	// Should be using a single rail for posting the control message
 	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
@@ -4540,10 +4429,8 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_schedule_t *schedule = flush_data->schedule;
-	if (OFI_UNLIKELY(schedule == NULL)) {
-		NCCL_OFI_WARN("Schedule for req %p is NULL", req);
-		return -1;
-	}
+
+	assert(schedule != NULL);
 
 	// Should be using a single rail for posting the control message
 	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
@@ -4650,16 +4537,21 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)send_comm;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	nccl_net_ofi_rdma_req_t *req = NULL;
-	int dev_id = s_comm->base.base.dev_id;
 
-	/* Validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
+	assert(s_comm != NULL);
+
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
 		ret = ncclInternalError;
-		NCCL_OFI_WARN("Invalid endpoint provided for sComm: %p and dev_id: %d",
-			      s_comm, dev_id);
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			      NCCL_OFI_MAX_SEND_REQUESTS);
 		goto error;
 	}
+
+	int dev_id = s_comm->base.base.dev_id;
+
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	assert(ep != NULL);
 
 	/*
 	 * Try finalize connection if not established yet; Return NULL
@@ -4690,14 +4582,6 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		ret = 0;
 		goto error;
 	} else if (ret != 0) {
-		goto error;
-	}
-
-	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
-		ret = ncclInternalError;
-		NCCL_OFI_WARN("Can not support more than %d inflight requests",
-			      NCCL_OFI_MAX_SEND_REQUESTS);
 		goto error;
 	}
 
@@ -5294,10 +5178,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 	/* Retrieve and validate devices */
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)base_ep->device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
-		return ncclInternalError;
-	}
+	assert(device != NULL);
 
 	/* Connection establishment is not done yet */
 	nccl_ofi_comm_stage_t stage = comm_state->stage;

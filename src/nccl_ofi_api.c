@@ -62,6 +62,11 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 		return ncclInvalidArgument;
 	}
 
+	if (OFI_UNLIKELY(num_devices == NULL)) {
+		NCCL_OFI_WARN("Invalid num_devices pointer");
+		return ncclInvalidArgument;
+	}
+
 	*num_devices = plugin->num_devs;
 	return ncclSuccess;
 }
@@ -278,6 +283,8 @@ ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 				void **mhandle)
 {
+	int ret = 0;
+
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm =
 		(nccl_net_ofi_comm_t *)comm;
@@ -286,7 +293,19 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 		return ncclInternalError;
 	}
 
-	int ret = 0;
+	/* Validate type of buffer */
+	bool valid_buffer_type = false;
+	if (type == NCCL_PTR_HOST) valid_buffer_type = true;
+#if HAVE_CUDA
+	if (type == NCCL_PTR_CUDA) valid_buffer_type = true;
+#endif
+#if HAVE_NEURON
+	if (type == NCCL_PTR_NEURON) valid_buffer_type = true;
+#endif
+	if (!valid_buffer_type) {
+		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
+		return ncclInternalError;
+	}
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
@@ -483,16 +502,27 @@ error:
 ncclResult_t nccl_net_ofi_isend(void *sComm, void* data, int size,
 				int tag, void *mhandle, void** req)
 {
-	/* Validate send_comm */
-	if (OFI_UNLIKELY(sComm == NULL)) {
-		NCCL_OFI_WARN("Invalid send_comm provided");
-		return ncclInternalError;
-	}
-
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sComm;
 	nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
+	/* Validate send_comm */
+	if (OFI_UNLIKELY(send_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
+		return ncclInternalError;
+	}
+
+	/* can't check the memory handle for validity because the
+	 * send/recv protocol will return a NULL handle for a host
+	 * buffer when the provider does not require local
+	 * registration and the buffer is a host buffer.
+	 */
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
 
 	int ret = send_comm->send(send_comm, data, size, tag, handle, base_req);
 	return nccl_net_ofi_retval_translate(ret);
@@ -509,16 +539,37 @@ ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
 ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, int* sizes,
 				int *tags, void** mhandles, void** req)
 {
-	/* Retrieve and validate comm */
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
+	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
-		NCCL_OFI_WARN("Invalid comm object provided");
+		NCCL_OFI_WARN("Invalid communicator object provided");
 		return ncclInternalError;
 	}
 
-	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	if (OFI_UNLIKELY(n > NCCL_OFI_MAX_RECVS)) {
+		NCCL_OFI_WARN("Request for group recv size of %d, greater than maximum of %d",
+			      n, NCCL_OFI_MAX_RECVS);
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(handles == NULL)) {
+		NCCL_OFI_WARN("Invalid memory handle provided");
+		return ncclInternalError;
+	}
+
+	/* can't check the memory handle for validity because the
+	 * send/recv protocol will return a NULL handle for a host
+	 * buffer when the provider does not require local
+	 * registration and the buffer is a host buffer.
+	 */
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
 
 	int ret = recv_comm->recv(recv_comm, n, buffers, sizes, tags, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
@@ -550,17 +601,37 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 				 void** mhandles, void** req)
 {
-
-	/* Retrieve and validate recv_comm */
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
+	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
-		NCCL_OFI_WARN("Invalid recv_comm provided");
+		NCCL_OFI_WARN("Invalid communicator object provided");
 		return ncclInternalError;
 	}
 
-	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	if (OFI_UNLIKELY(n > NCCL_OFI_MAX_RECVS)) {
+		NCCL_OFI_WARN("Request for group flush size of %d, greater than maximum of %d",
+			      n, NCCL_OFI_MAX_RECVS);
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(handles == NULL)) {
+		NCCL_OFI_WARN("Invalid memory handle provided");
+		return ncclInternalError;
+	}
+
+	/* can't check the memory handle for validity because the
+	 * send/recv protocol will return a NULL handle for a host
+	 * buffer when the provider does not require local
+	 * registration and the buffer is a host buffer.
+	 */
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
 
 	int ret = recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
@@ -601,18 +672,15 @@ ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size,
  */
 ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
-	if (OFI_UNLIKELY(sComm == NULL)) {
-		return ncclInternalError;
-	}
-
 	nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)sComm;
 
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)send_comm->base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
+	if (OFI_UNLIKELY(send_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
 		return ncclInternalError;
 	}
+
+	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)send_comm->base.ep;
+	assert(base_ep != NULL);
 
 	int ret = send_comm->close(send_comm);
 	if (ret != 0) {
@@ -631,18 +699,15 @@ error:
  */
 ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
-	if (OFI_UNLIKELY(rComm == NULL)) {
-		return ncclInternalError;
-	}
-
 	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)recv_comm->base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
+	if (OFI_UNLIKELY(recv_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
 		return ncclInternalError;
 	}
+
+	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)recv_comm->base.ep;
+	assert(base_ep != NULL);
 
 	int ret = recv_comm->close(recv_comm);
 	if (ret != 0) {
@@ -658,12 +723,13 @@ error:
 
 ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
-	if (OFI_UNLIKELY(lComm == NULL)) {
-		return ncclInternalError;
-	}
-
 	nccl_net_ofi_listen_comm_t *listen_comm =
 		(nccl_net_ofi_listen_comm_t *)lComm;
+
+	if (OFI_UNLIKELY(listen_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
+		return ncclInternalError;
+	}
 
 	int ret = listen_comm->close(listen_comm);
 	return nccl_net_ofi_retval_translate(ret);
