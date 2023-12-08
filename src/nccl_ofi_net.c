@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
@@ -945,46 +945,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
 			      nccl_ofi_selected_protocol);
 	} else {
-		int num_accelerators = ofi_ndevices;
-
-#if HAVE_CUDA
-		if (nccl_net_ofi_cuDeviceGetCount(&num_accelerators) != CUDA_SUCCESS) {
-			NCCL_OFI_WARN("Error getting CUDA device count");
-			ret = -ENOTSUP;
-			goto exit;
-		}
-#endif
-
-		/* We try to use the RDMA protocol if all of the
-		 * following are true:
-		 *
-		 * - Using EFA
-		 * - The number of accelerators is less than the
-		 *   number of ofi devices (ie, we likely want
-		 *   multi-rail)
-		 * - We're using Libfabric API 1.18 or later (because
-		 *   we want to disable CUDA copies and see GDR
-		 *   support is still enabled)
-		 * - RMA is supported (because we need write)
-		 * - FI_CONTEXT/FI_CONTEXT2 are not required
-		 *   (requirement of the RDMA protocol).
-		 *
-		 * Otherwise, we'll use the send/recv protocol.  We
-		 * should at some point in the future drop the EFA
-		 * requirement, but I think we want to hoist the hwloc
-		 * check above this and use that to look for clusters
-		 * of NICs rather than this simplistic count check,
-		 * but we need to finish debugging edge cases in the
-		 * topo_create code before we do that.
-		 */
-		if (IS_EFA_PROVIDER(ofi_info_list->fabric_attr->prov_name) &&
-		    num_accelerators < ofi_ndevices &&
-		    selected_fi_version >= FI_VERSION(1,18) &&
-		    (ofi_info_list->caps & FI_RMA) &&
-		    !(ofi_info_list->mode & FI_CONTEXT || ofi_info_list->mode & FI_CONTEXT2)) {
-			nccl_ofi_selected_protocol = "RDMA";
-		}
-
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
 			      nccl_ofi_selected_protocol);
 	}

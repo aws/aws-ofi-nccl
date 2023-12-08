@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
@@ -28,6 +28,7 @@ struct ec2_platform_data {
 	float latency;
 	bool gdr_required;
 	bool net_flush_required;
+	const char *default_protocol;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
@@ -36,6 +37,7 @@ struct ec2_platform_data {
 		.latency = 75.0,
 		.gdr_required = true,
 		.net_flush_required = true,
+		.default_protocol = "SENDRECV",
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -44,6 +46,7 @@ struct ec2_platform_data {
 		.latency = 75.0,
 		.gdr_required = true,
 		.net_flush_required = true,
+		.default_protocol = "SENDRECV",
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -52,6 +55,7 @@ struct ec2_platform_data {
 		.latency = 150.0,
 		.gdr_required = false,
 		.net_flush_required = true,
+		.default_protocol = "SENDRECV",
 	},
 	{
 		.name = "p5.48xlarge",
@@ -60,12 +64,14 @@ struct ec2_platform_data {
 		.latency = 75.0,
 		.gdr_required = true,
 		.net_flush_required = false,
+		.default_protocol = "RDMA",
 	},
 	{
 		.name = "g5.48xlarge",
 		.topology = "g5.48xl-topo.xml",
 		.gdr_required = false,
 		.net_flush_required = true,
+		.default_protocol = "SENDRECV",
 	},
 };
 
@@ -339,6 +345,8 @@ int platform_init(void)
 {
 	int ret = ncclSuccess;
 	struct ec2_platform_data *platform_data;
+	bool select_efa = false;
+	char *fi_provider;
 
 	NCCL_OFI_INFO(NCCL_INIT, "Configuring AWS-specific options");
 
@@ -350,9 +358,13 @@ int platform_init(void)
 	 * hard failure when there are no NICs.  Both are the
 	 * behaviors we want).
 	 */
-	if (!getenv("FI_PROVIDER")) {
+	fi_provider = getenv("FI_PROVIDER");
+	if (fi_provider == NULL) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting provider_filter to efa");
 		provider_filter = "efa";
+		select_efa = true;
+	} else if (0 == strcmp(fi_provider, "efa")) {
+		select_efa = true;
 	}
 
 #if HAVE_CUDA
@@ -491,6 +503,10 @@ int platform_init(void)
 		}
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
 				net_latency);
+	}
+
+	if (select_efa && ofi_nccl_protocol() == NULL && platform_data) {
+		nccl_ofi_selected_protocol = platform_data->default_protocol;
 	}
 
 exit:
