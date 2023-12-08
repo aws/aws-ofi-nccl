@@ -54,16 +54,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 }
 
 
-// To handle the difference in maximum number of requests that
-// can be sent over the network
-ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction)
-{
-	int ret = nccl_net_ofi_init(logFunction);
-
-	return nccl_net_ofi_retval_translate(ret);
-}
-
-
 ncclResult_t nccl_net_ofi_devices(int *num_devices)
 {
 	/* Validate plugin */

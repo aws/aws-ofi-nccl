@@ -16,7 +16,6 @@ extern "C" {
 struct nccl_ofi_properties;
 
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction);
-ncclResult_t nccl_net_ofi_init_v3(ncclDebugLogger_t logFunction);
 ncclResult_t nccl_net_ofi_devices(int *ndev);
 ncclResult_t nccl_net_ofi_get_properties(int dev, struct nccl_ofi_properties *ofi_properties);
 ncclResult_t nccl_net_ofi_listen(int dev, void *handle, void **listenComm);
