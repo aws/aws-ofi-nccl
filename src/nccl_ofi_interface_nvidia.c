@@ -132,7 +132,7 @@ static ncclResult_t accept_v7(void* listenComm, void** recvComm,
 
 const ncclNet_v2_t ncclNetPlugin_v2 = {
 	.name = "AWS Libfabric",
-	.init = nccl_net_ofi_init_v3,
+	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.pciPath = pciPath_v2,
 	.ptrSupport = ptrSupport_v2,
@@ -152,7 +152,7 @@ const ncclNet_v2_t ncclNetPlugin_v2 = {
 
 const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.name = "AWS Libfabric",
-	.init = nccl_net_ofi_init_v3,
+	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = getProperties_v4,
 	.listen = nccl_net_ofi_listen_v4,
