@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_RDMA_H_
@@ -628,8 +628,7 @@ typedef struct nccl_net_ofi_rdma_device {
 /*
  * @brief	Initialize plugin with rdma protocol structures
  */
-int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
-			   bool provide_own_mr_key,
+int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus

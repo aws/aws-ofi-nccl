@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023=2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 #include "config.h"
 
@@ -23,6 +23,7 @@
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_memcheck.h"
+#include "nccl_ofi_ofiutils.h"
 
 /* Template path used to write temporary NCCL topology file */
 static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
@@ -5388,8 +5389,8 @@ static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
-		nccl_ofi_ep_release_ofi(rail->ofi_ep, rail->av,
-					rail->cq, dev_id);
+		nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
+					     rail->cq, dev_id);
 		rail->ofi_ep = NULL;
 		rail->av = NULL;
 		rail->cq = NULL;
@@ -5443,10 +5444,11 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 			get_device_rail(device, rail_id);
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
-		ret = nccl_ofi_init_connection(rail_dev->info,
-					       rail_dev->domain,
-					       &rail->ofi_ep,
-					       &rail->av, &rail->cq);
+		ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18),
+							rail_dev->info,
+							rail_dev->domain,
+							&rail->ofi_ep,
+							&rail->av, &rail->cq);
 		if (ret != 0) {
 			goto exit;
 		}
@@ -5859,16 +5861,96 @@ static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info 
 	return device_rails;
 }
 
-int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
-				    bool provide_own_mr_key,
-				    nccl_net_ofi_plugin_t **plugin_p)
+
+static void get_hints(struct fi_info *hints)
+{
+	hints->caps = 0;
+
+	/* Primary Capabilities */
+	hints->caps = FI_MSG | FI_RMA | FI_TAGGED | FI_HMEM;
+
+	/* Primary Modifiers.  Explicitly do not request any primary
+	 * modifiers, as we need send/recv, read, and write
+	 */
+
+	/* Secondary Capabilities.  local comm is needed both for the
+	 * bounce buffer cleanup and if peer to peer is disabled at
+	 * the NCCL level.  */
+	hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+
+	hints->mode = 0;
+
+	hints->tx_attr->msg_order = FI_ORDER_SAS;
+	hints->rx_attr->msg_order = FI_ORDER_SAS;
+
+	hints->ep_attr->type = FI_EP_RDM;
+
+	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_ENDPOINT | FI_MR_VIRT_ADDR |
+		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
+	hints->domain_attr->threading = FI_THREAD_SAFE;
+
+	/* Set progress mode to unspec to use the provider's default
+	 * mode.  We hard poll for completion, but if a provider is
+	 * faster with async progress, then we don't really care and
+	 * should let it do that. */
+	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
+	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+}
+
+
+int nccl_net_ofi_rdma_init(const char *provider_filter,
+			   nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t **base_devs = NULL;
 	int num_devs = 0;
-	struct fi_info *info_list = NULL;
+	struct fi_info *provider_list = NULL;
+	unsigned int num_providers;
 	size_t rr_threshold = ofi_nccl_round_robin_threshold();
 	nccl_net_ofi_plugin_t *plugin = NULL;
+	nccl_ofi_topo_t *topo = NULL;
+	struct fi_info *hints;
+
+	ret = pthread_mutex_init(&topo_file_lock, NULL);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
+		ret = ncclSystemError;
+		goto error;
+	}
+
+	hints = fi_allocinfo();
+	if (hints == NULL) {
+		NCCL_OFI_WARN("Allocation of fi_info failed");
+		ret = -FI_ENOMEM;
+		goto error;
+	}
+
+	get_hints(hints);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 18), hints,
+					      &provider_list, &num_providers);
+	if (ret == 0) {
+		/* The 1.18 API allows providers to use CUDA to
+		 * support HMEM pointers, so just having HMEM doesn't
+		 * tell us anything about the usability of CUDA
+		 * pointers with NCCL.  So leave the state unknown
+		 * until we create an endpoint and try to disable
+		 * CUDA
+		 */
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
+		support_gdr = GDR_UNKNOWN;
+	} else {
+		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
+		goto error;
+	}
+	fi_freeinfo(hints);
+
+	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
+		goto exit;
+	}
 
 	if (ofi_nccl_eager_max_size() < 0 ||
 	    ofi_nccl_eager_max_size() > rr_threshold) {
@@ -5883,6 +5965,14 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
 		ret = ncclSystemError;
 		goto error;
+	}
+
+	/* Create NCCL OFI topology */
+	topo = nccl_ofi_topo_create(provider_list);
+	if (!topo) {
+		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
+		ret = -ENOTSUP;
+		goto exit;
 	}
 
 	ret = nccl_ofi_topo_group(topo);
@@ -5942,6 +6032,8 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 
 	/* Allocate and initialize nccl_net devices */
 	for (int dev_id = 0 ; dev_id != num_devs ; ++dev_id) {
+		struct fi_info *info_list;
+
 		/* Retrieve NIC info list from topology */
 		info_list = nccl_ofi_topo_next_info_list(&data_iter);
 
@@ -6033,6 +6125,12 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		}
 
 		/* Initialize mr key pool */
+		bool provide_own_mr_key = true;
+		ret = nccl_ofi_mr_keys_need_own_key(provider_list, &provide_own_mr_key);
+		if (ret != 0) {
+			goto exit;
+		}
+
 		if (provide_own_mr_key) {
 			/* The provider may return support for a larger key size. Use
 			* the size requested by the user to allow them to limit the
@@ -6074,6 +6172,10 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	}
 
  exit:
+	if (topo != NULL) {
+		nccl_ofi_topo_free(topo);
+	}
+
 	*plugin_p = plugin;
 
 	return ret;

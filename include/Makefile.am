@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2023      Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -24,6 +24,7 @@ noinst_HEADERS = \
 	nccl_ofi_scheduler.h \
 	nccl_ofi_topo.h \
 	nccl_ofi_tuner.h \
+	nccl_ofi_ofiutils.h \
 	tracepoint.h \
 	nccl-headers/net.h \
 	nccl-headers/error.h \
