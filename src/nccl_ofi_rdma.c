@@ -5782,7 +5782,6 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 {
 	int ret = 0;
 	nccl_net_ofi_device_t **base_devs = NULL;
-	int num_rails = 0;
 	int num_devs = 0;
 	struct fi_info *info_list = NULL;
 	size_t rr_threshold = ofi_nccl_round_robin_threshold();
@@ -5809,15 +5808,14 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		goto error;
 	}
 
-	num_rails = topo->max_group_size;
-	if (num_rails > MAX_NUM_RAILS) {
+	if (topo->max_group_size > MAX_NUM_RAILS) {
 		NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
-			      num_rails, MAX_NUM_RAILS);
+			      topo->max_group_size, MAX_NUM_RAILS);
 		ret = ncclInternalError;
 		goto error;
 	}
-	if (num_rails < 1) {
-		NCCL_OFI_WARN("Unexpected group size %d", num_rails);
+	if (topo->max_group_size < 1) {
+		NCCL_OFI_WARN("Unexpected group size %d", topo->max_group_size);
 		ret = ncclInternalError;
 		goto error;
 	}
@@ -5881,9 +5879,9 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 
 		/* Ensure that number of rails are the same across devices */
 		int length = ofi_info_list_length(info_list);
-		if (num_rails != length) {
+		if (topo->max_group_size != length) {
 			NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
-				      dev_id, num_rails, length);
+				      dev_id, topo->max_group_size, length);
 			ret = ncclInternalError;
 			goto error;
 		}
@@ -5927,7 +5925,7 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		}
 
 		/* Create scheduler */
-		ret = nccl_net_ofi_threshold_scheduler_init(num_rails,
+		ret = nccl_net_ofi_threshold_scheduler_init(length,
 							    rr_threshold,
 							    &device->scheduler);
 		if (ret) {
@@ -5937,8 +5935,8 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 
 		/* Set NIC information */
 		device->prov_name = info_list->fabric_attr->prov_name;
-		device->num_rails = num_rails;
-		device->device_rails = create_device_rail_array(info_list, num_rails);
+		device->num_rails = length;
+		device->device_rails = create_device_rail_array(info_list, length);
 		if (!device->device_rails) {
 			NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
 			ret = ncclSystemError;
