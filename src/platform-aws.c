@@ -341,7 +341,7 @@ int configure_nvls_option(void)
  * 		   if we find no match
  * 		error, on failure
  */
-int platform_init(void)
+int platform_init(const char **provider_filter)
 {
 	int ret = ncclSuccess;
 	struct ec2_platform_data *platform_data;
@@ -361,7 +361,7 @@ int platform_init(void)
 	fi_provider = getenv("FI_PROVIDER");
 	if (fi_provider == NULL) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting provider_filter to efa");
-		provider_filter = "efa";
+		*provider_filter = "efa";
 		select_efa = true;
 	} else if (0 == strcmp(fi_provider, "efa")) {
 		select_efa = true;

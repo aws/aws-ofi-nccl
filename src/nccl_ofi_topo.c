@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -17,6 +17,7 @@
 #include "nccl-headers/error.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_ofiutils.h"
 
 #if HAVE_CUDA
 static const uint8_t target_class_id = 0x03;		/* Display controller class */
@@ -192,7 +193,7 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo)
 		nccl_ofi_topo_data_t *data = nccl_ofi_get_user_data(&data_iter);
 		nccl_ofi_inc_user_data_iter(&data_iter);
 		while (data) {
-			nccl_net_ofi_free_info_list(data->info_list);
+			nccl_ofi_ofiutils_free_info_list(data->info_list);
 			data = nccl_ofi_get_user_data(&data_iter);
 			nccl_ofi_inc_user_data_iter(&data_iter);
 		}

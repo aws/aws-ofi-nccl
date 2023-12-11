@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 #include "config.h"
 
@@ -17,8 +17,13 @@
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_ofiutils.h"
 #include "tracepoint.h"
 #include "nccl_ofi_math.h"
+
+
+static int selected_api_version = 0;
+
 
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 				 nccl_ofi_properties_t *props)
@@ -2035,8 +2040,8 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	 * deallocation.
 	 */
 	if (ep->ref_cnt == 0) {
-		nccl_ofi_ep_release_ofi(ep->ofi_ep, ep->av, ep->cq,
-					device->base.dev_id);
+		nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, ep->cq,
+					     device->base.dev_id);
 		ep->ofi_ep = NULL;
 		ep->av = NULL;
 		ep->cq = NULL;
@@ -2100,8 +2105,9 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	if (ep->ref_cnt == 0) {
-		ret = nccl_ofi_init_connection(device->info, device->domain, &ep->ofi_ep,
-						   &ep->av, &ep->cq);
+		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info,
+							device->domain, &ep->ofi_ep, &ep->av,
+							&ep->cq);
 		if (ret != 0) {
 			goto unlock;
 		}
@@ -2198,16 +2204,195 @@ static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
 	return 0;
 }
 
-int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
-					int num_infos,
-					bool provide_own_mr_key,
-					nccl_net_ofi_plugin_t **plugin_p)
+
+static void get_hints(struct fi_info *hints, int req_gdr)
+{
+	hints->caps = FI_LOCAL_COMM | FI_REMOTE_COMM | FI_TAGGED | FI_MSG;
+	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_ENDPOINT;
+	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
+
+	if (req_gdr) {
+		hints->caps |= FI_HMEM;
+		if (!cuda_flush) {
+			hints->caps |= FI_RMA | FI_READ;
+		}
+		/*
+		 * Set MR mode bits to indicate that application allows
+		 * registration of both local and device memory buffers
+		 * and can support the endpoint memory registration model
+		 */
+		hints->domain_attr->mr_mode |= FI_MR_HMEM;
+	}
+
+	hints->mode = FI_CONTEXT | FI_CONTEXT2;
+
+	hints->ep_attr->type = FI_EP_RDM;
+
+	hints->domain_attr->threading = FI_THREAD_SAFE;
+
+	/* Set progress mode to unspec to use the provider's default mode. */
+	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
+	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+
+	/* Set MR mode bits to indicate FI_MR_BASIC registration */
+	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+
+	hints->tx_attr->msg_order = FI_ORDER_SAS;
+	hints->rx_attr->msg_order = FI_ORDER_SAS;
+}
+
+
+int nccl_net_ofi_sendrecv_init(const char *provider_filter,
+			       nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
 	int dev_id = 0;
-	struct fi_info *info = ofi_info_list;
+	struct fi_info *provider_list = NULL, *info;
+	unsigned int num_providers;
 	nccl_net_ofi_device_t **base_devs = NULL;
 	nccl_net_ofi_plugin_t *plugin = NULL;
+	struct fi_info *hints;
+
+	hints = fi_allocinfo();
+	if (hints == NULL) {
+		NCCL_OFI_WARN("Allocation of fi_info failed");
+		ret = -FI_ENOMEM;
+		goto error;
+	}
+
+	get_hints(hints, true);
+	selected_api_version = FI_VERSION(1, 18);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+					      &provider_list, &num_providers);
+	if (ret == 0) {
+		/* The 1.18 API allows providers to use CUDA to
+		 * support HMEM pointers, so just having HMEM doesn't
+		 * tell us anything about the usability of CUDA
+		 * pointers with NCCL.  So leave the state unknown
+		 * until we create an endpoint and try to disable
+		 * CUDA
+		 */
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
+		support_gdr = GDR_UNKNOWN;
+		goto found;
+	}
+
+	get_hints(hints, true);
+	selected_api_version = FI_VERSION(1, 6);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+					      &provider_list, &num_providers);
+	if (ret == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.6 API, with GPUDirect RDMA support");
+		support_gdr = GDR_SUPPORTED;
+		goto found;
+	}
+
+	get_hints(hints, false);
+	selected_api_version = FI_VERSION(1, 6);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+					      &provider_list, &num_providers);
+	if (ret == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Using Libfabric 1.6 API, without GPUDirect RDMA support");
+		support_gdr = GDR_UNSUPPORTED;
+		goto found;
+	}
+
+	ret = -FI_ENODATA;
+found:
+	fi_freeinfo(hints);
+	if (ret != 0 && ret != -FI_ENODATA) {
+		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
+		goto error;
+	}
+	if (provider_list == NULL) {
+		ret = -FI_ENODATA;
+		goto error;
+	}
+
+	/* Allow for multiple virtual nics per nic to increase
+	 * throughput for NICs that do not handle single QP situations
+	 * well. */
+	if (nic_dup_conns > 1) {
+		struct fi_info *input_iter, *tmp, *output_head, *output_tail;
+
+		/* The goal of the next chunk of code is to make
+		 * provider_list contain the existing providr
+		 * structures nic_dup_conns times each.  We start by
+		 * multiplying the number of devices (ie, the size of
+		 * the provider_list array) by nic_dup_conns.  We then
+		 * iterate over a new info list, adding that number of
+		 * devices by repeatedly copying the entries in the
+		 * original list.
+		 *
+		 * If the input list was info objects A, B, C and
+		 * dup_conns was 2, the output array (ie, provider_list
+		 * at the end) will be A, B, C, A, B, C.
+		 *
+		 * Note that this isn't entirely sufficient to get
+		 * NCCL to use all the connections.  We must also fake
+		 * the locality of the info structures so that they
+		 * look like more appealing paths; see the dup_conns
+		 * code in the PCIe path discovery logic.
+		 */
+		num_providers *= nic_dup_conns;
+
+		input_iter = NULL;
+		output_head = output_tail = NULL;
+		for (size_t i = 0 ; i < num_providers ; i++) {
+			/* note that because we'll iterate through
+			   provider_list multiple times (because
+			   num_providers is already multiplied by
+			   nic_dup_conns), this check has to be in the
+			   for loop.  Each time we reach the end of
+			   the list, we'll see iter as NULL and
+			   restart. */
+			if (!input_iter)
+				input_iter = provider_list;
+
+			tmp = fi_dupinfo(input_iter);
+			if (!tmp) {
+				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
+				ret = ncclSystemError;
+				goto exit;
+			}
+			/* just in case */
+			tmp->next = NULL;
+
+			if (!output_head)
+				output_head = tmp;
+
+			if (!output_tail) {
+				output_tail = tmp;
+			} else {
+				output_tail->next = tmp;
+				output_tail = tmp;
+			}
+
+			input_iter = input_iter->next;
+		}
+
+		fi_freeinfo(provider_list);
+		provider_list = output_head;
+
+		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
+			      nic_dup_conns, num_providers);
+	}
+
+	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
+		goto exit;
+	}
+
+	/* Indicates if the provider selects MR keys */
+	bool provide_own_mr_key = true;
+	ret = nccl_ofi_mr_keys_need_own_key(provider_list, &provide_own_mr_key);
+	if (ret != 0) {
+		goto exit;
+	}
 
 	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
 	if (!plugin) {
@@ -2216,7 +2401,7 @@ int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 		goto exit;
 	}
 
-	base_devs = malloc(num_infos * sizeof(nccl_net_ofi_sendrecv_device_t *));
+	base_devs = malloc(num_providers * sizeof(nccl_net_ofi_sendrecv_device_t *));
 	if (!base_devs) {
 		NCCL_OFI_WARN("Unable to allocate "
 			      "nccl_net_ofi_sendrecv_device_t pointer array");
@@ -2225,11 +2410,11 @@ int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 	}
 
 	plugin->devs = base_devs;
-	plugin->num_devs = num_infos;
+	plugin->num_devs = num_providers;
 
 	/* Allocate and initialize nccl_net devices */
-
-	while (dev_id != num_infos) {
+	info = provider_list;
+	while (dev_id != num_providers) {
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			ret = -EINVAL;

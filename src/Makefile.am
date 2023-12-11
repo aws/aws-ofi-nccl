@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2024, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -17,6 +17,7 @@ sources = \
 	nccl_ofi_freelist.c \
 	nccl_ofi_deque.c \
 	nccl_ofi_idpool.c \
+	nccl_ofi_ofiutils.c \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS

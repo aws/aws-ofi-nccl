@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_H_
@@ -464,24 +464,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
  */
 int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
-/*
- * @brief	Allocates and initialises libfabric endpoint and AV.
- *
- * @return	Endpoint ep
- * @return	Address vector av
- */
-int nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
-				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
-
-/*
- * @brief	Returns provider info structure for the given NIC ID.
- */
-struct fi_info *get_nic_info(int dev_id, struct fi_info *info_list);
-
-/*
- * @brief	Release libfabric endpoint and address vector
- */
-void nccl_ofi_ep_release_ofi(struct fid_ep *ep, struct fid_av *av, struct fid_cq *cq, int dev_id);
 
 /*
  * @brief	Register DMA buffer for send comm. Unimplemented.
@@ -530,15 +512,16 @@ int nccl_net_ofi_alloc_mr_buffer(size_t size, void **ptr);
  */
 int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
 
+
 /*
- * @brief	Free libfabric NIC info list.
+ * @brief       Parse selected provider for required behavior flags
+ * @return      0 (Success)
  *
- * Frees each node of the list. No operation if list is NULL.
- *
- * @param	info_list
- *		List or circular list of libfabric NIC infos
+ * Set required behavior flags (and print debugging information) for
+ * local_mr, virt_addr_mr, and endpoint_mr.
  */
-void nccl_net_ofi_free_info_list(struct fi_info *info_list);
+int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
+					     unsigned int num_providers);
 
 /* Declare a platform-specific initialization hook that can be
  * provided by platform-specific source files (such as the optionally
@@ -546,7 +529,7 @@ void nccl_net_ofi_free_info_list(struct fi_info *info_list);
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_init will be NULL at runtime.
  */
-int platform_init(void) __attribute__((weak));
+int platform_init(const char **provider_filter) __attribute__((weak));
 
 /* Declare a platform-specific endpoint configuration hook that can be
  * provided by platform-specific source files (such as the optionally

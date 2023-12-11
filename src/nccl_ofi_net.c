@@ -27,9 +27,6 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
 
-#define EFA_PROVIDER_NAME "efa"
-#define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
-
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
 
@@ -37,9 +34,6 @@ enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
-
-/* Selected Libfabric API version */
-int selected_fi_version;
 
 /* number of duplicate providers to create for each discovered
  * provider, including renaming to cause NCCL to create additional
@@ -132,616 +126,11 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
 	return ret;
 }
 
-/*
- * @brief	Free list of libfabric NIC info structs
- *
- * This function frees all elements of the input list. The input list
- * may be a circular list.
- */
-void nccl_net_ofi_free_info_list(struct fi_info *info_list)
-{
-	if (!info_list) return;
-
-	struct fi_info *info = info_list;
-	struct fi_info *next = NULL;
-	while (info) {
-		next = info->next;
-		info->next = NULL;
-		fi_freeinfo(info);
-		info = next;
-
-		/* End info list traversal when next info struct
-		 * closes loop to list head */
-		if (next == info_list) {
-			break;
-		}
-	}
-}
-
-static int in_list(const char *item, const char *list)
-{
-	int ret = 0;
-	char *token = NULL;
-	char *list_temp = strdup(list);
-
-	if (list_temp == NULL) {
-		if (list != NULL) {
-			NCCL_OFI_WARN("Unable to duplicate list.");
-			ret = ncclSystemError;
-		}
-		goto exit;
-	}
-
-	token = strtok((char *)list_temp, ",");
-
-	while (token) {
-		if (strcmp(item, token) == 0) {
-			ret = 1;
-			goto exit;
-		}
-		token = strtok(NULL, ",");
-	}
-
- exit:
-	free(list_temp);
-	return ret;
-}
-
-/*
- * @brief	Returns true if the given provider matches IPv6 addressing format,
- *		interfaces from tcp_if_exclude_list or multiple memory tag formats.
- *
- * @return 	true, if success
- *		false, otherwise
- */
-static bool match_prov_info(char *name, uint32_t addr_format,
-			    uint64_t mem_tag_format, uint64_t expected_mem_tag_format)
-{
-	const char *tcp_if_exclude_list = ofi_nccl_exclude_tcp_if();
-
-	if (in_list(name, tcp_if_exclude_list)) {
-		return true;
-	} else if (!ofi_nccl_use_ipv6_tcp() && (addr_format == FI_SOCKADDR_IN6)) {
-		return true;
-	} else if (mem_tag_format != expected_mem_tag_format) {
-		/* TODO: Remove after https://github.com/ofiwg/libfabric/issues/6126 is fixed */
-		/* RxM utility provider adds `FI_COLLECTIVE` capability
-		 * which ends up duplicating the fi_info structures. That
-		 * is because the size of the supported tag changes when
-		 * `FI_COLLECTIVE` is enabled.
-		 * This happens even when applications do not request for
-		 * this capability in hints.
-		 * For now, we choose one tag format and use that to filter all
-		 * info objects.
-		 */
-		return true;
-	}
-
-	return false;
-}
-
-/*
- * @brief	Removes info objects from `info_list` matching
- *		certain criteria for TCP provider.
- *
- * @param	info_list
- *		List of libfabric NIC info
- * @param	num_infos
- *		Number of NICs represented in info_list
- */
-static void filter_tcp_info_list(struct fi_info **info_list, int *num_infos)
-{
-	struct fi_info *prev = NULL, *curr = NULL;
-	struct fi_info *delete_info = NULL;
-	bool delete_prov = false;
-	uint64_t expected_mem_tag_format = 0;
-
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Removing unnecessary interfaces and address formats for TCP provider");
-
-	curr = *info_list;
-	expected_mem_tag_format = curr->ep_attr->mem_tag_format;
-
-	while (curr != NULL) {
-
-		/* Check if interface name and format matches deletion criteria */
-		delete_prov = match_prov_info(curr->domain_attr->name,
-					      curr->addr_format,
-					      curr->ep_attr->mem_tag_format,
-					      expected_mem_tag_format);
-		if (delete_prov) {
-
-			if (prev != NULL) {
-				prev->next = curr->next;
-			}
-			(*num_infos)--;
-
-			delete_info = curr;
-			curr = curr->next;
-
-			/* Delete node matching criteria */
-			delete_info->next = NULL;
-			fi_freeinfo(delete_info);
-		}
-		else {
-			if (prev == NULL) {
-				/*
-				 * Update HEAD of prov_info_list to point to first endpoint which
-				 * can be used for communication.
-				 */
-				*info_list = curr;
-			}
-
-			prev = curr;
-			curr = curr->next;
-		}
-	}
-
-	/*
-	 * In case all info objects match the filter criteria,
-	 * update HEAD of prov_info_list to point to NULL.
-	 */
-	if (prev == NULL) {
-		*info_list = prev;
-	}
-}
-
-
-/*
- * @brief	Returns hints info structure depending on GPUDirect support requirement
- */
-static void get_hints(struct fi_info *hints, int req_gdr)
-{
-	if (req_gdr) {
-		hints->caps = FI_TAGGED | FI_MSG | FI_HMEM;
-		if (!cuda_flush)
-			hints->caps |= FI_RMA | FI_READ;
-		/*
-		 * Set MR mode bits to indicate that application allows
-		 * registration of both local and device memory buffers
-		 * and can support the endpoint memory registration model
-		 */
-		hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_ENDPOINT;
-		hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
-	}
-	else {
-		hints->caps = FI_TAGGED | FI_MSG;
-		/*
-		 * Set MR mode bits to indicate that application allows
-		 * registration of both local memory buffers
-		 */
-		hints->domain_attr->mr_mode = FI_MR_LOCAL;
-	}
-
-	hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
-
-	/*
-	 * Add capabilities needed for RDMA protcol:
-	 * - FI_DIRECTED_RECV - support fi_trecv from specific endpoint
-	 * - FI_RMA and family - support RMA operations
-	 */
-	hints->caps |= FI_DIRECTED_RECV | FI_RMA | FI_WRITE | FI_REMOTE_WRITE;
-
-	hints->mode = FI_CONTEXT | FI_CONTEXT2;
-
-	hints->ep_attr->type = FI_EP_RDM;
-
-	hints->domain_attr->threading = FI_THREAD_SAFE;
-
-	/* Set progress mode to unspec to use the provider's default mode. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
-
-	/* Set MR mode bits to indicate FI_MR_BASIC registration */
-	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
-
-	hints->tx_attr->msg_order = FI_ORDER_SAS;
-	hints->rx_attr->msg_order = FI_ORDER_SAS;
-}
-
-/*
- * @brief	Returns provider info structure. It first tries to get providers
- *		which supports GPUDirect. If not found, it re-tries to search for
- *		provider supporting tagged messaging and RDM endpoints.
- *
- * @return	A list of fi_info structures for a single provider.
- * @return	0 on success
- *		non-zero on error
- */
-static int find_ofi_provider(struct fi_info **providers)
-{
-	int rc = 0;
-	struct fi_info *gdr_hints, *hints;
-
-	gdr_hints = fi_allocinfo();
-	hints = fi_allocinfo();
-	if ((gdr_hints == NULL) || (hints == NULL)) {
-		NCCL_OFI_WARN("Unable to allocate hints fi_info structure");
-		rc = -FI_ENOMEM;
-		goto exit;
-	}
-
-	/* Get hints for GPUDirect capable provider */
-	get_hints(gdr_hints, true);
-
-/* Libfabric 1.18.0 API introduced significant API and behavior changes,
- * including the "FI_OPT_CUDA_API_PERMITTED" endpoint option (which
- * enables/disables CUDA operations at runtime), setting the
- * "FI_EFA_USE_DEVICE_RDMA" environment variable to true by default (the
- * previous default was false), and new endpoint options for EFA. Thus, we will
- * first try to use the 1.18.0 API, and if it is unavailable, we will fall back
- * to the previously utilized v1.6 API to support customers with older versions
- * of Libfabric.
- */
-	rc = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, gdr_hints, providers);
-	if (rc == 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
-		/* The 1.18 API allows providers to use CUDA to
-		 * support HMEM pointers, so just having HMEM doesn't
-		 * tell us anything about the usability of CUDA
-		 * pointers with NCCL.  So leave the state unknown
-		 * until we create an endpoint and try to disable
-		 * CUDA
-		 */
-		support_gdr = GDR_UNKNOWN;
-		selected_fi_version = FI_VERSION(1, 18);
-		goto exit;
-	}
-	
-	rc = fi_getinfo(FI_VERSION(1, 6), NULL, NULL, 0ULL, gdr_hints, providers);
-	if (rc == 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.6 API, with GPUDirect RDMA support");
-		support_gdr = GDR_SUPPORTED;
-		selected_fi_version = FI_VERSION(1, 6);
-		goto exit;
-	}
-	else if (rc == -FI_ENODATA) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Could not find any optimal provider supporting GPUDirect RDMA");
-
-		/* Indicate that plugin doesn't support transfers using GPU buffers */
-		support_gdr = GDR_UNSUPPORTED;
-#if !HAVE_NEURON
-		/* Functioning without GDR support is not a valid use case for neuron */
-		/* Re-try finding non-GPUDirect capable provider */
-		get_hints(hints, false);
-
-		rc = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0ULL, hints, providers);
-		if (rc == 0) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Using Libfabric 1.18 API, without GPUDirect RDMA support");
-			selected_fi_version = FI_VERSION(1, 18);
-			goto exit;
-		}
-		
-		rc = fi_getinfo(FI_VERSION(1, 6), NULL, NULL, 0ULL, hints, providers);
-		if (rc == 0) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Using Libfabric 1.6 API, without GPUDirect RDMA support");
-			selected_fi_version = FI_VERSION(1, 6);
-		}
-		else if (rc == -FI_ENODATA) {
-			NCCL_OFI_WARN("Couldn't find any optimal provider");
-		} else {
-			NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
-		}
-#endif
-	}
-	else {
-		NCCL_OFI_WARN("OFI call failed with RC %d, %s", rc, fi_strerror(-rc));
-	}
-
- exit:
-	if (gdr_hints)
-		fi_freeinfo(gdr_hints);
-	if (hints)
-		fi_freeinfo(hints);
-	return rc;
-}
-
-/*
- * @brief	Calls fi_getinfo() to find a list of usable providers for RDM
- *		tagged endpoints.  The code will return all providers
- *		with the same name as the first provider in the list
- *		returned by fi_getinfo() that satisfies any filters
- *		applied by prov_include.
- *
- * @param	prov_include
- *		Contains a list of preferred provider names.
- *
- * @return	A list of fi_info structures for a single provider.
- * @return	Number of fi_info structs in list.
- * @return	0 on success
- *		non-zero on error
- */
-static int get_ofi_provider(const char *prov_include, struct fi_info **prov_info_list,
-			    int *num_prov_infos)
-{
-	int rc = 0;
-	struct fi_info *providers = NULL, *prov = NULL, *last_prov;
-	char *selected_prov_name = NULL;
-
-	rc = find_ofi_provider(&providers);
-	if (rc != 0)
-		goto error;
-
-	if (!providers)
-		goto error;
-
-	/* Pick a provider name to use.  If there is a prov_include
-	 * provided, use the first provider which matches the list,
-	 * otherwise use the first provider in the list.
-	 */
-	if (prov_include) {
-		prov = providers;
-		while (prov) {
-			if (in_list(prov->fabric_attr->prov_name, prov_include)) {
-				selected_prov_name = prov->fabric_attr->prov_name;
-				break;
-			}
-			prov = prov->next;
-		}
-	} else {
-		selected_prov_name = providers->fabric_attr->prov_name;
-	}
-	if (!selected_prov_name)
-		goto error;
-
-	/* Now remove all providers in the providers list that do not
-	 * match the selected name, and count the ones that do.
-	 */
-	prov = providers;
-	providers = NULL;
-	last_prov = NULL;
-	*num_prov_infos = 0;
-	while (prov) {
-		struct fi_info *prov_next = prov->next;
-		prov->next = NULL;
-
-		if (strcmp(selected_prov_name, prov->fabric_attr->prov_name) != 0) {
-			fi_freeinfo(prov);
-		} else {
-			if (!providers) {
-				providers = last_prov = prov;
-			} else {
-				last_prov->next = prov;
-				last_prov = prov;
-			}
-			(*num_prov_infos)++;
-		}
-		prov = prov_next;
-	}
-
-	*prov_info_list = providers;
-	if (*num_prov_infos == 0)
-		goto error;
-
-	return 0;
-
- error:
-	if (providers)
-		fi_freeinfo(providers);
-	return -EINVAL;
-}
-
-/*
- * @brief	Returns provider info structure for the given NIC ID.
- */
-struct fi_info *get_nic_info(int dev_id, struct fi_info *info_list)
-{
-	int dev_idx = 0;
-	struct fi_info *nic_info = NULL;
-
-	nic_info = info_list;
-	while ((nic_info != NULL) && (dev_idx < dev_id)) {
-		dev_idx++;
-		nic_info = nic_info->next;
-	}
-
-	return nic_info;
-}
-
-int nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
-				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
-{
-	int ret = 0;
- 	struct fi_av_attr av_attr = {0};
-	struct fi_cq_attr cq_attr = {0};
-
-	/* Create transport level communication endpoint(s) */
-	ret = fi_endpoint(domain, info, ep, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't allocate endpoint. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	cq_attr.format = FI_CQ_FORMAT_TAGGED;
-	ret = fi_cq_open(domain, &cq_attr, cq, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	/* Open AV */
-	ret = fi_av_open(domain, &av_attr, av, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't open AV. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	/* Bind CQ to endpoint */
-	ret = fi_ep_bind(*ep, &((*cq)->fid), FI_SEND | FI_RECV);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't bind EP-CQ. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	/* Bind AV to endpoint */
-	ret = fi_ep_bind(*ep, &((*av)->fid), 0);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't bind EP-AV. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-
-	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
-	 * using the Libfabric 1.18 API with HMEM support.
-	 */
-	if (selected_fi_version == FI_VERSION(1,18) && support_gdr != GDR_UNSUPPORTED) {
-#if (HAVE_CUDA && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
-		bool optval = false;
-		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
-				FI_OPT_CUDA_API_PERMITTED, &optval,
-				sizeof(optval));
-		if (ret == -FI_EOPNOTSUPP) {
-			if (support_gdr == GDR_SUPPORTED) {
-				/* If we got here, that means we previously said
-				 * we definitely had GDR support, but now don't.
-				 * Since we may have already told NCCL that we
-				 * support GDR, we should just abort.
-				 */
-				NCCL_OFI_WARN("GDR support reported to NCCL but then couldn't be configured on an endpoint.  Cannot continue.");
-				goto error;
-			} else {
-				NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Could not disable CUDA API usage for HMEM, disabling GDR");
-				/* If we can't disable CUDA, then we don't really
-				 * have GDR, so disable GDR  support from the NCCL
-				 * point of view.
-				 */
-				support_gdr = GDR_UNSUPPORTED;
-			}
-		} else if (ret == 0) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_CUDA_API_PERMITTED. GDR Supported");
-			/* we were able to disable CUDA, so we can do GDR */
-			support_gdr = GDR_SUPPORTED;
-		} else {
-			NCCL_OFI_WARN("Failed to set FI_OPT_CUDA_API_PERMITTED. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			goto error;
-		}
-#elif HAVE_NEURON
-		/*
-		 * Provider discovery for Neuron will have been successful only
-		 * if HMEM capabilities were guaranteed by the libfabric
-		 * provider. Unlike CUDA, we do not need to handle the
-		 * runtime/endpoint deadlock with fi_setopt(), so move the flag
-		 * to supported.
-		 */
-		support_gdr = GDR_SUPPORTED;
-#else
-		NCCL_OFI_WARN("Using Libfabric 1.18 API with GPUDirect RDMA support, and FI_OPT_CUDA_API_PERMITTED is not declared.");
-		goto error;
-#endif
-	}
-	/* Run platform-specific endpoint configuration hook if declared */
-	if (platform_config_endpoint) {
-		ret = platform_config_endpoint(info, *ep);
-		if (ret != ncclSuccess)
-			goto error;
-	}
-
-	/* Enable endpoint for communication */
-	ret = fi_enable(*ep);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't enable endpoint. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	return ret;
- error:
-	if (*ep) {
-		fi_close((fid_t)*ep);
-		*ep = NULL;
-	}
-
-	if (*av) {
-		fi_close((fid_t)*av);
-		*av = NULL;
-	}
-
-	if (*cq) {
-		fi_close((fid_t)*cq);
-		*cq = NULL;
-	}
-
-	return ret;
-}
-
-/*
- * @brief	Release libfabric endpoint, address vector, and completion queue
- */
-void nccl_ofi_ep_release_ofi(struct fid_ep *ep, struct fid_av *av, struct fid_cq *cq, int dev_id)
-{
-	if (ep)
-		fi_close((fid_t)ep);
-
-	if (av)
-		fi_close((fid_t)av);
-
-	if (cq)
-		fi_close((fid_t)cq);
-
-	NCCL_OFI_TRACE(NCCL_NET, "Libfabric endpoint and address vector of dev #%d is released", dev_id);
-}
-
-/*
- * @brief Check if provider selects memory registration keys
- */
-int check_own_mr_keys_required(struct fi_info* ofi_info_list, bool *provide_own_mr_key)
-{
-	if (!(ofi_info_list->caps & FI_RMA)) {
-		/* When FI_RMA is not requested, Libfabric considers
-		   memory registrations to be local only, and
-		   therefore the requested_key field is ignored and
-		   (unfortunately) a random key may be returned from
-		   fi_mr_key().  This totally screws up the code to
-		   provide a unique MR key, which is, according to
-		   Libfabric, unnecessary in this mode anyway, so fall
-		   back to the provider-specified key code, which
-		   should behave properly in either case. */
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s only configured for local registration.",
-			       ofi_info_list->fabric_attr->prov_name);
-		*provide_own_mr_key = false;
-		return 0;
-	}
-	else if (ofi_info_list->domain_attr->mr_mode & FI_MR_PROV_KEY) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s selects memory registration keys",
-			       ofi_info_list->fabric_attr->prov_name);
-		*provide_own_mr_key = false;
-		return 0;
-	}
-	else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not select memory registration keys",
-			       ofi_info_list->fabric_attr->prov_name);
-
-		if (ofi_info_list->domain_attr->mr_key_size < ofi_nccl_mr_key_size()) {
-			NCCL_OFI_WARN("Provider %s supports MR key size of %zu, but %zu was requested",
-				      ofi_info_list->fabric_attr->prov_name,
-				      ofi_info_list->domain_attr->mr_key_size,
-				      ofi_nccl_mr_key_size());
-			return -EINVAL;
-		}
-
-		*provide_own_mr_key = true;
-		return 0;
-	}
-}
 
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
-
-	/* NICs info list for a provider */
-	struct fi_info* ofi_info_list = NULL;
-	/* Number of NICs */
-	int ofi_ndevices = -1;
+	const char *provider_filter = NULL;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -785,161 +174,21 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	}
 #endif
 
+	/* configuration parameters */
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	net_latency = (float)ofi_nccl_net_latency();
+	cq_read_count = ofi_nccl_cq_read_count();
 
 	if (platform_init) {
-		ret = platform_init();
+		ret = platform_init(&provider_filter);
 		if (ret != 0)
 			goto exit;
 	}
 
-	/* Get list of NICs fi_info structures for a single provider */
-	ret = get_ofi_provider(provider_filter, &ofi_info_list, &ofi_ndevices);
-	if (ret != 0 || ofi_info_list == NULL) {
-		ret = -ENOTSUP;
-		goto exit;
-	}
-
-	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
-	if (strncmp("tcp", ofi_info_list->fabric_attr->prov_name, strlen("tcp")) == 0) {
-		filter_tcp_info_list(&ofi_info_list, &ofi_ndevices);
-		if (ofi_info_list == NULL) {
-			NCCL_OFI_WARN("No viable endpoint found for TCP provider. Try and relax the filters using OFI_NCCL_USE_IPV6_TCP or OFI_NCCL_EXCLUDE_TCP_IF environment variables");
-			ret = -ENOTSUP;
-			goto exit;
-		}
-	}
-
-	/* Allow for multiple virtual nics per nic to increase
-	 * throughput for NICs that do not handle single QP situations
-	 * well. */
-	if (nic_dup_conns > 1) {
-		struct fi_info *input_iter, *tmp, *output_head, *output_tail;
-
-		/* The goal of the next chunk of code is to make
-		 * ofi_info_list contain the existing providr
-		 * structures nic_dup_conns times each.  We start by
-		 * multiplying the number of devices (ie, the size of
-		 * the ofi_info_list array) by nic_dup_conns.  We then
-		 * iterate over a new info list, adding that number of
-		 * devices by repeatedly copying the entries in the
-		 * original list.
-		 *
-		 * If the input list was info objects A, B, C and
-		 * dup_conns was 2, the output array (ie, ofi_info_list
-		 * at the end) will be A, B, C, A, B, C.
-		 *
-		 * Note that this isn't entirely sufficient to get
-		 * NCCL to use all the connections.  We must also fake
-		 * the locality of the info structures so that they
-		 * look like more appealing paths; see the dup_conns
-		 * code in the PCIe path discovery logic.
-		 */
-		ofi_ndevices *= nic_dup_conns;
-
-		input_iter = NULL;
-		output_head = output_tail = NULL;
-		for (size_t i = 0 ; i < ofi_ndevices ; i++) {
-			/* note that because we'll iterate through
-			   ofi_info_list multiple times (because
-			   ofi_ndevices is already multiplied by
-			   nic_dup_conns), this check has to be in the
-			   for loop.  Each time we reach the end of
-			   the list, we'll see iter as NULL and
-			   restart. */
-			if (!input_iter)
-				input_iter = ofi_info_list;
-
-			tmp = fi_dupinfo(input_iter);
-			if (!tmp) {
-				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
-				ret = ncclSystemError;
-				goto exit;
-			}
-			/* just in case */
-			tmp->next = NULL;
-
-			if (!output_head)
-				output_head = tmp;
-
-			if (!output_tail) {
-				output_tail = tmp;
-			} else {
-				output_tail->next = tmp;
-				output_tail = tmp;
-			}
-
-			input_iter = input_iter->next;
-		}
-
-		fi_freeinfo(ofi_info_list);
-		ofi_info_list = output_head;
-
-		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
-			      nic_dup_conns, ofi_ndevices);
-	}
-
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
-		      ofi_info_list->fabric_attr->prov_name, ofi_ndevices);
-
-	/* Prior to Libfabric 1.18.0, there was no way to disable
-	 * Libfabric from making CUDA calls.  While the EFA path was
-	 * CUDA clean, it could use the shm provider, which did make
-	 * CUDA calls.  Rather than muck with side channel ways of
-	 * disabling CUDA in old Libfabric, just require newer
-	 * Libfabric. */
-	if (strncmp("efa", ofi_info_list->fabric_attr->prov_name, strlen("efa")) == 0) {
-		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 18))) {
-			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.18.0.");
-			ret = -ENOTSUP;
-			goto exit;
-		}
-	}
-
-	/* Check if provider requires local memory registration */
-	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
-			       ofi_info_list->fabric_attr->prov_name);
-		local_mr = true;
-	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
-			       ofi_info_list->fabric_attr->prov_name);
-	}
-
-	/* Check if provider uses remote virtual addressing */
-	if (ofi_info_list->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses remote virtual addressing",
-			       ofi_info_list->fabric_attr->prov_name);
-		virt_addr_mr = true;
-	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not use remote virtual addressing",
-			       ofi_info_list->fabric_attr->prov_name);
-	}
-
-	/* Indicates if the provider selects MR keys */
-	bool provide_own_mr_key = true;
-	ret = check_own_mr_keys_required(ofi_info_list, &provide_own_mr_key);
-	if (ret != 0) {
-		goto exit;
-	}
-
-	/* Check if provider uses endpoint memory registration */
-	if (ofi_info_list->domain_attr->mr_mode & FI_MR_ENDPOINT) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires endpoint memory registration",
-			       ofi_info_list->fabric_attr->prov_name);
-		endpoint_mr = true;
-	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
-			       ofi_info_list->fabric_attr->prov_name);
-	}
-
-	/* Store the cq_read_count parameter value in a global
-	   variable to avoid the lookup overhead during execution. */
-	cq_read_count = ofi_nccl_cq_read_count();
-
-
-	/* Select and initialize protocol data structure */
+	/* Select and initialize protocol data structure.
+	 * platform_init() may change the default, so this must occur
+	 * after the platform init call.
+	 */
 	if (ofi_nccl_protocol()) {
 		nccl_ofi_selected_protocol = ofi_nccl_protocol();
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
@@ -950,31 +199,15 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	}
 
 	if (0 == strcasecmp(nccl_ofi_selected_protocol, "SENDRECV")) {
-		ret = nccl_net_ofi_sendrecv_init(ofi_info_list, ofi_ndevices,
-						 provide_own_mr_key,
-						 plugin_p);
+		ret = nccl_net_ofi_sendrecv_init(provider_filter, plugin_p);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 			ret = ncclInternalError;
 			goto exit;
 		}
 	} else if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
-		/* NCCL OFI topology */
-		nccl_ofi_topo_t *topo = NULL;
-
-		/* Create NCCL OFI topology */
-		topo = nccl_ofi_topo_create(ofi_info_list);
-		if (!topo) {
-			NCCL_OFI_WARN("Failed to create NCCL OFI topology");
-			ret = -ENOTSUP;
-			goto exit;
-		}
-
-		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key, plugin_p);
-
-		nccl_ofi_topo_free(topo);
-
-		if (ret != ncclSuccess) {
+		ret = nccl_net_ofi_rdma_init(provider_filter, plugin_p);
+		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to initialize rdma protocol");
 			goto exit;
 		}
@@ -1021,8 +254,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	}
 
  exit:
-	nccl_net_ofi_free_info_list(ofi_info_list);
-
 	if (ret != 0) {
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
 	}
@@ -1237,4 +468,60 @@ int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 					  nccl_net_ofi_mr_handle_t **handle)
 {
 	return -ENOTSUP;
+}
+
+
+int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
+					     unsigned int num_providers)
+{
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
+		      selected_provider->fabric_attr->prov_name, num_providers);
+
+	/* Prior to Libfabric 1.18.0, there was no way to disable
+	 * Libfabric from making CUDA calls.  While the EFA path was
+	 * CUDA clean, it could use the shm provider, which did make
+	 * CUDA calls.  Rather than muck with side channel ways of
+	 * disabling CUDA in old Libfabric, just require newer
+	 * Libfabric. */
+	if (strncmp("efa", selected_provider->fabric_attr->prov_name, strlen("efa")) == 0) {
+		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 18))) {
+			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.18.0.");
+			return -ENOTSUP;
+		}
+	}
+
+	/* Check if provider requires local memory registration */
+	if (selected_provider->domain_attr->mr_mode & FI_MR_LOCAL) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
+			       selected_provider->fabric_attr->prov_name);
+		local_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
+			       selected_provider->fabric_attr->prov_name);
+		local_mr = false;
+	}
+
+	/* Check if provider uses remote virtual addressing */
+	if (selected_provider->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses remote virtual addressing",
+			       selected_provider->fabric_attr->prov_name);
+		virt_addr_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not use remote virtual addressing",
+			       selected_provider->fabric_attr->prov_name);
+		virt_addr_mr = false;
+	}
+
+	/* Check if provider uses endpoint memory registration */
+	if (selected_provider->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires endpoint memory registration",
+			       selected_provider->fabric_attr->prov_name);
+		endpoint_mr = true;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
+			       selected_provider->fabric_attr->prov_name);
+		endpoint_mr = false;
+	}
+
+	return 0;
 }
