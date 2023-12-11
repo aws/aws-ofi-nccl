@@ -5781,7 +5781,6 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 				    nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
-	int dev_id = 0;
 	nccl_net_ofi_device_t **base_devs = NULL;
 	int num_rails = 0;
 	int num_devs = 0;
@@ -5812,14 +5811,13 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 
 	num_rails = topo->max_group_size;
 	if (num_rails > MAX_NUM_RAILS) {
-		NCCL_OFI_WARN("Unexpected number of rails of device %i. Maximum is %i but got %i",
-			      dev_id, MAX_NUM_RAILS, num_rails);
+		NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
+			      num_rails, MAX_NUM_RAILS);
 		ret = ncclInternalError;
 		goto error;
 	}
 	if (num_rails < 1) {
-		NCCL_OFI_WARN("Unexpected number of rails of device %i. Expected at least one NIC but got %i",
-			      dev_id, num_rails);
+		NCCL_OFI_WARN("Unexpected group size %d", num_rails);
 		ret = ncclInternalError;
 		goto error;
 	}
@@ -5862,7 +5860,7 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	}
 
 	/* Allocate and initialize nccl_net devices */
-	for (; dev_id != num_devs; ++dev_id) {
+	for (int dev_id = 0 ; dev_id != num_devs ; ++dev_id) {
 		/* Retrieve NIC info list from topology */
 		info_list = nccl_ofi_topo_next_info_list(&data_iter);
 
