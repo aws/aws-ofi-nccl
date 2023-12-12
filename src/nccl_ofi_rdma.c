@@ -6037,21 +6037,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		/* Retrieve NIC info list from topology */
 		info_list = nccl_ofi_topo_next_info_list(&data_iter);
 
-		/* Check that provider does not require FI_CONTEXT */
-		if ((info_list->mode & FI_CONTEXT) ||
-			(info_list->mode & FI_CONTEXT2)) {
-			NCCL_OFI_WARN("RDMA protocol does not support FI_CONTEXT, but provider requires it.");
-			ret = ncclSystemError;
-			goto error;
-		}
-
-		/* Check that provider supports RMA */
-		if (!(info_list->caps & FI_RMA)) {
-			NCCL_OFI_WARN("Endpoint does not support RMA operations, required for RDMA protocol!");
-			ret = ncclSystemError;
-			goto error;
-		}
-
 		/* Ensure that number of rails are the same across devices */
 		int length = ofi_info_list_length(info_list);
 		if (topo->max_group_size != length) {
