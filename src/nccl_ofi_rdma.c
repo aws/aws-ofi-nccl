@@ -5840,25 +5840,39 @@ static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info 
 	/* Allocate NIC info array */
 	nccl_net_ofi_rdma_device_rail_t *device_rails =
 		calloc(num_infos, sizeof(nccl_net_ofi_rdma_device_rail_t));
-	if (!device_rails) {
+	if (device_rails == NULL) {
 		return NULL;
 	}
 
-	nccl_net_ofi_rdma_device_rail_t *begin = device_rails;
-	nccl_net_ofi_rdma_device_rail_t *end = device_rails + num_infos;
+	for (int i = 0 ; i < num_infos ; i++) {
+		if (info_list == NULL) {
+			goto error;
+		}
 
-	/* Copy list elements into array */
-	while (info_list && begin != end) {
 		/* Duplicate NIC info */
-		begin->info = fi_dupinfo(info_list);
-		if (!begin->info) break;
+		device_rails[i].info = fi_dupinfo(info_list);
+		if (device_rails[i].info == NULL) {
+			goto error;
+		}
+		/* Libfabric documnetation is not clear if next is
+		 * copied or not with fi_dupinfo(), so assume the
+		 * worst */
+		device_rails[i].info->next = NULL;
 
-		/* Iterate to next NIC info */
 		info_list = info_list->next;
-		++begin;
 	}
 
 	return device_rails;
+
+error:
+	for (int i = 0 ; i < num_infos ; i++) {
+		if (device_rails[i].info != NULL) {
+			fi_freeinfo(device_rails[i].info);
+		}
+	}
+	free(device_rails);
+
+	return NULL;
 }
 
 
