@@ -31,10 +31,6 @@ static char *topo_file_unlink = NULL;
 /* Locks functions which access `topo_file_unlink` */
 static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 
-/* Maximum number of comms open simultaneously. Eventually this will be
-   runtime-expandable */
-#define NCCL_OFI_RDMA_MAX_COMMS 4096
-
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
@@ -55,6 +51,10 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
  * @brief	Number of bits used for the tag value
  */
 #define NUM_TAG_VALUE_BITS ((uint64_t)12)
+
+/* Maximum number of comms open simultaneously. Eventually this will be
+   runtime-expandable */
+#define NCCL_OFI_RDMA_MAX_COMMS (1 << NUM_TAG_VALUE_BITS)
 
 /*
  * @brief	Number of bits used for message sequence number
@@ -671,7 +671,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		props->port_speed *= device->num_rails;
 		_Static_assert(NUM_TAG_VALUE_BITS < 31,
 			       "NUM_TAG_VALUE_BITS must be less than 31 so max_communicators fits in an integer");
-		props->max_communicators = (1 << NUM_TAG_VALUE_BITS);
+		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
 	}
 	return ret;
 }
