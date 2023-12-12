@@ -29,7 +29,7 @@ static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
 /* Stores path to NCCL topology file written by ofi plugin for later unlinking */
 static char *topo_file_unlink = NULL;
 /* Locks functions which access `topo_file_unlink` */
-static pthread_mutex_t topo_file_lock;
+static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
@@ -5788,13 +5788,6 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 	struct fi_info *info_list = NULL;
 	size_t rr_threshold = ofi_nccl_round_robin_threshold();
 	nccl_net_ofi_plugin_t *plugin = NULL;
-
-	ret = pthread_mutex_init(&topo_file_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
-		ret = ncclSystemError;
-		goto error;
-	}
 
 	if (ofi_nccl_eager_max_size() < 0 ||
 	    ofi_nccl_eager_max_size() > rr_threshold) {
