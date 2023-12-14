@@ -479,7 +479,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * emulated writes are disabled.
 	 */
 
-	if (0 == strcmp("RDMA", nccl_ofi_selected_protocol) &&
+	if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol) &&
 	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
@@ -501,12 +501,12 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * was previously set and error if we can't set them the same
 	 * way later.
 	 */
-	if (0 == strcmp("SENDRECV", nccl_ofi_selected_protocol)) {
+	if (0 == strcasecmp("SENDRECV", nccl_ofi_selected_protocol)) {
 #if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
 #endif
-	} else if (0 == strcmp("RDMA", nccl_ofi_selected_protocol)) {
+	} else if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
@@ -543,7 +543,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * the check when using the RDMA protocol.
 	 */
 	if ((NULL == getenv("NCCL_PROTO")) &&
-	    (0 == strcmp("RDMA", nccl_ofi_selected_protocol)) &&
+	    (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) &&
 	    (0 == strcmp(get_platform_type(), "p5.48xlarge"))) {
 		if (!nccl_proto_configured) {
 			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5 + RDMA");

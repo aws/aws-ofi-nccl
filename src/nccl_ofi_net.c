@@ -1054,7 +1054,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			      nccl_ofi_selected_protocol);
 	}
 
-	if (0 == strcmp(nccl_ofi_selected_protocol, "SENDRECV")) {
+	if (0 == strcasecmp(nccl_ofi_selected_protocol, "SENDRECV")) {
 		ret = nccl_net_ofi_sendrecv_init(ofi_info_list, ofi_ndevices,
 						 provide_own_mr_key,
 						 plugin_p);
@@ -1063,7 +1063,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			ret = ncclInternalError;
 			goto exit;
 		}
-	} else if (0 == strcmp(nccl_ofi_selected_protocol, "RDMA")) {
+	} else if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
 		/* NCCL OFI topology */
 		nccl_ofi_topo_t *topo = NULL;
 
