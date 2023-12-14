@@ -231,7 +231,7 @@ static int configure_nccl_proto(void)
 				      strerror(errno));
 			return -errno;
 		}
-	} else if (strcmp(getenv("NCCL_PROTO"), "simple") != 0) {
+	} else if (strcasecmp(getenv("NCCL_PROTO"), "simple") != 0) {
 		NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
 	}
 
