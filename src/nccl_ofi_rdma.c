@@ -1185,6 +1185,7 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_n
 	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(eager_copy_req);
 	eager_copy_data->recv_req = recv_req;
 	eager_copy_data->eager_bounce_req = bounce_req;
+	assert(get_bounce_data(bounce_req)->recv_len != 0);
 
 	get_recv_data(recv_req)->eager_copy_req = eager_copy_req;
 
@@ -3131,11 +3132,24 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto error;
 	}
 
+	rdma_req_recv_data_t *recv_data = get_recv_data(req);
+
 	if (eager) {
 		nccl_net_ofi_rdma_req_t *bounce_req = elem;
-		ret = alloc_eager_copy_req(req, r_comm, bounce_req);
-		if (ret != 0) {
-			goto error;
+		rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
+		if (bounce_data->recv_len == 0) {
+			/* Special case for zero-sized messages */
+			ret = check_post_bounce_req(bounce_req);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed call to check_post_bounce_req");
+				return ret;
+			}
+			recv_data->eager_copy_req = NULL;
+		} else {
+			ret = alloc_eager_copy_req(req, r_comm, bounce_req);
+			if (ret != 0) {
+				goto error;
+			}
 		}
 	}
 
@@ -3152,8 +3166,6 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	NCCL_OFI_TRACE_RECV(dev_id, r_comm->local_tag, sizes[0], req, base_req);
 
-	rdma_req_recv_data_t *recv_data = get_recv_data(req);
-
 	ret = receive_progress(recv_data->send_ctrl_req, true);
 	if (OFI_UNLIKELY(ret != 0)) {
 		/* TODO: Remove req from message buffer */
@@ -3161,11 +3173,20 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	if (eager) {
-		ret = receive_progress(recv_data->eager_copy_req, true);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to issue eager read");
-			/* TODO: Remove req from message buffer */
-			goto error;
+		if (recv_data->eager_copy_req == NULL) {
+			/* If we don't need to do eager copy, this recv is already complete */
+			ret = inc_req_completion(req, 0, recv_data->total_num_compls);
+			if (ret != 0) {
+				goto error;
+			}
+		} else {
+			/* Post eager copy */
+			ret = receive_progress(recv_data->eager_copy_req, true);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to issue eager read");
+				/* TODO: Remove req from message buffer */
+				goto error;
+			}
 		}
 	}
 
