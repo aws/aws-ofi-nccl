@@ -17,6 +17,7 @@ noinst_HEADERS = \
 	nccl_ofi_log.h \
 	nccl_ofi_freelist.h \
 	nccl_ofi_param.h \
+	nccl_ofi_tuner.h \
 	nccl_ofi_math.h \
 	nccl_ofi_memcheck.h \
 	nccl_ofi_memcheck_nop.h \
@@ -30,5 +31,6 @@ noinst_HEADERS = \
 	nccl-headers/nvidia/net_v4.h \
 	nccl-headers/nvidia/net_v5.h \
 	nccl-headers/nvidia/net_v6.h \
+	nccl-headers/nvidia/tuner.h \
 	nccl-headers/neuron/net.h \
 	nccl-headers/neuron/error.h
