@@ -27,6 +27,7 @@ struct ec2_platform_data {
 	int default_dup_conns;
 	float latency;
 	bool gdr_required;
+	bool net_flush_required;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
@@ -34,6 +35,7 @@ struct ec2_platform_data {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
+		.net_flush_required = true,
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -41,6 +43,7 @@ struct ec2_platform_data {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
+		.net_flush_required = true,
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -48,6 +51,7 @@ struct ec2_platform_data {
 		.default_dup_conns = 4,
 		.latency = 150.0,
 		.gdr_required = false,
+		.net_flush_required = true,
 	},
 	{
 		.name = "p5.48xlarge",
@@ -55,11 +59,13 @@ struct ec2_platform_data {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
+		.net_flush_required = false,
 	},
 	{
 		.name = "g5.48xlarge",
 		.topology = "g5.48xl-topo.xml",
 		.gdr_required = false,
+		.net_flush_required = true,
 	},
 };
 
@@ -394,6 +400,27 @@ int platform_init(void)
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to configure NVLS option");
 		goto exit;
+	}
+
+	if ((platform_data && !platform_data->net_flush_required) &&
+	    NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
+
+		/* Hopper GPUs do not require a network flush, but NCCL versions <2.19.1
+		* still enable flush by default on any GPU type.
+		* For GPU generations earlier than Hopper, NCCL always enables flush, while
+		* for Hopper GPUs flush is enabled or disabled depending on the value of
+		* the NCCL_NET_FORCE_FLUSH environment variable. The default value for this
+		* variable is 1 for NCCL versions <2.19.1, which forces flush when it is not
+		* needed, so it is safe to set it to 0 if it is not explicitly set.
+		*/
+
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 for Hopper GPUs");
+		ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
+			ret = -errno;
+			goto exit;
+		}
 	}
 #endif
 
