@@ -1407,24 +1407,7 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 		 * 7. flush complete      : recv communicator AND FI_READ
 		 */
 
-		if (OFI_UNLIKELY((comp_flags & FI_TAGGED) && !IS_DATA_MSG_TYPE(cq_entry[comp_idx].tag))) {
-			/* Type 0 */
-			assert(IS_CONN_MSG_TYPE(cq_entry[comp_idx].tag) || IS_CONN_RESP_MSG_TYPE(cq_entry[comp_idx].tag));
-
-			req = op_ctx;
-			if (inc_req_completion(req, cq_entry[comp_idx].len, 1)) {
-				return ncclInternalError;
-			}
-
-			if (IS_CONN_RESP_MSG_TYPE(cq_entry[comp_idx].tag) && (comp_flags & FI_RECV)) {
-				assert(req->comm->type == NCCL_NET_OFI_SEND_COMM);
-				/* Complete send communicator */
-				nccl_net_ofi_rdma_send_comm_t *s_comm =
-					(nccl_net_ofi_rdma_send_comm_t *)req->comm;
-				assert(s_comm->conn_resp_req == req);
-				ret = finish_connect(s_comm);
-			}
-		} else if (comp_flags & FI_SEND) {
+		if (comp_flags & FI_SEND) {
 			/* The context for these operations is req. */
 			req = op_ctx;
 
@@ -1442,17 +1425,36 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 					ret = ncclInternalError;
 					goto exit;
 				}
+			} else if (OFI_UNLIKELY(req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP)) {
+				if (inc_req_completion(req, cq_entry[comp_idx].len, 1)) {
+					return ncclInternalError;
+				}
 			} else {
-				/* Type 3 */
 				NCCL_OFI_WARN("Send complete from unexpected req type");
 				ret = ncclSystemError;
 				goto exit;
 			}
 		} else if (comp_flags & FI_RECV) {
-			/* This is a bounce buffer receive event. It could be a
-			   ctrl message receive (send comm) or an eager message
-			   receive (recv comm) */
-			ret = handle_bounce_recv(&cq_entry[comp_idx], rail_id);
+			/* The context for these operations is req. */
+			req = op_ctx;
+			if (OFI_UNLIKELY(req->type == NCCL_OFI_RDMA_RECV_CONN || req->type == NCCL_OFI_RDMA_RECV_CONN_RESP)) {
+				if (inc_req_completion(req, cq_entry[comp_idx].len, 1)) {
+					return ncclInternalError;
+				}
+				if (req->type == NCCL_OFI_RDMA_RECV_CONN_RESP) {
+					assert(req->comm->type == NCCL_NET_OFI_SEND_COMM);
+					/* Complete send communicator */
+					nccl_net_ofi_rdma_send_comm_t *s_comm =
+						(nccl_net_ofi_rdma_send_comm_t *)req->comm;
+					assert(s_comm->conn_resp_req == req);
+					ret = finish_connect(s_comm);
+				}
+			} else {
+				/* This is a bounce buffer receive event. It could be a
+				   ctrl message receive (send comm) or an eager message
+				   receive (recv comm) */
+				ret = handle_bounce_recv(&cq_entry[comp_idx], rail_id);
+			}
 		} else if (comp_flags & FI_REMOTE_WRITE) {
 			/* Type 6: Remote-initiated write is complete */
 			ret = handle_write_comp(&cq_entry[comp_idx], ep, rail_id);
