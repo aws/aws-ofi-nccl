@@ -348,8 +348,8 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
 
 		struct fi_pci_attr *attr = ofi_info_get_pci_attr(info);
 		if (!attr) {
-			NCCL_OFI_WARN("Failed to retrieve PCI attributes from NIC");
-			return ncclInternalError;
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Failed to retrieve PCI attributes from NIC");
+			return -ENOTSUP;
 		}
 
 		if (node_attr->pcidev.domain == attr->domain_id &&
@@ -397,7 +397,9 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 		}
 
 		ret = get_info_for_node(obj, info_list, &info);
-		if (ret != 0) {
+		if (ret == -ENOTSUP) {
+			return ret;
+		} else if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ncclInternalError;
 		}
@@ -489,7 +491,9 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	/* Retrieve number of topology nodes that have a Nvidia GPU or a NIC in their subtree */
 	int num_nodes = 0;
 	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
-	if (ret != 0) {
+	if (ret == -ENOTSUP) {
+		return ret;
+	} else if (ret != 0) {
 		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
 		return ncclInternalError;
 	}
@@ -581,7 +585,10 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	 * GPU in their subtree. Also, add libfabric NIC info structs
 	 * to user data to topology nodes corresponding to the NICs. */
 	ret = set_user_data(ofi_topo, info_list);
-	if (ret != 0) {
+	if (ret == -ENOTSUP) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Provider does not support topology");
+		goto error;
+	} else if (ret != 0) {
 		NCCL_OFI_WARN("Data decoration failed.");
 		goto error;
 	}

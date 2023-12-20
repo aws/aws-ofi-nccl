@@ -628,8 +628,9 @@ typedef struct nccl_net_ofi_rdma_device {
  * @brief	Initialize plugin with rdma protocol structures
  */
 int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
-			   bool provide_own_mr_key,
-			   nccl_net_ofi_plugin_t **plugin_p);
+                           struct fi_info *ofi_info_list, int num_infos,
+                           bool use_topo, bool provide_own_mr_key,
+                           nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus
 } // End extern "C"

@@ -1070,12 +1070,16 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		/* Create NCCL OFI topology */
 		topo = nccl_ofi_topo_create(ofi_info_list);
 		if (!topo) {
-			NCCL_OFI_WARN("Failed to create NCCL OFI topology");
-			ret = -ENOTSUP;
-			goto exit;
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Failed to create NCCL OFI topology, falling back to info list");
 		}
 
-		ret = nccl_net_ofi_rdma_init(topo, provide_own_mr_key, plugin_p);
+		/**
+		 * If the Libfabric provider does not provide topology information
+		 * (e.g., the TCP provider), fall back to using the device list
+		 */
+		bool use_topo = topo ? true : false;
+
+		ret = nccl_net_ofi_rdma_init(topo, ofi_info_list, ofi_ndevices, use_topo, provide_own_mr_key, plugin_p);
 
 		nccl_ofi_topo_free(topo);
 
