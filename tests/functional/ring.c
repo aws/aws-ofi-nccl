@@ -78,8 +78,11 @@ int main(int argc, char *argv[])
 	/* Set CUDA device for subsequent device memory allocation, in case GDR is used */
 	cuda_dev = local_rank;
 	NCCL_OFI_TRACE(NCCL_NET, "Using CUDA device %d for memory allocation", cuda_dev);
-	CUDACHECK(cudaSetDevice(cuda_dev));
 
+	CUDACHECK(cuInit(0));
+	CUcontext context;
+	CUDACHECK(cuCtxCreate(&context, CU_CTX_SCHED_SPIN|CU_CTX_MAP_HOST, cuda_dev));
+	CUDACHECK(cuCtxSetCurrent(context));
 	/*
 	 * Calculate the rank of the next process in the ring.  Use the
 	 * modulus operator so that the last process "wraps around" to

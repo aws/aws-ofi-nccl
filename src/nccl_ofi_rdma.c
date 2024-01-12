@@ -3410,13 +3410,13 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
 
-#if CUDART_VERSION >= 11030
+#if CUDA_VERSION >= 11030
 	if (cuda_flush) {
-		cudaError_t cuda_ret = nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites(
-			cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
-			cudaFlushGPUDirectRDMAWritesToOwner);
+		CUresult cuda_ret = nccl_net_ofi_cuFlushGPUDirectRDMAWrites(
+			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
+			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER);
 
-		if (cuda_ret != cudaSuccess) {
+		if (cuda_ret != CUDA_SUCCESS) {
 			ret = ncclUnhandledCudaError;
 			NCCL_OFI_WARN("Error performing CUDA GDR flush");
 			goto exit;
