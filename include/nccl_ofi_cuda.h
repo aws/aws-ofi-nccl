@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#include <cuda_runtime.h>
+#include <cuda.h>
 
 int nccl_net_ofi_cuda_init(void);
 
@@ -27,18 +27,18 @@ int nccl_net_ofi_cuda_init(void);
  */
 int nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
 
-extern cudaError_t (*nccl_net_ofi_cudaRuntimeGetVersion)(int *runtimeVersion);
+extern CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion);
 
-extern cudaError_t (*nccl_net_ofi_cudaPointerGetAttributes)(struct cudaPointerAttributes* attributes, const void* ptr);
+extern CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr);
 
-extern cudaError_t (*nccl_net_ofi_cudaGetDevice)(int* device);
-extern cudaError_t (*nccl_net_ofi_cudaGetDeviceCount)(int* count);
+extern CUresult (*nccl_net_ofi_cuCtxGetDevice)(CUdevice *device);
+extern CUresult (*nccl_net_ofi_cuDeviceGetCount)(int* count);
 
-#if CUDART_VERSION >= 11030
-extern cudaError_t (*nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites)(enum cudaFlushGPUDirectRDMAWritesTarget target,
-								      enum cudaFlushGPUDirectRDMAWritesScope scope);
+#if CUDA_VERSION >= 11030
+extern CUresult (*nccl_net_ofi_cuFlushGPUDirectRDMAWrites)(CUflushGPUDirectRDMAWritesTarget target,
+							   CUflushGPUDirectRDMAWritesScope scope);
 #else
-extern void *nccl_net_ofi_cudaDeviceFlushGPUDirectRDMAWrites;
+extern void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites;
 #endif
 
 #ifdef _cplusplus

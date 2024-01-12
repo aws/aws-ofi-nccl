@@ -29,10 +29,10 @@ AC_DEFUN([CHECK_PKG_CUDA], [
          LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
-        [AC_CHECK_HEADERS([cuda_runtime.h], [], [check_pkg_found=no])])
+        [AC_CHECK_HEADERS([cuda.h], [], [check_pkg_found=no])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
-        [AC_SEARCH_LIBS([cudaHostAlloc], [cudart], [CUDA_LIBS="-lcudart"], [check_pkg_found=no])])
+        [AC_SEARCH_LIBS([cuMemHostAlloc], [cuda], [CUDA_LIBS="-lcuda"], [check_pkg_found=no])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define=1
