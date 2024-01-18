@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
 static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
