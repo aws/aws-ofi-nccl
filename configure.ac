@@ -72,7 +72,7 @@ have_device_interface=no
 CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
                         [AC_MSG_ERROR([Cannot enable both CUDA and neuron.])],
                         [want_cuda=no])
-                  have_device_interface=neuon]
+                  have_device_interface=neuron]
                   AC_SUBST([OFI_NCCL_ARCHIVE], [nccom-net]))
 CHECK_PKG_CUDA([have_device_interface=cuda]
                AC_SUBST([OFI_NCCL_ARCHIVE], [nccl-net]))
@@ -81,8 +81,7 @@ AS_IF([test "${have_device_interface}" = "no"],
       [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
 
 CHECK_PKG_HWLOC([],
-                [AS_IF([test "${have_device_interface}" = "cuda"],
-                       [AC_MSG_ERROR([HWLOC package required for CUDA builds])])])
+		[AC_MSG_ERROR([Could not find the hwloc library. Use --with-hwloc to provide the path to non-standard hwloc installation.])])
 
 CHECK_PKG_VALGRIND()
 CHECK_VAR_REDZONE()
