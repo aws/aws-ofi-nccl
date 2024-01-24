@@ -16,6 +16,7 @@ sources = \
 	nccl_ofi_msgbuff.c \
 	nccl_ofi_freelist.c \
 	nccl_ofi_deque.c \
+	nccl_ofi_idpool.c \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS

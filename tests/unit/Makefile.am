@@ -13,7 +13,8 @@ noinst_PROGRAMS = \
 	deque \
 	freelist \
 	msgbuff \
-	scheduler
+	scheduler \
+	idpool
 
 TESTS = $(noinst_PROGRAMS)
 

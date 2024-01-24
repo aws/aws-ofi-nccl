@@ -19,6 +19,7 @@ tests/unit/msgbuff
 tests/unit/freelist
 tests/unit/deque
 tests/unit/scheduler
+tests/unit/idpool
 
 # http://www.gnu.org/software/automake
 .deps/
