@@ -14,6 +14,7 @@ noinst_HEADERS = \
 	nccl_ofi_topo.h \
 	nccl_ofi_msgbuff.h \
 	nccl_ofi_deque.h \
+	nccl_ofi_idpool.h \
 	nccl_ofi_log.h \
 	nccl_ofi_freelist.h \
 	nccl_ofi_param.h \
