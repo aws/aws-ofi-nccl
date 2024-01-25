@@ -1715,7 +1715,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", device->base.dev_id);
+		NCCL_OFI_WARN("Error accessing device.");
 		return -EINVAL;
 	}
 
