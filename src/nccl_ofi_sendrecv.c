@@ -1762,7 +1762,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	ret_s_comm->conn_info = calloc(1, sizeof(nccl_ofi_connection_info_t));
 	if (!ret_s_comm->conn_info) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out;
 	}
 
 	ret_s_comm->conn_info->ep_namelen = sizeof(ret_s_comm->conn_info->ep_name);
