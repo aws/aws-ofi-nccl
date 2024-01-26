@@ -20,7 +20,6 @@ and operating system bypass.
 ## Requirements
 
 The plug-in currently supports the following distributions:
-* Amazon Linux
 * Amazon Linux 2
 * Redhat Enterprise Linux 7 and 8
 * Ubuntu 18.04 and 20.04 LTS
