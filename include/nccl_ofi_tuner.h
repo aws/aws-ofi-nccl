@@ -97,7 +97,7 @@ struct nccl_ofi_tuner_context {
  * Global context, allocated at _init(). This is allocated and initialized once
  * per process.
  */
-struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
+extern struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
 
 /* Modeling functions */
 void nccl_ofi_tuner_model_costs();

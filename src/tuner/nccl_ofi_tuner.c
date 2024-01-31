@@ -4,6 +4,7 @@
 #include "nccl_ofi_tuner.h"
 #include "nccl_ofi_log.h"
 
+struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 
 ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction)
