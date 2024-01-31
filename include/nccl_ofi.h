@@ -20,6 +20,7 @@ extern "C" {
 #include "nccl-headers/net.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_idpool.h"
 
 #ifdef __GNUC__
 #define OFI_LIKELY(x)	__builtin_expect((x), 1)
@@ -197,24 +198,6 @@ typedef struct nccl_net_ofi_conn_handle {
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
-
-/*
- * Memory registration key-pool for one rail.
- *
- * In the case that this struct does not provide keys, the key pool
- * array needs to be set to NULL.
- */
-typedef struct nccl_ofi_mr_keypool {
-	/* Size of the key pool */
-	size_t size;
-
-	/* Key pool array. Array entries indicate whether key is
-	 * vacant or not. */
-	bool *mr_keys;
-
-	/* Lock for concurrency on memory registration keys */
-	pthread_mutex_t lock;
-} nccl_ofi_mr_keypool_t;
 
 /**
  * Properties structure
@@ -491,11 +474,6 @@ int nccl_ofi_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
 
 /*
- * @brief	Initialize memory registration keypool
- */
-int nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys);
-
-/*
  * @brief	Returns provider info structure for the given NIC ID.
  */
 struct fi_info *get_nic_info(int dev_id, struct fi_info *info_list);
@@ -520,16 +498,6 @@ int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 					  void *data, size_t size,
 					  int type, uint64_t offset, int fd,
 					  nccl_net_ofi_mr_handle_t **handle);
-
-/*
- * @brief	Free a memory registration key
- */
-int nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key);
-
-/*
- * @brief	Allocate a memory registration key
- */
-uint64_t nccl_net_ofi_allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool);
 
 /*
  * @brief	Allocate memory region for memory registration

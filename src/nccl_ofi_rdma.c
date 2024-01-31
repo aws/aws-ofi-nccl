@@ -535,7 +535,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
  * @return	0 on success
  *		non-zero on error
  */ 
-static int set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
+static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 				    void *data, size_t size, int type,
 				    struct fi_mr_attr *mr_attr, struct iovec *iov)
 {
@@ -590,14 +590,13 @@ static int set_mr_req_attr(nccl_ofi_mr_keypool_t *key_pool, int dev_id,
 		goto exit;
 	}
 
-	if (key_pool->mr_keys) {
-		uint64_t key = nccl_net_ofi_allocate_mr_key(key_pool);
-		if (key == FI_KEY_NOTAVAIL) {
+	if (key_pool->ids) {
+		int key = nccl_ofi_idpool_allocate_id(key_pool);
+		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
-			ret = -ENOMEM;
 			goto exit;
 		}
-		mr_attr->requested_key = key;
+		mr_attr->requested_key = (uint64_t)key;
 	}
 
  exit:
@@ -2562,7 +2561,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 
 	int dev_id = device->base.dev_id;
 	int num_rails = device->num_rails;
-	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->key_pool;
 
 	/* Allocate rdma memory registration handle */
 	ret_handle = calloc_rdma_mr_handle(num_rails);
@@ -2684,7 +2683,7 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
 }
 
 static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
-				       nccl_ofi_mr_keypool_t *key_pool)
+				       nccl_ofi_idpool_t *key_pool)
 {
 	int ret = 0;
 
@@ -2698,13 +2697,13 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		return ncclInternalError;
 	}
 
-	if (key_pool->mr_keys) {
+	if (key_pool->ids) {
 		uint64_t key = fi_mr_key(mr_handle->mr[0]);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			ret = ncclSystemError;
 			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
 		} else {
-			ret = nccl_net_ofi_free_mr_key(key_pool, key);
+			ret = nccl_ofi_idpool_free_id(key_pool, key);
 			if (OFI_UNLIKELY(ret != 0)) {
 				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
 			}
@@ -2721,7 +2720,7 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 
 typedef struct {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	nccl_ofi_mr_keypool_t *key_pool;
+	nccl_ofi_idpool_t *key_pool;
 } freelist_regmr_fn_handle_t;
 
 /**
@@ -5971,7 +5970,18 @@ int nccl_net_ofi_rdma_init(nccl_ofi_topo_t *topo,
 		}
 
 		/* Initialize mr key pool */
-		nccl_ofi_mr_keys_init(&device->key_pool, provide_own_mr_key);
+		if (provide_own_mr_key) {
+			/* The provider may return support for a larger key size. Use
+			* the size requested by the user to allow them to limit the
+			* size of the mr_keys table. */
+			ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
+		} else {
+			/* Mark key pool as not in use */
+			ret = nccl_ofi_idpool_init(&device->key_pool, 0);
+		}
+		if (ret != 0) {
+			goto error;
+		}
 	}
 
 	goto exit;

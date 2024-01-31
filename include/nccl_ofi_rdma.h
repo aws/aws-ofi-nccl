@@ -20,6 +20,7 @@ extern "C" {
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_deque.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_idpool.h"
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear
@@ -621,7 +622,7 @@ typedef struct nccl_net_ofi_rdma_device {
 	uint64_t max_tag;
 
 	/* Memory registration key pool */
-	nccl_ofi_mr_keypool_t key_pool;
+	nccl_ofi_idpool_t key_pool;
 } nccl_net_ofi_rdma_device_t;
 
 /*

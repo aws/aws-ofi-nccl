@@ -25,6 +25,7 @@
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_idpool.h"
 
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
@@ -155,86 +156,6 @@ void nccl_net_ofi_free_info_list(struct fi_info *info_list)
 			break;
 		}
 	}
-}
-
-/*
- * @brief	Allocate a memory registration key
- *
- * Extract an available key from the key pool, mark the key as
- * unavailable in the key pool, and return extracted key. Noop in case
- * no key was available.
- *
- * This operation is locked by the key pool's internal lock.
- *
- * @param	key_pool
- *		The Key pool
- * @return	Extracted key, on susccess
- *		FI_KEY_NOTAVAIL, in case no key is available
- */
-uint64_t nccl_net_ofi_allocate_mr_key(nccl_ofi_mr_keypool_t *key_pool)
-{
-	uint64_t key = FI_KEY_NOTAVAIL;
-	bool* mr_keys = key_pool->mr_keys;
-	int num_mr_keys = key_pool->size;
-	pthread_mutex_t *lock = &key_pool->lock;
-
-	if (mr_keys == NULL) {
-		NCCL_OFI_WARN("Invalid call to allocate_mr_key");
-		return FI_KEY_NOTAVAIL;
-	}
-
-	pthread_mutex_lock(lock);
-
-	for (size_t i = 0; i < num_mr_keys; i++) {
-		if (mr_keys[i]) {
-			mr_keys[i] = false;
-			key = i;
-			break;
-		}
-	}
-
-	if (key == FI_KEY_NOTAVAIL)
-		NCCL_OFI_WARN("No MR keys available (max: %d)", num_mr_keys);
-
-	pthread_mutex_unlock(lock);
-	return key;
-}
-
-/*
- * @brief	Free a memory registration key
- *
- * Return input key into the key pool.
- *
- * This operation is locked by the key pool's internal lock.
- */
-int nccl_net_ofi_free_mr_key(nccl_ofi_mr_keypool_t *key_pool, uint64_t key)
-{
-	bool* mr_keys = key_pool->mr_keys;
-	int num_mr_keys = key_pool->size;
-	pthread_mutex_t *lock = &key_pool->lock;
-
-	if (mr_keys == NULL) {
-		NCCL_OFI_WARN("Invalid call to free_mr_key");
-		return -EINVAL;
-	}
-
-	if (key >= num_mr_keys) {
-		NCCL_OFI_WARN("Key value out of range (%"PRIu64")", key);
-		return -EINVAL;
-	}
-
-	if (mr_keys[key] != false) {
-		NCCL_OFI_WARN("Attempted to free a key that's not in use (%"PRIu64")", key);
-		return -ENOTSUP;
-	}
-
-	pthread_mutex_lock(lock);
-
-	mr_keys[key] = true;
-
-	pthread_mutex_unlock(lock);
-
-	return 0;
 }
 
 static int in_list(const char *item, const char *list)
@@ -1342,41 +1263,4 @@ int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 					  nccl_net_ofi_mr_handle_t **handle)
 {
 	return -ENOTSUP;
-}
-
-int nccl_ofi_mr_keys_init(nccl_ofi_mr_keypool_t *key_pool, bool provide_mr_keys)
-{
-	if (provide_mr_keys) {
-		/* The provider may return support for a larger key size. Use
-		 * the size requested by the user to allow them to limit the
-		 * size of the mr_keys table. */
-		key_pool->size = (size_t) 1 << (ofi_nccl_mr_key_size() * 8);
-		key_pool->mr_keys = malloc(sizeof(bool) * key_pool->size);
-
-		/* Return in case of allocation error */
-		if (NULL == key_pool->mr_keys) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Unable to allocate MR keys table");
-			return  ncclSystemError;
-		}
-
-		/* Set keys to be vacant */
-		for (size_t i = 0; i < key_pool->size; i++) {
-			key_pool->mr_keys[i] = true;
-		}
-
-		/* Intiaialize mutex for endpoint access */
-		if (pthread_mutex_init(&key_pool->lock, NULL)) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Unable to initialize mutex");
-			free(key_pool->mr_keys);
-			return ncclSystemError;
-		}
-	}
-	else {
-		/* Mark key pool as not in use */
-		key_pool->size = 0;
-		key_pool->mr_keys = NULL;
-	}
-
-	return ncclSuccess;
 }
