@@ -470,7 +470,7 @@ static int post_recv_conn(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
  *		non-zero on error
  */
 static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
-					nccl_ofi_mr_keypool_t *key_pool, int dev_id,
+					nccl_ofi_idpool_t *key_pool, int dev_id,
 					void *data, size_t size,
 					int type, struct fid_mr **mr_handle)
 {
@@ -535,14 +535,13 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 		goto exit;
 	}
 
-	if (key_pool->mr_keys) {
-		uint64_t key = nccl_net_ofi_allocate_mr_key(key_pool);
-		if (key == FI_KEY_NOTAVAIL) {
+	if (key_pool->ids) {
+		int key = nccl_ofi_idpool_allocate_id(key_pool);
+		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
-			ret = -EINVAL;
 			goto exit;
 		}
-		mr_attr.requested_key = key;
+		mr_attr.requested_key = (uint64_t)key;
 	}
 
 	ret = fi_mr_regattr(domain,
@@ -624,7 +623,7 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
  *		non-zero on error
  */
 static int register_internal_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
-					nccl_ofi_mr_keypool_t *key_pool, int dev_id,
+					nccl_ofi_idpool_t *key_pool, int dev_id,
 					void *data, size_t size,
 					int type, struct fid_mr **mr_handle)
 {
@@ -637,7 +636,7 @@ static int register_internal_mr_buffers(struct fid_domain *domain, struct fid_ep
 }
 
 static int reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
-				nccl_ofi_mr_keypool_t *key_pool, int dev_id,
+				nccl_ofi_idpool_t *key_pool, int dev_id,
 				void *data, size_t size, int type,
 				void **mhandle)
 {
@@ -680,7 +679,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	}
 	int dev_id = device->base.dev_id;
 
-	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->key_pool;
 	return reg_mr_base(device->domain, ep->ofi_ep, key_pool,
 			   dev_id, data, size, type, mhandle);
 }
@@ -698,7 +697,7 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
 }
 
 static int dereg_mr_base_comm(struct fid_mr *mr_handle,
-				       nccl_ofi_mr_keypool_t *key_pool,
+				       nccl_ofi_idpool_t *key_pool,
 				       int dev_id)
 {
 	int ret = 0;
@@ -708,12 +707,12 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 		goto exit;
 	}
 
-	if (key_pool->mr_keys) {
+	if (key_pool->ids) {
 		uint64_t key = fi_mr_key(mr_handle);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
 		} else {
-			ret = nccl_net_ofi_free_mr_key(key_pool, key);
+			ret = nccl_ofi_idpool_free_id(key_pool, key);
 			if (OFI_UNLIKELY(ret != 0)) {
 				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
 			}
@@ -1107,7 +1106,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
  * 		error, on others
  */
 static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep,
-				    nccl_ofi_mr_keypool_t *key_pool,
+				    nccl_ofi_idpool_t *key_pool,
 				    nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff, int dev_id)
 {
 	int ret = 0;
@@ -1165,7 +1164,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	fi_addr_t remote_ep;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
-	nccl_ofi_mr_keypool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->key_pool;
 	int dev_id = device->base.dev_id;
 
 	/* Insert remote EP address to AV */
@@ -2290,7 +2289,22 @@ int nccl_net_ofi_sendrecv_init(struct fi_info* ofi_info_list,
 		}
 
 		/* Initialize mr key pool */
-		nccl_ofi_mr_keys_init(&device->key_pool, provide_own_mr_key);
+		if (provide_own_mr_key) {
+			/* The provider may return support for a larger key size. Use
+			* the size requested by the user to allow them to limit the
+			* size of the mr_keys table. */
+			ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
+		} else {
+			/* Mark key pool as not in use */
+			ret = nccl_ofi_idpool_init(&device->key_pool, 0);
+		}
+
+		if (ret != 0) {
+			fi_freeinfo(device->info);
+			free(device->base.name);
+			free(device);
+			goto error;
+		}
 
 		base_devs[dev_id] = &device->base;
 
