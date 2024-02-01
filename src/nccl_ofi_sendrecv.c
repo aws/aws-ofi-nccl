@@ -1393,7 +1393,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 		goto exit;
 	}
 
-	base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep);
 	free(listen_comm);
  exit:
 	return ret;
@@ -1473,7 +1473,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	local_ep_name = get_local_address(ep->ofi_ep);
 
 	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
-	handle->tag = tag;
+	handle->comm_id = tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
 	num_addrs = fi_av_insert(ep->av, (void *)local_ep_name, 1,
@@ -1722,7 +1722,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Get tag and remote name from handle */
 	memcpy(&remote_ep_addr, handle->ep_name, MAX_EP_ADDR);
-	memcpy(&tag, &handle->tag, sizeof(tag));
+	memcpy(&tag, &handle->comm_id, sizeof(tag));
 	if (tag < 1 || tag > max_tag) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
 			      device->base.dev_id);
@@ -2067,7 +2067,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	pthread_mutex_lock(&device->ep_lock);
 
 	/* Obtain thread-local sendrecv endpoint. Allocate and
-	 * initialize endpoint if neccessary. */
+	 * initialize endpoint if necessary. */
 	nccl_net_ofi_sendrecv_ep_t *ep = pthread_getspecific(device->ep_key);
 	if (!ep) {
 		/* Allocate endpoint */
