@@ -194,7 +194,7 @@ typedef struct nccl_ofi_connection_info {
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
-	uint64_t tag;
+	uint64_t comm_id;
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;

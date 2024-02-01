@@ -85,7 +85,7 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /*
  * @brief	Tag value bitmask for tag variables
  */
-#define TAG_VALUE_TAG_MASK ((((uint64_t)1 << NUM_TAG_VALUE_BITS) - 1) << NUM_TAG_TYPE_BITS)
+#define TAG_VALUE_TAG_MASK (((uint64_t)1 << NUM_TAG_VALUE_BITS) - 1)
 
 /*
  * @brief	Message sequence number bitmask for immediate data
@@ -130,39 +130,24 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /*
  * @brief	Return input tag indicating data path message
  */
-#define GET_DATA_MSG_TAG(tag) (((tag) & ~TAG_TYPE_TAG_MASK) | DATA_MSG_TYPE_MASK)
+#define GET_DATA_MSG_TAG(comm_id) (((comm_id) << NUM_TAG_TYPE_BITS) | CONN_MSG_TYPE_MASK)
 
 /*
  * @brief	Return input tag indicating connect message
  */
-#define GET_CONN_MSG_TAG(tag) (((tag) & ~TAG_TYPE_TAG_MASK) | CONN_MSG_TYPE_MASK)
+#define GET_CONN_MSG_TAG(comm_id) (((comm_id) << NUM_TAG_TYPE_BITS) | CONN_MSG_TYPE_MASK)
 
 /*
  * @brief	Return input tag indicating connect response message
  */
-#define GET_CONN_RESP_MSG_TAG(tag) (((tag) & ~TAG_TYPE_TAG_MASK) | CONN_RESP_MSG_TYPE_MASK)
-
-/*
- * @brief	Return input tag with tag value incremented by one
- *
- * The type of the input tag remains unchanged
- */
-#define INCREMENT_TAG_VALUE(tag) ((tag) + ((uint64_t)1 << NUM_TAG_TYPE_BITS))
-
-/*
- * @brief	Return true iff the input tag is a valid tag based on `max_tag'
- *
- * A tag is valid as long as incrementing its tag value and clearing
- * the tag type bits do not overflow over `max_tag'.
- */
-#define IS_TAG_VALID(tag, max_tag) (((tag) | TAG_TYPE_TAG_MASK) <= max_tag)
+#define GET_CONN_RESP_MSG_TAG(comm_id) (((comm_id) << NUM_TAG_TYPE_BITS) | CONN_RESP_MSG_TYPE_MASK)
 
 /*
  * @brief	Extract tag from write completion immediate data
  *
  * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
  */
-#define GET_TAG_FROM_IMM(data) ((((data) >> NUM_MSG_SEQ_NUM_BITS) << NUM_TAG_TYPE_BITS) & TAG_VALUE_TAG_MASK)
+#define GET_TAG_FROM_IMM(data) ((((data) >> NUM_MSG_SEQ_NUM_BITS)) & TAG_VALUE_TAG_MASK)
 
 /*
  * @brief	Extract message sequence number from write completion immediate data
@@ -172,11 +157,6 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 #define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
 
 /*
- * @brief	Get tag value
- */
-#define GET_TAG_VALUE(tag) ((tag) >> NUM_TAG_TYPE_BITS)
-
-/*
  * @brief	Extract number of segments from write completion immediate data
  *
  * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
@@ -184,14 +164,14 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 #define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NUM_MSG_SEQ_NUM_BITS +  NUM_TAG_VALUE_BITS)) & MSG_NUM_SEG_MASK)
 
 /*
- * @brief	Build write completion immediate data from tag, message seq
+ * @brief	Build write completion immediate data from comm ID, message seq
  *		number and number of segments used to transfer RDMA write
  *
  * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
  */
-#define GET_RDMA_WRITE_IMM_DATA(tag, seq, nseg) \
-		((seq) | (((tag) >> NUM_TAG_TYPE_BITS) << NUM_MSG_SEQ_NUM_BITS) | \
-		 (nseg << (NUM_MSG_SEQ_NUM_BITS + NUM_TAG_VALUE_BITS)))
+#define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
+		((seq) | ((comm_id) << NUM_MSG_SEQ_NUM_BITS) | \
+		 ((nseg) << (NUM_MSG_SEQ_NUM_BITS + NUM_TAG_VALUE_BITS)))
 
 /*
  * RDMA data-path communication does not use Libfabric tags, but we must use
@@ -213,7 +193,7 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending);
 static int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, int rail_id);
 
 static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
-				     nccl_net_ofi_rdma_req_t *bounce_req);
+					 nccl_net_ofi_rdma_req_t *bounce_req);
 
 static nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl);
 
@@ -225,48 +205,46 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 
 /*
- * @brief	Get endpoint communicator with given tag
+ * @brief	Get endpoint communicator with given ID
  */
 static inline nccl_net_ofi_comm_t *get_comm(nccl_net_ofi_rdma_ep_t *ep,
-			       	     	    int64_t local_tag)
+			       	     	    int64_t local_comm_id)
 {
-	uint64_t tag_value = GET_TAG_VALUE(local_tag);
-	assert(tag_value < NCCL_OFI_RDMA_MAX_COMMS);
-	return ep->comms[tag_value];
+	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+	return ep->comms[local_comm_id];
 }
 
 /*
- * @brief	Set endpoint communicator with given tag
+ * @brief	Set endpoint communicator with given ID
  */
 static inline void set_comm(nccl_net_ofi_rdma_ep_t *ep,
-			    int64_t local_tag,
+			    int64_t local_comm_id,
 			    nccl_net_ofi_comm_t *comm)
 {
-	uint64_t tag_value = GET_TAG_VALUE(local_tag);
-	assert(tag_value < NCCL_OFI_RDMA_MAX_COMMS);
-	ep->comms[tag_value] = comm;
+	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+	ep->comms[local_comm_id] = comm;
 }
 
 /*
- * @brief	Get endpoint send communicator with given tag
+ * @brief	Get endpoint send communicator with given ID
  */
 static inline nccl_net_ofi_rdma_send_comm_t *get_send_comm(nccl_net_ofi_rdma_ep_t *ep,
-						    	   uint64_t local_tag)
+						    	   uint64_t local_comm_id)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)
-		get_comm(ep, local_tag);
+		get_comm(ep, local_comm_id);
 	assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
 	return s_comm;
 }
 
 /*
- * @brief	Get endpoint recv communicator with given tag
+ * @brief	Get endpoint recv communicator with given comm_id
  */
 static inline nccl_net_ofi_rdma_recv_comm_t *get_recv_comm(nccl_net_ofi_rdma_ep_t *ep,
-							   uint64_t local_tag)
+							   uint64_t local_comm_id)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)
-		get_comm(ep, local_tag);
+		get_comm(ep, local_comm_id);
 	assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
 	return r_comm;
 }
@@ -278,36 +256,6 @@ static inline nccl_net_ofi_rdma_ctrl_msg_t *get_bounce_ctrl_msg
 	(nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item)
 {
 	return (nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg;
-}
-
-/*
- * @brief	Increment value of tag stored in endpoint
- *
- * The tag of the endpoint is only updated in case the new tag is a
- * valid.
- *
- * @param	ep
- *		Endpoint whose tag is incremented
- * @param	device
- * 		Device providing the maximum tag
- * @return	0, new tag is valud
- *		ncclInternalError, on others
- */
-static inline int increment_tag(nccl_net_ofi_rdma_ep_t *ep,
-					 nccl_net_ofi_rdma_device_t *device)
-{
-	uint64_t new_tag = INCREMENT_TAG_VALUE(ep->tag);
-
-	/* Increment tag ID */
-	if (!IS_TAG_VALID(new_tag, device->max_tag)) {
-		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
-			      " Last generated tag is %ld but maximum tag is %ld",
-			      device->base.dev_id, ep->tag, device->max_tag);
-		return ncclInternalError;
-	}
-
-	ep->tag = new_tag;
-	return 0;
 }
 
 /*
@@ -1283,21 +1231,21 @@ static inline int handle_bounce_recv(struct fi_cq_tagged_entry *cq_entry, int ra
 		return -EINVAL;
 	}
 
-	uint64_t comm_local_tag = GET_TAG_FROM_IMM(cq_entry->data);
+	uint64_t local_comm_id = GET_TAG_FROM_IMM(cq_entry->data);
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 
 	bounce_data->recv_len = cq_entry->len;
 
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
-	nccl_net_ofi_comm_t *comm = get_comm(ep, comm_local_tag);
+	nccl_net_ofi_comm_t *comm = get_comm(ep, local_comm_id);
 	uint16_t msg_seq_num = GET_SEQ_NUM_FROM_IMM(cq_entry->data);
 
 	if (comm->type == NCCL_NET_OFI_SEND_COMM) {
 		/* Control message */
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(comm->dev_id, rail_id, comm, msg_seq_num);
 		nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)comm;
-		assert(s_comm->local_tag == comm_local_tag);
+		assert(s_comm->local_comm_id == local_comm_id);
 		assert(bounce_data->recv_len == sizeof(nccl_net_ofi_rdma_ctrl_msg_t));
 
 		return handle_ctrl_recv(s_comm, msg_seq_num, bounce_req, ep);
@@ -1316,14 +1264,14 @@ static inline int handle_bounce_recv(struct fi_cq_tagged_entry *cq_entry, int ra
 /**
  * @brief	Get request associated with RDMA write immediate data
  * 
- * @param	ep, to look up r_comm from tag encoded in data
+ * @param	ep, to look up r_comm from ID encoded in data
  * @param	data, the immediate data
  */
 static inline nccl_net_ofi_rdma_req_t *get_req_from_imm_data
 	(nccl_net_ofi_rdma_ep_t *ep, uint64_t data)
 {
-	uint16_t tag = GET_TAG_FROM_IMM(data);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = get_recv_comm(ep, tag);
+	uint16_t comm_id = GET_TAG_FROM_IMM(data);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = get_recv_comm(ep, comm_id);
 
 	uint16_t msg_seq_num = GET_SEQ_NUM_FROM_IMM(data);
 	void *elem;
@@ -2215,21 +2163,21 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	if (s_comm->conn_resp_req->state != NCCL_OFI_RDMA_REQ_COMPLETED) {
 		NCCL_OFI_WARN("Invalid connect response request state. Got %i but expected %i",
 			      s_comm->conn_resp_req->state, NCCL_OFI_RDMA_REQ_COMPLETED);
-		return ncclInternalError;
+		return -EINVAL;
 	}
 
 	/* Validate endpoint */
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		return ncclInternalError;
+		return -EINVAL;
 	}
 
 	/* Retrieve and validate device */
 	device = (nccl_net_ofi_rdma_device_t*)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
-		return ncclInternalError;
+		return -EINVAL;
 	}
 	dev_id = device->base.dev_id;
 
@@ -2237,18 +2185,25 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 		NCCL_OFI_WARN("Unexpected number of remote rails for dev %d. Expected %i but got %i",
 			      dev_id, ep->num_rails,
 			      conn_resp->num_rails);
-		return ncclInternalError;
+		return -EINVAL;
 	}
 
-	/* local_tag in this message should be equal to s_comm's remote tag */
-	assert(conn_resp->local_tag == s_comm->remote_tag);
+	/* Validate received comm ID */
+	if (OFI_UNLIKELY(conn_resp->local_comm_id >= device->num_comm_ids)) {
+		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", conn_resp->local_comm_id,
+						dev_id);
+		return -EINVAL;
+	}
+
+	/* Set remote comm ID to remote recv comm ID */
+	s_comm->remote_comm_id = conn_resp->local_comm_id;
 
 	/* Initialize rails `1...num_rails-1' */
 	ret = init_send_comm_rails(s_comm, ep, dev_id,
 				   conn_resp->ep_names,
 				   conn_resp->num_rails);
 	if (ret != 0) {
-		return ncclInternalError;
+		return ret;
 	}
 
 	s_comm->conn_resp_req->free(s_comm->conn_resp_req, false);
@@ -2423,7 +2378,7 @@ static int post_recv_conn_resp(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	rc = fi_trecv(comm_rail->local_ep, &s_comm->conn_msg,
 		      sizeof(nccl_ofi_rdma_connection_info_t),
 		      NULL, comm_rail->remote_addr,
-		      GET_CONN_RESP_MSG_TAG(s_comm->local_tag),
+		      GET_CONN_RESP_MSG_TAG(s_comm->local_comm_id),
 		      0, req);
 	if (rc == -FI_EAGAIN) {
 		/*
@@ -2467,7 +2422,7 @@ static int post_recv_conn(nccl_net_ofi_rdma_listen_comm_t *l_comm,
 	/* Post a buffer for receiving connection requests */
 	l_comm->req.state = NCCL_OFI_RDMA_REQ_PENDING;
 	rc = fi_trecv(l_comm->leader_local_ep, &l_comm->conn_msg, sizeof(nccl_ofi_rdma_connection_info_t),
-		      NULL, FI_ADDR_UNSPEC, GET_CONN_MSG_TAG(l_comm->tag),
+		      NULL, FI_ADDR_UNSPEC, GET_CONN_MSG_TAG(l_comm->comm_id),
 		      0, &l_comm->req);
 	if (rc == -FI_EAGAIN) {
 		l_comm->req.state = NCCL_OFI_RDMA_REQ_CREATED;
@@ -3163,7 +3118,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	/* At this point, we've successfully inserted a new request, so update the num inflight. */
 	(r_comm->num_inflight_reqs)++;
 
-	NCCL_OFI_TRACE_RECV(dev_id, r_comm->local_tag, sizes[0], req, base_req);
+	NCCL_OFI_TRACE_RECV(dev_id, r_comm->local_comm_id, sizes[0], req, base_req);
 
 	ret = receive_progress(recv_data->send_ctrl_req, true);
 	if (OFI_UNLIKELY(ret != 0)) {
@@ -3356,7 +3311,14 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	}
 
 	/* Not strictly necessary, but why leave dangling pointers? */
-	set_comm((nccl_net_ofi_rdma_ep_t *)base_ep, r_comm->local_tag, NULL);
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) base_ep;
+	set_comm(ep, r_comm->local_comm_id, NULL);
+
+	/* Release communicator ID */
+	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", r_comm->local_comm_id);
+	}
 
 	free(r_comm);
  exit:
@@ -3549,6 +3511,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 							nccl_ofi_rdma_connection_info_t *conn_msg)
 {
 	int ret = 0;
+
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = NULL;
 	int dev_id = device->base.dev_id;
 	int num_rails = ep->num_rails;
@@ -3575,14 +3538,27 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close;
-	assert(IS_DATA_MSG_TYPE(l_comm->tag));
-	r_comm->local_tag = l_comm->tag;
-	assert(IS_DATA_MSG_TYPE(conn_msg->local_tag));
-	r_comm->remote_tag = conn_msg->local_tag;
+
+	/* Allocate recv communicator ID */
+	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	if (OFI_UNLIKELY(comm_id < 0)) {
+		r_comm->local_comm_id = ~0;
+		goto error;
+	}
+	r_comm->local_comm_id = (uint64_t)comm_id;
+
+	/* Validate received comm ID */
+	if (OFI_UNLIKELY(conn_msg->local_comm_id >= device->num_comm_ids)) {
+		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", conn_msg->local_comm_id,
+					  dev_id);
+		goto error;
+    }
+
+	r_comm->remote_comm_id = conn_msg->local_comm_id;
 	r_comm->next_msg_seq_num = 0;
 
 	/* Add ourselves to ep's lookup array */
-	set_comm(ep, r_comm->local_tag, &r_comm->base.base);
+	set_comm(ep, r_comm->local_comm_id, &r_comm->base.base);
 
 	/* Allocate array of communicator rails */
 	r_comm->num_rails = num_rails;
@@ -3663,6 +3639,12 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 			nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 		if (r_comm->msgbuff)
 			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
+		if (~0 != r_comm->local_comm_id) {
+			ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", r_comm->local_comm_id);
+			}
+		}
 		free(r_comm);
 	}
 
@@ -3694,9 +3676,6 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 			      MAX_NUM_RAILS, num_rails);
 		return ncclInternalError;
 	}
-
-	/* Set l_comm's (local) tag to be sent back to remote for verification */
-	conn_resp->local_tag = l_comm->tag;
 
 	/* Set number of rails to be sent back to remote for verification */
 	conn_resp->num_rails = num_rails;
@@ -3745,7 +3724,7 @@ static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 	rc = fi_tsend(comm_rail->local_ep, (void *)conn_resp,
 		      sizeof(nccl_ofi_rdma_connection_info_t), NULL, comm_rail->remote_addr,
-		      GET_CONN_RESP_MSG_TAG(r_comm->remote_tag), req);
+		      GET_CONN_RESP_MSG_TAG(r_comm->remote_comm_id), req);
 
 	if (rc == -FI_EAGAIN) {
 		req->state = NCCL_OFI_RDMA_REQ_CREATED;
@@ -3904,6 +3883,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 			goto exit;
 		}
 	
+		/* Set r_comm's (local) comm ID to be sent back to remote */
+		conn_msg->local_comm_id = r_comm->local_comm_id;
+
 		/* COMM_SEND_CONN: Send connect response message to remote */
 		ret = post_send_conn_resp(r_comm, conn_msg, device, ep, req);
 		if (ret == -FI_EAGAIN) {
@@ -3991,6 +3973,8 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	nccl_net_ofi_rdma_listen_comm_t *l_comm =
 		(nccl_net_ofi_rdma_listen_comm_t *)listen_comm;
 
+	int ret = 0;
+
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_ep_t *base_ep = l_comm->base.base.ep;
 	assert(base_ep != NULL);
@@ -4012,10 +3996,16 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 		return ncclSystemError;
 	}
 
-	free(listen_comm);
-	base_ep->release_ep(base_ep);
+	/* Release communicator ID */
+	ret = nccl_ofi_idpool_free_id(((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool, l_comm->comm_id);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
+	}
 
-	return 0;
+	free(l_comm);
+	ret = base_ep->release_ep(base_ep);
+
+	return ret;
 }
 
 static int listen(nccl_net_ofi_ep_t *base_ep,
@@ -4035,17 +4025,11 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	int dev_id = device->base.dev_id;
 
-	if(increment_tag(ep, device)) {
-		ret = ncclSystemError;
-		goto error;
-	}
-
 	/* Build handle */
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
 	assert(sizeof(handle->ep_name) == sizeof(first_rail->local_ep_name));
 	memcpy(handle->ep_name, first_rail->local_ep_name,
 	       sizeof(first_rail->local_ep_name));
-	handle->tag = ep->tag;
 
 	/* Build listen_comm */
 	l_comm = calloc(1, sizeof(nccl_net_ofi_rdma_listen_comm_t));
@@ -4061,8 +4045,17 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = accept;
 	l_comm->base.close = listen_close;
-	l_comm->tag = ep->tag;
 	l_comm->leader_local_ep = first_rail->ofi_ep;
+
+    /* Allocate listen communicator ID */
+	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	if (OFI_UNLIKELY(comm_id < 0)) {
+		l_comm->comm_id = ~0;
+		ret = ncclSystemError;
+		goto error;
+	}
+	l_comm->comm_id = (uint64_t)comm_id;
+	handle->comm_id = l_comm->comm_id;
 
 	/* Prepare receive request to accept connections */
 	ret = prepare_recv_conn_req(l_comm);
@@ -4089,6 +4082,11 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	goto exit;
 
  error:
+	if (l_comm && ~0 != l_comm->comm_id) {
+		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, l_comm->comm_id)) {
+			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
+		}
+	}
 	free(l_comm);
  exit:
 	return ret;
@@ -4150,7 +4148,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	/* Set expected number of completions. If ctrl msg is outsanding then add one more. */
 	send_data->total_num_compls = (have_ctrl ? 0 : 1) + send_data->schedule->num_xfer_infos;
 
-	send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_tag,
+	send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id,
 						   req->msg_seq_num,
 						   send_data->schedule->num_xfer_infos);
 
@@ -4247,7 +4245,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 			  RDMA_DATA_TAG, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("fi_tsenddada failed; RC: %zd, Error: %s",
+		NCCL_OFI_WARN("fi_tsenddata failed; RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
 	} else if (rc == 0) {
 		/* TODO: use a better trace for eager send? */
@@ -4383,7 +4381,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	assert(xfer_info->rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
 
-	uint64_t data = GET_RDMA_WRITE_IMM_DATA(r_comm->remote_tag, req->msg_seq_num, 0);
+	uint64_t data = GET_RDMA_WRITE_IMM_DATA(r_comm->remote_comm_id, req->msg_seq_num, 0);
 
 	ssize_t rc = fi_tsenddata(comm_rail->local_ep, &ctrl_fl_item->ctrl_msg,
 				  sizeof(nccl_net_ofi_rdma_ctrl_msg_t), desc,
@@ -4762,7 +4760,14 @@ static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	}
 
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
-	set_comm(ep, s_comm->local_tag, NULL);
+	set_comm(ep, s_comm->local_comm_id, NULL);
+
+	/* Release communicator ID */
+	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, s_comm->local_comm_id);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", s_comm->local_comm_id);
+	}
+
 	free(s_comm);
 
  exit:
@@ -4824,14 +4829,14 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
  *		NULL, on others
  */
 static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep,
-			      int dev_id, uint64_t local_tag,
+			      int dev_id, uint64_t local_comm_id,
 			      nccl_net_ofi_conn_handle_t *handle,
 			      nccl_ofi_rdma_connection_info_t* conn_msg)
 {
 	int num_rails = ep->num_rails;
 
-	/* Send s_comm's local tag to be transferred to receiver */
-	conn_msg->local_tag = local_tag;
+	/* Send s_comm's local comm ID to be transferred to receiver */
+	conn_msg->local_comm_id = local_comm_id;
 
 	/* Set number of rails to be sent back to remote for verification */
 	conn_msg->num_rails = num_rails;
@@ -5002,22 +5007,25 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->next_msg_seq_num = 0;
 
 	/* Store tag from handle in communicator */
-	if (!IS_TAG_VALID(handle->tag, device->max_tag)) {
-		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", handle->tag,
+	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
+		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", handle->comm_id,
 			      dev_id);
-		free(ret_s_comm);
-		return ncclSystemError;
+		ret = -EINVAL;
+		goto error;
 	}
-	ret_s_comm->remote_tag = handle->tag;
+	ret_s_comm->remote_comm_id = handle->comm_id;
 
-	if (increment_tag(ep, device)) {
-		free(ret_s_comm);
-		return ncclSystemError;
+	/* Allocate send communicator ID */
+	int comm_id = nccl_ofi_idpool_allocate_id(ep->comm_idpool);
+	if (OFI_UNLIKELY(comm_id < 0)) {
+		ret_s_comm->local_comm_id = ~0;
+		ret = comm_id;
+		goto error;
 	}
-	ret_s_comm->local_tag = ep->tag;
+	ret_s_comm->local_comm_id = (uint64_t)comm_id;
 
 	/* Add ourselves to ep's lookup array */
-	set_comm(ep, ret_s_comm->local_tag, &ret_s_comm->base.base);
+	set_comm(ep, ret_s_comm->local_comm_id, &ret_s_comm->base.base);
 
 	/* Allocate communicator rails array */
 	ret_s_comm->num_rails = num_rails;
@@ -5049,17 +5057,28 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Allocate and initialize connect message */
-	prepare_send_connect_message(ep, dev_id, ret_s_comm->local_tag, handle, &ret_s_comm->conn_msg);
+	prepare_send_connect_message(ep, dev_id, ret_s_comm->local_comm_id, handle, &ret_s_comm->conn_msg);
 
 	/* Allocate message buffer */
 	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE);
 	if (!ret_s_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
-		free(ret_s_comm);
-		return ncclSystemError;
+		ret = -ENOMEM;
+		goto error;
 	}
 
 	*s_comm = ret_s_comm;
+	return ret;
+
+
+ error:
+	if (ret_s_comm && ~0 != ret_s_comm->local_comm_id) {
+		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, ret_s_comm->local_comm_id)) {
+			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", ret_s_comm->local_comm_id);
+		}
+	}
+	free(ret_s_comm);
+
 	return ret;
 }
 
@@ -5143,7 +5162,7 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	 */
 	rc = fi_tsend(comm_rail->local_ep, (void *)&s_comm->conn_msg,
 		      sizeof(nccl_ofi_rdma_connection_info_t), NULL, comm_rail->remote_addr,
-		      GET_CONN_MSG_TAG(s_comm->remote_tag), req);
+		      GET_CONN_MSG_TAG(s_comm->remote_comm_id), req);
 
 	if (rc == -FI_EAGAIN) {
 		/*
@@ -5469,10 +5488,6 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		/* Ideally we would "un-post" the bounce buffers, but this
 		   should be accomplished by closing the endpoint. */
 		release_rdma_ep_resources(ep, device->base.dev_id);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to deregister ep bounce buffer");
-			goto unlock;
-		}
 
 		int r = fini_bounce_buffers(ep);
 		if (r != 0) {
@@ -5480,7 +5495,18 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 			goto unlock;
 		}
 
+		r = nccl_ofi_idpool_fini(ep->comm_idpool);
+		if (OFI_UNLIKELY(r != 0)) {
+			ret = ncclSystemError;
+			goto unlock;
+		}
+
+		free(ep->comm_idpool);
+		ep->comm_idpool = NULL;
+
 		free(ep->comms);
+		ep->comms = NULL;
+
 		r = nccl_ofi_deque_finalize(ep->pending_reqs_queue);
 		if (r != 0) {
 			NCCL_OFI_WARN("Failed to finalize pending_reqs_queue: %d", r);
@@ -5488,6 +5514,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 			goto unlock;
 		}
 		free(ep->rails);
+		ep->rails = NULL;
 	}
 
 	int r;
@@ -5521,7 +5548,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	pthread_mutex_lock(&device->ep_lock);
 
 	/* Obtain thread-local rdma endpoint. Allocate and
-	 * initialize endpoint if neccessary. */
+	 * initialize endpoint if necessary. */
 	nccl_net_ofi_rdma_ep_t *ep = pthread_getspecific(device->ep_key);
 	if (!ep) {
 		int num_rails = device->num_rails;
@@ -5544,8 +5571,21 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		/* Initialize number of rail */
 		ep->num_rails = num_rails;
 
-		/* Initialize endpoint tag */
-		ep->tag = 0;
+		/* Initialize endpoint ID pool */
+		ep->comm_idpool = malloc(sizeof(nccl_ofi_idpool_t));
+		if (OFI_UNLIKELY(ep->comm_idpool == NULL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
+			goto unlock;
+		}
+
+		ret = nccl_ofi_idpool_init(ep->comm_idpool, device->num_comm_ids);
+		if (OFI_UNLIKELY(ret != 0)) {
+			ret = ncclSystemError;
+			free(ep->comm_idpool);
+			ep->comm_idpool = NULL;
+			goto unlock;
+		}
 
 		/* Initialize reference count */
 		ep->ref_cnt = 0;
@@ -5659,16 +5699,15 @@ static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_
 }
 
 /*
- * @brief	Calculate maximum tag for device
+ * @brief	Calculate maximum number of comm IDs per device
  *
  * @param	device
  *		Rdma device
  *
- * @return	Maximum tag, on success
  * @return	0, on success
  *		ncclInternalError, on error
  */
-static int calculate_max_tag(nccl_net_ofi_rdma_device_t *device, uint64_t *max_tag)
+static int calculate_num_comm_ids(nccl_net_ofi_rdma_device_t *device)
 {
 	int ret = 0;
 	int ofi_tag_leading_zeroes = 0, ofi_tag_bits_for_ring_id = 64;
@@ -5690,7 +5729,7 @@ static int calculate_max_tag(nccl_net_ofi_rdma_device_t *device, uint64_t *max_t
 	} else {
 		/* Set maximum tag information; Reserving 2 bits for control information */
 		/* RDMA write protocol has maximum 12-bit tag due to 32-bit immediate data restriction */
-		device->max_tag = (uint64_t)((1ULL << (12 + NUM_TAG_TYPE_BITS)) - 1);
+		device->num_comm_ids = (uint64_t)NCCL_OFI_RDMA_MAX_COMMS;
 	}
 
 	return ret;
@@ -5706,7 +5745,7 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 	nccl_net_ofi_rdma_device_rail_t *begin = device->device_rails;
 	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
 
-	ret = calculate_max_tag(device, &device->max_tag);
+	ret = calculate_num_comm_ids(device);
 	if (ret != 0) {
 		return ret;
 	}
