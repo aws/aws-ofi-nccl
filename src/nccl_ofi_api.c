@@ -269,7 +269,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	if (ofi_handle->state.stage == COMM_CREATE_START) {
 		/* Retrieve and validate device */
-		nccl_net_ofi_device_t *base_dev = base_dev = plugin->devs[dev_id];
+		nccl_net_ofi_device_t *base_dev = plugin->devs[dev_id];
 		if (OFI_UNLIKELY(base_dev == NULL)) {
 			NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
 			return ncclInternalError;
