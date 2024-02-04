@@ -491,7 +491,7 @@ error:
 
 ncclResult_t nccl_net_ofi_accept_v4(void* listenComm, void** recvComm)
 {
-	ncclResult_t ret;
+	ncclResult_t ret = ncclInvalidArgument;
 
 	while (*recvComm == NULL) {
 		ret = nccl_net_ofi_accept(listenComm, recvComm);
