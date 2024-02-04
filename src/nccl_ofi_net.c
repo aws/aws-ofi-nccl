@@ -353,12 +353,14 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 				 nccl_ofi_properties_t *props)
 {
 	int ret = 0;
-	nccl_ofi_properties_t dev_props = {0};
 	struct fid_nic *nic_info = NULL;
 
-	ret = set_nic_props_default(dev_id, nic_prov, &dev_props);
-	if (ret != 0)
+	memset(props, 0, sizeof(*props));
+
+	ret = set_nic_props_default(dev_id, nic_prov, props);
+	if (ret != 0) {
 		goto error;
+	}
 
 	/* Change default values as set by NIC attributes */
 	nic_info = (struct fid_nic *)nic_prov->nic;
@@ -373,7 +375,11 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	/* name is NULL if device is a part of multirail config */
 	/* overriding default name only if value is available from provider */
 	if (nic_info->device_attr->name) {
-		dev_props.name = strdup(nic_info->device_attr->name);
+		if (props->name) {
+			free(props->name);
+		}
+		props->name = strdup(nic_info->device_attr->name);
+		assert(props->name != NULL);
 	}
 
 	/*
@@ -381,17 +387,17 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	 * registration support to NCCL
 	 */
 	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT) {
-		dev_props.mr_scope = NCCL_OFI_MR_SCOPE_ENDPOINT;
+		props->mr_scope = NCCL_OFI_MR_SCOPE_ENDPOINT;
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with endpoints");
 	} else {
-		dev_props.mr_scope = NCCL_OFI_MR_SCOPE_DOMAIN;
+		props->mr_scope = NCCL_OFI_MR_SCOPE_DOMAIN;
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with domains");
 	}
 
 	/* Speed reported in Mbps */
-	dev_props.port_speed = nic_info->link_attr->speed / (1e6);
+	props->port_speed = nic_info->link_attr->speed / (1e6);
 
-	ret = get_device_pci_path(nic_info, &(dev_props.pci_path));
+	ret = get_device_pci_path(nic_info, &props->pci_path);
 	if (ret != 0) {
 		ret = 0;
 		props->pci_path = NULL;
@@ -436,18 +442,25 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		 * this is probably ok; any affinity is lost by
 		 * bouncing through host buffers anyway.
 		 */
-		if (active_cuda_device / gpus_per_conn  != dev_id) {
-			for (c=strlen(dev_props.pci_path); c && dev_props.pci_path[c] != '/'; c--) {
-				dev_props.pci_path[c] = '\0';
+		if ((active_cuda_device / gpus_per_conn != dev_id) && props->pci_path) {
+			for (c = strlen(props->pci_path); props->pci_path[c] != '/'; c--) {
+				props->pci_path[c] = '\0';
 			}
-			dev_props.pci_path[c] = '\0';
 		}
-		NCCL_OFI_TRACE(NCCL_INIT, "Returning synthetic PCI path for device %d of  %s",
-			       dev_id, dev_props.pci_path);
+		NCCL_OFI_TRACE(NCCL_INIT,
+			       "Returning synthetic PCI path for device %d of %s",
+			       dev_id,
+			       props->pci_path);
 
-		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s-%x", nic_info->device_attr->name, dev_id);
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Adjusted dev %d device name to %s",
-			       dev_id, dev_props.name);
+		snprintf(props->name,
+			 FI_NAME_MAX + 2,
+			 "%s-%x",
+			 nic_info->device_attr->name,
+			 dev_id);
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Adjusted dev %d device name to %s",
+			       dev_id,
+			       props->name);
 #else
 		NCCL_OFI_WARN("NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  This should not happen.");
 		ret = -ENOTSUP;
@@ -456,11 +469,15 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	}
 
 	goto exit;
+error:
+	if (props->pci_path) {
+		free(props->pci_path);
+	}
+	if (props->name) {
+		free(props->name);
+	}
 
- error:
-	props = NULL;
- exit:
-	*props = dev_props;
+exit:
 	return ret;
 }
 
