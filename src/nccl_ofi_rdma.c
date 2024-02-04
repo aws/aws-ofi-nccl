@@ -5873,7 +5873,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	base_devs = calloc(num_devs, sizeof(nccl_net_ofi_rdma_device_t *));
+	base_devs = calloc(num_devs, sizeof(nccl_net_ofi_device_t *));
 	if (!base_devs) {
 		NCCL_OFI_WARN("Unable to allocate "
 			      "nccl_net_ofi_rdma_device_t pointer array");
