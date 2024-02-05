@@ -36,7 +36,6 @@ if WANT_PLATFORM_AWS
   # NCCL tuner plugin
   lib_LTLIBRARIES += libnccl-ofi-tuner.la
   tuner_sources = \
-	nccl_ofi_api.c \
 	tuner/nccl_ofi_model.c \
 	tuner/nccl_ofi_tuner.c
   libnccl_ofi_tuner_la_SOURCES = $(tuner_sources)
