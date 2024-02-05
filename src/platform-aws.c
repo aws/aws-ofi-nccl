@@ -283,8 +283,8 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 
 int configure_nvls_option(void)
 {
-	/* Disable NVLS topology discovery.  There's a bug with EFA
-	 * and NCCL version 2.18.3 and earlier on platforms with
+	/* Disable NVLS topology discovery for older NCCL versions. There's a
+	 * bug with EFA and NCCL version 2.18.3 and earlier on platforms with
 	 * NVLink Switch support.  We selectively disable NVLS support
 	 * to avoid the bug, which was fixed in 2.18.5.
 	 */
@@ -296,7 +296,9 @@ int configure_nvls_option(void)
 	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
 		nccl_get_version = dlsym(RTLD_DEFAULT, "ncclGetVersion");
 		if (nccl_get_version == NULL) {
-			NCCL_OFI_WARN("Could not find ncclGetVersion symbol");
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			    "Could not find ncclGetVersion symbol; skipping NVLS NCCL version check");
+			return 0;
 		} else {
 			nccl_ret = nccl_get_version(&version);
 			if (nccl_ret != ncclSuccess) {
