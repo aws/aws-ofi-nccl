@@ -62,13 +62,13 @@ float nccl_ofi_tuner_compute_cost(ncclFunc_t func, int algo, int proto, int pipe
 			break;
 
 		default:
-			NCCL_OFI_WARN("Algorithm %d for collective %d  without a model.", algo, func);
+			NCCL_OFI_TRACE(NCCL_TUNING, "Algorithm %d for collective %d  without a model.", algo, func);
 			return -1;
 		}
 		break;
 
 	default:
-		NCCL_OFI_WARN("Unsupported collective %d, fallback to NCCL's selection.", func);
+		NCCL_OFI_TRACE(NCCL_TUNING, "Unsupported collective %d, fallback to NCCL's selection.", func);
 		return -1;
 	}
 
