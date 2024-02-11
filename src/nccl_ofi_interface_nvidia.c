@@ -245,6 +245,6 @@ const ncclNet_v7_t ncclNetPlugin_v7 = {
         .closeSend = nccl_net_ofi_closeSend,
         .closeRecv = nccl_net_ofi_closeRecv,
         .closeListen = nccl_net_ofi_closeListen,
-	.getDeviceMr = NULL,
-	.irecvConsumed = NULL,
+        .getDeviceMr = NULL,
+        .irecvConsumed = NULL,
 };
