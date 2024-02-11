@@ -20,7 +20,7 @@ int main(int argc, char *argv[])
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {0};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {0};
-	ncclNetDeviceHandle_v7_t *s_ignore, *r_ignore;
+	ncclNetDeviceHandle_v8_t *s_ignore, *r_ignore;
 	test_nccl_net_t *extNet = NULL;
 
 	ofi_log_function = logger;

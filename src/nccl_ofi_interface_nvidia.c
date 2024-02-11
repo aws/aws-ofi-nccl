@@ -7,6 +7,44 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
+static ncclResult_t getProperties_v8(int dev_id, ncclNetProperties_v8_t* props)
+{
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_CUDA;
+	}
+	if (ofi_properties.dmabuf_support) {
+		props->ptrSupport |= NCCL_PTR_DMABUF;
+	}
+	/*
+	 * Signal to NCCL that a registered MRs is not tied to a particular
+	 * communicator.
+	 *
+	 * The plugin just set this to `true` because the plugin creates a
+	 * libfabric EP per NIC (rail) and a MR is registered on the EPs of all
+	 * rails (See `reg_mr_ep()` for the RDMA protocol and
+	 * `register_mr_buffers()` for the SENDRECV protocol).
+	 */
+	props->regIsGlobal = 1;
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->latency = ofi_properties.latency;
+	props->maxComms = ofi_properties.max_communicators;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	props->netDeviceType = NCCL_NET_DEVICE_HOST;
+	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+
+	return ncclSuccess;
+}
 
 static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t *props)
 {
@@ -236,6 +274,28 @@ const ncclNet_v7_t ncclNetPlugin_v7 = {
         .connect = connect_v7,
         .accept = accept_v7,
         .regMr = nccl_net_ofi_regMr_v7,
+        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
+        .deregMr = nccl_net_ofi_deregMr,
+        .isend = nccl_net_ofi_isend,
+        .irecv = nccl_net_ofi_irecv,
+        .iflush = nccl_net_ofi_iflush,
+        .test = nccl_net_ofi_test,
+        .closeSend = nccl_net_ofi_closeSend,
+        .closeRecv = nccl_net_ofi_closeRecv,
+        .closeListen = nccl_net_ofi_closeListen,
+        .getDeviceMr = NULL,
+        .irecvConsumed = NULL,
+};
+
+const ncclNet_v8_t ncclNetPlugin_v8 = {
+        .name = "AWS Libfabric",
+        .init = nccl_net_ofi_init,
+        .devices = nccl_net_ofi_devices,
+        .getProperties = getProperties_v8,
+        .listen = nccl_net_ofi_listen,
+        .connect = connect_v7,
+        .accept = accept_v7,
+        .regMr = nccl_net_ofi_regMr,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
         .isend = nccl_net_ofi_isend,
