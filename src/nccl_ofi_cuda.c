@@ -10,6 +10,8 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_cuda.h"
 
+#include <stdio.h>
+
 CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion) = NULL;
 CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr) = NULL;
 CUresult (*nccl_net_ofi_cuCtxGetDevice)(CUdevice *device) = NULL;
