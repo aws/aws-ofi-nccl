@@ -27,6 +27,7 @@ noinst_HEADERS = \
 	tracepoint.h \
 	nccl-headers/net.h \
 	nccl-headers/error.h \
+	nccl-headers/types.h \
 	nccl-headers/nvidia/err.h \
 	nccl-headers/nvidia/net.h \
 	nccl-headers/nvidia/net_device.h \
