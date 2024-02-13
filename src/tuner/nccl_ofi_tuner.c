@@ -112,7 +112,12 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(ncclFunc_t collType, size_t nBytes,
 
 ncclResult_t nccl_ofi_tuner_destroy()
 {
+	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 	free(nccl_ofi_tuner_ctx);
+	/* Prevent other threads from freeing a dangling global ctx */
+	nccl_ofi_tuner_ctx = NULL;
+	pthread_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+
 	return ncclSuccess;
 }
 
