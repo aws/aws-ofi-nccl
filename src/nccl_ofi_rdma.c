@@ -4443,6 +4443,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	 * props->maxRecvs > 1.
 	 */
 
+	bool polled_cq = false;
 	bool have_ctrl = false;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
 
@@ -4451,6 +4452,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_ofi_msgbuff_status_t msg_stat;
 	nccl_ofi_msgbuff_result_t mb_res;
 
+retry:
 	/* Retrive entry from message buffer for msg_seq_num index */
 	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, &elem,
 					   &type, &msg_stat);
@@ -4485,6 +4487,14 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 			      msg_seq_num, mb_res, msg_stat);
 		ret = -EINVAL;
 		goto error;
+	}
+
+	/* look for control messages and then retry the message search
+	   to avoid unnecessary polling / queueing. */
+	if (OFI_UNLIKELY(!polled_cq && !have_ctrl)) {
+		ofi_process_cq_rail(ep, &ep->control_rail);
+		polled_cq = true;
+		goto retry;
 	}
 
 	/* Determine if this should be sent eagerly. */
