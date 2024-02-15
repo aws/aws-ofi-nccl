@@ -1,2 +1,17 @@
-@rashikakheria
-@nzmsv
+# Tag the team by default on all PRs
+*		@aws/aws-ofi
+
+# Tag resident experts for different parts of the code
+
+# internal device-agnostic API
+*api*		@bwbarrett
+
+# Multi-rail scheduler
+*scheduler*	@rauteric
+
+# Algorithm/protocol tuner
+/src/tuner/	@rajachan
+
+# autotools
+configure.ac	@bwbarrett
+/m4/		@bwbarrett
