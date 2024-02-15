@@ -883,6 +883,20 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
 		      ofi_info_list->fabric_attr->prov_name, ofi_ndevices);
 
+	/* Prior to Libfabric 1.18.0, there was no way to disable
+	 * Libfabric from making CUDA calls.  While the EFA path was
+	 * CUDA clean, it could use the shm provider, which did make
+	 * CUDA calls.  Rather than muck with side channel ways of
+	 * disabling CUDA in old Libfabric, just require newer
+	 * Libfabric. */
+	if (strncmp("efa", ofi_info_list->fabric_attr->prov_name, strlen("efa")) == 0) {
+		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 18))) {
+			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.18.0.");
+			ret = -ENOTSUP;
+			goto exit;
+		}
+	}
+
 	/* Check if provider requires local memory registration */
 	if (ofi_info_list->domain_attr->mr_mode & FI_MR_LOCAL) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
