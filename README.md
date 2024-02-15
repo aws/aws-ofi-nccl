@@ -62,11 +62,11 @@ Instructions to build from source are available in [INSTALL.md](INSTALL.md)
 ## Plugin Configurations
 
 Similar to NCCL or Libfabric, the plugin dynamically loads CUDA
-dependencies at runtime, specifically `libcudart.so`.  Like NCCL and
+dependencies at runtime, specifically `libcuda.so`.  Like NCCL and
 Libfabric, the plugin does not find CUDA libraries with the
 `CUDA_HOME` environment variable.  `dlopen()` will use the
 `LD_LIBRARY_PATH` environment variable and then your system's
-default search path to find `libcudart.so`.  We do this to match NCCL
+default search path to find `libcuda.so`.  We do this to match NCCL
 and Libfabric behaviors so that all three components find the same
 CUDA installation.
 
