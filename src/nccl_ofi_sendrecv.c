@@ -2061,7 +2061,6 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		NCCL_OFI_WARN("Invalid device provided");
 		goto exit;
 	}
-	int dev_id = device->base.dev_id;
 
 	/* Obtain lock */
 	pthread_mutex_lock(&device->ep_lock);
@@ -2096,7 +2095,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 
 		NCCL_OFI_TRACE(NCCL_NET, "Sendrecv endpoint %p for dev #%d is created",
 			       ep,
-			       dev_id);
+			       device->base.dev_id);
 
 	}
 
