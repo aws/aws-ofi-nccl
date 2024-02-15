@@ -424,6 +424,26 @@ int platform_init(void)
 			goto exit;
 		}
 	}
+
+	/*
+	 * NCCL v2.19.3 reduced the chunk size used when running NVLS Tree
+	 * algorithm on greater than 4 nodes to 64KiB. This drastically impacted
+	 * performance on AWS (Ref: https://github.com/NVIDIA/nccl/pull/1112/
+	 * for some data). NCCL v2.20.3 has made this a tunable. Based on
+	 * empirical testing, a max chunk size of 512KiB recovers from the
+	 * regression and was also observed to be the default in v2.19.3.
+	 * Setting this unconditionally without relying on ncclGetVersion symbol
+	 * being available, since the parameter did not exist in versions prior
+	 * to v2.20.
+	 */
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NVLSTREE_MAX_CHUNKSIZE to 512KiB");
+	ret = setenv("NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288", 0);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to set NCCL_NVLSTREE_MAX_CHUNKSIZE");
+		ret = -errno;
+		goto exit;
+	}
+
 #endif
 
 	/*
