@@ -7,6 +7,9 @@ libnccl-net.so
 tags
 config.h
 
+src/tuner/.dirstamp
+src/tuner/*.lo
+
 tests/functional/*.o
 tests/unit/*.o
 tests/unit/*.log
