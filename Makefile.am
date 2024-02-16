@@ -10,6 +10,7 @@ EXTRA_DIST = \
 	autogen.sh \
 	CODE_OF_CONDUCT.md \
 	CONTRIBUTING.md \
+	INSTALL.md \
 	LICENSE \
 	NOTICE \
 	README.md \
