@@ -2,9 +2,7 @@
 
 # Supported Distributions
 * Amazon Linux 2
-* Redhat Enterprise Linux 7.0 and 8.0
-* Ubuntu 20.04 LTS
-* CentOS 7 and 8
+* Ubuntu 20.04 LTS and 22.04 LTS
 
 For releases before v1.6.0, there were generally two slightly
 different releases for any version, an AWS-specific release and
@@ -13,6 +11,54 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.8.0-aws release notes
+This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0)
+or later and supports [NCCL v2.19.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.19.4-1)
+while maintaining backward compatibility with older NCCL versions
+([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+
+New Features:
+* A tuner component for the plugin that picks the optimal NCCL algorithm and
+  protocol at a given scale and message size.
+* Improved communicator and memory region identifier management.
+* Migrated from CUDA Runtime API to functional equivalents in CUDA Driver API in
+  preparation for dma-buf support for memory registration. With this change, the
+  plugin uses the same mechanism as NCCL to interact with the CUDA subsystem.
+* No longer forcing a _flush_ operation for network operations when running with
+  H100 GPUs, even when running with older NCCL versions (< v2.19.1).
+* Improvements to internal device-agnostic APIs.
+* Support for NCCL v7 ext-net plugin interface introduced in NCCL v2.19.3.
+* Support for Ubuntu 22.04 LTS distribution.
+
+Bug Fixes:
+* Set the maximum NVLS tree chunk size used to 512KiB to recover from a
+  performance regression introduced in NCCL v2.19.4, using a parameter
+  introduced in NCCL v2.20.3.
+* Prevent possible invocation of CUDA calls in libfabric by
+  requiring a libfabric version of v1.18.0 or newer.
+* Fix debug prints that reported incorrect device IDs during initialization
+* Fixes to MAX_COMM computation.
+* Better handling of NVLS enablement when NCCL is statically linked to
+  applications
+* Fixes to internal API return codes
+* Configuration system fixes for Neuron builds
+* Fixes to plugin environment parsing to be case insensitive
+* Miscellaneous fixes that address memory leaks, NULL derefences, and compiler
+  warnings.
+* Updates and improvements to the project documentation.
+
+Testing:
+This release has been tested extensively with [NCCL
+v2.19.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.19.4-1) for
+functionality and performance. This release has also been lightly tested with
+[NCCL v2.20.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.20.3-1) that was
+released earlier this week. It was tested with Libfabric versions up to
+[Libfabric v1.20.1](https://github.com/ofiwg/libfabric/releases/tag/v1.20.1). 
+
+The plugin has been tested with following libfabric providers using tests
+bundled in the source code and
+[nccl-tests](https://github.com/NVIDIA/nccl-tests) suite:
+* efa
 
 # v1.7.4-aws release notes
 This release requires [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0)
