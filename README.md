@@ -23,7 +23,8 @@ The best way to build the plugin is to start with the latest [release
 package](https://github.com/aws/aws-ofi-nccl/releases).  The plugin
 developers highly discourage customers from building directly from the
 HEAD of a GitHub branch, as releases go through more extensive testing
-than the pre-commit testing on git branches.
+than the pre-commit testing on git branches. More information about installing
+the plugin from a released tarball can be found in [INSTALL.md](INSTALL.md).
 
 Version numbers that end in `-aws` have only been tested on Amazon Web
 Services Elastic Compute Cloud (EC2) instances and the Elastic Fabric
@@ -60,9 +61,6 @@ endpoints (`FI_EP_RDM`) with tagged messaging (`FI_TAGGED`, `FI_MSG`).
 This is similar to the requirements of most MPI implementations and a
 generally tested path in Libfabric.  For GPUDirect RDMA support, the
 plugin also requires `FI_HMEM` support, as well as RDMA support.
-
-The README.md file in each release of the plugin will have more
-detailed version requirements.
 
 ## Getting Help
 
