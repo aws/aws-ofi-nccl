@@ -17,3 +17,7 @@ repos:
       rev: 0.2.3
       hooks:
           - id: yamlfmt
+    - repo: https://github.com/rhysd/actionlint
+      rev: v1.7.0
+      hooks:
+          - id: actionlint
