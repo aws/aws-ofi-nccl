@@ -29,3 +29,7 @@ repos:
           - id: conventional-pre-commit
             stages: [commit-msg]
             args: [misc, build, ci, docs, feat, fix, perf, refactor, style, test, nit]
+    - repo: https://github.com/shellcheck-py/shellcheck-py
+      rev: v0.10.0.1
+      hooks:
+          - id: shellcheck
