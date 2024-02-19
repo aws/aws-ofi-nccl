@@ -37,3 +37,7 @@ repos:
   hooks:
   - id: clang-format
     types_or: [c++, c, cuda]
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.6.26
+  hooks:
+    - id: actionlint
