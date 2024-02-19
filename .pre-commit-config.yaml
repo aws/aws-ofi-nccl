@@ -21,3 +21,9 @@ repos:
       rev: v1.7.0
       hooks:
           - id: actionlint
+    - repo: https://github.com/compilerla/conventional-pre-commit
+      rev: v3.2.0
+      hooks:
+          - id: conventional-pre-commit
+            stages: [commit-msg]
+            args: [misc, build, ci, docs, feat, fix, perf, refactor, style, test, nit]

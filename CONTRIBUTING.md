@@ -33,7 +33,11 @@ To send us a pull request, please:
 2. Install [pre-commit](https://pre-commit.com/) through your preferred mechanism (eg: `pip install`), then run `pre-commit install` **inside this repo**. This will ensure that a collection of [git hooks](./.pre-commit-config.yaml) run on each of your commits, which help minimize your diffs, catch errors automatically, and avoid nitpicking.
 3. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
 4. Ensure local tests pass.
-5. Commit to your fork using clear commit messages.
+5. Commit to your fork using a [conventional commit message](https://www.conventionalcommits.org/en/v1.0.0/).
+   This repository encourages the following conventional commit message tags:\
+   `misc, build, ci, docs, feat, fix, perf, refactor, style, test, nit`\
+   However, there are no constraints on acceptable scopes or tags. See `git log`
+   for real world examples.
 6. Send us a pull request, answering any default questions in the pull request interface.
 7. Pay attention to any automated CI failures reported in the pull request, and stay involved in the conversation.
 
