@@ -20,3 +20,8 @@ repos:
     - id: conventional-pre-commit
       stages: [commit-msg]
       args: [--force-scope, misc, build, ci, docs, feat, fix, perf, refactor, style, test]
+- repo: https://github.com/pre-commit/mirrors-clang-format
+  rev: v17.0.6
+  hooks:
+  - id: clang-format
+    types_or: [c++, c, cuda]
