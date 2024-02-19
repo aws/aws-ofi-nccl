@@ -12,3 +12,9 @@ repos:
     -   id: mixed-line-ending
     -   id: check-added-large-files
     -   id: check-shebang-scripts-are-executable
+- repo: https://github.com/compilerla/conventional-pre-commit
+  rev: v3.1.0
+  hooks:
+    - id: conventional-pre-commit
+      stages: [commit-msg]
+      args: [--force-scope, misc, build, ci, docs, feat, fix, perf, refactor, style, test]
