@@ -63,6 +63,12 @@ repos:
             stages: [manual]
             exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
             args: [--config-file=.clang-tidy]
+    - repo: https://github.com/pre-commit/mirrors-clang-format
+      rev: v18.1.5
+      hooks:
+          - id: clang-format
+            stages: [manual]
+            types_or: [c++, c, cuda]
     - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
       rev: 2.7.3
       hooks:
