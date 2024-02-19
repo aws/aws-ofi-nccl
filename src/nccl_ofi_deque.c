@@ -2,9 +2,9 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
 #include <assert.h>
+
+#include "config.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_deque.h"

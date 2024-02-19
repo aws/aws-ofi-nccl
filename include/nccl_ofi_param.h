@@ -12,72 +12,84 @@ extern "C" {
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
-#include <string.h>
 #include <stdbool.h>
+#include <string.h>
 
 #include "nccl_ofi_log.h"
 
-#define OFI_NCCL_PARAM_INT(name, env, default_value) \
-static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline int64_t ofi_nccl_##name() { \
-    static bool initialized = false; \
-    static int64_t value = default_value; \
-    if (initialized) { \
-	return value; \
-    } \
-    pthread_mutex_lock(&ofi_nccl_param_lock_##name); \
-    int64_t v; \
-    char *str, *endptr; \
-    if (!initialized) { \
-        str = getenv("OFI_NCCL_" env); \
-        if (str && strlen(str) > 0) { \
-            errno = 0; \
-            v = strtoll(str, &endptr, 0); \
-            if (errno || str == endptr || *endptr != '\0') { \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, \
-                    "Invalid value %s provided for %s environment variable, using default %lu", \
-                    str, "OFI_NCCL_" env, value); \
-            } else { \
-                value = v; \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting %s environment variable to %lu", \
-                              "OFI_NCCL_" env, value); \
-            } \
-        } \
-	initialized = true; \
-    } \
-    pthread_mutex_unlock(&ofi_nccl_param_lock_##name); \
-    return value; \
-}
+#define OFI_NCCL_PARAM_INT(name, env, default_value)                                             \
+	static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER;           \
+	static inline int64_t ofi_nccl_##name()                                                  \
+	{                                                                                        \
+		static bool initialized = false;                                                 \
+		static int64_t value = default_value;                                            \
+		if (initialized) {                                                               \
+			return value;                                                            \
+		}                                                                                \
+		pthread_mutex_lock(&ofi_nccl_param_lock_##name);                                 \
+		int64_t v;                                                                       \
+		char *str, *endptr;                                                              \
+		if (!initialized) {                                                              \
+			str = getenv("OFI_NCCL_" env);                                           \
+			if (str && strlen(str) > 0) {                                            \
+				errno = 0;                                                       \
+				v = strtoll(str, &endptr, 0);                                    \
+				if (errno || str == endptr || *endptr != '\0') {                 \
+					NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,                      \
+						      "Invalid value %s provided for %s "        \
+						      "environment variable, using default %lu", \
+						      str,                                       \
+						      "OFI_NCCL_" env,                           \
+						      value);                                    \
+				} else {                                                         \
+					value = v;                                               \
+					NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,                      \
+						      "Setting %s environment variable to %lu",  \
+						      "OFI_NCCL_" env,                           \
+						      value);                                    \
+				}                                                                \
+			}                                                                        \
+			initialized = true;                                                      \
+		}                                                                                \
+		pthread_mutex_unlock(&ofi_nccl_param_lock_##name);                               \
+		return value;                                                                    \
+	}
 
-#define OFI_NCCL_PARAM_STR(name, env, default_value) \
-static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline const char *ofi_nccl_##name() { \
-    static bool initialized = false; \
-    static const char *value = default_value; \
-    if (initialized) { \
-	return value; \
-    } \
-    pthread_mutex_lock(&ofi_nccl_param_lock_##name); \
-    char *str; \
-    if (!initialized) { \
-        str = getenv("OFI_NCCL_" env); \
-        if (str) { \
-            value = strdup(str); \
-            if (value) { \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting %s environment variable to %s", \
-                              "OFI_NCCL_" env, value); \
-            } else { \
-		value = default_value; \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, \
-                    "Allocation error saving result for %s environment variable.  Falling back to default %s", \
-                    "OFI_NCCL_" env, value); \
-            } \
-        } \
-	initialized = true; \
-    } \
-    pthread_mutex_unlock(&ofi_nccl_param_lock_##name); \
-    return value; \
-}
+#define OFI_NCCL_PARAM_STR(name, env, default_value)                                            \
+	static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER;          \
+	static inline const char *ofi_nccl_##name()                                             \
+	{                                                                                       \
+		static bool initialized = false;                                                \
+		static const char *value = default_value;                                       \
+		if (initialized) {                                                              \
+			return value;                                                           \
+		}                                                                               \
+		pthread_mutex_lock(&ofi_nccl_param_lock_##name);                                \
+		char *str;                                                                      \
+		if (!initialized) {                                                             \
+			str = getenv("OFI_NCCL_" env);                                          \
+			if (str) {                                                              \
+				value = strdup(str);                                            \
+				if (value) {                                                    \
+					NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,                     \
+						      "Setting %s environment variable to %s",  \
+						      "OFI_NCCL_" env,                          \
+						      value);                                   \
+				} else {                                                        \
+					value = default_value;                                  \
+					NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,                     \
+						      "Allocation error saving result for %s "  \
+						      "environment variable.  Falling back to " \
+						      "default %s",                             \
+						      "OFI_NCCL_" env,                          \
+						      value);                                   \
+				}                                                               \
+			}                                                                       \
+			initialized = true;                                                     \
+		}                                                                               \
+		pthread_mutex_unlock(&ofi_nccl_param_lock_##name);                              \
+		return value;                                                                   \
+	}
 
 /*
  * Enable using endpoints with IPv6 addressing format for TCP provider.
@@ -204,7 +216,7 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
 OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_PARAM_H_
+#endif  // End NCCL_OFI_PARAM_H_

@@ -10,7 +10,7 @@
 
 #include "test-common.h"
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
 	ncclResult_t res = ncclSuccess;
 	int rank, size, proc_name;
@@ -35,7 +35,8 @@ int main(int argc, char* argv[])
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 	if (size != 2) {
-		NCCL_OFI_WARN("Expected two ranks but got %d. "
+		NCCL_OFI_WARN(
+			"Expected two ranks but got %d. "
 			"The nccl_connection functional test should be run with exactly two ranks.",
 			size);
 		res = ncclInvalidArgument;
@@ -53,8 +54,11 @@ int main(int argc, char* argv[])
 
 	/* Init API */
 	OFINCCLCHECKGOTO(extNet->init(logger), res, exit);
-	NCCL_OFI_INFO(NCCL_INIT, "Process rank %d started. NCCLNet device used on %s is %s.",
-		      rank, name, extNet->name);
+	NCCL_OFI_INFO(NCCL_INIT,
+		      "Process rank %d started. NCCLNet device used on %s is %s.",
+		      rank,
+		      name,
+		      extNet->name);
 
 	/* Devices API */
 	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
@@ -79,7 +83,6 @@ int main(int argc, char* argv[])
 
 	/* Test all devices */
 	for (int dev_idx = 0; dev_idx < ndev; dev_idx++) {
-
 		int dev = dev_idx;
 		if (rank == 1) {
 			/* In rank 1 scan devices in the opposite direction */
@@ -90,7 +93,8 @@ int main(int argc, char* argv[])
 
 		if (support_gdr[dev] == 1) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-					"Network supports communication using CUDA buffers. Dev: %d", dev);
+				      "Network supports communication using CUDA buffers. Dev: %d",
+				      dev);
 		}
 
 		/* Listen API */
@@ -104,44 +108,78 @@ int main(int argc, char* argv[])
 			MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, 1, 0, MPI_COMM_WORLD);
 
 			/* MPI recv */
-			MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv((void *)src_handle,
+				 NCCL_NET_HANDLE_MAXSIZE,
+				 MPI_CHAR,
+				 peer_rank,
+				 0,
+				 MPI_COMM_WORLD,
+				 MPI_STATUS_IGNORE);
 
 			/* Connect API */
 			NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", peer_rank);
 			while (sComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+				OFINCCLCHECKGOTO(extNet->connect(dev,
+								 (void *)src_handle,
+								 (void **)&sComm,
+								 &s_ignore),
+						 res,
+						 exit);
 			}
 
 			/* Accept API */
 			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
 			while (rComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
+				OFINCCLCHECKGOTO(
+					extNet->accept((void *)lComm, (void **)&rComm, &r_ignore),
+					res,
+					exit);
 			}
-			NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
-					peer_rank);
-		}
-		else if (rank == 1) {
+			NCCL_OFI_INFO(NCCL_INIT,
+				      "Successfully accepted connection from rank %d",
+				      peer_rank);
+		} else if (rank == 1) {
 			int peer_rank = (rank - 1) % size;
 
 			/* MPI recv */
-			MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			MPI_Recv((void *)src_handle,
+				 NCCL_NET_HANDLE_MAXSIZE,
+				 MPI_CHAR,
+				 peer_rank,
+				 0,
+				 MPI_COMM_WORLD,
+				 MPI_STATUS_IGNORE);
 
 			/* MPI send */
-			MPI_Send((void *)handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD);
+			MPI_Send((void *)handle,
+				 NCCL_NET_HANDLE_MAXSIZE,
+				 MPI_CHAR,
+				 peer_rank,
+				 0,
+				 MPI_COMM_WORLD);
 
 			/* Connect API */
 			NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", peer_rank);
 			while (sComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+				OFINCCLCHECKGOTO(extNet->connect(dev,
+								 (void *)src_handle,
+								 (void **)&sComm,
+								 &s_ignore),
+						 res,
+						 exit);
 			}
 
 			/* Accept API */
 			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
 			while (rComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
+				OFINCCLCHECKGOTO(
+					extNet->accept((void *)lComm, (void **)&rComm, &r_ignore),
+					res,
+					exit);
 			}
-			NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
-					peer_rank);
+			NCCL_OFI_INFO(NCCL_INIT,
+				      "Successfully accepted connection from rank %d",
+				      peer_rank);
 		}
 
 		OFINCCLCHECK(extNet->closeListen((void *)lComm));

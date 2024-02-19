@@ -1,10 +1,11 @@
 #ifndef NCCL_OFI_TUNER_H_
 #define NCCL_OFI_TUNER_H_
 
-#include <linux/limits.h>
-#include <float.h>
-#include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_param.h"
+
+#include "nccl-headers/nvidia/tuner.h"
+#include <float.h>
+#include <linux/limits.h>
 
 /*
  * The plugin interface lets us tune the number of channels as well, but that
@@ -30,8 +31,8 @@ OFI_NCCL_PARAM_INT(tuner_net_latency, "TUNER_NET_LATENCY", 20);
 OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
 
 /* EFA unidirectional network bandwidth */
-#define NCCL_OFI_TUNER_INTERNODE_BW	(12.5 * 1024 * 1024 * 1024 * 1e-6) /* per rail */
-#define NCCL_OFI_TUNER_NET_NUM_RAILS	(4) /* Available to each GPU */
+#define NCCL_OFI_TUNER_INTERNODE_BW  (12.5 * 1024 * 1024 * 1024 * 1e-6) /* per rail */
+#define NCCL_OFI_TUNER_NET_NUM_RAILS (4)                                /* Available to each GPU */
 
 /*
  * For Hopper GPUs on P5, all intranode communication goes over NVLink, so use
@@ -44,19 +45,19 @@ OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
  * TODO: When extending to P4/other platforms, include these values in
  * platform_data and fetch from it for the tuner. Value as defined in Bytes/µsec.
  */
-#define NCCL_OFI_TUNER_INTRANODE_BW	(20.0 * 1024 * 1024 * 1024 * 1e-6)
+#define NCCL_OFI_TUNER_INTRANODE_BW  (20.0 * 1024 * 1024 * 1024 * 1e-6)
 
 /*
  * NCCL's algo-specific latencies for intra-node cases with NVLink.
  * The values are directly taken from NCCL (hwLat[])). Values in µsecs.
  */
 static const float nccl_nvlink_lat[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS] = {
-	{ .6, 1.25,  28 }, /* Tree (LL, LL128, Simple) */
-	{ .6,  1.9, 3.4 }, /* Ring (LL, LL128, Simple) */
-	{  0,    0, 3.7 }, /* Collnet Direct - Unused */
-	{  0,    0, 2.8 }, /* Collnet Chain - Unused */
-	{  0,    0,  23 }, /* NVLS (Simple only) */
-	{  0,    0,  23 }  /* NVLS Tree (Simple only)*/
+	{.6, 1.25, 28}, /* Tree (LL, LL128, Simple) */
+	{.6, 1.9, 3.4}, /* Ring (LL, LL128, Simple) */
+	{0, 0, 3.7},    /* Collnet Direct - Unused */
+	{0, 0, 2.8},    /* Collnet Chain - Unused */
+	{0, 0, 23},     /* NVLS (Simple only) */
+	{0, 0, 23}      /* NVLS Tree (Simple only)*/
 };
 
 /*
@@ -68,12 +69,12 @@ static const float nccl_nvlink_lat[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS] = {
  * these base latencies seem to pick better switchpoints. Values in µsecs.
  */
 static const float nccl_base_lat[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS] = {
-	{  6.8, 14.0,    0 }, /* Tree */
-	{  6.6, 14.0,  8.4 }, /* Ring */
-	{    0,    0,    0 }, /* Collnet Direct */
-	{    0,    0,    0 }, /* Collnet Chain */
-	{    0,    0,    0 }, /* NVLS */
-	{    0,    0,    0 }  /* NVLS Tree */
+	{6.8, 14.0, 0},   /* Tree */
+	{6.6, 14.0, 8.4}, /* Ring */
+	{0, 0, 0},        /* Collnet Direct */
+	{0, 0, 0},        /* Collnet Chain */
+	{0, 0, 0},        /* NVLS */
+	{0, 0, 0}         /* NVLS Tree */
 };
 
 struct nccl_ofi_tuner_model_params {

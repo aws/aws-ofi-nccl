@@ -10,7 +10,6 @@ extern "C" {
 #endif
 
 #include <pthread.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -110,8 +109,10 @@ bool nccl_ofi_msgbuff_destroy(nccl_ofi_msgbuff_t *msgbuff);
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
+						  uint16_t msg_index,
+						  void *elem,
+						  nccl_ofi_msgbuff_elemtype_t type,
+						  nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 /**
  * Replace an existing message element
@@ -126,8 +127,10 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
+						   uint16_t msg_index,
+						   void *elem,
+						   nccl_ofi_msgbuff_elemtype_t type,
+						   nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 /**
  * Retrieve message with given index
@@ -142,8 +145,10 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void **elem, nccl_ofi_msgbuff_elemtype_t *type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
+						    uint16_t msg_index,
+						    void **elem,
+						    nccl_ofi_msgbuff_elemtype_t *type,
+						    nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 /**
  * Mark message with given index as complete
@@ -156,10 +161,11 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, nccl_ofi_msgbuff_status_t *msg_idx_status);
+						    uint16_t msg_index,
+						    nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_MSGBUFF_H_
+#endif  // End NCCL_OFI_MSGBUFF_H_

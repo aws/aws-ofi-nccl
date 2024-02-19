@@ -8,7 +8,7 @@
 #include "nccl_ofi_api.h"
 
 
-static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t *props)
+static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t* props)
 {
 	nccl_ofi_properties_t ofi_properties;
 	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
@@ -38,7 +38,7 @@ static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t *props)
 }
 
 
-static ncclResult_t getProperties_v6(int dev_id, ncclNetProperties_v6_t *props)
+static ncclResult_t getProperties_v6(int dev_id, ncclNetProperties_v6_t* props)
 {
 	nccl_ofi_properties_t ofi_properties;
 	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
@@ -60,7 +60,8 @@ static ncclResult_t getProperties_v6(int dev_id, ncclNetProperties_v6_t *props)
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	props->maxRecvs = ofi_properties.max_group_receives;;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	;
 
 	return ncclSuccess;
 }
@@ -100,7 +101,7 @@ static ncclResult_t pciPath_v2(int dev_id, char** path)
 }
 
 
-static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
+static ncclResult_t ptrSupport_v2(int dev_id, int* supportedTypes)
 {
 	ncclNetProperties_v6_t props_v6;
 	ncclResult_t ret = getProperties_v6(dev_id, &props_v6);
@@ -114,7 +115,9 @@ static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
 }
 
 
-static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
+static ncclResult_t connect_v7(int dev,
+			       void* handle,
+			       void** sendComm,
 			       ncclNetDeviceHandle_v7_t** sendDevComm)
 {
 	*sendDevComm = NULL;
@@ -122,7 +125,8 @@ static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
 }
 
 
-static ncclResult_t accept_v7(void* listenComm, void** recvComm,
+static ncclResult_t accept_v7(void* listenComm,
+			      void** recvComm,
 			      ncclNetDeviceHandle_v7_t** recvDevComm)
 {
 	*recvDevComm = NULL;
@@ -208,43 +212,43 @@ const ncclNet_v5_t ncclNetPlugin_v5 = {
 };
 
 const ncclNet_v6_t ncclNetPlugin_v6 = {
-        .name = "AWS Libfabric",
-        .init = nccl_net_ofi_init,
-        .devices = nccl_net_ofi_devices,
-        .getProperties = getProperties_v6,
-        .listen = nccl_net_ofi_listen,
-        .connect = nccl_net_ofi_connect,
-        .accept = nccl_net_ofi_accept,
-        .regMr = nccl_net_ofi_regMr,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
-        .deregMr = nccl_net_ofi_deregMr,
-        .isend = nccl_net_ofi_isend,
-        .irecv = nccl_net_ofi_irecv,
-        .iflush = nccl_net_ofi_iflush,
-        .test = nccl_net_ofi_test,
-        .closeSend = nccl_net_ofi_closeSend,
-        .closeRecv = nccl_net_ofi_closeRecv,
-        .closeListen = nccl_net_ofi_closeListen,
+	.name = "AWS Libfabric",
+	.init = nccl_net_ofi_init,
+	.devices = nccl_net_ofi_devices,
+	.getProperties = getProperties_v6,
+	.listen = nccl_net_ofi_listen,
+	.connect = nccl_net_ofi_connect,
+	.accept = nccl_net_ofi_accept,
+	.regMr = nccl_net_ofi_regMr,
+	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
+	.deregMr = nccl_net_ofi_deregMr,
+	.isend = nccl_net_ofi_isend,
+	.irecv = nccl_net_ofi_irecv,
+	.iflush = nccl_net_ofi_iflush,
+	.test = nccl_net_ofi_test,
+	.closeSend = nccl_net_ofi_closeSend,
+	.closeRecv = nccl_net_ofi_closeRecv,
+	.closeListen = nccl_net_ofi_closeListen,
 };
 
 const ncclNet_v7_t ncclNetPlugin_v7 = {
-        .name = "AWS Libfabric",
-        .init = nccl_net_ofi_init,
-        .devices = nccl_net_ofi_devices,
-        .getProperties = getProperties_v7,
-        .listen = nccl_net_ofi_listen,
-        .connect = connect_v7,
-        .accept = accept_v7,
-        .regMr = nccl_net_ofi_regMr,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
-        .deregMr = nccl_net_ofi_deregMr,
-        .isend = nccl_net_ofi_isend,
-        .irecv = nccl_net_ofi_irecv,
-        .iflush = nccl_net_ofi_iflush,
-        .test = nccl_net_ofi_test,
-        .closeSend = nccl_net_ofi_closeSend,
-        .closeRecv = nccl_net_ofi_closeRecv,
-        .closeListen = nccl_net_ofi_closeListen,
+	.name = "AWS Libfabric",
+	.init = nccl_net_ofi_init,
+	.devices = nccl_net_ofi_devices,
+	.getProperties = getProperties_v7,
+	.listen = nccl_net_ofi_listen,
+	.connect = connect_v7,
+	.accept = accept_v7,
+	.regMr = nccl_net_ofi_regMr,
+	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
+	.deregMr = nccl_net_ofi_deregMr,
+	.isend = nccl_net_ofi_isend,
+	.irecv = nccl_net_ofi_irecv,
+	.iflush = nccl_net_ofi_iflush,
+	.test = nccl_net_ofi_test,
+	.closeSend = nccl_net_ofi_closeSend,
+	.closeRecv = nccl_net_ofi_closeRecv,
+	.closeListen = nccl_net_ofi_closeListen,
 	.getDeviceMr = NULL,
 	.irecvConsumed = NULL,
 };

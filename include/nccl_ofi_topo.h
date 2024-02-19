@@ -10,6 +10,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+
 #include <hwloc.h>
 #include <rdma/fabric.h>
 
@@ -105,8 +106,7 @@ typedef struct nccl_ofi_topo {
  * @brief	Set topology user data iterator to the first element of NCCL OFI
  *		topologies's user data array
  */
-int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo,
-			       nccl_ofi_topo_data_iterator_t *iter);
+int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter);
 
 /*
  * @brief 	Free NCCL OFI topology
@@ -317,4 +317,4 @@ int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
 }
 #endif
 
-#endif // End NCCL_NET_OFI_TOPO_H_
+#endif  // End NCCL_NET_OFI_TOPO_H_

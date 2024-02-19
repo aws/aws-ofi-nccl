@@ -281,4 +281,4 @@ LTTNG_UST_TRACEPOINT_EVENT(
 #define NCCL_OFI_TRACE_COMPLETIONS(...)
 
 // clang-format on
-#endif // HAVE_LIBLTTNG_UST
+#endif  // HAVE_LIBLTTNG_UST

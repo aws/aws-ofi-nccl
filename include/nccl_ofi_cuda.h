@@ -29,10 +29,12 @@ int nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
 
 extern CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion);
 
-extern CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr);
+extern CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data,
+						      CUpointer_attribute attribute,
+						      CUdeviceptr ptr);
 
 extern CUresult (*nccl_net_ofi_cuCtxGetDevice)(CUdevice *device);
-extern CUresult (*nccl_net_ofi_cuDeviceGetCount)(int* count);
+extern CUresult (*nccl_net_ofi_cuDeviceGetCount)(int *count);
 
 #if CUDA_VERSION >= 11030
 extern CUresult (*nccl_net_ofi_cuFlushGPUDirectRDMAWrites)(CUflushGPUDirectRDMAWritesTarget target,
@@ -42,7 +44,7 @@ extern void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites;
 #endif
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_H_
+#endif  // End NCCL_OFI_H_

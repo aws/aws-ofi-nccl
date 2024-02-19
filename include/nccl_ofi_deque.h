@@ -10,9 +10,9 @@ extern "C" {
 #endif
 
 #include <assert.h>
-#include <stdlib.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdlib.h>
 
 #include "nccl_ofi_log.h"
 
@@ -74,7 +74,8 @@ int nccl_ofi_deque_finalize(nccl_ofi_deque_t *deque);
  * @param deque_elem	user-allocated storage space for list entry
  * @return zero on success, non-zero on error
  */
-static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque,
+					     nccl_ofi_deque_elem_t *deque_elem)
 {
 	int ret = 0;
 	assert(deque);
@@ -107,7 +108,8 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
  * @param deque_elem	user-allocated storage space for list entry
  * @return zero on success, non-zero on error
  */
-static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque,
+					      nccl_ofi_deque_elem_t *deque_elem)
 {
 	int ret = 0;
 	assert(deque);
@@ -149,7 +151,8 @@ static inline bool nccl_ofi_deque_isempty(nccl_ofi_deque_t *deque)
  * @param deque_elem  returned element; NULL if deque is empty or an error occurred
  * @return zero on success, non-zero on non-success
  */
-static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t **deque_elem)
+static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque,
+					      nccl_ofi_deque_elem_t **deque_elem)
 {
 	int ret = 0;
 	assert(deque);
@@ -189,7 +192,7 @@ unlock:
 }
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_DEQUE_H
+#endif  // End NCCL_OFI_DEQUE_H

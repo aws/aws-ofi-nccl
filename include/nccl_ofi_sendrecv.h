@@ -9,13 +9,14 @@
 extern "C" {
 #endif
 
+#include <rdma/fabric.h>
+
 #include "config.h"
 
-#include <rdma/fabric.h>
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
-#include "nccl_ofi_log.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
 
 typedef enum nccl_net_ofi_sendrecv_req_state {
 	NCCL_OFI_SENDRECV_REQ_CREATED = 0,
@@ -221,11 +222,10 @@ typedef struct nccl_net_ofi_sendrecv_req {
 /*
  * @brief	Initialize plugin with sendrecv protocol structures
  */
-int nccl_net_ofi_sendrecv_init(const char *provider_filter,
-			       nccl_net_ofi_plugin_t **plugin_p);
+int nccl_net_ofi_sendrecv_init(const char *provider_filter, nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_SENDRECV_H_
+#endif  // End NCCL_OFI_SENDRECV_H_

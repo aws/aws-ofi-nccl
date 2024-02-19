@@ -2,28 +2,29 @@
  * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
+#include <assert.h>
+#include <errno.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
+
 #include <hwloc.h>
 #include <rdma/fabric.h>
-#include <errno.h>
-#include <stdlib.h>
-#include <assert.h>
 
-#include "nccl_ofi_log.h"
+#include "config.h"
+
 #include "nccl_ofi.h"
-#include "nccl_ofi_topo.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_topo.h"
 
 #if HAVE_CUDA
-static const uint8_t target_class_id = 0x03;		/* Display controller class */
-static const unsigned short target_vendor_id = 0x10de;	/* NVIDIA */
+static const uint8_t target_class_id = 0x03;           /* Display controller class */
+static const unsigned short target_vendor_id = 0x10de; /* NVIDIA */
 #else
-static const uint8_t target_class_id = 0x08;		/* System peripheral */
-static const unsigned short target_vendor_id = 0x1d0f;	/* Amazon */
+static const uint8_t target_class_id = 0x08;           /* System peripheral */
+static const unsigned short target_vendor_id = 0x1d0f; /* Amazon */
 #endif
 
 /* Maximum length of the device property read from file by function
@@ -49,7 +50,7 @@ const char *pcie_gen[] = {"2.5", "5", "8", "16", "32", "64"};
 static nccl_ofi_topo_data_vec_t *nccl_ofi_topo_data_vec_create(size_t size)
 {
 	nccl_ofi_topo_data_vec_t *vec = NULL;
-	vec = (nccl_ofi_topo_data_vec_t*)calloc(1, sizeof(nccl_ofi_topo_data_vec_t));
+	vec = (nccl_ofi_topo_data_vec_t *)calloc(1, sizeof(nccl_ofi_topo_data_vec_t));
 	if (!vec) {
 		NCCL_OFI_WARN("Failed to allocate struct nccl_ofi_topo_data_vec_t");
 		return NULL;
@@ -57,12 +58,13 @@ static nccl_ofi_topo_data_vec_t *nccl_ofi_topo_data_vec_create(size_t size)
 
 	if (size > 0) {
 		vec->size = size;
-		vec->data = (nccl_ofi_topo_data_t*)calloc(size, sizeof(nccl_ofi_topo_data_t));
+		vec->data = (nccl_ofi_topo_data_t *)calloc(size, sizeof(nccl_ofi_topo_data_t));
 
 		if (!vec->data) {
 			free(vec);
 			vec = NULL;
-			NCCL_OFI_WARN("Failed to allocate array of struct nccl_ofi_topo_data_vec_t");
+			NCCL_OFI_WARN(
+				"Failed to allocate array of struct nccl_ofi_topo_data_vec_t");
 		}
 	}
 
@@ -95,7 +97,9 @@ int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterato
  */
 static nccl_ofi_topo_data_t *nccl_ofi_get_user_data(nccl_ofi_topo_data_iterator_t *iter)
 {
-	if (!iter || iter->begin >= iter->end) return NULL;
+	if (!iter || iter->begin >= iter->end) {
+		return NULL;
+	}
 
 	return iter->begin;
 }
@@ -105,7 +109,9 @@ static nccl_ofi_topo_data_t *nccl_ofi_get_user_data(nccl_ofi_topo_data_iterator_
  */
 static void nccl_ofi_inc_user_data_iter(nccl_ofi_topo_data_iterator_t *iter)
 {
-	if (!iter) return;
+	if (!iter) {
+		return;
+	}
 	++(iter->begin);
 }
 
@@ -115,8 +121,8 @@ static void nccl_ofi_inc_user_data_iter(nccl_ofi_topo_data_iterator_t *iter)
  * @return	Pointer to fi_pci_attr struct, if available
  *		NULL, on others
  */
-static struct fi_pci_attr *ofi_info_get_pci_attr(struct fi_info *info) {
-
+static struct fi_pci_attr *ofi_info_get_pci_attr(struct fi_info *info)
+{
 	struct fi_pci_attr *pci_addr = NULL;
 	struct fi_bus_attr *bus = NULL;
 	struct fid_nic *nic = info->nic;
@@ -147,14 +153,16 @@ static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
 	bool vendor_match;
 
 	if (obj->type != HWLOC_OBJ_PCI_DEVICE) {
-                *res = false;
-                return 0;
-        }
+		*res = false;
+		return 0;
+	}
 
-        if (!obj->attr) {
-                NCCL_OFI_WARN("Invalid hwloc object attribute pointer. Expected pointer to pcidev, but got NULL");
-                return -EINVAL;
-        }
+	if (!obj->attr) {
+		NCCL_OFI_WARN(
+			"Invalid hwloc object attribute pointer. Expected pointer to pcidev, but "
+			"got NULL");
+		return -EINVAL;
+	}
 
 	/* The HWLOC class id is a 16 bit integer of format class
 	   code:subclass, where each field is 8 bits. We only want
@@ -174,15 +182,19 @@ static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
 	class_match = target_class_id == class_code;
 	vendor_match = obj->attr->pcidev.vendor_id == target_vendor_id;
 
-        *res = class_match && vendor_match;
-        return 0;
+	*res = class_match && vendor_match;
+	return 0;
 }
 
 void nccl_ofi_topo_free(nccl_ofi_topo_t *topo)
 {
-	if (!topo) return;
+	if (!topo) {
+		return;
+	}
 
-	if (topo->topo) hwloc_topology_destroy(topo->topo);
+	if (topo->topo) {
+		hwloc_topology_destroy(topo->topo);
+	}
 
 	if (topo->data_vec) {
 		nccl_ofi_topo_data_iterator_t data_iter;
@@ -273,15 +285,17 @@ static void enable_hwloc_io_types(hwloc_topology_t topo)
  *		-EINVAL, on others
  */
 static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
-						struct fi_info *info,
-						hwloc_obj_t *obj) {
+				       struct fi_info *info,
+				       hwloc_obj_t *obj)
+{
 	*obj = NULL;
 	hwloc_obj_t ret_obj = NULL;
 
 	struct fi_pci_attr *attr = ofi_info_get_pci_attr(info);
 	if (!attr) {
 		NCCL_OFI_WARN("Failed to retrieve PCI attributes from NIC");
-		return -EINVAL;;
+		return -EINVAL;
+		;
 	}
 
 	ret_obj = hwloc_get_pcidev_by_busid(topo,
@@ -299,7 +313,9 @@ static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 	}
 
 	if (!ret_obj->attr) {
-		NCCL_OFI_WARN("Invalid hwloc object attribute pointer. Expected pointer to pcidev, but got NULL");
+		NCCL_OFI_WARN(
+			"Invalid hwloc object attribute pointer. Expected pointer to pcidev, but "
+			"got NULL");
 		return -EINVAL;
 	}
 
@@ -308,7 +324,8 @@ static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 }
 
 /*
- * @brief	Return libfabric NIC info struct from info list that corresponds to input topology node
+ * @brief	Return libfabric NIC info struct from info list that corresponds to input topology
+ *node
  *
  * @param	node
  *		The topology node
@@ -330,7 +347,7 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
 		return -EINVAL;
 	}
 
-        node_attr = node->attr;
+	node_attr = node->attr;
 	if (!node_attr) {
 		NCCL_OFI_WARN("Failed to retrieve attributes from hwloc topology node");
 		return -EINVAL;
@@ -380,8 +397,8 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
  *		non-zero, on error
  */
 static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
-							   struct fi_info *info_list,
-							   int *count)
+						    struct fi_info *info_list,
+						    int *count)
 {
 	int ret = 0;
 	hwloc_obj_t obj = NULL;
@@ -392,39 +409,49 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 
 		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
+			NCCL_OFI_WARN(
+				"Error while checking whether hwloc topology node is nvidia GPU");
 			return ret;
 		}
 
 		ret = get_info_for_node(obj, info_list, &info);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
+			NCCL_OFI_WARN(
+				"Error while retrieving libfabric NIC info struct corresponding to "
+				"hwloc topology node");
 			return ret;
 		}
 
 		if (is_accel || info) {
-			/* Walk towards root, set counter and increment counter each time counter is set */
+			/* Walk towards root, set counter and increment counter each time counter is
+			 * set */
 			hwloc_obj_t node = obj;
 			while (node) {
 				/* Skip node if this function is counting and
 				 * if node it has already contributed to the
 				 * counter (indicated by set user data
 				 * pointer) */
-				if (count && node->userdata) break;
+				if (count && node->userdata) {
+					break;
+				}
 				node->userdata = count;
-				if (count) ++(*count);
+				if (count) {
+					++(*count);
+				}
 				node = node->parent;
 			}
 		}
-
 	}
 
 	/* While counting, the function sets the user data pointer of
 	 * the topology nodes to avoid counting nodes
 	 * twice. Afterwards, invoke this function another time to
 	 * clear the user data pointers. */
-	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, NULL);
-	else return 0;
+	if (count != NULL) {
+		return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, NULL);
+	} else {
+		return 0;
+	}
 }
 
 /*
@@ -443,16 +470,17 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
  * @return	0, on error
  *		-EINVAL, if data iterator does not provide enough user data objects
  */
-static int set_userdata_to_root(hwloc_obj_t node,
-					 nccl_ofi_topo_data_iterator_t *data_iter)
+static int set_userdata_to_root(hwloc_obj_t node, nccl_ofi_topo_data_iterator_t *data_iter)
 {
-	nccl_ofi_topo_data_t * user_data;
+	nccl_ofi_topo_data_t *user_data;
 
 	/* Walk upwards to the root */
 	while (node) {
 		if (!node->userdata) {
 			/* Abort when a node is reached that already stores user data */
-			if (node->userdata) break;
+			if (node->userdata) {
+				break;
+			}
 
 			user_data = nccl_ofi_get_user_data(data_iter);
 			if (!user_data) {
@@ -476,11 +504,11 @@ static int set_userdata_to_root(hwloc_obj_t node,
  * @param	ofi_topo
  *		NCCL OFI topology
  * @param	info_list
- *		List of libfabric NIC info structs used to identify topology nodes corresponding to NICs
+ *		List of libfabric NIC info structs used to identify topology nodes corresponding to
+ *NICs
  * @return
  */
-static int set_user_data(nccl_ofi_topo_t *ofi_topo,
-				  struct fi_info *info_list)
+static int set_user_data(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list)
 {
 	int ret = 0;
 	hwloc_obj_t obj = NULL;
@@ -490,7 +518,9 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	int num_nodes = 0;
 	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
+		NCCL_OFI_WARN(
+			"Failed counting number of nodes that have a Nvidia GPU or NIC in their "
+			"subtree.");
 		return ret;
 	}
 
@@ -512,13 +542,16 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 
 		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while checking whether hwloc topology node is nvidia GPU");
+			NCCL_OFI_WARN(
+				"Error while checking whether hwloc topology node is nvidia GPU");
 			return ret;
 		}
 
 		ret = get_info_for_node(obj, info_list, &info);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
+			NCCL_OFI_WARN(
+				"Error while retrieving libfabric NIC info struct corresponding to "
+				"hwloc topology node");
 			return ret;
 		}
 
@@ -544,7 +577,6 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 
 			ofi_topo->max_group_size = 1;
 		}
-
 	}
 
 	return 0;
@@ -557,8 +589,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	/* Allocate NCCL OFI topology */
 	nccl_ofi_topo_t *ofi_topo = calloc(1, sizeof(nccl_ofi_topo_t));
 	if (!ofi_topo) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to allocate nccl_ofi_topo");
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Unable to allocate nccl_ofi_topo");
 		goto error;
 	}
 
@@ -588,7 +619,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 
 	return ofi_topo;
 
- error:
+error:
 	nccl_ofi_topo_free(ofi_topo);
 	return NULL;
 }
@@ -649,7 +680,9 @@ static int propoagate_accel_count(hwloc_obj_t gpu_node)
 		return -EINVAL;
 	}
 
-	if (userdata->contributed_gpu) return 0;
+	if (userdata->contributed_gpu) {
+		return 0;
+	}
 	userdata->contributed_gpu = true;
 
 	/* Walk towards root */
@@ -689,7 +722,9 @@ static int propoagate_accel_group_counts(hwloc_topology_t topo)
 
 		ret = is_accelerator_dev(obj, &is_accel);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error while checking whether hwloc topology node is an accelerator");
+			NCCL_OFI_WARN(
+				"Error while checking whether hwloc topology node is an "
+				"accelerator");
 			return ret;
 		}
 
@@ -731,7 +766,9 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 		target_data = (nccl_ofi_topo_data_t *)target_obj->userdata;
 
 		/* Info object is already stored at appropriate node */
-		if (target_data->num_groups > 0) continue;
+		if (target_data->num_groups > 0) {
+			continue;
+		}
 
 		/* Search for topology nodes towards the root with a
 		 * group count of one or more and add libfabric NIC
@@ -746,7 +783,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 			if (target_data->num_groups > 0) {
 				/* Find end of list */
 				struct fi_info *list_end = source_data->info_list;
-				while(list_end->next) {
+				while (list_end->next) {
 					list_end = list_end->next;
 				}
 
@@ -788,10 +825,10 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
  * 		-EINVAL, on others
  */
 static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
-						 struct fi_info **info_list,
-						 int num_infos,
-						 hwloc_obj_t gpu_group_node,
-						 int num_groups)
+					struct fi_info **info_list,
+					int num_infos,
+					hwloc_obj_t gpu_group_node,
+					int num_groups)
 {
 	int ret = 0;
 	int group_idx = 0;
@@ -809,13 +846,19 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 		/* If the number of NIC infos is not a multiple of
 		 * group size, latter candidates have one candidate
 		 * less. */
-		if (group_idx == num_large_groups) --group_size;
-		if (group_size == 0) break;
+		if (group_idx == num_large_groups) {
+			--group_size;
+		}
+		if (group_size == 0) {
+			break;
+		}
 
 		/* Retrieve topology node of leader */
 		ret = get_hwloc_pcidev_by_fi_info(topo->topo, *info_list, &obj);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Retrieval of topology node corresponding to libfabric NIC failed with error");
+			NCCL_OFI_WARN(
+				"Retrieval of topology node corresponding to libfabric NIC failed "
+				"with error");
 			break;
 		}
 		if (!obj) {
@@ -834,8 +877,9 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 			if (group_idx + 1 == num_groups) {
 				break;
 			} else {
-				NCCL_OFI_WARN("Invalid state of topology. "
-					      "This state should not be reached.");
+				NCCL_OFI_WARN(
+					"Invalid state of topology. "
+					"This state should not be reached.");
 				return -EINVAL;
 			}
 		}
@@ -898,10 +942,10 @@ static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 
 		/* Create groups from list */
 		int ret = create_groups_from_info_list(topo,
-								&info_list,
-								info_list_len,
-								data->gpu_group_node,
-								num_groups);
+						       &info_list,
+						       info_list_len,
+						       data->gpu_group_node,
+						       num_groups);
 		if (ret != 0) {
 			data->info_list = info_list;
 			return ret;
@@ -914,7 +958,8 @@ static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 /*
  * @brief	Print libfabric NIC info lists stored in user data of topology nodes
  */
-static void print_nic_groups(nccl_ofi_topo_t *topo) {
+static void print_nic_groups(nccl_ofi_topo_t *topo)
+{
 	nccl_ofi_topo_data_t *data = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
@@ -934,7 +979,8 @@ static void print_nic_groups(nccl_ofi_topo_t *topo) {
 				NCCL_OFI_INFO(NCCL_INIT,
 					      "NIC group %i device #%i "
 					      "%04x:%02x:%02x.%01x",
-					      group_idx, info_idx,
+					      group_idx,
+					      info_idx,
 					      attr->domain_id,
 					      attr->bus_id,
 					      attr->device_id,
@@ -951,7 +997,7 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 
-        ret = mark_topo_nodes_with_ofi_info_subtree(topo);
+	ret = mark_topo_nodes_with_ofi_info_subtree(topo);
 	if (ret != 0) {
 		return ret;
 	}
@@ -1033,9 +1079,12 @@ static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
  * @return	0, on sucess
  *		non-zero, on error
  */
-static int get_device_property(unsigned domain, unsigned bus,
-			       unsigned dev, unsigned func,
-			       const char *prop_name, char *prop)
+static int get_device_property(unsigned domain,
+			       unsigned bus,
+			       unsigned dev,
+			       unsigned func,
+			       const char *prop_name,
+			       char *prop)
 {
 	int ret = 0;
 	FILE *file;
@@ -1043,9 +1092,11 @@ static int get_device_property(unsigned domain, unsigned bus,
 	size_t path_len;
 	char *path = NULL;
 
-        if ((path_len = snprintf(NULL, 0, path_format, domain, bus, dev, func, prop_name)) < 0) {
-		NCCL_OFI_WARN("Failed to determine device property path length of property %s. ERROR: %s",
-			      prop_name, strerror(errno));
+	if ((path_len = snprintf(NULL, 0, path_format, domain, bus, dev, func, prop_name)) < 0) {
+		NCCL_OFI_WARN(
+			"Failed to determine device property path length of property %s. ERROR: %s",
+			prop_name,
+			strerror(errno));
 		ret = -errno;
 		goto error;
 	}
@@ -1059,7 +1110,8 @@ static int get_device_property(unsigned domain, unsigned bus,
 	/* Create file path */
 	if (snprintf(path, path_len + 1, path_format, domain, bus, dev, func, prop_name) < 0) {
 		NCCL_OFI_WARN("Failed to create device property path for property %s. ERROR: %s",
-			      prop_name, strerror(errno));
+			      prop_name,
+			      strerror(errno));
 		ret = -errno;
 		goto error;
 	}
@@ -1073,25 +1125,30 @@ static int get_device_property(unsigned domain, unsigned bus,
 			prop[0] = '\0';
 		} else if (ferror(file)) {
 			NCCL_OFI_WARN("Failed to read device property file %s. ERROR: %s",
-				      path, strerror(errno));
+				      path,
+				      strerror(errno));
 			ret = -errno;
 			goto exit;
 		}
 	} else {
 		NCCL_OFI_WARN("Failed to open device property file %s. ERROR: %s",
-			      path, strerror(errno));
+			      path,
+			      strerror(errno));
 		ret = -errno;
 		goto error;
 	}
 
- exit:
+exit:
 	if (fclose(file)) {
 		NCCL_OFI_WARN("Failed to close device property file %s. ERROR: %s",
-			      path, strerror(errno));
+			      path,
+			      strerror(errno));
 		ret = -errno;
 	}
- error:
-	if (path) free(path);
+error:
+	if (path) {
+		free(path);
+	}
 
 	return ret;
 }
@@ -1108,8 +1165,7 @@ static int get_device_property(unsigned domain, unsigned bus,
  * @return	0, on sucess
  *		non-zero, on error
  */
-static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
-				size_t *speed_idx, size_t *width)
+static int get_pci_device_speed(hwloc_obj_t node, bool is_nic, size_t *speed_idx, size_t *width)
 {
 	struct hwloc_pcidev_attr_s attr;
 	/* Override the following PCI width and speed of libfabric NICs with fallback values */
@@ -1133,54 +1189,88 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 	size_t num_pcie_gens = sizeof(pcie_gen) / sizeof(pcie_gen[0]);
 
 	/* Read link speed */
-	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
-				       speed_name, prop_str))) {
+	if ((ret = get_device_property(attr.domain,
+				       attr.bus,
+				       attr.dev,
+				       attr.func,
+				       speed_name,
+				       prop_str))) {
 		return ret;
 	}
 
 	/* Search reported PCI speed in `pcie_gen` lookup table */
 	*speed_idx = 0;
-	while (*speed_idx < num_pcie_gens && strncmp(prop_str, pcie_gen[*speed_idx], strlen(pcie_gen[*speed_idx])) != 0) {
+	while (*speed_idx < num_pcie_gens &&
+	       strncmp(prop_str, pcie_gen[*speed_idx], strlen(pcie_gen[*speed_idx])) != 0) {
 		++(*speed_idx);
 	}
 
 	if (is_nic && strncmp(override_speed, prop_str, strlen(override_speed)) == 0) {
 		/* Override speed */
 		*speed_idx = fallback_speed_idx;
-		NCCL_OFI_INFO(NCCL_INIT,
-			      "Override link speed \"%s\" of NIC %04x:%02x:%02x.%01x with speed \"%s\"",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, pcie_gen[*speed_idx]);
+		NCCL_OFI_INFO(
+			NCCL_INIT,
+			"Override link speed \"%s\" of NIC %04x:%02x:%02x.%01x with speed \"%s\"",
+			prop_str,
+			attr.domain,
+			attr.bus,
+			attr.dev,
+			attr.func,
+			pcie_gen[*speed_idx]);
 	}
 	if (*speed_idx == num_pcie_gens) {
 		NCCL_OFI_WARN("Unknown link speed \"%s\" of device %04x:%02x:%02x.%01x",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func);
+			      prop_str,
+			      attr.domain,
+			      attr.bus,
+			      attr.dev,
+			      attr.func);
 		return -EINVAL;
 	}
 
 	/* Read link width */
-	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
-				       width_name, prop_str))) {
+	if ((ret = get_device_property(attr.domain,
+				       attr.bus,
+				       attr.dev,
+				       attr.func,
+				       width_name,
+				       prop_str))) {
 		return ret;
 	}
 
 	if (is_nic && strncmp(override_width, prop_str, strlen(override_width)) == 0) {
 		/* Override width */
 		*width = fallback_width;
-		NCCL_OFI_INFO(NCCL_INIT,
-			      "Override link width \"%s\" of NIC %04x:%02x:%02x.%01x with width \"%zu\"",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, *width);
+		NCCL_OFI_INFO(
+			NCCL_INIT,
+			"Override link width \"%s\" of NIC %04x:%02x:%02x.%01x with width \"%zu\"",
+			prop_str,
+			attr.domain,
+			attr.bus,
+			attr.dev,
+			attr.func,
+			*width);
 	} else {
 		*width = strtol(prop_str, NULL, 0);
 	}
 	if (errno == ERANGE) {
-		NCCL_OFI_WARN("Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a valid link width. Error: %s",
-			      prop_str,
-			      attr.domain, attr.bus, attr.dev, attr.func, strerror(errno));
+		NCCL_OFI_WARN(
+			"Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a "
+			"valid link width. Error: %s",
+			prop_str,
+			attr.domain,
+			attr.bus,
+			attr.dev,
+			attr.func,
+			strerror(errno));
 		return -errno;
 	} else if (*width == 0) {
 		NCCL_OFI_WARN("Unknown link width \"%s\" of device %04x:%02x:%02x.%01x",
 			      prop_str,
-			      attr.domain, attr.bus, attr.dev, attr.func);
+			      attr.domain,
+			      attr.bus,
+			      attr.dev,
+			      attr.func);
 		return -EINVAL;
 	}
 
@@ -1188,7 +1278,8 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 }
 
 /*
- * @brief	Read link speed and width of topology node and its parent topology node from file system and return minimum
+ * @brief	Read link speed and width of topology node and its parent topology node from file
+ *system and return minimum
  *
  * @param	node
  *		PCI device or bridge topology node. Parent of `node` must be a bridge topology node.
@@ -1199,8 +1290,7 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
  * @return	0, on sucess
  *		non-zero, on error
  */
-static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed_idx,
-				    size_t *width)
+static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed_idx, size_t *width)
 {
 	int ret;
 	hwloc_obj_t parent_node = node->parent;
@@ -1236,7 +1326,6 @@ static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed
  */
 static int write_cpu_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 {
-
 	/* Write NUMA node opening tag including `numaid` and
 	 * `affinity`. Fields `arch`, `vendor`, `familyid`, and
 	 * `modelid` are added by NCCL later. */
@@ -1245,9 +1334,10 @@ static int write_cpu_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 		    "<cpu "
 		    "numaid=\"%u\""
 		    ">\n",
-		    indent, "", node->os_index) < 0) {
-		NCCL_OFI_WARN("Failed to print opening CPU tag. ERROR: %s",
-			      strerror(errno));
+		    indent,
+		    "",
+		    node->os_index) < 0) {
+		NCCL_OFI_WARN("Failed to print opening CPU tag. ERROR: %s", strerror(errno));
 		return -errno;
 	}
 
@@ -1265,8 +1355,7 @@ static int write_cpu_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 static int write_cpu_closing_tag(FILE *file, int indent)
 {
 	if (fprintf(file, "%*s</cpu>\n", indent, "") < 0) {
-		NCCL_OFI_WARN("Failed to print closing CPU tag. ERROR: %s",
-			      strerror(errno));
+		NCCL_OFI_WARN("Failed to print closing CPU tag. ERROR: %s", strerror(errno));
 		return -errno;
 	}
 
@@ -1287,9 +1376,8 @@ static int write_cpu_closing_tag(FILE *file, int indent)
  * @param	width
  *		link width
  */
-static int write_pci_tag(FILE *file, int indent,
-			 struct hwloc_pcidev_attr_s *pcidev,
-			 size_t speed_idx, size_t width)
+static int write_pci_tag(
+	FILE *file, int indent, struct hwloc_pcidev_attr_s *pcidev, size_t speed_idx, size_t width)
 {
 	int rc = fprintf(file,
 			 "%*s"
@@ -1297,14 +1385,17 @@ static int write_pci_tag(FILE *file, int indent,
 			 "busid=\"%04x:%02x:%02x.%01x\" "
 			 "link_speed=\"%s GT/s PCIe/s\" "
 			 "link_width=\"%ld\"/>\n",
-			 indent, "",
-			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func,
+			 indent,
+			 "",
+			 pcidev->domain,
+			 pcidev->bus,
+			 pcidev->dev,
+			 pcidev->func,
 			 pcie_gen[speed_idx],
 			 width);
 
 	if (rc < 0) {
-		NCCL_OFI_WARN("Failed to print PCI tag. ERROR: %s",
-			      strerror(errno));
+		NCCL_OFI_WARN("Failed to print PCI tag. ERROR: %s", strerror(errno));
 		return -errno;
 	}
 
@@ -1348,7 +1439,8 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 
 		/* Retrieve link speed and width of GPU */
 		if ((ret = get_pci_device_min_speed(gpu, false, &gpu_speed_idx, &gpu_width))) {
-			NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
+			NCCL_OFI_WARN(
+				"Failed to retrieve PCI speed and width of GPU associated to NIC");
 			return ret;
 		}
 
@@ -1391,11 +1483,14 @@ static int write_pci_opening_tag(FILE *file, struct hwloc_pcidev_attr_s *pcidev,
 			 "%*s"
 			 "<pci "
 			 "busid=\"%04x:%02x:%02x.%01x\">\n",
-			 indent, "",
-			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func);
+			 indent,
+			 "",
+			 pcidev->domain,
+			 pcidev->bus,
+			 pcidev->dev,
+			 pcidev->func);
 	if (rc < 0) {
-		NCCL_OFI_WARN("Failed to print opening PCI tag. ERROR: %s",
-			      strerror(errno));
+		NCCL_OFI_WARN("Failed to print opening PCI tag. ERROR: %s", strerror(errno));
 		return -errno;
 	}
 
@@ -1435,8 +1530,7 @@ static int write_bridge_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 static int write_pci_closing_tag(FILE *file, int indent)
 {
 	if (fprintf(file, "%*s</pci>\n", indent, "") < 0) {
-		NCCL_OFI_WARN("Failed to write closing PCI bridge tag. ERROR: %s",
-			      strerror(errno));
+		NCCL_OFI_WARN("Failed to write closing PCI bridge tag. ERROR: %s", strerror(errno));
 		return -errno;
 	}
 
@@ -1460,7 +1554,8 @@ static int write_pci_closing_tag(FILE *file, int indent)
  * @return	0, on success
  *		non-zero, on error
  */
-static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *file, int indent, int bridge_depth)
+static int write_nccl_topo_rec(
+	hwloc_topology_t topo, hwloc_obj_t node, FILE *file, int indent, int bridge_depth)
 {
 	int ret = 0;
 	int indent_offset = 2;
@@ -1473,7 +1568,9 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	/* Only nodes with NICs or Nvidia GPUs in its subtree store
 	 * store userdata. Use this information to avoid printing
 	 * parts of the topology without NICs and Nvidia GPUs. */
-	if (!topo_data) return ret;
+	if (!topo_data) {
+		return ret;
+	}
 
 	if (node->type == HWLOC_OBJ_BRIDGE) {
 		if (!node->attr) {
@@ -1493,15 +1590,14 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 		}
 
 		++bridge_depth;
-	} else if (node->type == HWLOC_OBJ_PCI_DEVICE &&
-		   topo_data->info_list) {
-			/* Topology nodes which store NIC info lists
-			 * are topology nodes of leader NICs. The
-			 * leader NIC is the first NIC in the list. */
-			if ((ret = write_nic(node, file, indent))) {
-				return ret;
-			}
-			indent += indent_offset;
+	} else if (node->type == HWLOC_OBJ_PCI_DEVICE && topo_data->info_list) {
+		/* Topology nodes which store NIC info lists
+		 * are topology nodes of leader NICs. The
+		 * leader NIC is the first NIC in the list. */
+		if ((ret = write_nic(node, file, indent))) {
+			return ret;
+		}
+		indent += indent_offset;
 	} else if (node->type == HWLOC_OBJ_NUMANODE) {
 		/* Before HWLOC 2.0, NUMA topology nodes are stored in
 		 * the normal topology tree */
@@ -1532,15 +1628,16 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 
 	/* Recurse */
 	while ((child = hwloc_get_next_child(topo, node, child))) {
-		if ((ret = write_nccl_topo_rec(topo, child,
-					       file, indent,
-					       bridge_depth))) {
+		if ((ret = write_nccl_topo_rec(topo, child, file, indent, bridge_depth))) {
 			return ret;
 		}
 	}
 
-	if (close_numanode) ret = write_cpu_closing_tag(file, indent - indent_offset);
-	else if (close_bridge) ret = write_pci_closing_tag(file, indent - indent_offset);
+	if (close_numanode) {
+		ret = write_cpu_closing_tag(file, indent - indent_offset);
+	} else if (close_bridge) {
+		ret = write_pci_closing_tag(file, indent - indent_offset);
+	}
 
 	return ret;
 }
@@ -1557,8 +1654,11 @@ int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file)
 		return -errno;
 	}
 
-	ret = write_nccl_topo_rec(topo->topo, hwloc_get_root_obj(topo->topo),
-				   file, indent, bridge_depth);
+	ret = write_nccl_topo_rec(topo->topo,
+				  hwloc_get_root_obj(topo->topo),
+				  file,
+				  indent,
+				  bridge_depth);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to write topology to NCCL topology file");
 		return ret;
@@ -1595,7 +1695,9 @@ int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
 
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter)
 {
-	if (!iter || iter->begin >= iter->end) return NULL;
+	if (!iter || iter->begin >= iter->end) {
+		return NULL;
+	}
 
 	struct fi_info *info_list = NULL;
 	nccl_ofi_topo_data_t *data = NULL;

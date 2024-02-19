@@ -10,9 +10,9 @@ extern "C" {
 #endif
 
 #include <assert.h>
-#include <stdlib.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "nccl_ofi_log.h"
@@ -59,8 +59,7 @@ struct nccl_ofi_freelist_block_t {
  * @param	size
  *		Size of MR. Size must be a multiple of system memory page size.
  */
-typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque, void *data, size_t size,
-					  void **handle);
+typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque, void *data, size_t size, void **handle);
 
 /*
  * Function pointer to call when releasing memory
@@ -97,7 +96,9 @@ typedef struct nccl_ofi_freelist_reginfo_t nccl_ofi_freelist_reginfo_t;
 
 _Static_assert(offsetof(nccl_ofi_freelist_reginfo_t, elem) == 0,
 	       "elem is not the first member of the structure nccl_ofi_freelist_reginfo_t");
-_Static_assert(sizeof(nccl_ofi_freelist_reginfo_t) - offsetof(nccl_ofi_freelist_reginfo_t, redzone) == MEMCHECK_REDZONE_SIZE,
+_Static_assert(sizeof(nccl_ofi_freelist_reginfo_t) -
+			       offsetof(nccl_ofi_freelist_reginfo_t, redzone) ==
+		       MEMCHECK_REDZONE_SIZE,
 	       "redzone is not the last member of the structure nccl_ofi_freelist_reginfo_t");
 
 /*
@@ -190,13 +191,13 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist);
 
 /* Internal function, which grows the freelist */
-int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
-			  size_t num_entries);
+int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist, size_t num_entries);
 
 /*
  * Set memcheck guards of freelist entry's user data to accessible but undefined
  */
-static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *freelist, void *entry_p)
+static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *freelist,
+							 void *entry_p)
 {
 	size_t user_entry_size = freelist->entry_size - MEMCHECK_REDZONE_SIZE;
 
@@ -207,8 +208,9 @@ static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *fr
 		size_t redzone_offset = offsetof(struct nccl_ofi_freelist_reginfo_t, redzone);
 
 		/* Entry after reginfo structure is accessible but undefined */
-		nccl_net_ofi_mem_undefined_unaligned(entry_p + reginfo_offset + reginfo_size,
-						     user_entry_size - reginfo_offset - reginfo_size);
+		nccl_net_ofi_mem_undefined_unaligned(
+			entry_p + reginfo_offset + reginfo_size,
+			user_entry_size - reginfo_offset - reginfo_size);
 		/* Redzone at the end of the reginfo structure is
 		 * marked as not accessible */
 		nccl_net_ofi_mem_noaccess_unaligned(entry_p + reginfo_offset + redzone_offset,
@@ -312,7 +314,8 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 	}
 
 	if (freelist->have_reginfo) {
-		entry = (struct nccl_ofi_freelist_elem_t *)((char*)entry_p + freelist->reginfo_offset);
+		entry = (struct nccl_ofi_freelist_elem_t *)((char *)entry_p +
+							    freelist->reginfo_offset);
 		nccl_net_ofi_mem_defined_unaligned(entry, sizeof(*entry));
 	} else {
 		entry = (struct nccl_ofi_freelist_elem_t *)entry_p;
@@ -332,7 +335,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 }
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_FREELIST_H
+#endif  // End NCCL_OFI_FREELIST_H

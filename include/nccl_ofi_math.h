@@ -16,22 +16,22 @@ extern "C" {
 /*
  * @brief	Returns the ceil of x/y.
  */
-#define NCCL_OFI_DIV_CEIL(x, y) ((x) == 0 ? 0 : 1 + (((x) - 1) / (y)))
+#define NCCL_OFI_DIV_CEIL(x, y)       ((x) == 0 ? 0 : 1 + (((x)-1) / (y)))
 
 /*
  * @brief	Max of two int values
  */
-#define NCCL_OFI_MAX(x, y) ((x) < (y) ? (y) : (x))
+#define NCCL_OFI_MAX(x, y)            ((x) < (y) ? (y) : (x))
 
 /*
  * @brief	Min of two int values
  */
-#define  NCCL_OFI_MIN(x, y) ((x) < (y) ? (x) : (y))
+#define NCCL_OFI_MIN(x, y)            ((x) < (y) ? (x) : (y))
 
 /*
  * @brief	Returns true if and only if size_t value is a power of two
  */
-#define NCCL_OFI_IS_POWER_OF_TWO(x) ((x) && (((x) & ((x) - 1)) == 0))
+#define NCCL_OFI_IS_POWER_OF_TWO(x)   ((x) && (((x) & ((x)-1)) == 0))
 
 /*
  * @brief	Return true if and only if `x` is a multiple of `a`
@@ -39,7 +39,7 @@ extern "C" {
  * @param	a
  *		Must be a power of two
  */
-#define NCCL_OFI_IS_ALIGNED(x, a) (((x) & ((typeof(x))(a) - 1)) == 0)
+#define NCCL_OFI_IS_ALIGNED(x, a)     (((x) & ((typeof(x))(a)-1)) == 0)
 
 /*
  * @brief	Return true if and only if pointer `p` is `a`-byte aligned
@@ -55,7 +55,7 @@ extern "C" {
  * @param	y
  *		Must be a power of two
  */
-#define NCCL_OFI_ROUND_DOWN(x, y) ((x) & (~((y) - 1)))
+#define NCCL_OFI_ROUND_DOWN(x, y)     ((x) & (~((y)-1)))
 
 /*
  * @brief	Round value up to be a multiple of alignment
@@ -63,10 +63,10 @@ extern "C" {
  * @param	y
  *		Must be a power of two
  */
-#define NCCL_OFI_ROUND_UP(x, y) NCCL_OFI_ROUND_DOWN((x) + ((y) - 1), (y))
+#define NCCL_OFI_ROUND_UP(x, y)       NCCL_OFI_ROUND_DOWN((x) + ((y)-1), (y))
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_MATH_H_
+#endif  // End NCCL_OFI_MATH_H_
