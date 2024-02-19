@@ -1,0 +1,14 @@
+# ci(pre-commit): introduce shellcheck
+f024dfd7aeb160589a8aa078b6bef9f9d2932aef
+
+# style(tree): apply mdformat fixes
+8f9668eb5700da124af5932e7e7424dd017c894e
+
+# refactor: apply clang-tidy fixes
+45ed83b9d44cfaf71c20a9702271be0a700cdaab
+
+# style(tree): apply clang format changes
+16fe0e11a84bbbba4a8082f98a9cc51340c27f72
+
+# style(tree): apply pre-commit whitespace/eol fixes
+628d44a9576fa36cd4c6e06df2b6417bf4b16bd5
