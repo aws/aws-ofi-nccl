@@ -1,0 +1,15 @@
+---
+fail_fast: false
+exclude: |
+    (?x)^(
+      include/nccl-headers
+    ).*$
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.6.0
+      hooks:
+          - id: check-merge-conflict
+          - id: detect-private-key
+          - id: mixed-line-ending
+          - id: check-added-large-files
+          - id: check-shebang-scripts-are-executable
