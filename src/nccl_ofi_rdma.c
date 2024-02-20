@@ -2655,12 +2655,12 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 	int ret = 0;
 
 	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Null MR handle provided. This is an error.");
+		NCCL_OFI_WARN("Null MR handle provided. This is an error.");
 		return ncclInternalError;
 	}
 
 	if (OFI_UNLIKELY(mr_handle->num_rails < 1)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Unexpected number of rails in rdma memory registration handle");
+		NCCL_OFI_WARN("Unexpected number of rails in rdma memory registration handle");
 		return ncclInternalError;
 	}
 
@@ -5588,8 +5588,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		ep = calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
 		if (!ep) {
 			ret = ncclSystemError;
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Unable to allocate rdma endpoint");
+			NCCL_OFI_WARN("Unable to allocate rdma endpoint");
 			goto unlock;
 		}
 
@@ -5798,15 +5797,13 @@ static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
 {
 	/* Create pthead key */
 	if(pthread_key_create(&devices->ep_key, NULL)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to create pthread key");
+		NCCL_OFI_WARN("Unable to create pthread key");
 		return ncclSystemError;
 	}
 
 	/* Intiaialize mutex for endpoint access */
 	if (pthread_mutex_init(&devices->ep_lock, NULL)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to initialize mutex");
+		NCCL_OFI_WARN("Unable to initialize mutex");
 		return ncclSystemError;
 	}
 
