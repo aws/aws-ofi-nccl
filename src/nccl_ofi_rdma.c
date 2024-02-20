@@ -1834,12 +1834,6 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 
-	if (send_ctrl_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
-		nccl_net_ofi_release_schedule(device->scheduler, send_ctrl_data->ctrl_schedule);
-		send_ctrl_data->ctrl_schedule = NULL;
-	}
-
 	if (send_ctrl_data->ctrl_fl_item) {
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_item);
@@ -2759,7 +2753,6 @@ static inline int insert_send_ctrl_req(
 				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 				nccl_net_ofi_rdma_req_t *recv_req)
 {
-	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	nccl_net_ofi_rdma_req_t *send_ctrl_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_ctrl_req == NULL)) {
@@ -2775,22 +2768,9 @@ static inline int insert_send_ctrl_req(
 	send_ctrl_req->msg_seq_num = msg_seq_num;
 
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(send_ctrl_req);
-	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
 
 	send_ctrl_data->recv_req = recv_req;
 	send_ctrl_data->ctrl_fl_item = NULL;
-	send_ctrl_data->ctrl_schedule = scheduler->get_schedule(scheduler,
-								ctrl_msg_len,
-								device->num_rails);
-
-	if (OFI_UNLIKELY(!(send_ctrl_data->ctrl_schedule))) {
-		return -EINVAL;
-	} else if (OFI_UNLIKELY(send_ctrl_data->ctrl_schedule->num_xfer_infos != 1)) {
-		NCCL_OFI_WARN("Invalid schedule for outgoing control message (%zu bytes). Expected one rail, but got %zu",
-			      size,
-			      send_ctrl_data->ctrl_schedule->num_xfer_infos);
-		return -EINVAL;
-	}
 
 	/*
 	 * Allocate RDMA control buffer which transfers the RDMA write buffer
@@ -4402,17 +4382,12 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
-	nccl_net_ofi_schedule_t *schedule = send_ctrl_data->ctrl_schedule;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-
-	assert(schedule != NULL);
-
-	// Should be using a single rail for posting the control message
-	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
+	const int control_rail_id = 0;
 
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	comm_rail = get_recv_comm_rail(r_comm, xfer_info->rail_id);
+	comm_rail = get_recv_comm_rail(r_comm, control_rail_id);
 
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item = send_ctrl_data->ctrl_fl_item;
 
@@ -4421,8 +4396,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 		(freelist_regmr_fn_handle_t *)ctrl_fl_item->fl_reginfo.mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
-	assert(xfer_info->rail_id < mr_handle->num_rails);
-	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
+	void *desc = fi_mr_desc(mr_handle->mr[control_rail_id]);
 
 	NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, xfer_info->rail_id, req->comm, req, req->msg_seq_num);
 
