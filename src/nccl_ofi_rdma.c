@@ -191,7 +191,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req);
 
 static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending);
 
-static int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, int rail_id);
+static int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail);
 
 static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
 					 nccl_net_ofi_rdma_req_t *bounce_req);
@@ -948,14 +948,12 @@ static void copy_ctrl_data(nccl_net_ofi_rdma_req_t *bounce_req, nccl_net_ofi_rdm
  * Post all bounce buffers for a rail if we don't have enough
  */
 static inline int check_post_bounce_buffers_rail(nccl_net_ofi_rdma_ep_t *ep,
-						          int rail_id)
+						 nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-
 	/* Not taking lock here since we are only reading a value.
 	   If needed, post_bounce_buffs_on_rail will take the lock. */
 	if (rail->num_bounce_posted < rail->min_bounce_posted) {
-		return post_bounce_buffs_on_rail(ep, rail_id);
+		return post_bounce_buffs_on_rail(ep, rail);
 	}
 
 	return 0;
@@ -987,20 +985,18 @@ static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
 	}
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
-	int rail_id = bounce_data->bounce_rail_id;
 
 	/* Next, check the posted count and post more buffers if needed. */
-	return check_post_bounce_buffers_rail(ep, rail_id);
+	return check_post_bounce_buffers_rail(ep, bounce_data->rail);
 }
 
 /*
  * @brief	Decrement the number of bounce buffers posted for the rail
  *		corresponding to bounce_req
  */
-static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
+static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_ep_t *ep,
+					   nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-
 	int ret = pthread_mutex_lock(&rail->bounce_mutex);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to lock bounce_mutex");
@@ -1016,7 +1012,7 @@ static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_ep_t *ep, int rail_
 		return -ret;
 	}
 
-	return check_post_bounce_buffers_rail(ep, rail_id);
+	return check_post_bounce_buffers_rail(ep, rail);
 }
 
 /**
@@ -1030,7 +1026,6 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 					    nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret;
-	int bounce_rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
 
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(s_comm->msgbuff, msg_seq_num,
@@ -1039,7 +1034,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case sender has not yet called send() for this message, so
 		   return success and initiate RDMA write when sender calls send(). */
-		return decrease_bounce_buff_cnt(ep, bounce_rail_id);
+		return decrease_bounce_buff_cnt(ep, get_bounce_data(bounce_req)->rail);
 	}
 
 	if (mb_res != NCCL_OFI_MSGBUFF_INVALID_IDX || stat != NCCL_OFI_MSGBUFF_INPROGRESS) {
@@ -1149,10 +1144,9 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 					     nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret;
-	int bounce_rail_id = get_bounce_data(bounce_req)->bounce_rail_id;
 
 	/* Decrease bounce buffer count. It will be incremented again when reposting */
-	ret = decrease_bounce_buff_cnt(ep, bounce_rail_id);
+	ret = decrease_bounce_buff_cnt(ep, get_bounce_data(bounce_req)->rail);
 	if (ret != 0) {
 		return ret;
 	}
@@ -1395,8 +1389,8 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req);
  *		error, on others
  */
 static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
-							uint64_t num_cqes, nccl_net_ofi_rdma_ep_t *ep,
-							int rail_id)
+				      uint64_t num_cqes, nccl_net_ofi_rdma_ep_t *ep,
+				      nccl_net_ofi_ep_rail_t *rail)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_req_t *req = NULL;
@@ -1465,16 +1459,16 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 			/* This is a bounce buffer receive event. It could be a
 			   ctrl message receive (send comm) or an eager message
 			   receive (recv comm) */
-			ret = handle_bounce_recv(&cq_entry[comp_idx], rail_id);
+			ret = handle_bounce_recv(&cq_entry[comp_idx], rail->rail_id);
 		} else if (comp_flags & FI_REMOTE_WRITE) {
 			/* Type 6: Remote-initiated write is complete */
-			ret = handle_write_comp(&cq_entry[comp_idx], ep, rail_id);
+			ret = handle_write_comp(&cq_entry[comp_idx], ep, rail->rail_id);
 		} else if (comp_flags & FI_WRITE) {
 			/* Type 5: Local-initiated write is complete */
 			req = op_ctx;
 			rdma_req_send_data_t *send_data = get_send_data(req);
 
-			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
+			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail->rail_id, req->comm, req->msg_seq_num, req);
 
 			if (inc_req_completion(req, 0, send_data->total_num_compls)) {
 				ret = ncclInternalError;
@@ -1523,9 +1517,8 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
  *		error, on others
  */
 static inline int process_err_completion(nccl_net_ofi_rdma_ep_t *ep,
-					 int rail_id)
+					 nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 	struct fi_cq_err_entry err_entry = { 0 };
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	int ret = 0;
@@ -1691,6 +1684,42 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 	return rc;
 }
 
+static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
+{
+	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
+	ssize_t rc = 0;
+	int ret = 0;
+
+	while (true) {
+		/* Receive completions for the given endpoint */
+		rc = fi_cq_read(rail->cq, cqe_tagged_buffers, cq_read_count);
+		if (rc > 0) {
+			ret = process_completions(
+				cqe_tagged_buffers, rc, ep, rail);
+			if (OFI_UNLIKELY(ret != 0))
+				goto exit;
+		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+			ret = process_err_completion(ep, rail);
+			if (ret == 0)
+				/* Error entry not available yet */
+				break;
+			else
+				goto exit;
+		} else if (rc == -FI_EAGAIN) {
+			/* No completions to process */
+			break;
+		} else {
+			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
+				      rc, fi_strerror(-rc));
+			ret = ncclSystemError;
+			goto exit;
+		}
+	}
+
+exit:
+	return ret;
+}
+
 /*
  * @brief	Process completion entries for the given completion quque.
  *		This also updates several request fileds like size, status, etc
@@ -1700,46 +1729,21 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
  */
 static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 {
-	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
-	ssize_t rc = 0;
-	int ret = 0;
+	int ret;
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
-		while (true) {
-			/* Receive completions for the given endpoint */
-			rc = fi_cq_read(rail->cq, cqe_tagged_buffers, cq_read_count);
-			if (rc > 0) {
-				ret = process_completions(
-					cqe_tagged_buffers, rc, ep, rail_id);
-				if (OFI_UNLIKELY(ret != 0))
-					goto exit;
-			} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-				ret = process_err_completion(ep, rail_id);
-				if (ret == 0)
-					/* Error entry not available yet */
-					break;
-				else
-					goto exit;
-			} else if (rc == -FI_EAGAIN) {
-				/* No completions to process */
-				break;
-			} else {
-				NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
-					      rc, fi_strerror(-rc));
-				ret = ncclSystemError;
-				goto exit;
-			}
+		ret = ofi_process_cq_rail(ep, rail);
+		if (ret != 0) {
+			goto exit;
 		}
-
 	}
 
 	/* Process any pending requests */
-	rc = process_pending_reqs(ep);
-	if (OFI_UNLIKELY(rc != 0 && rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Failed call to process_pending_reqs: %zd", rc);
-		ret = ncclSystemError;
+	ret = process_pending_reqs(ep);
+	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("Failed call to process_pending_reqs: %zd", ret);
 	}
 
  exit:
@@ -1975,7 +1979,7 @@ static inline int free_bounce_req(nccl_net_ofi_rdma_req_t *req,
 }
 
 static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *ep,
-						 int rail_id)
+							nccl_net_ofi_ep_rail_t *rail)
 {
 	nccl_net_ofi_rdma_req_t *req = allocate_req(ep->bounce_buff_reqs_fl);
 	if (!req) return NULL;
@@ -1998,12 +2002,13 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 
 	bounce_data->bounce_fl_item = bounce_fl_item;
 	bounce_data->buff_len = ep->bounce_buff_size;
-	bounce_data->bounce_rail_id = rail_id;
+	bounce_data->rail = rail;
 	bounce_data->ep = ep;
 	return req;
 }
 
-static inline int handle_bounce_eagain(nccl_net_ofi_rdma_ep_t *ep, int rail_id,
+static inline int handle_bounce_eagain(nccl_net_ofi_rdma_ep_t *ep,
+				       nccl_net_ofi_ep_rail_t *rail,
 				       nccl_net_ofi_rdma_req_t *req, size_t num_buffs_failed)
 {
 	/* Add to pending reqs queue */
@@ -2013,8 +2018,6 @@ static inline int handle_bounce_eagain(nccl_net_ofi_rdma_ep_t *ep, int rail_id,
 		return ret;
 	}
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
-
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
 	ret = pthread_mutex_lock(&rail->bounce_mutex);
 	if (ret != 0) {
@@ -2034,11 +2037,10 @@ static inline int handle_bounce_eagain(nccl_net_ofi_rdma_ep_t *ep, int rail_id,
 	return ret;
 }
 
-static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
+static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
+					    nccl_net_ofi_ep_rail_t *rail)
 {
 	int ret = 0;
-
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
 	ret = pthread_mutex_lock(&rail->bounce_mutex);
 	if (ret != 0) {
@@ -2059,7 +2061,7 @@ static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, int rail
 	/* Post all the bounce buffers we need */
 	for (size_t i = 0; i < buffers_needed; ++i) {
 		nccl_net_ofi_rdma_req_t *req =
-			alloc_bounce_req(ep, rail_id);
+			alloc_bounce_req(ep, rail);
 		if (!req) {
 			NCCL_OFI_WARN("Failed to allocate bounce req");
 			return -ENOMEM;
@@ -2069,7 +2071,7 @@ static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, int rail
 			/* Update posted count */
 			/* We failed to post num_buffs_failed buffers that we promised above */
 			size_t num_buffs_failed = buffers_needed - i - 1;
-			ret = handle_bounce_eagain(ep, rail_id, req, num_buffs_failed);
+			ret = handle_bounce_eagain(ep, rail, req, num_buffs_failed);
 			if (ret != 0) return ret;
 
 			break;
@@ -2090,7 +2092,8 @@ static inline int post_bounce_buffs(nccl_net_ofi_rdma_ep_t *ep)
 	int ret = 0;
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
-		ret = post_bounce_buffs_on_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		ret = post_bounce_buffs_on_rail(ep, rail);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed call to post_bounce_buffs_on_rail");
 			goto exit;
@@ -2562,9 +2565,8 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 		goto exit;
 	}
 
-	ret_handle->num_rails = num_rails;
-
 	/* Register memory on each rail */
+	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_device_rail_t *dev_rail = get_device_rail(device, rail_id);
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
@@ -4287,7 +4289,7 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = bounce_data->bounce_fl_item;
 	freelist_regmr_fn_handle_t *fl_mr_handle = bounce_fl_item->fl_reginfo.mr_handle;
-	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[bounce_data->bounce_rail_id]);
+	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[bounce_data->rail->rail_id]);
 
 	/* Reset memcheck guards of bounce buffer freelist entry to
 	 * accessible but undefined to cover cases where the buffer
@@ -4368,12 +4370,9 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	} else if (req->type == NCCL_OFI_RDMA_BOUNCE) { // Post Bounce Buffer
 		rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 		/* Get ep rail information to xfer the req */
-		nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
-		assert(bounce_data->bounce_rail_id >=0 );
-		assert(bounce_data->bounce_rail_id < ep->num_rails);
-		nccl_net_ofi_ep_rail_t *ep_rail = &ep->rails[bounce_data->bounce_rail_id];
+		assert(bounce_data->rail != NULL);
 
-		ret = post_bounce_buffer(req, ep_rail);
+		ret = post_bounce_buffer(req, bounce_data->rail);
 	} else {
 		NCCL_OFI_WARN("Unexpected request type. Request type: %d", req->type);
 		ret = -EINVAL;
@@ -4437,7 +4436,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	int bounce_rail_id = bounce_data->bounce_rail_id;
+	int bounce_rail_id = bounce_data->rail->rail_id;
 	comm_rail = get_recv_comm_rail(r_comm, bounce_rail_id);
 
 	/* Unpack mr_handle */
@@ -4519,9 +4518,8 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
 	int ret = 0;
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
-	int rail_id = bounce_data->bounce_rail_id;
 
-	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+	nccl_net_ofi_ep_rail_t *rail = bounce_data->rail;
 
 	ret = pthread_mutex_lock(&rail->bounce_mutex);
 	if (ret) {
@@ -4558,7 +4556,7 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
 		}
 
 		/* Post more buffers if needed */
-		ret = check_post_bounce_buffers_rail(ep, rail_id);
+		ret = check_post_bounce_buffers_rail(ep, rail);
 	} else {
 		ret = bounce_req->free(bounce_req, false);
 		if (ret != 0) {
@@ -5381,19 +5379,24 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 	return ret;
 }
 
+
+static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
+{
+	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
+				     rail->cq, dev_id);
+	rail->ofi_ep = NULL;
+	rail->av = NULL;
+	rail->cq = NULL;
+}
+
+
 /*
  * @brief	Release libfabric resources of rdma endpoint
  */
 static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 {
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-
-		nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
-					     rail->cq, dev_id);
-		rail->ofi_ep = NULL;
-		rail->av = NULL;
-		rail->cq = NULL;
+		ep_rail_release(get_rail(ep, rail_id), dev_id);
 	}
 }
 
@@ -5429,6 +5432,33 @@ static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *r
 	return 0;
 }
 
+
+static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
+			int dev_id, int rail_id,
+			nccl_net_ofi_rdma_device_rail_t *dev_rail,
+			nccl_net_ofi_ep_rail_t *ep_rail)
+{
+	int ret = 0;
+
+	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18),
+						dev_rail->info, dev_rail->domain,
+						&ep_rail->ofi_ep, &ep_rail->av, &ep_rail->cq);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ep_rail->rail_id = rail_id;
+
+	ret = set_local_address(ep_rail->ofi_ep, ep_rail);
+	if (ret != 0) {
+		ep_rail_release(ep_rail, dev_id);
+		return ret;
+	}
+
+	return 0;
+}
+
+
 /*
  * @brief	Initialize libfabric resources of endpoint rails
  */
@@ -5444,16 +5474,7 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 			get_device_rail(device, rail_id);
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
-		ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18),
-							rail_dev->info,
-							rail_dev->domain,
-							&rail->ofi_ep,
-							&rail->av, &rail->cq);
-		if (ret != 0) {
-			goto exit;
-		}
-
-		ret = set_local_address(rail->ofi_ep, rail);
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail);
 		if (ret != 0) {
 			goto exit;
 		}

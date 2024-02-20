@@ -101,8 +101,10 @@ typedef struct nccl_net_ofi_rdma_bounce_fl_item {
 
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_rdma_ep;
+struct nccl_net_ofi_ep_rail;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
+typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
 	/* Bounce buffer freelist item */
@@ -117,7 +119,7 @@ typedef struct {
 	 * This is useful for re-posting the bounce buffer on the same rail
 	 * when it gets completed.
 	 */
-	int bounce_rail_id;
+	nccl_net_ofi_ep_rail_t *rail;
 	/*
 	 * Back-pointer to associated endpoint
 	 */
@@ -468,7 +470,9 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
  * Endpoint rail encapsulates data of an endpoint for a
  * specific rail.
  */
-typedef struct nccl_net_ofi_ep_rail {
+struct nccl_net_ofi_ep_rail {
+	int rail_id;
+
 	/* Local libfabric endpoint handle */
 	struct fid_ep *ofi_ep;
 
@@ -493,7 +497,7 @@ typedef struct nccl_net_ofi_ep_rail {
 	size_t max_bounce_posted;
 	/* Mutex for bounce buffer operations */
 	pthread_mutex_t bounce_mutex;
-} nccl_net_ofi_ep_rail_t;
+};
 
 /*
  * @brief	RDMA Endpoint
