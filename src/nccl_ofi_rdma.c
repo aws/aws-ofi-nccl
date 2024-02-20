@@ -5570,22 +5570,6 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		/* Initialize number of rail */
 		ep->num_rails = num_rails;
 
-		/* Initialize endpoint ID pool */
-		ep->comm_idpool = malloc(sizeof(nccl_ofi_idpool_t));
-		if (OFI_UNLIKELY(ep->comm_idpool == NULL)) {
-			ret = ncclSystemError;
-			NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
-			goto unlock;
-		}
-
-		ret = nccl_ofi_idpool_init(ep->comm_idpool, device->num_comm_ids);
-		if (OFI_UNLIKELY(ret != 0)) {
-			ret = ncclSystemError;
-			free(ep->comm_idpool);
-			ep->comm_idpool = NULL;
-			goto unlock;
-		}
-
 		/* Initialize reference count */
 		ep->ref_cnt = 0;
 
@@ -5622,6 +5606,22 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 		if (!ep->comms) {
 			NCCL_OFI_WARN("Failed to alloc comms array");
 			ret = ncclSystemError;
+			goto unlock;
+		}
+
+		/* Initialize endpoint ID pool */
+		ep->comm_idpool = malloc(sizeof(nccl_ofi_idpool_t));
+		if (OFI_UNLIKELY(ep->comm_idpool == NULL)) {
+			ret = ncclSystemError;
+			NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
+			goto unlock;
+		}
+
+		ret = nccl_ofi_idpool_init(ep->comm_idpool, device->num_comm_ids);
+		if (OFI_UNLIKELY(ret != 0)) {
+			ret = ncclSystemError;
+			free(ep->comm_idpool);
+			ep->comm_idpool = NULL;
 			goto unlock;
 		}
 
