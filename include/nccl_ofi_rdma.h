@@ -238,10 +238,6 @@ typedef struct {
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
-	/* Schedule used to transfer the control buffer. We save the
-	 * pointer to reference it when transferring the buffer over
-	 * network. */
-	nccl_net_ofi_schedule_t *ctrl_schedule;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
 #if HAVE_NVTX_TRACING
