@@ -567,22 +567,6 @@ static int register_rail_mr_buffer(struct fid_domain *domain,
 		goto exit;
 	}
 
-	if (endpoint_mr) {
-		ret = fi_mr_bind(*mr_handle, &ep->fid, 0);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to bind MR to EP (type = %d) for device %d. RC: %d, Error: %s",
-				      type, dev_id, ret, fi_strerror(-ret));
-			goto exit;
-		}
-
-		ret = fi_mr_enable(*mr_handle);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to enable MR (type = %d) for device %d. RC: %d, Error: %s",
-				      type, dev_id, ret, fi_strerror(-ret));
-			goto exit;
-		}
-	}
-
  exit:
 	return ret;
 }
@@ -5920,7 +5904,7 @@ static void get_hints(struct fi_info *hints)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
-	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_ENDPOINT | FI_MR_VIRT_ADDR |
+	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
 		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	hints->domain_attr->threading = FI_THREAD_SAFE;
@@ -5985,6 +5969,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
 		goto exit;
+	}
+
+	if (endpoint_mr) {
+		NCCL_OFI_WARN("RDMA protocol does not support endpoint memory registration.");
+		ret = -ENOTSUP;
+		goto error;
 	}
 
 	if (ofi_nccl_eager_max_size() < 0 ||
