@@ -103,7 +103,7 @@ void nccl_ofi_tuner_model_costs()
 	for (func = 0; func < NCCL_NUM_FUNCTIONS; func++) {
 		for (algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 			for(proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
-				nccl_ofi_tuner_ctx->base_costs[func][algo][proto] = 
+				nccl_ofi_tuner_ctx->base_costs[func][algo][proto] =
 					nccl_ofi_tuner_compute_base_cost(func, algo, proto);
 			}
 		}
