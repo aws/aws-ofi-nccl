@@ -1322,6 +1322,71 @@ static inline int handle_write_comp(struct fi_cq_tagged_entry *cq_entry,
 
 static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm);
 
+static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
+{
+	switch(state) {
+	case NCCL_OFI_RDMA_REQ_CREATED:
+		return "CREATED";
+	case NCCL_OFI_RDMA_REQ_PENDING:
+		return "PENDING";
+	case NCCL_OFI_RDMA_REQ_COMPLETED:
+		return "COMPLETED";
+	case NCCL_OFI_RDMA_REQ_ERROR:
+		return "ERROR";
+	}
+	return "unknown";
+}
+
+static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
+{
+	switch(type) {
+	case NCCL_OFI_RDMA_SEND_CONN:
+		return "SEND_CONN";
+	case NCCL_OFI_RDMA_SEND_CONN_RESP:
+		return "SEND_CONN_RESP";
+	case NCCL_OFI_RDMA_RECV_CONN:
+		return "RECV_CONN";
+	case NCCL_OFI_RDMA_RECV_CONN_RESP:
+		return "RECV_CONN_RESP";
+	case NCCL_OFI_RDMA_SEND:
+		return "SEND";
+	case NCCL_OFI_RDMA_RECV:
+		return "RECV";
+	case NCCL_OFI_RDMA_SEND_CTRL:
+		return "SEND_CTRL";
+	case NCCL_OFI_RDMA_RECV_SEGMS:
+		return "RECV_SEGMS";
+	case NCCL_OFI_RDMA_BOUNCE:
+		return "BOUNCE";
+	case NCCL_OFI_RDMA_FLUSH:
+		return "FLUSH";
+	case NCCL_OFI_RDMA_EAGER_COPY:
+		return "EAGER_COPY";
+	}
+	return "unknown";
+}
+
+/*
+ * @brief	Print NCCL OFI request information
+ */
+static const char *nccl_net_ofi_req_str(nccl_net_ofi_rdma_req_t *req)
+{
+	static char buf[256];
+	snprintf(buf, sizeof(buf), "{ dev: %d, size: %zu, state: %s, type: %s }",
+		 req->dev_id,
+		 req->size,
+		 req_state_str(req->state),
+		 req_type_str(req->type)
+		);
+	return buf;
+}
+
+static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req);
+
+static int post_flush_req(nccl_net_ofi_rdma_req_t *req);
+
+static int post_eager_copy(nccl_net_ofi_rdma_req_t *req);
+
 /*
  * @brief	Processes completion entries from CQ
  *
@@ -1450,70 +1515,73 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 	return ret;
 }
 
-static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
-{
-	switch(state) {
-	case NCCL_OFI_RDMA_REQ_CREATED:
-		return "CREATED";
-	case NCCL_OFI_RDMA_REQ_PENDING:
-		return "PENDING";
-	case NCCL_OFI_RDMA_REQ_COMPLETED:
-		return "COMPLETED";
-	case NCCL_OFI_RDMA_REQ_ERROR:
-		return "ERROR";
-	}
-	return "unknown";
-}
-
-static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
-{
-	switch(type) {
-	case NCCL_OFI_RDMA_SEND_CONN:
-		return "SEND_CONN";
-	case NCCL_OFI_RDMA_SEND_CONN_RESP:
-		return "SEND_CONN_RESP";
-	case NCCL_OFI_RDMA_RECV_CONN:
-		return "RECV_CONN";
-	case NCCL_OFI_RDMA_RECV_CONN_RESP:
-		return "RECV_CONN_RESP";
-	case NCCL_OFI_RDMA_SEND:
-		return "SEND";
-	case NCCL_OFI_RDMA_RECV:
-		return "RECV";
-	case NCCL_OFI_RDMA_SEND_CTRL:
-		return "SEND_CTRL";
-	case NCCL_OFI_RDMA_RECV_SEGMS:
-		return "RECV_SEGMS";
-	case NCCL_OFI_RDMA_BOUNCE:
-		return "BOUNCE";
-	case NCCL_OFI_RDMA_FLUSH:
-		return "FLUSH";
-	case NCCL_OFI_RDMA_EAGER_COPY:
-		return "EAGER_COPY";
-	}
-	return "unknown";
-}
-
 /*
- * @brief	Print NCCL OFI request information
+ * @brief	Process error completion entries from the CQ error queue
+ *
+ * @return	0, on success
+ *		error, on others
  */
-static const char *nccl_net_ofi_req_str(nccl_net_ofi_rdma_req_t *req)
+static inline int process_err_completion(nccl_net_ofi_rdma_ep_t *ep,
+					 int rail_id)
 {
-	static char buf[256];
-	snprintf(buf, sizeof(buf), "{ dev: %d, size: %zu, state: %s, type: %s }",
-		 req->dev_id,
-		 req->size,
-		 req_state_str(req->state),
-		 req_type_str(req->type)
-		);
-	return buf;
+	nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+	struct fi_cq_err_entry err_entry = { 0 };
+	nccl_net_ofi_rdma_req_t *req = NULL;
+	int ret = 0;
+
+	ret = fi_cq_readerr(rail->cq, &err_entry, 0);
+	if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
+		/*
+		 * Error not available yet.
+		 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
+		 */
+		return 0;
+	} else if (OFI_UNLIKELY(ret < 0)) {
+		NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
+			      ret, fi_strerror(-ret));
+		goto exit;
+	}
+
+	if (err_entry.flags & FI_REMOTE_WRITE) {
+		req = get_req_from_imm_data(ep, err_entry.data);
+		if (!req) {
+			NCCL_OFI_WARN("Unknown remote write error, could not get CQ data");
+			ret = -EIO;
+			goto exit;
+		}
+	} else {
+		/* For all other operations, ctx should be a req */
+		if (!err_entry.op_context) {
+			NCCL_OFI_WARN("Operation with NULL context completed with error");
+			ret = -EIO;
+			goto exit;
+		}
+		req = err_entry.op_context;
+	}
+
+	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %s. Completed length: %ld, Request: %s",
+		      req, err_entry.err,
+		      fi_cq_strerror(rail->cq, err_entry.prov_errno, err_entry.err_data, NULL, 0),
+		      (long)err_entry.len, nccl_net_ofi_req_str(req));
+	if (req->type == NCCL_OFI_RDMA_BOUNCE) {
+		/* A bounce buffer receive failed -- this is an internal error so bail out */
+		NCCL_OFI_WARN("Fatal: Bounce buffer recv completed with error");
+	} else {
+		/* Move user-facing request to error state */
+		set_request_state_to_error(req);
+	}
+
+	/*
+	 * Libfabric error codes directly map to ISO C errno values for standard
+	 * error codes up to FI_ERRNO_OFFSET, and libfabric-specific error codes
+	 * beyond. nccl_net_ofi_retval_translate() will figure out
+	 * how to deal with these, so it is safe to pass up the err as-is.
+	 * However, any special-handling for prov_errno should be handled here.
+	 */
+	ret = -err_entry.err;
+exit:
+	return ret;
 }
-
-static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req);
-
-static int post_flush_req(nccl_net_ofi_rdma_req_t *req);
-
-static int post_eager_copy(nccl_net_ofi_rdma_req_t *req);
 
 /*
  * Progress a request associated with recv
@@ -1631,11 +1699,9 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
  */
 static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 {
+	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
 	ssize_t rc = 0;
 	int ret = 0;
-	struct fi_cq_err_entry err_buffer = { 0 };
-	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
-	nccl_net_ofi_rdma_req_t *req = NULL;
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
@@ -1649,53 +1715,12 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 				if (OFI_UNLIKELY(ret != 0))
 					goto exit;
 			} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-				rc = fi_cq_readerr(rail->cq, &err_buffer, 0);
-				if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
-					/*
-					 * Error not available yet.
-					 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
-					 */
+				ret = process_err_completion(ep, rail_id);
+				if (ret == 0)
+					/* Error entry not available yet */
 					break;
-				} else if (OFI_UNLIKELY(rc < 0)) {
-					NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
-						      rc,
-						      fi_strerror(-rc));
-					ret = ncclSystemError;
+				else
 					goto exit;
-				}
-				if (err_buffer.flags & FI_REMOTE_WRITE) {
-					req = get_req_from_imm_data(ep, err_buffer.data);
-					if (!req) {
-						NCCL_OFI_WARN("Unknown remote write error");
-						ret = ncclSystemError;
-						goto exit;
-					}
-				} else {
-					/* For all other operations, ctx should be a req */
-					if (!err_buffer.op_context) {
-						NCCL_OFI_WARN("Operation with NULL context completed with error!");
-						ret = ncclSystemError;
-						goto exit;
-					}
-					req = err_buffer.op_context;
-				}
-
-				NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %s. Completed length: %ld, Request: %s",
-					      req,
-					      err_buffer.err,
-					      fi_cq_strerror(rail->cq,
-							     err_buffer.prov_errno,
-							     err_buffer.err_data, NULL, 0),
-					      (long)err_buffer.len,
-					      nccl_net_ofi_req_str(req));
-				set_request_state_to_error(req);
-
-				if (req->type == NCCL_OFI_RDMA_BOUNCE) {
-					/* A bounce buffer receive failed -- this is an internal error so bail out */
-					NCCL_OFI_WARN("Fatal: Bounce buffer recv completed with error");
-					ret = ncclSystemError;
-					goto exit;
-				}
 			} else if (rc == -FI_EAGAIN) {
 				/* No completions to process */
 				break;

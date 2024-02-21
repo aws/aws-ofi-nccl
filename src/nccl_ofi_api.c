@@ -24,14 +24,51 @@ ncclDebugLogger_t ofi_log_function = NULL;
 
 static ncclResult_t nccl_net_ofi_retval_translate(int retval)
 {
+	/*
+	 * This translates both ISO C errnos as well as libfabric errnos (up to
+	 * FI_ERRNO_OFFSET they are synonymous).
+	 */
 	switch (retval) {
 	case 0:
 		return ncclSuccess;
 		break;
 	case -EINVAL:
+		/*
+		 * Per ext-net docs, invalid arguments to plugin calls should
+		 * return ncclInternalError. Although a ncclInvalidArgument is defined,
+		 * it is suggested that ext-net plugins not pass these up and
+		 * leave NCCL API argument validation to NCCL.
+		 */
+		return ncclInternalError;
+		break;
+	case -EMSGSIZE:
+		/*
+		 * TODO: Per ext-net docs, this aligns with ncclInvalidUsage,
+		 * which is also defined in NCCL source, but for some reason
+		 * that error type is not available in err.h that we pull from
+		 * ext-net headers upstream. This needs to be fixed once the
+		 * ext-net header gets fixed to include ncclInvalidUsage.
+		 */
 		return ncclInvalidArgument;
 		break;
+	case -ECONNABORTED:
+	case -ECONNRESET:
+	case -ECONNREFUSED:
+	case -ENOTCONN:
+	case -EHOSTDOWN:
+	case -EHOSTUNREACH:
+		/*
+		 * Pass up ncclRemoteError (introduced in NCCL 2.13.4, but
+		 * missing in ext-net documentation) for any unrecoverable peer
+		 * reachability errors.
+		 */
+		return ncclRemoteError;
+		break;
 	default:
+		/*
+		 * Catch-all for other errors, including lifabric-specific error
+		 * codes.
+		 */
 		return ncclSystemError;
 		break;
 	}
