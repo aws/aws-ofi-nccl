@@ -21,6 +21,8 @@ jobs:
           - neuron
       fail-fast: false
     steps:
+      - uses: actions/checkout@v4
+
       - name: Install Dependencies
         run: |
           sudo apt-get update -y
@@ -42,7 +44,6 @@ jobs:
           # Install Neuron Runtime
           sudo apt-get install aws-neuronx-runtime-lib -y
 
-      - uses: actions/checkout@v4
       - name: Install Libfabric
         run: |
           # We're just doing distchecks, so it is fine if we
@@ -88,3 +89,31 @@ jobs:
         with:
           name: ${{ matrix.cc }}-config.log
           path: config.log
+
+      - uses: actions/setup-python@v5
+        if: matrix.cc == 'clang'
+        with:
+          python-version: '3.9'
+
+      - name: Run CodeChecker
+        if: matrix.cc == 'clang'
+        uses: whisperity/codechecker-analysis-action@v1
+        id: codechecker
+        with:
+          # clean and rebuild so that compile_commands.json can be detected
+          build-command: "make clean && make"
+          ctu: true
+
+      - name: Save CodeChecker HTML output.
+        if: matrix.cc == 'clang'
+        uses: actions/upload-artifact@v4
+        with:
+          name: "CodeChecker Bug Reports for ${{ matrix.sdk }}"
+          path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
+
+      - name: CodeChecker Pass Or Fail?
+        if: matrix.cc == 'clang' && ${{ steps.codechecker.outputs.warnings-in-diff == 'true' }}
+        shell: bash
+        run: |
+          echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
+          exit 0

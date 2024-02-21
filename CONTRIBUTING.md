@@ -53,6 +53,7 @@ opensource-codeofconduct@amazon.com with any additional questions or comments.
 ## Security issue notifications
 If you discover a potential security issue in this project we ask that you notify AWS/Amazon Security via our [vulnerability reporting page](http://aws.amazon.com/security/vulnerability-reporting/). Please do **not** create a public github issue.
 
+We run [CodeChecker](https://codechecker.readthedocs.io/en/latest/) (LLVM/Clang Static Analysis) on every pull request.
 
 ## Licensing
 
