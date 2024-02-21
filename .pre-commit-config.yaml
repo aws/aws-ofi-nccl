@@ -14,6 +14,18 @@ repos:
     -   id: mixed-line-ending
     -   id: check-added-large-files
     -   id: check-shebang-scripts-are-executable
+- repo: https://github.com/executablebooks/mdformat
+  rev: 0.7.17  # Use the ref you want to point at
+  hooks:
+  - id: mdformat
+    additional_dependencies:
+    - mdformat-gfm
+    - mdformat-black
+    - mdformat-web
+    - mdformat-toc
+    - mdformat-tables
+    - mdformat-footnote
+    - mdformat-simple-breaks
 - repo: https://github.com/compilerla/conventional-pre-commit
   rev: v3.1.0
   hooks:
