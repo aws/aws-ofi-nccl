@@ -29,7 +29,7 @@ Contributions via pull requests are much appreciated. Before sending us a pull r
 To send us a pull request, please:
 
 1. Fork the repository.
-1. Install [pre-commit](https://pre-commit.com/) through your preferred mechanism (eg: `pip install`), then run `pre-commit install` **inside this repo**. This will ensure that a collection of [git hooks](./.pre-commit-config.yaml) run on each of your commits, which help minimize your diffs and avoid nitpicking.
+1. Install [pre-commit](https://pre-commit.com/) through your preferred mechanism (eg: `pip install`), then run `pre-commit install` **inside this repo**. This will ensure that a collection of [git hooks](./.pre-commit-config.yaml) run on each of your commits, which help minimize your diffs and avoid nitpicking. This runs under GitHub actions on every pull request, so running it locally can help you catch issues before posting.
 1. Optionally, run `git config blame.ignoreRevsFile .git-blame-ignore-revs` to make `git blame` output more accurate.
 1. Modify the source; please focus on the specific change you are contributing. If you also reformat all the code, it will be hard for us to focus on your change.
 1. Ensure local tests pass.
