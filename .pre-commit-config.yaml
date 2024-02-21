@@ -23,6 +23,18 @@ repos:
       rev: v1.7.0
       hooks:
           - id: actionlint
+    - repo: https://github.com/executablebooks/mdformat
+      rev: 0.7.17
+      hooks:
+          - id: mdformat
+            additional_dependencies:
+                - mdformat-gfm
+                - mdformat-black
+                - mdformat-web
+                - mdformat-toc
+                - mdformat-tables
+                - mdformat-footnote
+                - mdformat-simple-breaks
     - repo: https://github.com/compilerla/conventional-pre-commit
       rev: v3.2.0
       hooks:
