@@ -1,6 +1,6 @@
 ---
 name: PR CI
-on: [push, pull_request]
+on: [push, pull_request, workflow_dispatch]
 env:
     APT_PACKAGES: >-
         build-essential
@@ -10,8 +10,18 @@ env:
         libhwloc-dev
         make
 jobs:
+    pre-commit:
+        runs-on: ubuntu-latest
+        name: pre-commit formatting checks
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.9'
+            - uses: pre-commit/action@v3.0.1
     distcheck:
         runs-on: ubuntu-22.04
+        needs: pre-commit
         strategy:
             matrix:
                 cc:
