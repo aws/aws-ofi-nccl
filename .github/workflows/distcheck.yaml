@@ -1,0 +1,58 @@
+name: PR CI
+on: [push, pull_request]
+env:
+  APT_PACKAGES: >-
+    build-essential
+    clang
+    gcc
+    git
+    libhwloc-dev
+    make
+jobs:
+  distcheck:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        cc:
+          - gcc
+          - clang
+      fail-fast: false
+    steps:
+      - name: Install Dependencies
+        run: |
+          sudo apt-get install -y ${{ env.APT_PACKAGES }}
+      - name: Install CUDA
+        run: |
+          sudo apt-get install -y nvidia-cuda-toolkit
+      - uses: actions/checkout@v4
+      - name: Build and Distribution Checks
+        run: |
+          set -x
+
+          # We're just doing distchecks, so it is fine if we
+          # just grab the latest master.
+          git clone --depth 1 https://github.com/ofiwg/libfabric.git
+          pushd libfabric
+          ./autogen.sh
+          ./configure --prefix=$PWD/install CC=${{ matrix.cc }}
+          make -j $(nproc)
+          make install
+          popd
+
+          # actions/checkout@v4 would drop the plugin source in $PWD,
+          # so go ahead and build it
+          ./autogen.sh
+          ./configure --with-libfabric=$PWD/libfabric/install --with-cuda=/usr/local/cuda/ CC=${{ matrix.cc }}
+          make -j $(nproc)
+
+          # Run Unit tests
+          make check
+
+          # Run dist tarball checks
+          make distcheck
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cc }}-config.log
+          path: config.log
