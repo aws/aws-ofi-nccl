@@ -38,7 +38,7 @@ int main(int argc, char* argv[])
 
 	/* For grouped recvs */
 	int tag = 1;
-	int nrecv = NCCL_OFI_MAX_RECVS;
+	int nrecv = 1;
 	int *sizes = (int *)malloc(sizeof(int)*nrecv);
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
 	int recv_n;
