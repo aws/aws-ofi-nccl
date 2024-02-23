@@ -1013,7 +1013,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(s_comm->msgbuff, msg_seq_num,
-		bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
+		msg_seq_num, 1, 0, bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
 
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case sender has not yet called send() for this message, so
@@ -1029,7 +1029,8 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	// Already a req entry here
 	void *elem;
 	nccl_ofi_msgbuff_elemtype_t type;
-	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, &elem, &type, &stat);
+	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, msg_seq_num, 1, 0,
+		&elem, &type, &stat);
 	if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS || type != NCCL_OFI_MSGBUFF_REQ) {
 		NCCL_OFI_WARN("Invalid message retrieval result for msg %hu", msg_seq_num);
 		return -EINVAL;
@@ -1137,7 +1138,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, msg_seq_num,
-		bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
+		msg_seq_num, 1, 0, bounce_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
 
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case receiver has not yet called recv() for this message, so
@@ -1157,7 +1158,8 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	// In this case, there is already a req entry here. Initiate eager copy.
 	void *elem;
 	nccl_ofi_msgbuff_elemtype_t type;
-	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, &elem, &type, &stat);
+	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, msg_seq_num,
+		1, 0, &elem, &type, &stat);
 	if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS || type != NCCL_OFI_MSGBUFF_REQ) {
 		NCCL_OFI_WARN("Invalid message retrieval result for msg %hu", msg_seq_num);
 		return -EINVAL;
@@ -1258,7 +1260,7 @@ static inline nccl_net_ofi_rdma_req_t *get_req_from_imm_data
 	nccl_ofi_msgbuff_status_t stat;
 
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff,
-		msg_seq_num, &elem, &type, &stat);
+		msg_seq_num, msg_seq_num, 1, 0, &elem, &type, &stat);
 	if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Unexpected: we don't have a msgbuff entry corresponding to this message*/
 		NCCL_OFI_WARN("Unexpected status (%d) for message %hu", (int)stat, msg_seq_num);
@@ -2307,7 +2309,8 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 			}
 
 			nccl_ofi_msgbuff_status_t stat;
-			nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_complete(msgbuff, req->msg_seq_num, &stat);
+			nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_complete(msgbuff, req->msg_seq_num,
+				req->msg_seq_num, 1, 0, &stat);
 			if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS) {
 				NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu", req->msg_seq_num);
 				ret = ncclSystemError;
@@ -2980,9 +2983,9 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm_
 		 * replace it with a request.
 		 */
 		mb_res = nccl_ofi_msgbuff_replace(r_comm->msgbuff,
-					req->msg_seq_num, req,
+					req->msg_seq_num, req->msg_seq_num, 1, 0, req,
 					NCCL_OFI_MSGBUFF_REQ,
-					&msg_stat);
+					&msg_stat, NULL);
 		if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS) {
 			NCCL_OFI_WARN("Unexpected result of nccl_ofi_msgbuff_replace for msg %hu",
 				      req->msg_seq_num);
@@ -2990,8 +2993,8 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm_
 		}
 	} else {
 		/* Try inserting the new request */
-		mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, req->msg_seq_num, req,
-						 NCCL_OFI_MSGBUFF_REQ, &msg_stat);
+		mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, req->msg_seq_num, req->msg_seq_num,
+						 1, 0, req, NCCL_OFI_MSGBUFF_REQ, &msg_stat);
 
 		if (OFI_UNLIKELY((mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX) &&
 				 (msg_stat == NCCL_OFI_MSGBUFF_INPROGRESS))) {
@@ -3076,8 +3079,8 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	nccl_ofi_msgbuff_status_t msg_stat;
 	nccl_ofi_msgbuff_result_t mb_res;
 
-	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, &elem,
-					   &type, &msg_stat);
+	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, msg_seq_num,
+					   1, 0, &elem, &type, &msg_stat);
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 
 		if (type == NCCL_OFI_MSGBUFF_REQ) {
@@ -4194,9 +4197,10 @@ static int insert_rdma_send_req_into_msgbuff(nccl_net_ofi_rdma_send_comm_t *s_co
 		 * so replace it with a request.
 		 */
 		mb_res = nccl_ofi_msgbuff_replace(s_comm->msgbuff,
-						  req->msg_seq_num, req,
+						  req->msg_seq_num, req->msg_seq_num,
+						  1, 0, req,
 						  NCCL_OFI_MSGBUFF_REQ,
-						  &msg_stat);
+						  &msg_stat, NULL);
 		if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS) {
 			NCCL_OFI_WARN("Unexpected result of nccl_ofi_msgbuff_replace for msg %hu",
 				      req->msg_seq_num);
@@ -4205,7 +4209,8 @@ static int insert_rdma_send_req_into_msgbuff(nccl_net_ofi_rdma_send_comm_t *s_co
 	} else {
 		/* Try inserting the new request */
 		mb_res = nccl_ofi_msgbuff_insert(s_comm->msgbuff,
-						 req->msg_seq_num, req,
+						 req->msg_seq_num, req->msg_seq_num,
+						 1, 0, req,
 						 NCCL_OFI_MSGBUFF_REQ,
 						 &msg_stat);
 		if (OFI_UNLIKELY((mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX) &&
@@ -4636,8 +4641,8 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_ofi_msgbuff_result_t mb_res;
 
 	/* Retrive entry from message buffer for msg_seq_num index */
-	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, &elem,
-					   &type, &msg_stat);
+	mb_res = nccl_ofi_msgbuff_retrieve(s_comm->msgbuff, msg_seq_num, msg_seq_num,
+					   1, 0, &elem, &type, &msg_stat);
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		if (type == NCCL_OFI_MSGBUFF_BUFF) {
 			/*
