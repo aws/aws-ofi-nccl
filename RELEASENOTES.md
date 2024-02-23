@@ -11,6 +11,23 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.8.1-aws release notes
+This is a bugfix release that requires
+[Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and
+supports [NCCL v2.19.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.19.4-1)
+while maintaining backward compatibility with older NCCL versions
+([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+
+Bug Fixes:
+* Fix an issue with the ID pool's reference counting and allocation
+* Improved error propagation for failed NCCL requests, allowing applications
+  to fail early instead of blocking on requests that can never be completed.
+
+The plugin has been tested with following libfabric providers using tests
+bundled in the source code and
+[nccl-tests](https://github.com/NVIDIA/nccl-tests) suite:
+* efa
+
 # v1.8.0-aws release notes
 This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0)
 or later and supports [NCCL v2.19.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.19.4-1)
