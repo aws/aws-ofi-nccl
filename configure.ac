@@ -65,6 +65,7 @@ AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlope
 # Check for GCC builtin functions
 CHECK_GCC_BUILTIN([__builtin_expect])
 CHECK_GCC_BUILTIN([__builtin_ffsll])
+CHECK_GCC_BUILTIN([__sync_synchronize])
 
 # Checks for external packages
 CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])

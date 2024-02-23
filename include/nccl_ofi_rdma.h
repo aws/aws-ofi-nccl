@@ -345,12 +345,18 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Comm ID provided by remote endpoint */
 	uint64_t remote_comm_id;
 
+	/* Request tracking connect message */
+	nccl_net_ofi_rdma_req_t *send_conn_req;
+
 	/* Request to receive connect response message to finalize
 	 * connection establishment */
 	nccl_net_ofi_rdma_req_t *conn_resp_req;
 
-	/* Indicates if connection establishment is completed */
-	bool connected;
+	/* Indicates if connect message was delivered (and req freed) */
+	bool connect_msg_delivered;
+
+	/* Indicates if connection response received and connection finalized */
+	bool connect_finalized;
 
 	/* Message struct send connect message and receive connect
 	 * response message */

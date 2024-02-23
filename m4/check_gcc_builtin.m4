@@ -14,7 +14,8 @@ AC_DEFUN([CHECK_GCC_BUILTIN], [
       [__builtin_ffs], [$1(0)],
       [__builtin_ffsl], [$1(0)],
       [__builtin_ffsll], [$1(0)],
-      [__builtin_expect], [$1(0, 0)]),
+      [__builtin_expect], [$1(0, 0)],
+      [__sync_synchronize], [$1()]),
       [exit(1)]
       ])], [result=yes], [result=no])
 
