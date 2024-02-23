@@ -1407,7 +1407,18 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 				return ncclInternalError;
 			}
 
-			if (IS_CONN_RESP_MSG_TYPE(cq_entry[comp_idx].tag) && (comp_flags & FI_RECV)) {
+			if (req->type == NCCL_OFI_RDMA_SEND_CONN) {
+				assert(req->comm->type == NCCL_NET_OFI_SEND_COMM);
+				nccl_net_ofi_rdma_send_comm_t *s_comm =
+					(nccl_net_ofi_rdma_send_comm_t *)req->comm;
+				assert(req == s_comm->send_conn_req);
+				/* Release connect message request */
+				req->free(req, false);
+				req = NULL;
+				s_comm->send_conn_req = NULL;
+				__sync_synchronize();
+				s_comm->connect_msg_delivered = true;
+			} else if (IS_CONN_RESP_MSG_TYPE(cq_entry[comp_idx].tag) && (comp_flags & FI_RECV)) {
 				assert(req->comm->type == NCCL_NET_OFI_SEND_COMM);
 				/* Complete send communicator */
 				nccl_net_ofi_rdma_send_comm_t *s_comm =
@@ -4804,8 +4815,9 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
 		return ncclInternalError;
 	}
 
-	// TODO: We might want to use READ_ONCE to read variable `connected'
-	while (!s_comm->connected) {
+	// TODO: We might want to use READ_ONCE to read variables
+	// `connect_msg_delivered` and `connected'
+	while (!s_comm->connect_msg_delivered || !s_comm->connected) {
 		__compiler_barrier();
 		int ret = 0;
 		/* Progress our engine to get completions. If the
@@ -5212,14 +5224,12 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 			    nccl_net_ofi_send_comm_t **send_comm)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_req_state_t conn_msg_state;
 	*send_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
-	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t *)comm_state->req;
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		(nccl_net_ofi_rdma_send_comm_t *)comm_state->comm;
 
@@ -5259,23 +5269,22 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		comm_state->comm = &s_comm->base.base;
 
 		/* Prepare connect request to be sent to peer */
-		req = prepare_send_conn_req(s_comm);
-		if (OFI_UNLIKELY(req == NULL)) {
+		s_comm->send_conn_req = prepare_send_conn_req(s_comm);
+		if (OFI_UNLIKELY(s_comm->send_conn_req == NULL)) {
 			send_close(s_comm);
 			return ncclSystemError;
 		}
-		comm_state->req = &req->base;
 
 		comm_state->stage = COMM_SEND_CONN;
 
 	case COMM_SEND_CONN:
 		/* COMM_SEND_CONN: Post a connect message to send peer connections */
-		ret = post_send_conn(s_comm, device, ep, req);
+		ret = post_send_conn(s_comm, device, ep, s_comm->send_conn_req);
 		if (ret == -FI_EAGAIN) {
 			return 0;
 		}
 		else if (ret != 0) {
-			req->free(req, false);
+			s_comm->send_conn_req->free(s_comm->send_conn_req, false);
 			send_close(s_comm);
 			return ret;
 		}
@@ -5296,29 +5305,6 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 			return ret;
 		}
 
-		/* Check if the connect message is sent */
-		ret = pthread_mutex_lock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-			return ncclInternalError;
-		}
-		conn_msg_state = req->state;
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return ncclInternalError;
-		}
-
-		/* Wait until connect message is sent */
-		if (conn_msg_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
-			return 0;
-		}
-
-		/* Release connect message request */
-		req->free(req, false);
-		comm_state->req = NULL;
-		req = NULL;
-
 		/* Prepare request to receive connect response message */
 		s_comm->conn_resp_req = prepare_recv_conn_resp_req(s_comm);
 		if (OFI_UNLIKELY(s_comm->conn_resp_req == NULL)) {
@@ -5328,15 +5314,27 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 		comm_state->stage = COMM_RECV_CONN;
 
-	case COMM_RECV_CONN:
+	case COMM_RECV_CONN: {
 		/* COMM_RECV_CONN: Receive connect response message from remote */
 
-		ret = post_recv_conn_resp(s_comm, device, ep);
-		if (ret == -FI_EAGAIN) {
-			return 0;
-		} else if (ret != 0) {
-			send_close(s_comm);
-			return ret;
+		bool recv_conn_resp_posted = false;
+		while (!recv_conn_resp_posted) {
+			ret = post_recv_conn_resp(s_comm, device, ep);
+			if (ret == -FI_EAGAIN) {
+				/* Block until we post the connection response request.
+				EAGAIN only involves waiting for local resources to free up, so it
+				should be safe to block. */
+				ret = ofi_process_cq(ep);
+				if (OFI_UNLIKELY(ret != 0)) {
+					send_close(s_comm);
+					return ret;
+				}
+			} else if (ret != 0) {
+				send_close(s_comm);
+				return ret;
+			} else {
+				recv_conn_resp_posted = true;
+			}
 		}
 
 		/* Progress our engine to get completions. If the
@@ -5350,7 +5348,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
 
 		break;
-
+	}
 	case COMM_CONN_RESP_REQ_PENDING:
 	case COMM_CONNECTED:
 	default:
