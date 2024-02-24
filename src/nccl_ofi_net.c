@@ -331,7 +331,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 * impacted with this feature as NCCL doesn't aggregate receives from
 	 * same source.
 	 */
-	props->max_group_receives = NCCL_OFI_MAX_RECVS;
+	props->max_group_receives = NCCL_OFI_MAX_RECVS_SENDRECV;
 
 	if (support_gdr == GDR_SUPPORTED) {
 		props->hmem_support = true;

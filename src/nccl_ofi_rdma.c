@@ -597,6 +597,9 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	struct fi_info *info = device->device_rails[0].info;
 	int ret =  nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
 
+	/* Multi-recv adjustment */
+	props->max_group_receives = NCCL_OFI_MAX_RECVS;
+
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
