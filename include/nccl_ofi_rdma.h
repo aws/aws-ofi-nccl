@@ -74,19 +74,31 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
 	struct fid_mr *mr[];
 } nccl_net_ofi_rdma_mr_handle_t;
 
-/* Contents of ctrl message sent from receiver to sender to advertise
-   destination buffer */
-typedef struct nccl_net_ofi_rdma_ctrl_msg {
+typedef struct nccl_net_ofi_rdma_ctrl_msg_entry {
+	int multi_recv_tag;
 	uint64_t buff_addr;
 	uint64_t buff_len;
 	uint64_t buff_mr_key[MAX_NUM_RAILS];
+} nccl_net_ofi_rdma_ctrl_msg_entry_t;
+
+/* Contents of ctrl message sent from receiver to sender to advertise
+   destination buffer */
+typedef struct nccl_net_ofi_rdma_ctrl_msg {
+	uint16_t msg_seq_num;
+	uint16_t multi_recv_size;
+	nccl_net_ofi_rdma_ctrl_msg_entry_t entries[];
 } nccl_net_ofi_rdma_ctrl_msg_t;
+
+#define RDMA_CTRL_MSG_ENTRIES_MAX_SIZE (NCCL_OFI_MAX_RECVS * sizeof(nccl_net_ofi_rdma_ctrl_msg_entry_t))
+#define RDMA_CTRL_MSG_MAX_SIZE (sizeof(nccl_net_ofi_rdma_ctrl_msg_t) + RDMA_CTRL_MSG_ENTRIES_MAX_SIZE)
 
 /* Structure used to store control messages in a free list */
 typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
 	nccl_ofi_freelist_reginfo_t fl_reginfo;
 	nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
 } nccl_net_ofi_rdma_ctrl_fl_item_t;
+
+#define RDMA_CTRL_FL_ITEM_MAX_SIZE (sizeof(nccl_net_ofi_rdma_ctrl_fl_item_t) + RDMA_CTRL_MSG_ENTRIES_MAX_SIZE)
 
 /* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
 #define BOUNCE_BUFFER_ALIGNMENT 128
@@ -152,6 +164,13 @@ typedef struct {
 	/* Total number of completions. Expect one completion for receiving the
 	 * control message and one completion for each send segment. */
 	int total_num_compls;
+
+	/* Multi-recv information */
+	uint16_t multi_recv_size;
+	uint16_t multi_recv_start;
+	int multi_recv_tag;
+	/* This may not match sender-side seq num with multi-recv */
+	uint16_t recv_side_msg_seq_num;
 } rdma_req_send_data_t;
 
 /*
@@ -166,6 +185,8 @@ typedef struct {
 	nccl_net_ofi_schedule_t *ctrl_schedule;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
+	/* Size of ctrl message */
+	size_t ctrl_msg_size;
 } rdma_req_send_ctrl_data_t;
 
 typedef struct {
@@ -206,6 +227,12 @@ typedef struct {
 	 * For eager messages, the second completion will be received
 	 * when the local read into the destination buffer is complete */
 	int total_num_compls;
+	/* Multi-recv information */
+	uint16_t multi_recv_size;
+	uint16_t multi_recv_start;
+	int multi_recv_tag;
+	/* Next req in sequence */
+	nccl_net_ofi_rdma_req_t *multi_recv_next;
 } rdma_req_recv_data_t;
 
 /*
