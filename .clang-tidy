@@ -1,0 +1,53 @@
+---
+Checks:
+    - -*
+    - cert-dcl16-c
+    - optin-mpi-mpi-checker-c
+    - optin.core.EnumCastOutOfRange
+    - optin-performance-padding
+    - clang-analyzer-core*
+    - clang-analyzer-nullability*
+    - clang-analyzer-optin.core.EnumCastOutOfRange
+    - clang-analyzer-optin.performance.Padding
+    - clang-analyzer-security*
+    - clang-analyzer-unix*
+    - -clang-analyzer-security.insecureAPI*
+    - bugprone-*
+    - -bugprone-easily-swappable-parameters
+    - -bugprone-assignment-in-if-condition
+    - -bugprone-multi-level-implicit-pointer-conversion
+    - misc-const-correctness
+    - misc-static-assert
+    - misc-misplaced-const
+    - misc-redundant-expression
+    - misc-header-include-cycle
+    - misc-definitions-in-headers
+    #- misc-include-cleaner
+    - readability-avoid-const-params-in-decls
+    - readability-avoid-return-with-void-value
+    - readability-avoid-unconditional-preprocessor-if
+    - readability-braces-around-statements
+    - readability-const-return-type
+    - readability-const-return-type
+    - readability-duplicate-include
+    - readability-implicit-bool-conversion
+    - readability-inconsistent-declaration-parameter-name
+    - readability-misleading-indentation
+    - readability-misplaced-array-index
+    - readability-named-parameter
+    - readability-non-const-parameter
+    - readability-redundant-control-flow
+    - readability-redundant-declaration
+    - readability-redundant-inline-specifier
+    - readability-simplify-boolean-expr
+    - readability-simplify-subscript-expr
+    - readability-string-compare
+    - readability-suspicious-call-argument
+    - readability-uppercase-literal-suffix
+WarningsAsErrors: true
+FormatStyle: file
+CheckOptions:
+    - key: readability-uppercase-literal-suffix.NewSuffixes
+      value: L;LL;LU;LLU
+    - key: misc-include-cleaner.IgnoreHeaders
+      value: include/nccl-headers/.*
