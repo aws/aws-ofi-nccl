@@ -158,6 +158,20 @@ int main(int argc, char *argv[])
 		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
 	NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
 
+	/* Receive NUM_REQUESTS from prev rank */
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
+	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		OFINCCLCHECK(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type));
+		OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
+			     buffer_type, &recv_mhandle[idx]));
+		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
+
+		while (recv_req[idx] == NULL) {
+			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
+				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
+		}
+	}
+
 	/* Send NUM_REQUESTS to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Sending %d requests to rank %d", NUM_REQUESTS, next);
 	for (idx = 0; idx < NUM_REQUESTS; idx++) {
@@ -171,20 +185,6 @@ int main(int argc, char *argv[])
 		while (send_req[idx] == NULL) {
 			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
 				     send_mhandle[idx], (void **)&send_req[idx]));
-		}
-	}
-
-	/* Receive NUM_REQUESTS from prev rank */
-	NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
-		OFINCCLCHECK(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type));
-		OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
-			     buffer_type, &recv_mhandle[idx]));
-		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
-
-		while (recv_req[idx] == NULL) {
-			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
-				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
 		}
 	}
 
