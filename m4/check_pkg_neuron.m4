@@ -11,6 +11,7 @@ AC_DEFUN([CHECK_PKG_NEURON], [
 
   AS_IF([test "${enable_neuron}" = "yes"],
         [check_pkg_define=1
+         NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --enable-neuron"
          $1],
         [check_pkg_define=0
          $2])
