@@ -202,7 +202,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		ret = nccl_net_ofi_sendrecv_init(provider_filter, plugin_p);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
-			ret = ncclInternalError;
 			goto exit;
 		}
 	} else if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
@@ -381,7 +380,7 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	dev_props.port_speed = nic_info->link_attr->speed / (1e6);
 
 	ret = get_device_pci_path(nic_info, &(dev_props.pci_path));
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		ret = 0;
 		props->pci_path = NULL;
 	}

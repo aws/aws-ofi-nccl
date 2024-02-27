@@ -13,8 +13,6 @@ extern "C" {
 #include <hwloc.h>
 #include <rdma/fabric.h>
 
-#include "nccl-headers/error.h"
-
 /*
  * @brief	User data of topology nodes
  *
@@ -241,10 +239,10 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * @param	topo
  *		The NCCL OFI topology.
  *
- * @return	ncclSuccess, on success
- * 		ncclInvalidArgument, if unable to extract libfabric
+ * @return	0, on success
+ * 		-EINVAL, if unable to extract libfabric
  * 		NIC info from topology via bus id
- * 		ncclInternalError, on others
+ * 		-ENOMEM, on others
  */
 int nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
 

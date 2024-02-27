@@ -14,7 +14,6 @@ extern "C" {
 #include <pthread.h>
 
 #include "nccl_ofi_log.h"
-#include "nccl-headers/error.h"
 #include "nccl_ofi_memcheck.h"
 
 /*
