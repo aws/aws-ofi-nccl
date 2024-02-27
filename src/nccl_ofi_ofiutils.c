@@ -36,7 +36,7 @@ static int in_list(const char *item, const char *list)
 	if (list_temp == NULL) {
 		if (list != NULL) {
 			NCCL_OFI_WARN("Unable to duplicate list.");
-			ret = ncclSystemError;
+			ret = -ENOMEM;
 		}
 		goto exit;
 	}
@@ -344,7 +344,7 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 	/* Run platform-specific endpoint configuration hook if declared */
 	if (platform_config_endpoint) {
 		ret = platform_config_endpoint(info, *ep);
-		if (ret != ncclSuccess)
+		if (ret != 0)
 			goto error;
 	}
 

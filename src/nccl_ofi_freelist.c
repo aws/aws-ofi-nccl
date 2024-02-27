@@ -96,7 +96,7 @@ static int freelist_init_internal(size_t entry_size,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		free(freelist);
-		return ncclSystemError;
+		return -ret;
 	}
 
 	ret = nccl_ofi_freelist_add(freelist, initial_entry_count);

@@ -300,7 +300,7 @@ struct nccl_net_ofi_ep {
 	 * listen().
 	 *
 	 * The callee has to guarantee the following invariants when
-	 * this function returns ncclSuccess and no send
+	 * this function returns 0 and no send
 	 * communicator has been returned
 	 * 1) The state stage of the handle is set to a value
 	 * different from COMM_CREATE_START.
@@ -376,7 +376,6 @@ struct nccl_net_ofi_send_comm {
 	 * This operation is not supported.
 	 *
 	 * @return	Memory handle for data send operations
-	 * @return	ncclInternalError
 	 */
 	int (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size,
 				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
@@ -415,7 +414,6 @@ struct nccl_net_ofi_recv_comm {
 	 * This operation is not supported.
 	 *
 	 * @return	Memory handle for data recv operations
-	 * @return	ncclInternalError
 	 */
 	int (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size,
 				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);

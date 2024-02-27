@@ -840,7 +840,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	req->num_recvs = n;
 
 	if (OFI_UNLIKELY(mr_handles == NULL)) {
-		ret = ncclInternalError;
+		ret = -EINVAL;
 		NCCL_OFI_WARN("Memory handles array is NULL");
 		goto error;
 	}
@@ -960,7 +960,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER);
 
 		if (cuda_ret != CUDA_SUCCESS) {
-			ret = ncclUnhandledCudaError;
+			ret = -EPERM;
 			NCCL_OFI_WARN("Error performing CUDA GDR flush");
 			goto exit;
 		}
@@ -2355,7 +2355,7 @@ found:
 			tmp = fi_dupinfo(input_iter);
 			if (!tmp) {
 				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
-				ret = ncclSystemError;
+				ret = -ENOMEM;
 				goto exit;
 			}
 			/* just in case */
