@@ -5819,9 +5819,15 @@ static void release_device_ofi_resources(nccl_net_ofi_rdma_device_t *device)
 	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
 
 	for (; begin != end; ++begin) {
-		if (begin->info) fi_freeinfo(begin->info);
-		if (begin->fabric) fi_close(&begin->fabric->fid);
-		if (begin->domain) fi_close(&begin->domain->fid);
+		if (begin->domain) {
+			fi_close(&begin->domain->fid);
+		}
+		if (begin->fabric) {
+			fi_close(&begin->fabric->fid);
+		}
+		if (begin->info) {
+			fi_freeinfo(begin->info);
+		}
 	}
 }
 
