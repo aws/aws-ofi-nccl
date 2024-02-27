@@ -5934,13 +5934,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	nccl_ofi_topo_t *topo = NULL;
 	struct fi_info *hints;
 
-	ret = pthread_mutex_init(&topo_file_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
-		ret = ncclSystemError;
-		goto error;
-	}
-
 	hints = fi_allocinfo();
 	if (hints == NULL) {
 		NCCL_OFI_WARN("Allocation of fi_info failed");
