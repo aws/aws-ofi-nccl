@@ -123,6 +123,7 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  * allocate a RDMA memory registration handle with `num_rails`+`num_control_rails` rails.
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
+	struct nccl_net_ofi_rdma_device *device;
 
 	int num_rails;
 
@@ -394,12 +395,6 @@ typedef struct nccl_net_ofi_rdma_req {
 	/* Size of completed request */
 	size_t size;
 
-	/*
-	 * Protect updating critical fields such as size and ncompls when
-	 * network xfer happened over multiple rails
-	 */
-	pthread_mutex_t req_lock;
-
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
 
@@ -533,7 +528,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
-	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
@@ -613,7 +607,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
 	/* Counters for total sent and received control messages */
-	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
 
@@ -838,6 +831,8 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t *ep_addr_list;
+
+	pthread_mutex_t rdma_domain_lock;
 } nccl_net_ofi_rdma_domain_t;
 
 
