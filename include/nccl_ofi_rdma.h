@@ -119,6 +119,7 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
 	struct fid_mr *control_mr;
+	struct nccl_net_ofi_rdma_device *device;
 
 	int num_rails;
 
@@ -396,12 +397,6 @@ typedef struct nccl_net_ofi_rdma_req {
 	/* Size of completed request */
 	size_t size;
 
-	/*
-	 * Protect updating critical fields such as size and ncompls when
-	 * network xfer happened over multiple rails
-	 */
-	pthread_mutex_t req_lock;
-
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
 
@@ -531,7 +526,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
-	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
@@ -612,7 +606,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
 	/* Counters for total sent and received control messages */
-	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
 
@@ -686,8 +679,6 @@ struct nccl_net_ofi_ep_rail {
 	size_t min_bounce_posted;
 	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
 	size_t max_bounce_posted;
-	/* Mutex for bounce buffer operations */
-	pthread_mutex_t bounce_mutex;
 };
 
 /*
