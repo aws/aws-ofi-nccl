@@ -68,6 +68,10 @@ typedef struct {
 	// Type of element
 	nccl_ofi_msgbuff_elemtype_t type;
 	void *elem;
+	// Multi-recv information
+	uint16_t multi_recv_size;
+	uint16_t multi_recv_start;
+	int multi_recv_tag;
 } nccl_ofi_msgbuff_elem_t;
 
 typedef struct {
@@ -110,8 +114,13 @@ bool nccl_ofi_msgbuff_destroy(nccl_ofi_msgbuff_t *msgbuff);
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
+		uint16_t msg_index, uint16_t multi_recv_start, uint16_t multi_recv_size, int multi_recv_tag,
+		void *elem, nccl_ofi_msgbuff_elemtype_t type,
 		nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert_ctrl_multirecv(nccl_ofi_msgbuff_t *msgbuff,
+	uint16_t msg_base_index, uint16_t multi_recv_size, int *tags, void *elem,
+	nccl_ofi_msgbuff_elemtype_t type, nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 /**
  * Replace an existing message element
@@ -126,8 +135,9 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
+		uint16_t msg_index, uint16_t multi_recv_start, uint16_t multi_recv_size,
+		int multi_recv_tag, void *elem, nccl_ofi_msgbuff_elemtype_t type,
+		nccl_ofi_msgbuff_status_t *msg_idx_status, bool *multi_send_ready);
 
 /**
  * Retrieve message with given index
@@ -142,6 +152,12 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
+		uint16_t msg_index, uint16_t multi_recv_start, uint16_t multi_recv_size,
+		int multi_recv_tag, void **elem, nccl_ofi_msgbuff_elemtype_t *type,
+		nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+/* As above, but with no tag */
+nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve_notag(nccl_ofi_msgbuff_t *msgbuff,
 		uint16_t msg_index, void **elem, nccl_ofi_msgbuff_elemtype_t *type,
 		nccl_ofi_msgbuff_status_t *msg_idx_status);
 
@@ -156,7 +172,8 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
  *  NCCL_OFI_MSGBUFF_ERROR, other error
  */
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, nccl_ofi_msgbuff_status_t *msg_idx_status);
+		uint16_t msg_index, uint16_t multi_recv_start, uint16_t multi_recv_size,
+		int multi_recv_tag, nccl_ofi_msgbuff_status_t *msg_idx_status);
 
 #ifdef _cplusplus
 } // End extern "C"

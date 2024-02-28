@@ -59,7 +59,8 @@ extern "C" {
 #define MIN_TAG_BITS_FOR_RING_ID	(32 + 1)
 
 /* Maximum number of grouped receives */
-#define NCCL_OFI_MAX_RECVS	1
+#define NCCL_OFI_MAX_RECVS	8
+#define NCCL_OFI_MAX_RECVS_SENDRECV	1
 
 /*
  * This defines a higher value than maximum inflight requests supported by NCCL
