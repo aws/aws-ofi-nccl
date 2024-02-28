@@ -68,6 +68,8 @@ typedef enum nccl_net_ofi_rdma_req_type {
  * allocate a rdma memory registration handle with `num_rails' rails.
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
+	struct fid_mr *control_mr;
+
 	int num_rails;
 
 	/* Array of size `num_rails' */
@@ -160,10 +162,6 @@ typedef struct {
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
-	/* Schedule used to transfer the control buffer. We save the
-	 * pointer to reference it when transferring the buffer over
-	 * network. */
-	nccl_net_ofi_schedule_t *ctrl_schedule;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
 } rdma_req_send_ctrl_data_t;
@@ -300,6 +298,8 @@ typedef struct nccl_ofi_rdma_connection_info {
 	   side. The receiver must use this ID when sending messages to sender */
 	uint64_t local_comm_id;
 
+	nccl_ofi_rdma_ep_name_t control_ep_name;
+
 	/* Number of rails */
 	int num_rails;
 
@@ -359,6 +359,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff_t *msgbuff;
+
+	nccl_net_ofi_rdma_send_comm_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
@@ -432,6 +434,8 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	/* Free list to track control buffers, for sending RDMA control messages */
 	nccl_ofi_freelist_t *ctrl_buff_fl;
+
+	nccl_net_ofi_rdma_recv_comm_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
@@ -520,6 +524,8 @@ struct nccl_net_ofi_rdma_ep {
 
 	/* ID pool */
 	nccl_ofi_idpool_t *comm_idpool;
+
+	nccl_net_ofi_ep_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
