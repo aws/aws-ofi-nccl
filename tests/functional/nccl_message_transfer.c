@@ -11,9 +11,12 @@
 
 #include "test-common.h"
 
+#define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
+
 int main(int argc, char* argv[])
 {
-	int rank, proc_name_len, num_ranks, local_rank = 0;
+	ncclResult_t res = ncclSuccess;
+	int rank, proc_name_len, num_ranks = 0, local_rank = 0;
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
@@ -30,17 +33,31 @@ int main(int argc, char* argv[])
 	/* Initialisation for data transfer */
 	nccl_net_ofi_req_t *req[NUM_REQUESTS] = {NULL};
 	void *mhandle[NUM_REQUESTS];
+	char handle[NCCL_NET_HANDLE_MAXSIZE];
 	int req_completed[NUM_REQUESTS] = {0};
 	int inflight_reqs = NUM_REQUESTS;
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
+	char *expected_buf = NULL;
 	int done, received_size, idx;
+
+	/* Indicates if NICs support GPUDirect */
+	int *support_gdr = NULL;
+
+	/* All processors IDs, used to find out the local rank */
+	char *all_proc_name = NULL;
 
 	/* For grouped recvs */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
 	int *sizes = (int *)malloc(sizeof(int)*nrecv);
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
+	if (sizes == NULL || tags == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
+
 	int recv_n;
 	for (recv_n = 0; recv_n < nrecv; recv_n++) {
 		sizes[recv_n] = RECV_SIZE;
@@ -54,18 +71,25 @@ int main(int argc, char* argv[])
 		NCCL_OFI_WARN("Expected two ranks but got %d. "
 			"The nccl_message_transfer functional test should be run with exactly two ranks.",
 			num_ranks);
-		return 1;
+		res = ncclInvalidArgument;
+		goto exit;
 	}
 
-	char all_proc_name[num_ranks][MPI_MAX_PROCESSOR_NAME];
+	all_proc_name = (char *)malloc(sizeof(char) * num_ranks * MPI_MAX_PROCESSOR_NAME);
+	if (all_proc_name == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
 
-	MPI_Get_processor_name(all_proc_name[rank], &proc_name_len);
+	MPI_Get_processor_name(&all_proc_name[PROC_NAME_IDX(rank)], &proc_name_len);
 	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, all_proc_name,
 			MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
 
 	/* Determine local rank */
 	for (i = 0; i < num_ranks; i++) {
-		if (!strcmp(all_proc_name[rank], all_proc_name[i])) {
+		if (!strcmp(&all_proc_name[PROC_NAME_IDX(rank)],
+			    &all_proc_name[PROC_NAME_IDX(i)])) {
 			if (i < rank) {
 				++local_rank;
 			}
@@ -83,25 +107,31 @@ int main(int argc, char* argv[])
 
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
-	if (extNet == NULL)
-		return 1;
+	if (extNet == NULL) {
+		res = ncclInternalError;
+		goto exit;
+	}
 
 	/* Init API */
-	OFINCCLCHECK(extNet->init(&logger));
-	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
-			rank, all_proc_name[rank], extNet->name);
+	OFINCCLCHECKGOTO(extNet->init(&logger), res, exit);
+	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.", rank,
+		      &all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
 
 	/* Devices API */
-	OFINCCLCHECK(extNet->devices(&ndev));
+	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
-	/* Indicates if NICs support GPUDirect */
-	int support_gdr[ndev];
+	support_gdr = (int *)malloc(sizeof(int) * ndev);
+	if (support_gdr == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
 
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
 		test_nccl_properties_t props = {0};
-		OFINCCLCHECK(extNet->getProperties(dev, &props));
+		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
 
 		/* Set CUDA support */
@@ -119,9 +149,8 @@ int main(int argc, char* argv[])
 	}
 
 	/* Listen API */
-	char handle[NCCL_NET_HANDLE_MAXSIZE];
 	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on dev %d", dev);
-	OFINCCLCHECK(extNet->listen(dev, (void *)&handle, (void **)&lComm));
+	OFINCCLCHECKGOTO(extNet->listen(dev, (void *)&handle, (void **)&lComm), res, exit);
 
 	if (rank == 0) {
 
@@ -135,13 +164,16 @@ int main(int argc, char* argv[])
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank + 1);
 		while (sComm == NULL) {
-			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore));
+			OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm,
+							 &s_ignore),
+					 res, exit);
 		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 		while (rComm == NULL) {
-			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
+			OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore),
+					 res, exit);
 		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank + 1);
@@ -150,17 +182,24 @@ int main(int argc, char* argv[])
 		NCCL_OFI_INFO(NCCL_NET, "Send %d requests to rank %d", NUM_REQUESTS,
 				rank + 1);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
-			OFINCCLCHECK(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type));
-			OFINCCLCHECK(initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type));
+			OFINCCLCHECKGOTO(
+				allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type), res,
+				exit);
+			OFINCCLCHECKGOTO(
+				initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type), res,
+				exit);
 
-			OFINCCLCHECK(extNet->regMr((void *)sComm, (void *)send_buf[idx], SEND_SIZE,
-						buffer_type, &mhandle[idx]));
+			OFINCCLCHECKGOTO(extNet->regMr((void *)sComm, (void *)send_buf[idx],
+						       SEND_SIZE, buffer_type, &mhandle[idx]),
+					 res, exit);
 			NCCL_OFI_TRACE(NCCL_NET,
 					"Successfully registered send memory for request %d of rank %d",
 					idx, rank);
 			while (req[idx] == NULL) {
-				OFINCCLCHECK(extNet->isend((void *)sComm, (void *)send_buf[idx], SEND_SIZE, tag,
-							 mhandle[idx], (void **)&req[idx]));
+				OFINCCLCHECKGOTO(extNet->isend((void *)sComm, (void *)send_buf[idx],
+							       SEND_SIZE, tag, mhandle[idx],
+							       (void **)&req[idx]),
+						 res, exit);
 			}
 		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
@@ -177,13 +216,16 @@ int main(int argc, char* argv[])
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", rank - 1);
 		while (sComm == NULL) {
-			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore));
+			OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm,
+							 &s_ignore),
+					 res, exit);
 		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 		while (rComm == NULL) {
-			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
+			OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore),
+					 res, exit);
 		}
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 				rank - 1);
@@ -192,21 +234,27 @@ int main(int argc, char* argv[])
 		NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
 				NUM_REQUESTS);
 		for (idx = 0; idx < NUM_REQUESTS; idx++) {
-			OFINCCLCHECK(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type));
-			OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
-						buffer_type, &mhandle[idx]));
+			OFINCCLCHECKGOTO(
+				allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res,
+				exit);
+			OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx],
+						       RECV_SIZE, buffer_type, &mhandle[idx]),
+					 res, exit);
 			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 			while (req[idx] == NULL) {
-				OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void *)&recv_buf[idx],
-							 sizes, tags, &mhandle[idx], (void **)&req[idx]));
+				OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv,
+							       (void *)&recv_buf[idx], sizes, tags,
+							       &mhandle[idx], (void **)&req[idx]),
+						 res, exit);
 			}
 		}
 	}
 
 	/* Allocate and populate expected buffer */
-	char *expected_buf = NULL;
-	OFINCCLCHECK(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST));
-	OFINCCLCHECK(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST));
+	OFINCCLCHECKGOTO(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST), res,
+			 exit);
+	OFINCCLCHECKGOTO(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST), res,
+			 exit);
 
 	/* Test for completions */
 	while (true) {
@@ -214,7 +262,8 @@ int main(int argc, char* argv[])
 			if (req_completed[idx])
 				continue;
 
-			OFINCCLCHECK(extNet->test((void *)req[idx], &done, &received_size));
+			OFINCCLCHECKGOTO(extNet->test((void *)req[idx], &done, &received_size), res,
+					 exit);
 			if (done) {
 				inflight_reqs--;
 				req_completed[idx] = 1;
@@ -224,28 +273,40 @@ int main(int argc, char* argv[])
 							"Issue flush for data consistency. Request idx: %d",
 							idx);
 					nccl_net_ofi_req_t *iflush_req = NULL;
-					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
-								(void **)&recv_buf[idx],
-								sizes, &mhandle[idx], (void **)&iflush_req));
+					OFINCCLCHECKGOTO(
+						extNet->iflush((void *)rComm, nrecv,
+							       (void **)&recv_buf[idx], sizes,
+							       &mhandle[idx], (void **)&iflush_req),
+						res, exit);
 					done = 0;
 					if (iflush_req) {
 						while (!done) {
-							OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+							OFINCCLCHECKGOTO(
+								extNet->test((void *)iflush_req,
+									     &done, NULL),
+								res, exit);
 						}
 					}
 				}
 
 				/* Deregister memory handle */
 				if (rank == 0) {
-					OFINCCLCHECK(extNet->deregMr((void *)sComm, mhandle[idx]));
+					OFINCCLCHECKGOTO(
+						extNet->deregMr((void *)sComm, mhandle[idx]), res,
+						exit);
 				}
 				else if (rank == 1) {
 					if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
 						/* Data validation may fail if flush operations are disabled */
 					} else
-						OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
+						OFINCCLCHECKGOTO(
+							validate_data(recv_buf[idx], expected_buf,
+								      SEND_SIZE, buffer_type),
+							res, exit);
 
-					OFINCCLCHECK(extNet->deregMr((void *)rComm, mhandle[idx]));
+					OFINCCLCHECKGOTO(
+						extNet->deregMr((void *)rComm, mhandle[idx]), res,
+						exit);
 				}
 			}
 		}
@@ -256,21 +317,64 @@ int main(int argc, char* argv[])
 	NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
 			NUM_REQUESTS, rank);
 
-	/* Deallocate buffers */
-	OFINCCLCHECK(deallocate_buffer(expected_buf, NCCL_PTR_HOST));
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
-		if (send_buf[idx])
-			OFINCCLCHECK(deallocate_buffer(send_buf[idx], buffer_type));
-		if (recv_buf[idx])
-			OFINCCLCHECK(deallocate_buffer(recv_buf[idx], buffer_type));
-	}
-
-	OFINCCLCHECK(extNet->closeListen((void *)lComm));
-	OFINCCLCHECK(extNet->closeSend((void *)sComm));
-	OFINCCLCHECK(extNet->closeRecv((void *)rComm));
+	OFINCCLCHECKGOTO(extNet->closeListen((void *)lComm), res, exit);
+	lComm = NULL;
+	OFINCCLCHECKGOTO(extNet->closeSend((void *)sComm), res, exit);
+	sComm = NULL;
+	OFINCCLCHECKGOTO(extNet->closeRecv((void *)rComm), res, exit);
+	rComm = NULL;
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
+	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
-	return 0;
+exit:
+
+	/* Deallocate buffers */
+	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		if (send_buf[idx]) {
+			res = deallocate_buffer(send_buf[idx], buffer_type);
+			if (res != ncclSuccess) {
+				NCCL_OFI_WARN("Send buffer deallocation failure: %d", res);
+			}
+			send_buf[idx] = NULL;
+		}
+		if (recv_buf[idx]) {
+			res = deallocate_buffer(recv_buf[idx], buffer_type);
+			if (res != ncclSuccess) {
+				NCCL_OFI_WARN("Recv buffer deallocation failure: %d", res);
+			}
+			recv_buf[idx] = NULL;
+		}
+	}
+
+	if (expected_buf) {
+		res = deallocate_buffer(expected_buf, NCCL_PTR_HOST);
+		if (res != ncclSuccess) {
+			NCCL_OFI_WARN("Expected buffer deallocation failure: %d", res);
+		}
+		expected_buf = NULL;
+	}
+
+	if (support_gdr) {
+		free(support_gdr);
+		support_gdr = NULL;
+	}
+
+	if (all_proc_name) {
+		free(all_proc_name);
+		all_proc_name = NULL;
+	}
+
+	if (sizes) {
+		free(sizes);
+		sizes = NULL;
+	}
+
+	if (tags) {
+		free(tags);
+		tags = NULL;
+	}
+
+	return res;
 }
