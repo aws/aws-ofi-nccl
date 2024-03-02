@@ -20,7 +20,7 @@ int main(int argc, char* argv[])
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
-	int ndev, dev, cuda_dev, i;
+	int ndev, dev, cuda_dev;
 	nccl_net_ofi_send_comm_t *sComm = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
@@ -39,7 +39,7 @@ int main(int argc, char* argv[])
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	char *expected_buf = NULL;
-	int done, received_size, idx;
+	int done, received_size;
 
 	/* Indicates if NICs support GPUDirect */
 	int *support_gdr = NULL;
@@ -58,8 +58,7 @@ int main(int argc, char* argv[])
 		goto exit;
 	}
 
-	int recv_n;
-	for (recv_n = 0; recv_n < nrecv; recv_n++) {
+	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
 		sizes[recv_n] = RECV_SIZE;
 		tags[recv_n] = tag;
 	}
@@ -87,7 +86,7 @@ int main(int argc, char* argv[])
 			MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
 
 	/* Determine local rank */
-	for (i = 0; i < num_ranks; i++) {
+	for (int i = 0; i < num_ranks; i++) {
 		if (!strcmp(&all_proc_name[PROC_NAME_IDX(rank)],
 			    &all_proc_name[PROC_NAME_IDX(i)])) {
 			if (i < rank) {
@@ -181,7 +180,7 @@ int main(int argc, char* argv[])
 		/* Send NUM_REQUESTS to Rank 1 */
 		NCCL_OFI_INFO(NCCL_NET, "Send %d requests to rank %d", NUM_REQUESTS,
 				rank + 1);
-		for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 			OFINCCLCHECKGOTO(
 				allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type), res,
 				exit);
@@ -233,7 +232,7 @@ int main(int argc, char* argv[])
 		/* Receive NUM_REQUESTS from Rank 0 */
 		NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
 				NUM_REQUESTS);
-		for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 			OFINCCLCHECKGOTO(
 				allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res,
 				exit);
@@ -257,8 +256,8 @@ int main(int argc, char* argv[])
 			 exit);
 
 	/* Test for completions */
-	while (true) {
-		for (idx = 0; idx < NUM_REQUESTS; idx++) {
+	while (inflight_reqs > 0) {
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 			if (req_completed[idx])
 				continue;
 
@@ -310,9 +309,6 @@ int main(int argc, char* argv[])
 				}
 			}
 		}
-
-		if (inflight_reqs == 0)
-			break;
 	}
 	NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
 			NUM_REQUESTS, rank);
@@ -331,7 +327,7 @@ int main(int argc, char* argv[])
 exit:
 
 	/* Deallocate buffers */
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+	for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 		if (send_buf[idx]) {
 			res = deallocate_buffer(send_buf[idx], buffer_type);
 			if (res != ncclSuccess) {
