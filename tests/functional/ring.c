@@ -6,8 +6,11 @@
 
 #include "test-common.h"
 
+#define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
+
 int main(int argc, char *argv[])
 {
+	ncclResult_t res = ncclSuccess;
 	int rank, size, next, prev, proc_name_len, local_rank = 0;
 	int buffer_type = NCCL_PTR_HOST;
 
@@ -35,13 +38,26 @@ int main(int argc, char *argv[])
 	int inflight_reqs = NUM_REQUESTS * 2;
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
+	char *expected_buf = NULL;
 	int done, received_size, idx;
+
+	/* Indicates if NICs support GPUDirect */
+	int *support_gdr = NULL;
+
+	/* All processors IDs, used to find out the local rank */
+	char *all_proc_name = NULL;
 
 	/* For grouped receives */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
 	int *sizes = (int *)malloc(sizeof(int)*nrecv);
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
+	if (sizes == NULL || tags == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
+
 	int recv_n;
 
 	for (recv_n = 0; recv_n < nrecv; recv_n++) {
@@ -57,18 +73,25 @@ int main(int argc, char *argv[])
 		NCCL_OFI_WARN("Expected at least two ranks but got %d. "
 			"The ring functional test should be run with at least two ranks.",
 			size);
-		return 1;
+		res = ncclInvalidArgument;
+		goto exit;
 	}
 
-	char all_proc_name[size][MPI_MAX_PROCESSOR_NAME];
+	all_proc_name = (char *)malloc(sizeof(char) * size * MPI_MAX_PROCESSOR_NAME);
+	if (all_proc_name == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
 
-	MPI_Get_processor_name(all_proc_name[rank], &proc_name_len);
+	MPI_Get_processor_name(&all_proc_name[PROC_NAME_IDX(rank)], &proc_name_len);
 	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, all_proc_name,
 		      MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
 
 	/* Determine local rank */
 	for (i = 0; i < size; i++) {
-		if (!strcmp(all_proc_name[rank], all_proc_name[i])) {
+		if (!strcmp(&all_proc_name[PROC_NAME_IDX(rank)],
+			    &all_proc_name[PROC_NAME_IDX(i)])) {
 			if (i < rank) {
 				++local_rank;
 			}
@@ -93,25 +116,32 @@ int main(int argc, char *argv[])
 
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
-	if (extNet == NULL)
-		return 1;
+	if (extNet == NULL) {
+		res = ncclInternalError;
+		goto exit;
+	}
 
 	/* Init API */
-	OFINCCLCHECK(extNet->init(&logger));
+	OFINCCLCHECKGOTO(extNet->init(&logger), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
-		      rank, all_proc_name[rank], extNet->name);
+		      rank, &all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
 
 	/* Devices API */
-	OFINCCLCHECK(extNet->devices(&ndev));
+	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
 	/* Indicates if NICs support GPUDirect */
-	int support_gdr[ndev];
+	support_gdr = (int *)malloc(sizeof(int) * ndev);
+	if (support_gdr == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
 
         /* Get Properties for the device */
         for (dev = 0; dev < ndev; dev++) {
                 test_nccl_properties_t props = {0};
-                OFINCCLCHECK(extNet->getProperties(dev, &props));
+                OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
                 print_dev_props(dev, &props);
 
                 /* Set CUDA support */
@@ -130,7 +160,7 @@ int main(int argc, char *argv[])
 
 	/* Listen API */
 	NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device %d", dev);
-	OFINCCLCHECK(extNet->listen(dev, (void *)&handle, (void **)&lComm));
+	OFINCCLCHECKGOTO(extNet->listen(dev, (void *)&handle, (void **)&lComm), res, exit);
 
 	/* MPI send: Distribute handle to prev and next ranks */
 	MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE,
@@ -147,7 +177,7 @@ int main(int argc, char *argv[])
 	/* Connect to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
 	while (sComm_next == NULL)
-		OFINCCLCHECK(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next, &s_ignore));
+		OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next, &s_ignore), res, exit);
 
 	/*
 	 * Accept API: accept connection from prev rank as the data flow is
@@ -155,43 +185,42 @@ int main(int argc, char *argv[])
 	 */
 	NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
 	while (rComm == NULL)
-		OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
+		OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
 
 	/* Send NUM_REQUESTS to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Sending %d requests to rank %d", NUM_REQUESTS, next);
 	for (idx = 0; idx < NUM_REQUESTS; idx++) {
-		OFINCCLCHECK(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type));
-		OFINCCLCHECK(initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type));
+		OFINCCLCHECKGOTO(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type), res, exit);
+		OFINCCLCHECKGOTO(initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type), res, exit);
 
-		OFINCCLCHECK(extNet->regMr((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE,
-			     buffer_type, &send_mhandle[idx]));
+		OFINCCLCHECKGOTO(extNet->regMr((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE,
+			     buffer_type, &send_mhandle[idx]), res, exit);
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered send memory for request %d of rank %d", idx, rank);
 
 		while (send_req[idx] == NULL) {
-			OFINCCLCHECK(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
-				     send_mhandle[idx], (void **)&send_req[idx]));
+			OFINCCLCHECKGOTO(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
+				     send_mhandle[idx], (void **)&send_req[idx]), res, exit);
 		}
 	}
 
 	/* Receive NUM_REQUESTS from prev rank */
 	NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
 	for (idx = 0; idx < NUM_REQUESTS; idx++) {
-		OFINCCLCHECK(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type));
-		OFINCCLCHECK(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
-			     buffer_type, &recv_mhandle[idx]));
+		OFINCCLCHECKGOTO(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res, exit);
+		OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
+			     buffer_type, &recv_mhandle[idx]), res, exit);
 		NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 
 		while (recv_req[idx] == NULL) {
-			OFINCCLCHECK(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
-				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]));
+			OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
+				     sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]), res, exit);
 		}
 	}
 
 	/* Allocate and populate expected buffer */
-	char *expected_buf = NULL;
-	OFINCCLCHECK(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST));
-	OFINCCLCHECK(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST));
+	OFINCCLCHECKGOTO(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST), res, exit);
+	OFINCCLCHECKGOTO(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST), res, exit);
 
 	/* Test all completions */
 	while (true) {
@@ -200,12 +229,12 @@ int main(int argc, char *argv[])
 			if (req_completed_send[idx])
 				continue;
 
-			OFINCCLCHECK(extNet->test((void *)send_req[idx], &done, &received_size));
+			OFINCCLCHECKGOTO(extNet->test((void *)send_req[idx], &done, &received_size), res, exit);
 			if (done) {
 				inflight_reqs--;
 				req_completed_send[idx] = 1;
 				/* Deregister memory handle */
-				OFINCCLCHECK(extNet->deregMr((void *)sComm_next, send_mhandle[idx]));
+				OFINCCLCHECKGOTO(extNet->deregMr((void *)sComm_next, send_mhandle[idx]), res, exit);
 			}
 		}
 
@@ -214,7 +243,7 @@ int main(int argc, char *argv[])
 			if (req_completed_recv[idx])
 				continue;
 
-			OFINCCLCHECK(extNet->test((void *)recv_req[idx], &done, &received_size));
+			OFINCCLCHECKGOTO(extNet->test((void *)recv_req[idx], &done, &received_size), res, exit);
 			if (done) {
 				inflight_reqs--;
 				req_completed_recv[idx] = 1;
@@ -225,13 +254,13 @@ int main(int argc, char *argv[])
 						"Issue flush for data consistency. Request idx: %d",
 						idx);
 					nccl_net_ofi_req_t *iflush_req = NULL;
-					OFINCCLCHECK(extNet->iflush((void *)rComm, nrecv,
+					OFINCCLCHECKGOTO(extNet->iflush((void *)rComm, nrecv,
 								    (void **)&recv_buf[idx], sizes,
-								    &recv_mhandle[idx], (void **)&iflush_req));
+								    &recv_mhandle[idx], (void **)&iflush_req), res, exit);
 					done = 0;
 					if (iflush_req) {
 						while (!done) {
-							OFINCCLCHECK(extNet->test((void *)iflush_req, &done, NULL));
+							OFINCCLCHECKGOTO(extNet->test((void *)iflush_req, &done, NULL), res, exit);
 						}
 					}
 				}
@@ -239,10 +268,10 @@ int main(int argc, char *argv[])
 				if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
 					/* Data validation may fail if flush operations are disabled */
 				} else
-					OFINCCLCHECK(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type));
+					OFINCCLCHECKGOTO(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type), res, exit);
 
 				/* Deregister memory handle */
-				OFINCCLCHECK(extNet->deregMr((void *)rComm, recv_mhandle[idx]));
+				OFINCCLCHECKGOTO(extNet->deregMr((void *)rComm, recv_mhandle[idx]), res, exit);
 			}
 		}
 
@@ -250,21 +279,65 @@ int main(int argc, char *argv[])
 			break;
 	}
 
-	/* Deallocate buffers */
-	OFINCCLCHECK(deallocate_buffer(expected_buf, NCCL_PTR_HOST));
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
-		if (send_buf[idx])
-			OFINCCLCHECK(deallocate_buffer(send_buf[idx], buffer_type));
-		if (recv_buf[idx])
-			OFINCCLCHECK(deallocate_buffer(recv_buf[idx], buffer_type));
-	}
 
 	/* Close all Comm objects */
-	OFINCCLCHECK(extNet->closeSend((void *)sComm_next));
-	OFINCCLCHECK(extNet->closeRecv((void *)rComm));
-	OFINCCLCHECK(extNet->closeListen((void *)lComm));
+	OFINCCLCHECKGOTO(extNet->closeSend((void *)sComm_next), res, exit);
+	sComm_next = NULL;
+	OFINCCLCHECKGOTO(extNet->closeRecv((void *)rComm), res, exit);
+	rComm = NULL;
+	OFINCCLCHECKGOTO(extNet->closeListen((void *)lComm), res, exit);
+	lComm = NULL;
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
-	return 0;
+
+	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
+
+exit:
+	/* Deallocate buffers */
+	for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+		if (send_buf[idx]) {
+			res = deallocate_buffer(send_buf[idx], buffer_type);
+			if (res != ncclSuccess) {
+				NCCL_OFI_WARN("Send buffer deallocation failure: %d", res);
+			}
+			send_buf[idx] = NULL;
+		}
+		if (recv_buf[idx]) {
+			res = deallocate_buffer(recv_buf[idx], buffer_type);
+			if (res != ncclSuccess) {
+				NCCL_OFI_WARN("Recv buffer deallocation failure: %d", res);
+			}
+			recv_buf[idx] = NULL;
+		}
+	}
+
+	if (expected_buf) {
+		res = deallocate_buffer(expected_buf, NCCL_PTR_HOST);
+		if (res != ncclSuccess) {
+			NCCL_OFI_WARN("Expected buffer deallocation failure: %d", res);
+		}
+		expected_buf = NULL;
+	}
+
+	if (support_gdr) {
+		free(support_gdr);
+		support_gdr = NULL;
+	}
+
+	if (all_proc_name) {
+		free(all_proc_name);
+		all_proc_name = NULL;
+	}
+
+	if (sizes) {
+		free(sizes);
+		sizes = NULL;
+	}
+
+	if (tags) {
+		free(tags);
+		tags = NULL;
+	}
+	return res;
 }
