@@ -12,6 +12,7 @@
 
 int main(int argc, char* argv[])
 {
+	ncclResult_t res = ncclSuccess;
 	int rank, proc_name;
 	char name[MPI_MAX_PROCESSOR_NAME];
 
@@ -26,6 +27,9 @@ int main(int argc, char* argv[])
 
 	ofi_log_function = logger;
 
+	/* Indicates if NICs support GPUDirect */
+	int *support_gdr = NULL;
+
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	int size;
@@ -34,31 +38,39 @@ int main(int argc, char* argv[])
 		NCCL_OFI_WARN("Expected two ranks but got %d. "
 			"The nccl_connection functional test should be run with exactly two ranks.",
 			size);
-		return 1;
+		res = ncclInvalidArgument;
+		goto exit;
 	}
+
 	MPI_Get_processor_name(name, &proc_name);
 
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
-	if (extNet == NULL)
-		return 1;
+	if (extNet == NULL) {
+		res = ncclInternalError;
+		goto exit;
+	}
 
 	/* Init API */
-	OFINCCLCHECK(extNet->init(logger));
+	OFINCCLCHECKGOTO(extNet->init(logger), res, exit);
 	NCCL_OFI_INFO(NCCL_INIT, "Process rank %d started. NCCLNet device used on %s is %s.",
 		      rank, name, extNet->name);
 
 	/* Devices API */
-	OFINCCLCHECK(extNet->devices(&ndev));
+	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_INIT, "Received %d network devices", ndev);
 
-	/* Indicates if NICs support GPUDirect */
-	int support_gdr[ndev];
+	support_gdr = (int *)malloc(sizeof(int) * ndev);
+	if (support_gdr == NULL) {
+		NCCL_OFI_WARN("Failed to allocate memory");
+		res = ncclInternalError;
+		goto exit;
+	}
 
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
 		test_nccl_properties_t props = {0};
-		OFINCCLCHECK(extNet->getProperties(dev, &props));
+		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
 
 		/* Set CUDA support */
@@ -77,7 +89,7 @@ int main(int argc, char* argv[])
 	/* Listen API */
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
 	NCCL_OFI_INFO(NCCL_INIT, "Server: Listening on dev %d", dev);
-	OFINCCLCHECK(extNet->listen(dev, (void *)&handle, (void **)&lComm));
+	OFINCCLCHECKGOTO(extNet->listen(dev, (void *)&handle, (void **)&lComm), res, exit);
 
 	if (rank == 0) {
 
@@ -90,13 +102,13 @@ int main(int argc, char* argv[])
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank + 1);
 		while (sComm == NULL) {
-			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore));
+			OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
 		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
 		while (rComm == NULL) {
-			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
+			OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
 		}
 		NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 			      rank + 1);
@@ -112,13 +124,13 @@ int main(int argc, char* argv[])
 		/* Connect API */
 		NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", rank - 1);
 		while (sComm == NULL) {
-			OFINCCLCHECK(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore));
+			OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
 		}
 
 		/* Accept API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
 		while (rComm == NULL) {
-			OFINCCLCHECK(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore));
+			OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
 		}
 		NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 			      rank - 1);
@@ -130,6 +142,13 @@ int main(int argc, char* argv[])
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
+	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
-	return 0;
+exit:
+	if (support_gdr) {
+		free(support_gdr);
+		support_gdr = NULL;
+	}
+
+	return res;
 }
