@@ -34,6 +34,14 @@
 	}							\
 } while (false);
 
+#define OFINCCLCHECKGOTO(call, res, label) do {					\
+	res = call;						\
+	if (res != ncclSuccess) {				\
+		NCCL_OFI_WARN("OFI NCCL failure: %d", res);	\
+		goto label;					\
+	}							\
+} while (false);
+
 #define CUDACHECK(call) do {							\
         CUresult e = call;							\
         if (e != CUDA_SUCCESS) {						\
