@@ -15,7 +15,7 @@ int main(int argc, char *argv[])
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
-	int ndev, dev, cuda_dev, i;
+	int ndev, dev, cuda_dev;
 
 	nccl_net_ofi_send_comm_t *sComm_next = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
@@ -39,7 +39,7 @@ int main(int argc, char *argv[])
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	char *expected_buf = NULL;
-	int done, received_size, idx;
+	int done, received_size;
 
 	/* Indicates if NICs support GPUDirect */
 	int *support_gdr = NULL;
@@ -58,9 +58,7 @@ int main(int argc, char *argv[])
 		goto exit;
 	}
 
-	int recv_n;
-
-	for (recv_n = 0; recv_n < nrecv; recv_n++) {
+	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
 		sizes[recv_n] = RECV_SIZE;
 		tags[recv_n] = tag;
 	}
@@ -89,7 +87,7 @@ int main(int argc, char *argv[])
 		      MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
 
 	/* Determine local rank */
-	for (i = 0; i < size; i++) {
+	for (int i = 0; i < size; i++) {
 		if (!strcmp(&all_proc_name[PROC_NAME_IDX(rank)],
 			    &all_proc_name[PROC_NAME_IDX(i)])) {
 			if (i < rank) {
@@ -190,7 +188,7 @@ int main(int argc, char *argv[])
 
 	/* Send NUM_REQUESTS to next rank */
 	NCCL_OFI_INFO(NCCL_NET, "Sending %d requests to rank %d", NUM_REQUESTS, next);
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+	for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 		OFINCCLCHECKGOTO(allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type), res, exit);
 		OFINCCLCHECKGOTO(initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type), res, exit);
 
@@ -206,7 +204,7 @@ int main(int argc, char *argv[])
 
 	/* Receive NUM_REQUESTS from prev rank */
 	NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
-	for (idx = 0; idx < NUM_REQUESTS; idx++) {
+	for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 		OFINCCLCHECKGOTO(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res, exit);
 		OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
 			     buffer_type, &recv_mhandle[idx]), res, exit);
@@ -223,9 +221,9 @@ int main(int argc, char *argv[])
 	OFINCCLCHECKGOTO(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST), res, exit);
 
 	/* Test all completions */
-	while (true) {
+	while (inflight_reqs > 0) {
 		/* Test for send completions */
-		for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 			if (req_completed_send[idx])
 				continue;
 
@@ -239,7 +237,7 @@ int main(int argc, char *argv[])
 		}
 
 		/* Test for recv completions */
-		for (idx = 0; idx < NUM_REQUESTS; idx++) {
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 			if (req_completed_recv[idx])
 				continue;
 
@@ -274,9 +272,6 @@ int main(int argc, char *argv[])
 				OFINCCLCHECKGOTO(extNet->deregMr((void *)rComm, recv_mhandle[idx]), res, exit);
 			}
 		}
-
-		if (inflight_reqs == 0)
-			break;
 	}
 
 
