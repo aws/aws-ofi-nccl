@@ -37,10 +37,6 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
 		goto error;
 	}
 
-	if (nccl_net_ofi_mutex_init(&ret_cache->lock, NULL)) {
-		goto error;
-	}
-
 	ret_cache->system_page_size = system_page_size;
 	ret_cache->size = init_num_entries;
 	ret_cache->used = 0;
@@ -67,8 +63,6 @@ void nccl_ofi_mr_cache_finalize(nccl_ofi_mr_cache_t *cache)
 		      "MR cache %d hits %d misses",
 		      cache->hit_count,
 		      cache->miss_count);
-
-	nccl_net_ofi_mutex_destroy(&cache->lock);
 
 	free(cache->slots);
 

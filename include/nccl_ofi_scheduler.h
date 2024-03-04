@@ -91,8 +91,7 @@ typedef struct nccl_net_ofi_threshold_scheduler {
 	nccl_net_ofi_scheduler_t base;
 	/* Round robin counter */
 	unsigned int rr_counter;
-	/* Lock for round robin counter */
-	pthread_mutex_t rr_lock;
+
 	/* Minimum size of the message in bytes before message is
 	 * multiplexed */
 	size_t min_stripe_size;

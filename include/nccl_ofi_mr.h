@@ -160,7 +160,6 @@ typedef struct nccl_ofi_mr_cache {
 	size_t used;
 	uint32_t hit_count;
 	uint32_t miss_count;
-	pthread_mutex_t lock;
 } nccl_ofi_mr_cache_t;
 
 /**
