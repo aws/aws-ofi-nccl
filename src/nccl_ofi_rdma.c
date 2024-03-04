@@ -2770,9 +2770,7 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret = nccl_ofi_mr_cache_del_entry(mr_cache, mr_handle);
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -2922,7 +2920,6 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 		 * MR cache is locked between lookup and insert, to be sure we
 		 * insert a missing entry
 		 */
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)
 			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
 
@@ -2953,10 +2950,6 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 	}
 
 exit:
-	if (mr_cache) {
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
-	}
-
 	*mhandle = ret_handle;
 	return ret;
 }
