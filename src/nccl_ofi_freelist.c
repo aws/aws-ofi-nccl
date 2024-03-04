@@ -92,17 +92,9 @@ static int freelist_init_internal(size_t entry_size,
 	freelist->deregmr_fn = deregmr_fn;
 	freelist->regmr_opaque = regmr_opaque;
 
-	ret = pthread_mutex_init(&freelist->lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
-		free(freelist);
-		return -ret;
-	}
-
 	ret = nccl_ofi_freelist_add(freelist, initial_entry_count);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Allocating initial freelist entries failed: %d", ret);
-		pthread_mutex_destroy(&freelist->lock);
 		free(freelist);
 		return ret;
 
@@ -194,8 +186,6 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 
 	freelist->entry_size = 0;
 	freelist->entries = NULL;
-
-	pthread_mutex_destroy(&freelist->lock);
 
 	free(freelist);
 

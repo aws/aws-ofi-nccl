@@ -766,9 +766,7 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_comm_t *base_comm,
 		 * cache itself, this call would either just decrement the
 		 * refcnt, or delete the entry for this handle.
 		 */
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret = nccl_ofi_mr_cache_del_entry(mr_cache, (void *)mr_handle);
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -843,7 +841,6 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		 * MR cache is locked between lookup and insert, to be sure we
 		 * insert a missing entry
 		 */
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
 		if (ret_handle) {
 			/* Cache hit */
@@ -878,10 +875,6 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 	}
 
 unlock:
-	if (mr_cache) {
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
-	}
-
 	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 	*mhandle = ret_handle;
