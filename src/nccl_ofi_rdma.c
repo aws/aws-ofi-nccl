@@ -7199,14 +7199,22 @@ static void get_hints(struct fi_info *hints)
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
 		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
-	hints->domain_attr->threading = FI_THREAD_SAFE;
+	hints->domain_attr->threading = FI_THREAD_DOMAIN;
 
-	/* Set progress mode to unspec to use the provider's default
-	 * mode.  We hard poll for completion, but if a provider is
-	 * faster with async progress, then we don't really care and
-	 * should let it do that. */
+	/* If libfabric is new enough to support
+	 * FI_PROGRESS_CONTROL_UNIFIED, specify MANUAL /
+	 * CONTROL_UNIFIED progress, to remove the domain lock from
+	 * the completion queue polling.  Otherwise, set
+	 * PROGRESS_UNSPEC to allow the provider to pick what it
+	 * thinks will go fastsest.
+	 */
+#if HAVE_DECL_FI_PROGRESS_CONTROL_UNIFIED
+	hints->domain_attr->control_progress = FI_PROGRESS_CONTROL_UNIFIED;
+	hints->domain_attr->data_progress = FI_PROGRESS_MANUAL;
+#else
 	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;;
+#endif
 }
 
 

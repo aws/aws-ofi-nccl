@@ -58,6 +58,7 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
                   FI_OPT_MAX_MSG_SIZE,
                   FI_OPT_SHARED_MEMORY_PERMITTED,
                   FI_MR_DMABUF,
+		  FI_PROGRESS_CONTROL_UNIFIED,
 		  FI_OPT_INJECT_RMA_SIZE],
                   [], [], [AC_INCLUDES_DEFAULT
 [#include <rdma/fi_endpoint.h>
