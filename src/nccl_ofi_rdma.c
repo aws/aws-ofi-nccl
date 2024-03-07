@@ -3518,8 +3518,7 @@ static inline nccl_net_ofi_rdma_recv_comm_t *calloc_rdma_recv_comm(int num_rails
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen_comm_t *l_comm,
-							nccl_net_ofi_rdma_device_t *device,
+static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device_t *device,
 							nccl_net_ofi_rdma_ep_t *ep,
 							nccl_ofi_rdma_connection_info_t *conn_msg)
 {
@@ -3875,7 +3874,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Prepare receive communicator object for the received peer connection */
-		r_comm = prepare_recv_comm(l_comm, device, ep, conn_msg);
+		r_comm = prepare_recv_comm(device, ep, conn_msg);
 		if (OFI_UNLIKELY(r_comm == NULL)) {
 			ret = -EINVAL;
 			goto exit;
@@ -5192,7 +5191,7 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
  *
  * The connect functionality is split into two steps. This function
  * implements the first step in a nonblocking manner. The first step
- * performs (a) create send comminicator with only the first
+ * performs (a) create send communicator with only the first
  * communicator rail being initalized, (b) post send operation to send
  * connect message to remote, containing local endpoint addresses, (c)
  * wait until message is delivered, (d) post receive operation to
