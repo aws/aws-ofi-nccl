@@ -2,12 +2,13 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
+#include <stdint.h>
 #include <stdio.h>
 
-#include "test-common.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_msgbuff.h"
+
+#include "test-common.h"
 
 int main(int argc, char *argv[])
 {
@@ -26,26 +27,31 @@ int main(int argc, char *argv[])
 
 	/** Test insert new **/
 	for (uint16_t i = 0; i < buff_sz; ++i) {
-		if (nccl_ofi_msgbuff_insert(msgbuff, i, &buff_store[i], type, &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
+		if (nccl_ofi_msgbuff_insert(msgbuff, i, &buff_store[i], type, &stat) !=
+		    NCCL_OFI_MSGBUFF_SUCCESS) {
 			NCCL_OFI_WARN("nccl_ofi_msgbuff_insert failed when non-full");
 			return 1;
 		}
 	}
-	if (nccl_ofi_msgbuff_insert(msgbuff, buff_sz, NULL, type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_UNAVAILABLE) {
+	if (nccl_ofi_msgbuff_insert(msgbuff, buff_sz, NULL, type, &stat) !=
+		    NCCL_OFI_MSGBUFF_INVALID_IDX ||
+	    stat != NCCL_OFI_MSGBUFF_UNAVAILABLE) {
 		NCCL_OFI_WARN("nccl_ofi_msgbuff_insert did not return unavailable when full");
 		return 1;
 	}
-	if (nccl_ofi_msgbuff_insert(msgbuff, buff_sz-1, NULL, type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_INPROGRESS) {
-		NCCL_OFI_WARN("nccl_ofi_msgbuff_insert did not return inprogress on duplicate insert");
+	if (nccl_ofi_msgbuff_insert(msgbuff, buff_sz - 1, NULL, type, &stat) !=
+		    NCCL_OFI_MSGBUFF_INVALID_IDX ||
+	    stat != NCCL_OFI_MSGBUFF_INPROGRESS) {
+		NCCL_OFI_WARN(
+			"nccl_ofi_msgbuff_insert did not return inprogress on duplicate insert");
 		return 1;
 	}
 
 	/** Test retrieve **/
 	uint16_t *result;
 	for (uint16_t i = 0; i < buff_sz; ++i) {
-		if (nccl_ofi_msgbuff_retrieve(msgbuff, i, (void**)&result, &type, &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
+		if (nccl_ofi_msgbuff_retrieve(msgbuff, i, (void **)&result, &type, &stat) !=
+		    NCCL_OFI_MSGBUFF_SUCCESS) {
 			NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve failed on valid index");
 			return 1;
 		}
@@ -54,13 +60,18 @@ int main(int argc, char *argv[])
 			return 1;
 		}
 	}
-	if (nccl_ofi_msgbuff_retrieve(msgbuff, buff_sz, (void**)&result, &type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
+	if (nccl_ofi_msgbuff_retrieve(msgbuff, buff_sz, (void **)&result, &type, &stat) !=
+		    NCCL_OFI_MSGBUFF_INVALID_IDX ||
+	    stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
 		NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve did not return notstarted");
 		return 1;
 	}
-	if (nccl_ofi_msgbuff_retrieve(msgbuff, UINT16_C(0) - UINT16_C(1), (void**)&result, &type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_COMPLETED) {
+	if (nccl_ofi_msgbuff_retrieve(msgbuff,
+				      UINT16_C(0) - UINT16_C(1),
+				      (void **)&result,
+				      &type,
+				      &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
+	    stat != NCCL_OFI_MSGBUFF_COMPLETED) {
 		NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve did not return completed");
 		return 1;
 	}
@@ -73,12 +84,12 @@ int main(int argc, char *argv[])
 		}
 	}
 	if (nccl_ofi_msgbuff_complete(msgbuff, buff_sz, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
+	    stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
 		NCCL_OFI_WARN("nccl_ofi_msgbuff_complete did not return notstarted");
 		return 1;
 	}
 	if (nccl_ofi_msgbuff_complete(msgbuff, 0, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
-			stat != NCCL_OFI_MSGBUFF_COMPLETED) {
+	    stat != NCCL_OFI_MSGBUFF_COMPLETED) {
 		NCCL_OFI_WARN("nccl_ofi_msgbuff_complete did not return completed");
 		return 1;
 	}

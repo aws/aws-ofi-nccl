@@ -12,12 +12,16 @@
 
 #include "nccl_ofi_api.h"
 
-void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
-	    int line, const char *fmt, ...)
+void logger(ncclDebugLogLevel level,
+	    unsigned long flags,
+	    const char *filefunc,
+	    int line,
+	    const char *fmt,
+	    ...)
 {
 }
 
-int main(int argc, char* argv[])
+int main(int argc, char *argv[])
 {
 	return nccl_net_ofi_init(logger);
 }

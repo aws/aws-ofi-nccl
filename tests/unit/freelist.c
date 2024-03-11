@@ -2,12 +2,17 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include <stddef.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #include "config.h"
 
-#include <stdio.h>
+#include "nccl_ofi.h"
+#include "nccl_ofi_freelist.h"
+#include "nccl_ofi_log.h"
 
 #include "test-common.h"
-#include "nccl_ofi_freelist.h"
 
 void *simple_base;
 size_t simple_size;
@@ -28,8 +33,9 @@ int regmr_simple(void *opaque, void *data, size_t size, void **handle)
 
 int deregmr_simple(void *handle)
 {
-	if (simple_handle != handle)
+	if (simple_handle != handle) {
 		return ncclSystemError;
+	}
 
 	simple_base = NULL;
 	simple_size = 0;
@@ -55,16 +61,12 @@ int main(int argc, char *argv[])
 	ofi_log_function = logger;
 
 	/* initial size larger than max size */
-	ret = nccl_ofi_freelist_init(1,
-				     16,
-				     0,
-				     8,
-				     &freelist);
+	ret = nccl_ofi_freelist_init(1, 16, 0, 8, &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
 		exit(1);
 	}
-	for (i = 0 ; i < 8 ; i++) {
+	for (i = 0; i < 8; i++) {
 		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
@@ -79,16 +81,12 @@ int main(int argc, char *argv[])
 	nccl_ofi_freelist_fini(freelist);
 
 	/* require addition to reach full size */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     16,
-				     &freelist);
+	ret = nccl_ofi_freelist_init(1, 8, 8, 16, &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
 		exit(1);
 	}
-	for (i = 0 ; i < 16 ; i++) {
+	for (i = 0; i < 16; i++) {
 		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
@@ -103,16 +101,12 @@ int main(int argc, char *argv[])
 	nccl_ofi_freelist_fini(freelist);
 
 	/* no max size */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     0,
-				     &freelist);
+	ret = nccl_ofi_freelist_init(1, 8, 8, 0, &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
 		exit(1);
 	}
-	for (i = 0 ; i < 32 ; i++) {
+	for (i = 0; i < 32; i++) {
 		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
@@ -123,37 +117,29 @@ int main(int argc, char *argv[])
 	nccl_ofi_freelist_fini(freelist);
 
 	/* check return of entries */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     16,
-				     &freelist);
+	ret = nccl_ofi_freelist_init(1, 8, 8, 16, &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
 		exit(1);
 	}
-	for (i = 0 ; i < 32 ; i++) {
+	for (i = 0; i < 32; i++) {
 		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
-		nccl_ofi_freelist_entry_free(freelist, (void*)entry);
+		nccl_ofi_freelist_entry_free(freelist, (void *)entry);
 	}
 	nccl_ofi_freelist_fini(freelist);
 
 	/* make sure entries look rationally spaced */
-	ret = nccl_ofi_freelist_init(1024,
-				     16,
-				     0,
-				     16,
-				     &freelist);
+	ret = nccl_ofi_freelist_init(1024, 16, 0, 16, &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
 		exit(1);
 	}
 	char *last_buff = NULL;
-	for (i = 0 ; i < 8 ; i++) {
+	for (i = 0; i < 8; i++) {
 		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
@@ -194,7 +180,7 @@ int main(int argc, char *argv[])
 		NCCL_OFI_WARN("looks like registration not called");
 		exit(1);
 	}
-	for (i = 0 ; i < 8 ; i++) {
+	for (i = 0; i < 8; i++) {
 		struct random_freelisted_item *item = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!item) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
@@ -202,13 +188,17 @@ int main(int argc, char *argv[])
 		}
 
 		if (item->reginfo.mr_handle != simple_handle) {
-			NCCL_OFI_WARN("allocation handle mismatch %p %p", item->reginfo.mr_handle, simple_handle);
+			NCCL_OFI_WARN("allocation handle mismatch %p %p",
+				      item->reginfo.mr_handle,
+				      simple_handle);
 			exit(1);
 		}
 
 		if ((char *)item - (char *)simple_base != item->reginfo.base_offset) {
 			NCCL_OFI_WARN("base_offset was wrong %p %p %lu %lu",
-				      item, simple_base, (char *)item - (char *)simple_base,
+				      item,
+				      simple_base,
+				      (char *)item - (char *)simple_base,
 				      item->reginfo.base_offset);
 			exit(1);
 		}

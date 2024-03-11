@@ -9,8 +9,8 @@
 extern "C" {
 #endif
 
-#include <stdint.h>
 #include <pthread.h>
+#include <stdint.h>
 
 #include "nccl_ofi_freelist.h"
 
@@ -56,7 +56,8 @@ typedef struct nccl_net_ofi_scheduler {
 	nccl_ofi_freelist_t *schedule_fl;
 
 	/*
-	 * @brief	Scheduler specific function pointer stored in base scheduler to create schedule for a message
+	 * @brief	Scheduler specific function pointer stored in base scheduler to create
+	 *schedule for a message
 	 *
 	 * @param	scheduler
 	 *		The scheduler struct
@@ -70,7 +71,8 @@ typedef struct nccl_net_ofi_scheduler {
 	 *		NULL, on others
 	 */
 	nccl_net_ofi_schedule_t *(*get_schedule)(nccl_net_ofi_scheduler_t *scheduler,
-						 size_t size, int num_rails);
+						 size_t size,
+						 int num_rails);
 
 	/*
 	 * brief	Function pointer stored in scheduler to finalize (free) scheduler
@@ -135,7 +137,7 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size,
 					    nccl_net_ofi_schedule_t *schedule);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_SCHEDULER_H_
+#endif  // End NCCL_OFI_SCHEDULER_H_

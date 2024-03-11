@@ -3,11 +3,18 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include "config.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
-
+#include "nccl_ofi_log.h"
 
 _Static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE,
 	       "Size of OFI Handle is too large");
@@ -125,13 +132,15 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 
 	/* Validate devices */
 	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
+		NCCL_OFI_WARN(
+			"Error accessing devices array. Devices array has not been initialized.");
 		return ncclInternalError;
 	}
 
 	/* Validate device */
 	if (OFI_UNLIKELY(plugin->devs[dev_id] == NULL)) {
-		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
+		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.",
+			      dev_id);
 		return ncclInternalError;
 	}
 
@@ -145,8 +154,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 	ncclResult_t ret = ncclSuccess;
 	nccl_net_ofi_device_t *base_dev = NULL;
 	nccl_net_ofi_ep_t *base_ep = NULL;
-	nccl_net_ofi_listen_comm_t **listen_comm =
-		(nccl_net_ofi_listen_comm_t **)lComm;
+	nccl_net_ofi_listen_comm_t **listen_comm = (nccl_net_ofi_listen_comm_t **)lComm;
 
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
@@ -156,22 +164,26 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 
 	/* Validate dev_id parameter */
 	if (OFI_UNLIKELY(dev_id < 0 || dev_id >= plugin->num_devs)) {
-		NCCL_OFI_WARN("Incorrect device ID %d provided. "
-			      "Correct values are from 0 to %d",
-			      dev_id, plugin->num_devs - 1);
+		NCCL_OFI_WARN(
+			"Incorrect device ID %d provided. "
+			"Correct values are from 0 to %d",
+			dev_id,
+			plugin->num_devs - 1);
 		return ncclInternalError;
 	}
 
 	/* Validate devices */
 	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
+		NCCL_OFI_WARN(
+			"Error accessing devices array. Devices array has not been initialized.");
 		return ncclInternalError;
 	}
 
 	/* Retrieve and validate device */
 	base_dev = plugin->devs[dev_id];
 	if (OFI_UNLIKELY(base_dev == NULL)) {
-		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
+		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.",
+			      dev_id);
 		return ncclInternalError;
 	}
 
@@ -197,9 +209,9 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 }
 
 
-ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
+ncclResult_t nccl_net_ofi_listen_v4(int dev, void *handle, void **listenComm)
 {
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+	nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
 	ncclResult_t ret;
 
 	ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
@@ -213,7 +225,7 @@ ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 
 /*
  * @brief	Non-blocking connect which returns sComm as NULL
- *		with an expectation that it will be called again until 
+ *		with an expectation that it will be called again until
  *		sComm != NULL
  *
  * The callee obtains one endpoint handle via the device's get_ep()
@@ -245,21 +257,23 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 
 	/* Validate dev_id parameter */
 	if (OFI_UNLIKELY(dev_id < 0 || dev_id >= plugin->num_devs)) {
-		NCCL_OFI_WARN("Incorrect device ID %d provided. "
-			      "Correct values are from 0 to %d",
-			      dev_id, plugin->num_devs - 1);
+		NCCL_OFI_WARN(
+			"Incorrect device ID %d provided. "
+			"Correct values are from 0 to %d",
+			dev_id,
+			plugin->num_devs - 1);
 		return ncclInternalError;
 	}
 
 	/* Validate devices */
 	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
+		NCCL_OFI_WARN(
+			"Error accessing devices array. Devices array has not been initialized.");
 		return ncclInternalError;
 	}
 
 	/* Retrieve and validate Handle */
-	nccl_net_ofi_conn_handle_t *ofi_handle =
-		(nccl_net_ofi_conn_handle_t *)handle;
+	nccl_net_ofi_conn_handle_t *ofi_handle = (nccl_net_ofi_conn_handle_t *)handle;
 	if (OFI_UNLIKELY(ofi_handle == NULL)) {
 		NCCL_OFI_WARN("Provided handle is NULL");
 		return ncclInvalidArgument;
@@ -271,7 +285,9 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 		/* Retrieve and validate device */
 		nccl_net_ofi_device_t *base_dev = base_dev = plugin->devs[dev_id];
 		if (OFI_UNLIKELY(base_dev == NULL)) {
-			NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
+			NCCL_OFI_WARN(
+				"Error accessing device. Device #%i has not been initialized.",
+				dev_id);
 			return ncclInternalError;
 		}
 
@@ -282,14 +298,14 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	} else {
 		base_ep = ofi_handle->state.comm->ep;
 		if (OFI_UNLIKELY(base_ep == NULL)) {
-			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
+			NCCL_OFI_WARN(
+				"Error accessing endpoint. Endpoint has not been initialized.");
 			return ncclInternalError;
 		}
 	}
 
 	/* Connect */
-	nccl_net_ofi_send_comm_t **send_comm =
-		(nccl_net_ofi_send_comm_t **)sComm;
+	nccl_net_ofi_send_comm_t **send_comm = (nccl_net_ofi_send_comm_t **)sComm;
 	int ret = base_ep->connect(base_ep, handle, send_comm);
 
 	if (ret != 0) {
@@ -300,31 +316,31 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 }
 
 
-ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
+ncclResult_t nccl_net_ofi_connect_v4(int dev, void *handle, void **sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+	nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
 
-        memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
+	memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 
 	while (*sendComm == NULL) {
 		ret = nccl_net_ofi_connect(dev, &nccl_net_ofi_handle, sendComm);
-		if (ret != ncclSuccess)
+		if (ret != ncclSuccess) {
 			return ret;
+		}
 	}
 
 	return ret;
 }
 
 
-ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
-				void **mhandle)
+ncclResult_t nccl_net_ofi_regMr(
+	void *comm, void *data, long unsigned int size, int type, void **mhandle)
 {
 	int ret = 0;
 
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
+	nccl_net_ofi_comm_t *base_comm = (nccl_net_ofi_comm_t *)comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return ncclInternalError;
@@ -332,12 +348,18 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 
 	/* Validate type of buffer */
 	bool valid_buffer_type = false;
-	if (type == NCCL_PTR_HOST) valid_buffer_type = true;
+	if (type == NCCL_PTR_HOST) {
+		valid_buffer_type = true;
+	}
 #if HAVE_CUDA
-	if (type == NCCL_PTR_CUDA) valid_buffer_type = true;
+	if (type == NCCL_PTR_CUDA) {
+		valid_buffer_type = true;
+	}
 #endif
 #if HAVE_NEURON
-	if (type == NCCL_PTR_NEURON) valid_buffer_type = true;
+	if (type == NCCL_PTR_NEURON) {
+		valid_buffer_type = true;
+	}
 #endif
 	if (!valid_buffer_type) {
 		NCCL_OFI_WARN("Invalid buffer type provided: %d", type);
@@ -346,13 +368,11 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+		nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->regMr(send_comm, data, size, type, mhandle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+		nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->regMr(recv_comm, data, size, type, mhandle);
 		break;
 	default:
@@ -366,12 +386,10 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 }
 
 
-ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int type,
-				void **mhandle)
+ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int type, void **mhandle)
 {
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
+	nccl_net_ofi_comm_t *base_comm = (nccl_net_ofi_comm_t *)comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return ncclInternalError;
@@ -381,13 +399,11 @@ ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int t
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+		nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->regMr(send_comm, data, size, type, mhandle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+		nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->regMr(recv_comm, data, size, type, mhandle);
 		break;
 	default:
@@ -404,8 +420,7 @@ ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int t
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
+	nccl_net_ofi_comm_t *base_comm = (nccl_net_ofi_comm_t *)comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return ncclInternalError;
@@ -415,13 +430,11 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+		nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->deregMr(send_comm, mhandle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+		nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->deregMr(recv_comm, mhandle);
 		break;
 	default:
@@ -435,13 +448,11 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 }
 
 
-ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
-				      int type, uint64_t offset,
-				      int fd, void** mhandle)
+ncclResult_t nccl_net_ofi_regMrDmaBuf(
+	void *comm, void *data, size_t size, int type, uint64_t offset, int fd, void **mhandle)
 {
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
+	nccl_net_ofi_comm_t *base_comm = (nccl_net_ofi_comm_t *)comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return ncclInternalError;
@@ -452,13 +463,11 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+		nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->regMrDmaBuf(send_comm, data, size, type, offset, fd, handle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+		nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->regMrDmaBuf(recv_comm, data, size, type, offset, fd, handle);
 		break;
 	default:
@@ -496,17 +505,14 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 	}
 
 	/* Invoke listen communicator accept() function */
-	nccl_net_ofi_listen_comm_t *listen_comm =
-		(nccl_net_ofi_listen_comm_t *)lComm;
-	nccl_net_ofi_recv_comm_t **recv_comm =
-		(nccl_net_ofi_recv_comm_t **)rComm;
+	nccl_net_ofi_listen_comm_t *listen_comm = (nccl_net_ofi_listen_comm_t *)lComm;
+	nccl_net_ofi_recv_comm_t **recv_comm = (nccl_net_ofi_recv_comm_t **)rComm;
 	int ret = listen_comm->accept(listen_comm, recv_comm);
 
 	/* Invoke release_ep() on listen comm's endpoint since accept failed */
 	if (ret != 0) {
 		/* Retrieve and validate endpoint */
-		nccl_net_ofi_ep_t *ep =
-			listen_comm->base.ep;
+		nccl_net_ofi_ep_t *ep = listen_comm->base.ep;
 		if (OFI_UNLIKELY(ep == NULL)) {
 			NCCL_OFI_WARN("Invalid endpoint provided");
 			ret = -EINVAL;
@@ -520,7 +526,7 @@ error:
 }
 
 
-ncclResult_t nccl_net_ofi_accept_v4(void* listenComm, void** recvComm)
+ncclResult_t nccl_net_ofi_accept_v4(void *listenComm, void **recvComm)
 {
 	ncclResult_t ret;
 
@@ -536,11 +542,10 @@ error:
 }
 
 
-ncclResult_t nccl_net_ofi_isend(void *sComm, void* data, int size,
-				int tag, void *mhandle, void** req)
+ncclResult_t nccl_net_ofi_isend(
+	void *sComm, void *data, int size, int tag, void *mhandle, void **req)
 {
-	nccl_net_ofi_send_comm_t *send_comm =
-		(nccl_net_ofi_send_comm_t *)sComm;
+	nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)sComm;
 	nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
@@ -566,18 +571,22 @@ ncclResult_t nccl_net_ofi_isend(void *sComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
-			  void* mhandle, void** request)
+ncclResult_t nccl_net_ofi_isend_v4(
+	void *sendComm, void *data, int size, void *mhandle, void **request)
 {
 	return nccl_net_ofi_isend(sendComm, data, size, 0, mhandle, request);
 }
 
 
-ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, int* sizes,
-				int *tags, void** mhandles, void** req)
+ncclResult_t nccl_net_ofi_irecv(void *rComm,
+				int n,
+				void **buffers,
+				const int *sizes,
+				int *tags,
+				void **mhandles,
+				void **req)
 {
-	nccl_net_ofi_recv_comm_t *recv_comm =
-		(nccl_net_ofi_recv_comm_t *)rComm;
+	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
@@ -588,7 +597,8 @@ ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, int* sizes,
 
 	if (OFI_UNLIKELY(n > NCCL_OFI_MAX_RECVS)) {
 		NCCL_OFI_WARN("Request for group recv size of %d, greater than maximum of %d",
-			      n, NCCL_OFI_MAX_RECVS);
+			      n,
+			      NCCL_OFI_MAX_RECVS);
 		return ncclInternalError;
 	}
 
@@ -613,8 +623,8 @@ ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, int* sizes,
 }
 
 
-ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
-			  void* mhandle, void** request)
+ncclResult_t nccl_net_ofi_irecv_v4(
+	void *recvComm, void *data, int size, void *mhandle, void **request)
 {
 	int tag = 0;
 
@@ -622,7 +632,7 @@ ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
+ncclResult_t nccl_net_ofi_test(void *req, int *done, int *size)
 {
 	/* Validate request */
 	if (OFI_UNLIKELY(req == NULL)) {
@@ -635,11 +645,10 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 }
 
 
-ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
-				 void** mhandles, void** req)
+ncclResult_t nccl_net_ofi_iflush(
+	void *rComm, int n, void **buffers, const int *sizes, void **mhandles, void **req)
 {
-	nccl_net_ofi_recv_comm_t *recv_comm =
-		(nccl_net_ofi_recv_comm_t *)rComm;
+	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
 	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
 
@@ -650,7 +659,8 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 
 	if (OFI_UNLIKELY(n > NCCL_OFI_MAX_RECVS)) {
 		NCCL_OFI_WARN("Request for group flush size of %d, greater than maximum of %d",
-			      n, NCCL_OFI_MAX_RECVS);
+			      n,
+			      NCCL_OFI_MAX_RECVS);
 		return ncclInternalError;
 	}
 
@@ -675,7 +685,7 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 }
 
 
-ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* mhandle)
+ncclResult_t nccl_net_ofi_flush_v3(void *recvComm, void *data, int size, void *mhandle)
 {
 	void *req = NULL;
 	ncclResult_t ret = ncclSuccess;
@@ -697,8 +707,8 @@ ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* m
 }
 
 
-ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size,
-			   void* mhandle, void** request)
+ncclResult_t nccl_net_ofi_iflush_v4(
+	void *recvComm, void *data, int size, void *mhandle, void **request)
 {
 	return nccl_net_ofi_iflush(recvComm, 1, &data, &size, &mhandle, request);
 }
@@ -760,8 +770,7 @@ error:
 
 ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
-	nccl_net_ofi_listen_comm_t *listen_comm =
-		(nccl_net_ofi_listen_comm_t *)lComm;
+	nccl_net_ofi_listen_comm_t *listen_comm = (nccl_net_ofi_listen_comm_t *)lComm;
 
 	if (OFI_UNLIKELY(listen_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");

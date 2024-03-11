@@ -3,27 +3,33 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
-
-#define _GNU_SOURCE
-#include <limits.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <inttypes.h>
+#include <strings.h>
+
+#include "config.h"
+
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
-#include <dlfcn.h>
+#include <rdma/fabric.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_errno.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 
 struct ec2_platform_data {
-	const char* name;
-	const char* topology;
+	const char *name;
+	const char *topology;
 	int default_dup_conns;
 	float latency;
 	bool gdr_required;
@@ -85,7 +91,7 @@ struct ec2_platform_data {
  * @return	NULL, on allocation and file system error
  * 		EC2 platform type, on success
  */
-static const char* get_platform_type(void)
+static const char *get_platform_type(void)
 {
 	char file[] = "/sys/devices/virtual/dmi/id/product_name";
 	FILE *fd = NULL;
@@ -111,7 +117,7 @@ static const char* get_platform_type(void)
 		goto error;
 	}
 
-	platform_type = (char *)malloc(sizeof(char)*platform_type_len);
+	platform_type = (char *)malloc(sizeof(char) * platform_type_len);
 	if (platform_type == NULL) {
 		NCCL_OFI_WARN("Unable to allocate platform type");
 		goto error;
@@ -143,8 +149,9 @@ error:
 	}
 
 exit:
-	if (fd)
+	if (fd) {
 		fclose(fd);
+	}
 
 	pthread_mutex_unlock(&platform_mutex);
 
@@ -164,8 +171,8 @@ struct ec2_platform_data *get_platform_data()
 	static bool init = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	static struct ec2_platform_data *platform_data = NULL;
-	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
-	const char* platform_type = NULL;
+	const size_t platform_n = sizeof(platform_data_map) / sizeof(platform_data_map[0]);
+	const char *platform_type = NULL;
 
 	pthread_mutex_lock(&mutex);
 
@@ -182,8 +189,9 @@ struct ec2_platform_data *get_platform_data()
 	}
 
 	for (size_t idx = 0; idx < platform_n; idx++) {
-		if (strcmp(platform_type, platform_data_map[idx].name) == 0)
+		if (strcmp(platform_type, platform_data_map[idx].name) == 0) {
 			platform_data = &platform_data_map[idx];
+		}
 	}
 
 	pthread_mutex_unlock(&mutex);
@@ -205,22 +213,31 @@ static int validate_rdma_write(struct fid_ep *ep)
 	ret = fi_getopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_EFA_EMULATED_WRITE, &optval, &optlen);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Couldn't get FI_OPT_EFA_EMULATED_WRITE. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
+			      ret,
+			      fi_strerror(-ret));
 		goto exit;
 	} else if (optlen != sizeof(optval)) {
-		NCCL_OFI_WARN("Unexpected response size when checking FI_OPT_EFA_EMULATED_WRITE.  Expected %lu, got %lu",
-			      sizeof(optval), optlen);
+		NCCL_OFI_WARN(
+			"Unexpected response size when checking FI_OPT_EFA_EMULATED_WRITE.  "
+			"Expected %lu, got %lu",
+			sizeof(optval),
+			optlen);
 		ret = -EINVAL;
 		goto exit;
 	} else if (optval) {
-		NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE is true when the communication protocol is RDMA write.");
+		NCCL_OFI_WARN(
+			"FI_OPT_EFA_EMULATED_WRITE is true when the communication protocol is RDMA "
+			"write.");
 		ret = -EINVAL;
 		goto exit;
 	}
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d", 
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		       "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d",
 		       optval);
 #else
-	NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA write.");
+	NCCL_OFI_WARN(
+		"FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA "
+		"write.");
 	ret = -EINVAL;
 	goto exit;
 #endif
@@ -244,7 +261,10 @@ static int configure_nccl_proto(void)
 			return -errno;
 		}
 	} else if (strcasecmp(getenv("NCCL_PROTO"), "simple") != 0) {
-		NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
+		NCCL_OFI_WARN(
+			"NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not "
+			"support 128 byte in-order aligned stores. This endpoint may corrupt data "
+			"during communication");
 	}
 
 	return 0;
@@ -258,7 +278,9 @@ static int configure_nccl_proto(void)
  * Returns 0 on success (ie, have_ordering is in a sane state) or
  * -error code on unexpected failure.
  */
-static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name,
+static int configure_ep_inorder(struct fid_ep *ep,
+				int optname,
+				const char *optname_name,
 				bool *have_ordering)
 {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
@@ -267,20 +289,24 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 
 	*have_ordering = false;
 
-	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
-			optname, &optval, sizeof(optval));
+	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT, optname, &optval, sizeof(optval));
 	if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting %s not supported.", optname_name);
 	} else if (ret != 0) {
 		NCCL_OFI_WARN("Could not set %s. RC: %d, ERROR: %s",
-			      optname_name, ret, fi_strerror(-ret));
+			      optname_name,
+			      ret,
+			      fi_strerror(-ret));
 		return ret;
 	} else {
 		*have_ordering = true;
 	}
 
-	NCCL_OFI_TRACE(NCCL_INIT, "fi_setopt(%s) ordering result %s, error code %d",
-		       optname_name, have_ordering ? "yes" : "no", ret);
+	NCCL_OFI_TRACE(NCCL_INIT,
+		       "fi_setopt(%s) ordering result %s, error code %d",
+		       optname_name,
+		       have_ordering ? "yes" : "no",
+		       ret);
 #else
 	*have_ordering = false;
 #endif
@@ -303,7 +329,8 @@ int configure_nvls_option(void)
 		nccl_get_version = dlsym(RTLD_DEFAULT, "ncclGetVersion");
 		if (nccl_get_version == NULL) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			    "Could not find ncclGetVersion symbol; skipping NVLS NCCL version check");
+				       "Could not find ncclGetVersion symbol; skipping NVLS NCCL "
+				       "version check");
 			return 0;
 		} else {
 			nccl_ret = nccl_get_version(&version);
@@ -312,19 +339,25 @@ int configure_nvls_option(void)
 				return -ENOTSUP;
 			}
 
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %lu", version);
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "ncclGetVersion results = %lu",
+				       version);
 		}
 
 		/* 2.18.5 */
 		if (version < 21805) {
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %lu", version);
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "Disabling NVLS support due to NCCL version %lu",
+				      version);
 			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
 				return -errno;
 			}
 		} else {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %lu", version);
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Not disabling NVLS support due to NCCL version %lu",
+				       version);
 		}
 	}
 
@@ -396,12 +429,14 @@ int platform_init(const char **provider_filter)
 	 * this for Nvidia platforms.
 	 */
 	uint32_t libversion = fi_version();
-	const char * fork_safe_var_name =
-		(FI_MAJOR(libversion) > 1 || (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
-		? "FI_EFA_FORK_SAFE"
-		: "RDMAV_FORK_SAFE";
+	const char *fork_safe_var_name = (FI_MAJOR(libversion) > 1 ||
+					  (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
+						 ? "FI_EFA_FORK_SAFE"
+						 : "RDMAV_FORK_SAFE";
 	if (!getenv(fork_safe_var_name)) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting %s environment variable to 1", fork_safe_var_name);
+		NCCL_OFI_INFO(NCCL_INIT,
+			      "Setting %s environment variable to 1",
+			      fork_safe_var_name);
 		ret = setenv(fork_safe_var_name, "1", 1);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to set %s", fork_safe_var_name);
@@ -418,17 +453,17 @@ int platform_init(const char **provider_filter)
 
 	if ((platform_data && !platform_data->net_flush_required) &&
 	    NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
-
 		/* Hopper GPUs do not require a network flush, but NCCL versions <2.19.1
-		* still enable flush by default on any GPU type.
-		* For GPU generations earlier than Hopper, NCCL always enables flush, while
-		* for Hopper GPUs flush is enabled or disabled depending on the value of
-		* the NCCL_NET_FORCE_FLUSH environment variable. The default value for this
-		* variable is 1 for NCCL versions <2.19.1, which forces flush when it is not
-		* needed, so it is safe to set it to 0 if it is not explicitly set.
-		*/
+		 * still enable flush by default on any GPU type.
+		 * For GPU generations earlier than Hopper, NCCL always enables flush, while
+		 * for Hopper GPUs flush is enabled or disabled depending on the value of
+		 * the NCCL_NET_FORCE_FLUSH environment variable. The default value for this
+		 * variable is 1 for NCCL versions <2.19.1, which forces flush when it is not
+		 * needed, so it is safe to set it to 0 if it is not explicitly set.
+		 */
 
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 for Hopper GPUs");
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Setting NCCL_NET_FORCE_FLUSH=0 for Hopper GPUs");
 		ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
@@ -459,28 +494,40 @@ int platform_init(const char **provider_filter)
 #endif
 
 	/*
-	 * Update topology if platform topology is available and 
+	 * Update topology if platform topology is available and
 	 * environment variable NCCL_TOPO_FILE is not set.
 	 */
 	if (getenv("NCCL_TOPO_FILE")) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Running on %s platform, NCCL_TOPO_FILE environment variable is already set to %s",
-			      get_platform_type(), getenv("NCCL_TOPO_FILE"));
+			      "Running on %s platform, NCCL_TOPO_FILE environment variable is "
+			      "already set to %s",
+			      get_platform_type(),
+			      getenv("NCCL_TOPO_FILE"));
 	} else if (platform_data && platform_data->topology) {
 		char topology_path[PATH_MAX];
 
-		ret = snprintf(topology_path, sizeof(topology_path), "%s/%s",
-			       XML_DIR, platform_data->topology);
+		ret = snprintf(topology_path,
+			       sizeof(topology_path),
+			       "%s/%s",
+			       XML_DIR,
+			       platform_data->topology);
 		if (ret < 0 || ret >= sizeof(topology_path)) {
-			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s, Topology file: %s",
-				      ret, PATH_MAX, XML_DIR, platform_data->topology);
+			NCCL_OFI_WARN(
+				"Error occurred while forming the complete topology XML file path. "
+				"RC: %d, Buffer Size: %d, XML dir: %s, Topology file: %s",
+				ret,
+				PATH_MAX,
+				XML_DIR,
+				platform_data->topology);
 			ret = -ENOMEM;
 			goto exit;
 		}
 
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
-				get_platform_type(), topology_path);
+		NCCL_OFI_INFO(
+			NCCL_INIT | NCCL_NET,
+			"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
+			get_platform_type(),
+			topology_path);
 
 		ret = setenv("NCCL_TOPO_FILE", topology_path, 1);
 		if (ret != 0) {
@@ -488,11 +535,11 @@ int platform_init(const char **provider_filter)
 			ret = -errno;
 			goto exit;
 		}
-
 	}
 
-	if (nic_dup_conns == 0 && platform_data)
+	if (nic_dup_conns == 0 && platform_data) {
 		nic_dup_conns = platform_data->default_dup_conns;
+	}
 
 	if (ofi_nccl_net_latency() < 0) {
 		if (platform_data && platform_data->latency >= 0.0) {
@@ -501,8 +548,9 @@ int platform_init(const char **provider_filter)
 			/* For historical reasons, default value for EFA is 150 us */
 			net_latency = 150.0;
 		}
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
-				net_latency);
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Internode latency set at %.1f us",
+			      net_latency);
 	}
 
 	if (select_efa && ofi_nccl_protocol() == NULL && platform_data) {
@@ -513,7 +561,8 @@ exit:
 	return ret;
 }
 
-int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
+int platform_config_endpoint(struct fi_info *info, struct fid_ep *endpoint)
+{
 	int ret = 0;
 
 	if (endpoint == NULL) {
@@ -532,7 +581,8 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		/* Ensure GDR is enabled on GDR-supported instances */
 		struct ec2_platform_data *platform_data = get_platform_data();
 		if (platform_data && platform_data->gdr_required && support_gdr != GDR_SUPPORTED) {
-			NCCL_OFI_WARN("GDR disabled on GDR-supported instance type %s", platform_data->name);
+			NCCL_OFI_WARN("GDR disabled on GDR-supported instance type %s",
+				      platform_data->name);
 			ret = -EINVAL;
 			goto exit;
 		}
@@ -621,8 +671,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		bool have_ordering = false;
 
 		if (optname != -1) {
-			ret = configure_ep_inorder(endpoint, optname, optname_name,
-						   &have_ordering);
+			ret = configure_ep_inorder(endpoint, optname, optname_name, &have_ordering);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unexpected failure setting inorder %d", ret);
 				goto unlock;
@@ -630,8 +679,9 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		}
 
 		if (need_ordering && !have_ordering) {
-			NCCL_OFI_WARN("Setting %s option failed after succeeding during initialization",
-				      optname_name);
+			NCCL_OFI_WARN(
+				"Setting %s option failed after succeeding during initialization",
+				optname_name);
 			ret = -ENOTSUP;
 			goto unlock;
 		}
@@ -652,7 +702,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	}
 unlock:
 	pthread_mutex_unlock(&mutex);
-#endif // HAVE_CUDA
+#endif  // HAVE_CUDA
 
 exit:
 	return ret;

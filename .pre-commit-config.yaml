@@ -1,0 +1,47 @@
+fail_fast: false
+exclude: |
+  (?x)^(
+    include/nccl-headers
+  ).*$
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: trailing-whitespace
+    -   id: end-of-file-fixer
+    -   id: check-merge-conflict
+    -   id: detect-private-key
+    -   id: mixed-line-ending
+    -   id: check-added-large-files
+    -   id: check-shebang-scripts-are-executable
+- repo: https://github.com/executablebooks/mdformat
+  rev: 0.7.17  # Use the ref you want to point at
+  hooks:
+  - id: mdformat
+    additional_dependencies:
+    - mdformat-gfm
+    - mdformat-black
+    - mdformat-web
+    - mdformat-toc
+    - mdformat-tables
+    - mdformat-footnote
+    - mdformat-simple-breaks
+- repo: https://github.com/compilerla/conventional-pre-commit
+  rev: v3.1.0
+  hooks:
+    - id: conventional-pre-commit
+      stages: [commit-msg]
+      args: [--force-scope, misc, build, ci, docs, feat, fix, perf, refactor, style, test]
+- repo: https://github.com/pre-commit/mirrors-clang-format
+  rev: v17.0.6
+  hooks:
+  - id: clang-format
+    types_or: [c++, c, cuda]
+- repo: https://github.com/rhysd/actionlint
+  rev: v1.6.26
+  hooks:
+    - id: actionlint
+-   repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.6
+    hooks:
+    -   id: shellcheck

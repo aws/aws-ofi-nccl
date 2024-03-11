@@ -170,7 +170,7 @@ static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size
 static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_t size);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_MEMCHECK_H
+#endif  // End NCCL_OFI_MEMCHECK_H

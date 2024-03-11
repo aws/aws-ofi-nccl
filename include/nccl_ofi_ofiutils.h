@@ -22,14 +22,20 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
  * @return	Endpoint ep
  * @return	Address vector av
  */
-int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, struct fid_domain *domain,
-				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq);
+int nccl_ofi_ofiutils_init_connection(int api_version,
+				      struct fi_info *info,
+				      struct fid_domain *domain,
+				      struct fid_ep **ep,
+				      struct fid_av **av,
+				      struct fid_cq **cq);
 
 /*
  * @brief	Release libfabric endpoint and address vector
  */
-void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av,
-				  struct fid_cq *cq, int dev_id);
+void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep,
+				  struct fid_av *av,
+				  struct fid_cq *cq,
+				  int dev_id);
 
 /*
  * @brief	Free libfabric NIC info list.
@@ -41,10 +47,10 @@ void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av,
  */
 void nccl_ofi_ofiutils_free_info_list(struct fi_info *info_list);
 
-int nccl_ofi_mr_keys_need_own_key(struct fi_info* provider, bool *provide_own_mr_key);
+int nccl_ofi_mr_keys_need_own_key(struct fi_info *provider, bool *provide_own_mr_key);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
 #endif

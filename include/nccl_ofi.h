@@ -10,28 +10,31 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+
 #include <rdma/fabric.h>
-#include <rdma/fi_errno.h>
+#include <rdma/fi_cm.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
-#include <rdma/fi_cm.h>
-#include <rdma/fi_tagged.h>
+#include <rdma/fi_errno.h>
 #include <rdma/fi_rma.h>
+#include <rdma/fi_tagged.h>
+
 #include "nccl-headers/net.h"
+
+#include "nccl_ofi_idpool.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
-#include "nccl_ofi_idpool.h"
 
 #ifdef __GNUC__
-#define OFI_LIKELY(x)	__builtin_expect((x), 1)
-#define OFI_UNLIKELY(x)	__builtin_expect((x), 0)
+#define OFI_LIKELY(x)   __builtin_expect((x), 1)
+#define OFI_UNLIKELY(x) __builtin_expect((x), 0)
 #else
-#define OFI_LIKELY(x)	(x)
-#define OFI_UNLIKELY(x)	(x)
+#define OFI_LIKELY(x)   (x)
+#define OFI_UNLIKELY(x) (x)
 #endif
 
-#define MAX_PROV_INFO		(15)
-#define MAX_BDF_LEN		(25)
+#define MAX_PROV_INFO              (15)
+#define MAX_BDF_LEN                (25)
 
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
@@ -43,23 +46,23 @@ extern "C" {
  * We also store tags and communicator stage information in remaining
  * part of the handle.
  */
-#define MAX_EP_ADDR		(56)
+#define MAX_EP_ADDR                (56)
 
 /*
  * For each tag, we use MSB as control bit and remaining
  * for identifying different rings. We look at mem_tag_format for
  * an endpoint to determine if provider is reserving any MSBs.
  */
-#define OFI_HIGHEST_TAG_BIT		(0x1UL << 63)
+#define OFI_HIGHEST_TAG_BIT        (0x1UL << 63)
 
 /*
  * We are supporting minimum 2^32 rings per endpoint and reserving 1 bit
  * for marking control sends/recvs.
  */
-#define MIN_TAG_BITS_FOR_RING_ID	(32 + 1)
+#define MIN_TAG_BITS_FOR_RING_ID   (32 + 1)
 
 /* Maximum number of grouped receives */
-#define NCCL_OFI_MAX_RECVS	1
+#define NCCL_OFI_MAX_RECVS         1
 
 /*
  * This defines a higher value than maximum inflight requests supported by NCCL
@@ -67,7 +70,7 @@ extern "C" {
  * we are able to support more number of outstanding requests with dynamic buffer
  * depth changes in NCCL and Neuron.
  */
-#define NCCL_OFI_MAX_REQUESTS	(128)
+#define NCCL_OFI_MAX_REQUESTS      (128)
 
 /*
  * Number of send requests that can be active at any given time.  In
@@ -79,13 +82,13 @@ extern "C" {
 #define NCCL_OFI_MAX_SEND_REQUESTS (NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS)
 
 /* Maximum length of directory path */
-#define PATH_MAX	4096
+#define PATH_MAX                   4096
 
 /* Flush read size (bytes) */
-#define NCCL_OFI_FLUSH_SIZE	4
+#define NCCL_OFI_FLUSH_SIZE        4
 
 /* Indicates if GPUDirect is supported by libfabric provider */
-enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
+enum gdr_support_level_t { GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED };
 extern enum gdr_support_level_t support_gdr;
 
 
@@ -189,7 +192,7 @@ typedef struct nccl_ofi_connection_info {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t ep_namelen;
 	uint64_t connect_to_self;
-	nccl_net_ofi_req_t* req;
+	nccl_net_ofi_req_t *req;
 } nccl_ofi_connection_info_t;
 
 typedef struct nccl_net_ofi_conn_handle {
@@ -246,21 +249,19 @@ struct nccl_net_ofi_device {
 	   that point. */
 	char *name;
 
-	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
-			      nccl_ofi_properties_t *props);
+	int (*get_properties)(nccl_net_ofi_device_t *base_dev, nccl_ofi_properties_t *props);
 
 	/*
 	 * @brief	Get nccl_ofi_ep for given
 	 * 		nccl_ofi_device.  Create if it does not exist. Store
 	 * 		in pthread key. Increase reference counter. Must be
 	 * 		protected by lock stored in device.
-	 * 
-	 * 		During the plugin initialization, this function will be 
+	 *
+	 * 		During the plugin initialization, this function will be
 	 * 		called once per process using one of the instantiated device structs
 	 * 		to create and configure the endpoint of the initializing thread.
 	 */
-	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
-			       nccl_net_ofi_ep_t **ep);
+	int (*get_ep)(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ep);
 };
 
 /**
@@ -293,8 +294,8 @@ struct nccl_net_ofi_ep {
 	 * handle is set to COMM_CREATE_START.
 	 */
 	int (*listen)(nccl_net_ofi_ep_t *ep,
-			       nccl_net_ofi_conn_handle_t *handle,
-			       nccl_net_ofi_listen_comm_t **listen_comm);
+		      nccl_net_ofi_conn_handle_t *handle,
+		      nccl_net_ofi_listen_comm_t **listen_comm);
 
 	/* Create a connection to a process that has called
 	 * listen().
@@ -312,8 +313,8 @@ struct nccl_net_ofi_ep {
 	 * The callee must allocate memory for send_comm.
 	 */
 	int (*connect)(nccl_net_ofi_ep_t *ep,
-				nccl_net_ofi_conn_handle_t *handle,
-				nccl_net_ofi_send_comm_t **send_comm);
+		       nccl_net_ofi_conn_handle_t *handle,
+		       nccl_net_ofi_send_comm_t **send_comm);
 
 	/*
 	 * @brief	Release nccl_ofi_ep.
@@ -353,7 +354,7 @@ struct nccl_net_ofi_listen_comm {
 	nccl_net_ofi_comm_t base;
 
 	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
-			       nccl_net_ofi_recv_comm_t **recv_comm);
+		      nccl_net_ofi_recv_comm_t **recv_comm);
 	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
 };
 
@@ -367,8 +368,11 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int type,
-			      void **mhandle);
+	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm,
+		     void *data,
+		     size_t size,
+		     int type,
+		     void **mhandle);
 
 	/*
 	 * @brief	Register DMA memory region on send communicator (both Host and CUDA)
@@ -377,8 +381,13 @@ struct nccl_net_ofi_send_comm {
 	 *
 	 * @return	Memory handle for data send operations
 	 */
-	int (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size,
-				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
+	int (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm,
+			   void *data,
+			   size_t size,
+			   int type,
+			   uint64_t offset,
+			   int fd,
+			   nccl_net_ofi_mr_handle_t **handle);
 
 	/*
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
@@ -389,8 +398,12 @@ struct nccl_net_ofi_send_comm {
 	 */
 	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
-			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
+	int (*send)(nccl_net_ofi_send_comm_t *send_comm,
+		    void *data,
+		    int size,
+		    int tag,
+		    nccl_net_ofi_mr_handle_t *mhandle,
+		    nccl_net_ofi_req_t **req);
 
 	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
 };
@@ -405,8 +418,11 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size, int type,
-			      void **mhandle);
+	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm,
+		     void *data,
+		     size_t size,
+		     int type,
+		     void **mhandle);
 
 	/*
 	 * @brief	Register DMA memory region on recv communicator (both Host and CUDA)
@@ -415,8 +431,13 @@ struct nccl_net_ofi_recv_comm {
 	 *
 	 * @return	Memory handle for data recv operations
 	 */
-	int (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size,
-				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
+	int (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm,
+			   void *data,
+			   size_t size,
+			   int type,
+			   uint64_t offset,
+			   int fd,
+			   nccl_net_ofi_mr_handle_t **handle);
 
 	/*
 	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
@@ -427,11 +448,20 @@ struct nccl_net_ofi_recv_comm {
 	 */
 	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes, int *tags,
-			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
+	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm,
+		    int n,
+		    void **data,
+		    const int *sizes,
+		    int *tags,
+		    nccl_net_ofi_mr_handle_t **mhandles,
+		    nccl_net_ofi_req_t **req);
 
-	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
-			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
+	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm,
+		     int n,
+		     void **data,
+		     const int *sizes,
+		     nccl_net_ofi_mr_handle_t **mhandles,
+		     nccl_net_ofi_req_t **req);
 
 	int (*close)(nccl_net_ofi_recv_comm_t *recv_comm);
 };
@@ -460,23 +490,32 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, nccl_ofi_properties_t *props);
+int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+				 int dev_id,
+				 int num_devices,
+				 nccl_ofi_properties_t *props);
 
 
 /*
  * @brief	Register DMA buffer for send comm. Unimplemented.
  */
 int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
+					  void *data,
+					  size_t size,
+					  int type,
+					  uint64_t offset,
+					  int fd,
 					  nccl_net_ofi_mr_handle_t **handle);
 
 /*
  * @brief	Register DMA buffer for recv comm. Unimplemented.
  */
 int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
+					  void *data,
+					  size_t size,
+					  int type,
+					  uint64_t offset,
+					  int fd,
 					  nccl_net_ofi_mr_handle_t **handle);
 
 /*
@@ -535,10 +574,10 @@ int platform_init(const char **provider_filter) __attribute__((weak));
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_config_endpoint will be NULL at runtime.
  */
-int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
+int platform_config_endpoint(struct fi_info *info, struct fid_ep *endpoint) __attribute__((weak));
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_H_
+#endif  // End NCCL_OFI_H_

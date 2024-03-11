@@ -2,25 +2,30 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi.h"
-#include "nccl_ofi_scheduler.h"
+#include "nccl_ofi_freelist.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_scheduler.h"
+
 
 /*
  * @brief	Size of s schedule struct capable to store `num_rails' xfer info objects
  */
 static inline size_t sizeof_schedule(int num_rails)
 {
-	return sizeof (nccl_net_ofi_schedule_t)
-		+ num_rails * sizeof(nccl_net_ofi_xfer_info_t);
+	return sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t);
 }
 
-void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
+void nccl_net_ofi_set_multiplexing_schedule(size_t size,
+					    int num_rails,
 					    size_t align,
 					    nccl_net_ofi_schedule_t *schedule)
 {
@@ -33,7 +38,9 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
 
 	schedule->num_xfer_infos = 0;
 
-	if (OFI_UNLIKELY(num_rails == 0)) return;
+	if (OFI_UNLIKELY(num_rails == 0)) {
+		return;
+	}
 
 	max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_rails), align) * align;
 
@@ -99,8 +106,7 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 {
 	int ret = 0;
 	if (size > scheduler->rr_threshold) {
-		nccl_net_ofi_set_multiplexing_schedule(size, num_rails,
-						       align, schedule);
+		nccl_net_ofi_set_multiplexing_schedule(size, num_rails, align, schedule);
 	} else {
 		ret = set_round_robin_schedule(scheduler, size, num_rails, schedule);
 	}
@@ -135,11 +141,11 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
  *		NULL, on others
  */
 static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
-						size_t size,
-						int num_rails)
+						       size_t size,
+						       int num_rails)
 {
 	nccl_net_ofi_schedule_t *schedule;
-	nccl_net_ofi_threshold_scheduler_t * scheduler =
+	nccl_net_ofi_threshold_scheduler_t *scheduler =
 		(nccl_net_ofi_threshold_scheduler_t *)scheduler_p;
 	/* Align stripes to LL128 requirement */
 	size_t align = 128;
@@ -152,8 +158,7 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
 		NCCL_OFI_WARN("Failed to allocate schedule");
 		return NULL;
 	}
-	ret = set_schedule_by_threshold(scheduler, size, num_rails, align,
-					schedule);
+	ret = set_schedule_by_threshold(scheduler, size, num_rails, align, schedule);
 	if (OFI_UNLIKELY(ret)) {
 		nccl_net_ofi_release_schedule(scheduler_p, schedule);
 		schedule = NULL;
@@ -194,7 +199,7 @@ static int scheduler_fini(nccl_net_ofi_scheduler_t *scheduler)
  */
 static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
 {
-	nccl_net_ofi_threshold_scheduler_t * scheduler =
+	nccl_net_ofi_threshold_scheduler_t *scheduler =
 		(nccl_net_ofi_threshold_scheduler_t *)scheduler_p;
 	int ret = 0;
 
@@ -234,7 +239,11 @@ int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *scheduler)
 {
 	int ret = 0;
 
-	ret = nccl_ofi_freelist_init(sizeof_schedule(num_rails), 16, 16, 0, &scheduler->schedule_fl);
+	ret = nccl_ofi_freelist_init(sizeof_schedule(num_rails),
+				     16,
+				     16,
+				     0,
+				     &scheduler->schedule_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not allocate freelist of schedules");
 		return ret;

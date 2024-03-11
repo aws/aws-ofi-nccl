@@ -2,13 +2,22 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
 #include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "config.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_memcheck.h"
 
 /*
  * @brief	Returns size of block memory
@@ -36,7 +45,8 @@ static inline size_t freelist_block_mem_size_full_pages(size_t entry_size, size_
  *
  * @return	Maximum number of entries
  */
-static inline size_t freelist_page_padded_entry_count(size_t entry_size, size_t entry_count) {
+static inline size_t freelist_page_padded_entry_count(size_t entry_size, size_t entry_count)
+{
 	assert(entry_size > 0);
 	size_t covered_pages_size = freelist_block_mem_size_full_pages(entry_size, entry_count);
 	return (covered_pages_size - sizeof(struct nccl_ofi_freelist_block_t)) / entry_size;
@@ -67,18 +77,19 @@ static int freelist_init_internal(size_t entry_size,
 
 	freelist->memcheck_redzone_size = NCCL_OFI_ROUND_UP(MEMCHECK_REDZONE_SIZE, entry_alignment);
 
-	freelist->entry_size = NCCL_OFI_ROUND_UP(NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)),
-						 NCCL_OFI_MAX(entry_alignment, NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY)));
+	freelist->entry_size = NCCL_OFI_ROUND_UP(
+		NCCL_OFI_MAX(entry_size, sizeof(struct nccl_ofi_freelist_elem_t)),
+		NCCL_OFI_MAX(entry_alignment, NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY)));
 	freelist->entry_size += freelist->memcheck_redzone_size;
 
 	/* Use initial_entry_count and increase_entry_count as lower
 	 * bounds and increase values such that allocations that cover
 	 * full system memory pages do not have unused space for
 	 * additional entries. */
-	initial_entry_count = freelist_page_padded_entry_count(freelist->entry_size,
-							       initial_entry_count);
-	increase_entry_count = freelist_page_padded_entry_count(freelist->entry_size,
-								increase_entry_count);
+	initial_entry_count =
+		freelist_page_padded_entry_count(freelist->entry_size, initial_entry_count);
+	increase_entry_count =
+		freelist_page_padded_entry_count(freelist->entry_size, increase_entry_count);
 
 	freelist->num_allocated_entries = 0;
 	freelist->max_entry_count = max_entry_count;
@@ -105,7 +116,6 @@ static int freelist_init_internal(size_t entry_size,
 		pthread_mutex_destroy(&freelist->lock);
 		free(freelist);
 		return ret;
-
 	}
 
 	*freelist_p = freelist;
@@ -175,8 +185,10 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 		if (freelist->deregmr_fn) {
 			ret = freelist->deregmr_fn(block->mr_handle);
 			if (ret != 0) {
-				NCCL_OFI_WARN("Could not deregister freelist buffer %p with handle %p",
-					      memory, block->mr_handle);
+				NCCL_OFI_WARN(
+					"Could not deregister freelist buffer %p with handle %p",
+					memory,
+					block->mr_handle);
 			}
 		}
 
@@ -203,8 +215,7 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 
 /* note: it is assumed that the lock is either held or not needed when
  * this function is called */
-int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
-			  size_t num_entries)
+int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist, size_t num_entries)
 {
 	int ret;
 	size_t allocation_count = num_entries;
@@ -235,17 +246,17 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		return ret;
 	}
 
-	block = (struct nccl_ofi_freelist_block_t*)(buffer + (freelist->entry_size * allocation_count));
+	block = (struct nccl_ofi_freelist_block_t *)(buffer +
+						     (freelist->entry_size * allocation_count));
 	block->memory = buffer;
 	block->memory_size = block_mem_size;
 	block->next = freelist->blocks;
 
 	/* Mark unused memory after block structure as noaccess */
 	char *b_end = (char *)(block + 1);
-	char *b_end_aligned = (char *)NCCL_OFI_ROUND_DOWN((uintptr_t)b_end,
-							  (uintptr_t)MEMCHECK_GRANULARITY);
-	nccl_net_ofi_mem_noaccess(b_end_aligned,
-				  block_mem_size - (b_end_aligned - buffer));
+	char *b_end_aligned =
+		(char *)NCCL_OFI_ROUND_DOWN((uintptr_t)b_end, (uintptr_t)MEMCHECK_GRANULARITY);
+	nccl_net_ofi_mem_noaccess(b_end_aligned, block_mem_size - (b_end_aligned - buffer));
 	nccl_net_ofi_mem_undefined(b_end_aligned, b_end - b_end_aligned);
 
 	if (freelist->regmr_fn) {
@@ -257,7 +268,8 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		 * buffers cover full system memory pages. For more
 		 * information, see reg_internal_mr_ep().
 		 */
-		ret = freelist->regmr_fn(freelist->regmr_opaque, buffer,
+		ret = freelist->regmr_fn(freelist->regmr_opaque,
+					 buffer,
 					 block_mem_size,
 					 &block->mr_handle);
 		if (ret != 0) {
@@ -279,7 +291,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 
 	freelist->blocks = block;
 
-	for (size_t i = 0 ; i < allocation_count ; ++i) {
+	for (size_t i = 0; i < allocation_count; ++i) {
 		struct nccl_ofi_freelist_elem_t *entry;
 		size_t user_entry_size = freelist->entry_size - freelist->memcheck_redzone_size;
 
@@ -289,12 +301,13 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 
 		if (freelist->have_reginfo) {
 			struct nccl_ofi_freelist_reginfo_t *reginfo =
-				(struct nccl_ofi_freelist_reginfo_t*)(buffer + freelist->reginfo_offset);
+				(struct nccl_ofi_freelist_reginfo_t *)(buffer +
+								       freelist->reginfo_offset);
 			reginfo->base_offset = (char *)buffer - (char *)block->memory;
 			reginfo->mr_handle = block->mr_handle;
 			entry = &(reginfo->elem);
 		} else {
-			entry = (struct nccl_ofi_freelist_elem_t*)buffer;
+			entry = (struct nccl_ofi_freelist_elem_t *)buffer;
 		}
 		entry->ptr = buffer;
 		entry->next = freelist->entries;

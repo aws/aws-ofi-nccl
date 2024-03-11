@@ -9,18 +9,18 @@
 extern "C" {
 #endif
 
-#include "config.h"
-
 #include <rdma/fabric.h>
 
+#include "config.h"
+
 #include "nccl_ofi.h"
-#include "nccl_ofi_log.h"
-#include "nccl_ofi_scheduler.h"
-#include "nccl_ofi_msgbuff.h"
-#include "nccl_ofi_topo.h"
 #include "nccl_ofi_deque.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
+#include "nccl_ofi_msgbuff.h"
+#include "nccl_ofi_scheduler.h"
+#include "nccl_ofi_topo.h"
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear
@@ -88,13 +88,15 @@ typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
 	nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
 } nccl_net_ofi_rdma_ctrl_fl_item_t;
 
-/* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
+/* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned
+ */
 #define BOUNCE_BUFFER_ALIGNMENT 128
 
 /* Structure used to store bounce buffers in a free list */
 typedef struct nccl_net_ofi_rdma_bounce_fl_item {
 	nccl_ofi_freelist_reginfo_t fl_reginfo;
-#define PADDING_SIZE (BOUNCE_BUFFER_ALIGNMENT - (sizeof(nccl_ofi_freelist_reginfo_t) % BOUNCE_BUFFER_ALIGNMENT))
+#define PADDING_SIZE \
+	(BOUNCE_BUFFER_ALIGNMENT - (sizeof(nccl_ofi_freelist_reginfo_t) % BOUNCE_BUFFER_ALIGNMENT))
 	char padding[PADDING_SIZE];
 	char bounce_msg[];
 } nccl_net_ofi_rdma_bounce_fl_item_t;
@@ -275,8 +277,7 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	int (*free)(nccl_net_ofi_rdma_req_t *req,
-		    bool dec_inflight_reqs);
+	int (*free)(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
 
 } nccl_net_ofi_rdma_req_t;
 
@@ -632,11 +633,10 @@ typedef struct nccl_net_ofi_rdma_device {
 /*
  * @brief	Initialize plugin with rdma protocol structures
  */
-int nccl_net_ofi_rdma_init(const char *provider_filter,
-			   nccl_net_ofi_plugin_t **plugin_p);
+int nccl_net_ofi_rdma_init(const char *provider_filter, nccl_net_ofi_plugin_t **plugin_p);
 
 #ifdef _cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_RDMA_H_
+#endif  // End NCCL_OFI_RDMA_H_

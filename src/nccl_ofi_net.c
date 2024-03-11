@@ -3,29 +3,34 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
-
-#define _GNU_SOURCE
-#include <limits.h>
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <inttypes.h>
+#include <strings.h>
 #include <sys/mman.h>
-#include <ctype.h>
+#include <unistd.h>
+
+#include <rdma/fabric.h>
+
+#include "config.h"
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
+
 #include "tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+
+#include <cuda.h>
 #endif
-#include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
-#include "nccl_ofi_topo.h"
-#include "nccl_ofi_math.h"
-#include "nccl_ofi_idpool.h"
+#include "nccl_ofi_sendrecv.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
@@ -89,11 +94,9 @@ int nccl_net_ofi_alloc_mr_buffer(size_t size, void **ptr)
 	assert(system_page_size > 0);
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	*ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
-		    MAP_PRIVATE | MAP_ANON, -1, 0);
+	*ptr = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
 	if (OFI_UNLIKELY(*ptr == MAP_FAILED)) {
-		NCCL_OFI_WARN("Unable to map MR buffer (%d %s)",
-			      errno, strerror(errno));
+		NCCL_OFI_WARN("Unable to map MR buffer (%d %s)", errno, strerror(errno));
 		*ptr = NULL;
 		return -errno;
 	}
@@ -119,8 +122,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
 
 	ret = munmap(ptr, size);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to unmap MR buffer (%d %s)",
-			      errno, strerror(errno));
+		NCCL_OFI_WARN("Unable to unmap MR buffer (%d %s)", errno, strerror(errno));
 		ret = -errno;
 	}
 	return ret;
@@ -136,8 +138,10 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	/* Print Libfabric version */
 	uint32_t fab_version = fi_version();
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using Libfabric version %u.%u", FI_MAJOR(fab_version),
-			FI_MINOR(fab_version));
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+		      "Using Libfabric version %u.%u",
+		      FI_MAJOR(fab_version),
+		      FI_MINOR(fab_version));
 
 	system_page_size = sysconf(_SC_PAGESIZE);
 	if (OFI_UNLIKELY(system_page_size == -1)) {
@@ -165,7 +169,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA driver version %d", cuda_version);
 	if (ofi_nccl_cuda_flush_enable()) {
 		if (nccl_net_ofi_cuFlushGPUDirectRDMAWrites == NULL) {
-			NCCL_OFI_WARN("CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
+			NCCL_OFI_WARN(
+				"CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
 			cuda_flush = false;
 		} else {
 			NCCL_OFI_WARN("CUDA flush enabled");
@@ -181,8 +186,9 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	if (platform_init) {
 		ret = platform_init(&provider_filter);
-		if (ret != 0)
+		if (ret != 0) {
 			goto exit;
+		}
 	}
 
 	/* Select and initialize protocol data structure.
@@ -191,10 +197,12 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	if (ofi_nccl_protocol()) {
 		nccl_ofi_selected_protocol = ofi_nccl_protocol();
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Using transport protocol %s (user set)",
 			      nccl_ofi_selected_protocol);
 	} else {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Using transport protocol %s",
 			      nccl_ofi_selected_protocol);
 	}
 
@@ -247,19 +255,21 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * down here
 	 */
 	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
-		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
+		NCCL_OFI_WARN(
+			"NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  "
+			"This configuration is not supported.");
 		ret = -ENOTSUP;
 		goto exit;
 	}
 
- exit:
+exit:
 	if (ret != 0) {
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
 	}
 	return ret;
 }
 
-static int get_device_pci_path(struct fid_nic *nic_info, char** path)
+static int get_device_pci_path(struct fid_nic *nic_info, char **path)
 {
 	int ret = 0;
 	struct fi_pci_attr *pci = NULL;
@@ -269,15 +279,20 @@ static int get_device_pci_path(struct fid_nic *nic_info, char** path)
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "Invalid type of PCI bus returned %d",
 			      nic_info->bus_attr->bus_type);
-		ret = -EINVAL;;
+		ret = -EINVAL;
+		;
 		goto exit;
 	}
 
 	pci = &nic_info->bus_attr->attr.pci;
 	ret = asprintf(&device_path,
 		       "/sys/class/pci_bus/%04x:%02x/../../%04x:%02x:%02x.%01x",
-		       pci->domain_id, pci->bus_id,
-		       pci->domain_id, pci->bus_id, pci->device_id, pci->function_id);
+		       pci->domain_id,
+		       pci->bus_id,
+		       pci->domain_id,
+		       pci->bus_id,
+		       pci->device_id,
+		       pci->function_id);
 	if (ret < 0) {
 		NCCL_OFI_WARN("pciPath: Allocation failure");
 		ret = -ENOMEM;
@@ -288,15 +303,15 @@ static int get_device_pci_path(struct fid_nic *nic_info, char** path)
 
 	*path = realpath(device_path, NULL);
 	if (*path == NULL) {
-		NCCL_OFI_WARN("pciPath: Could not find real path of %s",
-			      device_path);
+		NCCL_OFI_WARN("pciPath: Could not find real path of %s", device_path);
 		ret = -errno;
 		goto exit;
 	}
 
- exit:
-	if (device_path)
+exit:
+	if (device_path) {
 		free(device_path);
+	}
 
 	return ret;
 }
@@ -304,8 +319,7 @@ static int get_device_pci_path(struct fid_nic *nic_info, char** path)
 /*
  * @brief	Set default properties for libfabric NIC info.
  */
-static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
-				 nccl_ofi_properties_t *props)
+static int set_nic_props_default(int dev_id, struct fi_info *nic_prov, nccl_ofi_properties_t *props)
 {
 	props->name = strdup(nic_prov->domain_attr->name);
 
@@ -349,7 +363,9 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices,
+int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+				 int dev_id,
+				 int num_devices,
 				 nccl_ofi_properties_t *props)
 {
 	int ret = 0;
@@ -357,15 +373,17 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	struct fid_nic *nic_info = NULL;
 
 	ret = set_nic_props_default(dev_id, nic_prov, &dev_props);
-	if (ret != 0)
+	if (ret != 0) {
 		goto error;
+	}
 
 	/* Change default values as set by NIC attributes */
 	nic_info = (struct fid_nic *)nic_prov->nic;
 	if (nic_info == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "No NIC info for dev %d. Supplying default values for NIC properties.",
-			      dev_id);
+		NCCL_OFI_INFO(
+			NCCL_INIT | NCCL_NET,
+			"No NIC info for dev %d. Supplying default values for NIC properties.",
+			dev_id);
 		ret = 0;
 		goto exit;
 	}
@@ -403,7 +421,9 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		}
 
 		gpus_per_conn = num_gpus_visible / num_devices;
-		if (gpus_per_conn == 0) gpus_per_conn = 1;
+		if (gpus_per_conn == 0) {
+			gpus_per_conn = 1;
+		}
 
 		/* The goal is to have gpus_per_conn gpus in the local
 		 * system think that any given virtual nic is the one
@@ -424,20 +444,31 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		 * this is probably ok; any affinity is lost by
 		 * bouncing through host buffers anyway.
 		 */
-		if (active_cuda_device / gpus_per_conn  != dev_id) {
-			for (c=strlen(dev_props.pci_path); c && dev_props.pci_path[c] != '/'; c--) {
+		if (active_cuda_device / gpus_per_conn != dev_id) {
+			for (c = strlen(dev_props.pci_path); c && dev_props.pci_path[c] != '/';
+			     c--) {
 				dev_props.pci_path[c] = '\0';
 			}
 			dev_props.pci_path[c] = '\0';
 		}
-		NCCL_OFI_TRACE(NCCL_INIT, "Returning synthetic PCI path for device %d of  %s",
-			       dev_id, dev_props.pci_path);
+		NCCL_OFI_TRACE(NCCL_INIT,
+			       "Returning synthetic PCI path for device %d of  %s",
+			       dev_id,
+			       dev_props.pci_path);
 
-		snprintf(dev_props.name, FI_NAME_MAX + 2, "%s-%x", nic_info->device_attr->name, dev_id);
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Adjusted dev %d device name to %s",
-			       dev_id, dev_props.name);
+		snprintf(dev_props.name,
+			 FI_NAME_MAX + 2,
+			 "%s-%x",
+			 nic_info->device_attr->name,
+			 dev_id);
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Adjusted dev %d device name to %s",
+			       dev_id,
+			       dev_props.name);
 #else
-		NCCL_OFI_WARN("NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  This should not happen.");
+		NCCL_OFI_WARN(
+			"NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  "
+			"This should not happen.");
 		ret = -ENOTSUP;
 		goto error;
 #endif
@@ -445,25 +476,31 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 
 	goto exit;
 
- error:
+error:
 	props = NULL;
- exit:
+exit:
 	*props = dev_props;
 	return ret;
 }
 
 
 int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
+					  void *data,
+					  size_t size,
+					  int type,
+					  uint64_t offset,
+					  int fd,
 					  nccl_net_ofi_mr_handle_t **handle)
 {
 	return -ENOTSUP;
 }
 
 int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
+					  void *data,
+					  size_t size,
+					  int type,
+					  uint64_t offset,
+					  int fd,
 					  nccl_net_ofi_mr_handle_t **handle)
 {
 	return -ENOTSUP;
@@ -473,8 +510,10 @@ int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
 					     unsigned int num_providers)
 {
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
-		      selected_provider->fabric_attr->prov_name, num_providers);
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+		      "Selected Provider is %s (found %d nics)",
+		      selected_provider->fabric_attr->prov_name,
+		      num_providers);
 
 	/* Prior to Libfabric 1.18.0, there was no way to disable
 	 * Libfabric from making CUDA calls.  While the EFA path was
@@ -491,33 +530,39 @@ int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
 
 	/* Check if provider requires local memory registration */
 	if (selected_provider->domain_attr->mr_mode & FI_MR_LOCAL) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s requires registration of local memory buffers",
 			       selected_provider->fabric_attr->prov_name);
 		local_mr = true;
 	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s does not require registration of local memory buffers",
 			       selected_provider->fabric_attr->prov_name);
 		local_mr = false;
 	}
 
 	/* Check if provider uses remote virtual addressing */
 	if (selected_provider->domain_attr->mr_mode & FI_MR_VIRT_ADDR) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses remote virtual addressing",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s uses remote virtual addressing",
 			       selected_provider->fabric_attr->prov_name);
 		virt_addr_mr = true;
 	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not use remote virtual addressing",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s does not use remote virtual addressing",
 			       selected_provider->fabric_attr->prov_name);
 		virt_addr_mr = false;
 	}
 
 	/* Check if provider uses endpoint memory registration */
 	if (selected_provider->domain_attr->mr_mode & FI_MR_ENDPOINT) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires endpoint memory registration",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s requires endpoint memory registration",
 			       selected_provider->fabric_attr->prov_name);
 		endpoint_mr = true;
 	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Provider %s does not require endpoint memory registration",
 			       selected_provider->fabric_attr->prov_name);
 		endpoint_mr = false;
 	}

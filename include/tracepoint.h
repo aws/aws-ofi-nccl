@@ -2,6 +2,8 @@
  * Copyright (c) 2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+// clang-format off
+
 #undef LTTNG_UST_TRACEPOINT_PROVIDER
 #define LTTNG_UST_TRACEPOINT_PROVIDER nccl_ofi_plugin
 
@@ -278,4 +280,5 @@ LTTNG_UST_TRACEPOINT_EVENT(
 #define NCCL_OFI_TRACE_PENDING_REMOVE(...)
 #define NCCL_OFI_TRACE_COMPLETIONS(...)
 
-#endif // HAVE_LIBLTTNG_UST
+// clang-format on
+#endif  // HAVE_LIBLTTNG_UST
