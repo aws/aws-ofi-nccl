@@ -21,7 +21,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	 */
 	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
 		NCCL_OFI_WARN("The tuner plugin can not be loaded when explicitly choosing an algorithm or protocol with NCCL_ALGO/NCCL_PROTO");
-		return ncclInvalidUsage;
+		return ncclInvalidArgument;
 	}
 
 	struct nccl_ofi_tuner_model_params params = {
