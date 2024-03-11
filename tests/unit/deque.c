@@ -2,11 +2,14 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include <stddef.h>
 #include <stdio.h>
+#include <stdlib.h>
 
-#include "config.h"
+#include <rdma/fabric.h>
 
 #include "nccl_ofi_deque.h"
+#include "nccl_ofi_log.h"
 
 #include "test-common.h"
 

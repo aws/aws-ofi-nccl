@@ -1,19 +1,43 @@
 /*
  * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
+#include "string.h"
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/mman.h>
-#include <unistd.h>
+
+#include <rdma/fabric.h>
+#include <rdma/fi_cm.h>
+#include <rdma/fi_domain.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_eq.h>
+#include <rdma/fi_errno.h>
+#include <rdma/fi_rma.h>
+#include <rdma/fi_tagged.h>
 
 #include "config.h"
 
+#include "nccl-headers/error.h"
+#include "nccl-headers/net.h"
+
 #include "nccl_ofi.h"
+#include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
+
+#include <sys/uio.h>
+
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
+
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
@@ -335,7 +359,7 @@ static inline int free_req_comm(nccl_net_ofi_comm_t *base_comm,
 	}
 }
 
-#define __compiler_barrier()                     \
+#define compiler_barrier()                       \
 	do {                                     \
 		asm volatile("" : : : "memory"); \
 	} while (0)
@@ -380,7 +404,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	/* Determine whether the request has finished and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED ||
 		       req->state == NCCL_OFI_SENDRECV_REQ_ERROR)) {
-		__compiler_barrier();
+		compiler_barrier();
 		if (size) {
 			*size = req->size;
 		}
@@ -829,7 +853,7 @@ exit:
 static int recv(nccl_net_ofi_recv_comm_t *recv_comm,
 		int n,
 		void **buffers,
-		int *sizes,
+		const int *sizes,
 		int *tags,
 		nccl_net_ofi_mr_handle_t **mhandles,
 		nccl_net_ofi_req_t **base_req)
@@ -991,7 +1015,7 @@ exit:
 static int flush(nccl_net_ofi_recv_comm_t *recv_comm,
 		 int n,
 		 void **buffers,
-		 int *sizes,
+		 const int *sizes,
 		 nccl_net_ofi_mr_handle_t **mhandles,
 		 nccl_net_ofi_req_t **base_req)
 {

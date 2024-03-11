@@ -3,30 +3,34 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
-
-#define _GNU_SOURCE
-#include <ctype.h>
-#include <inttypes.h>
-#include <limits.h>
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <rdma/fabric.h>
+
+#include "config.h"
+
 #include "nccl_ofi.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 
 #include "tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+
+#include <cuda.h>
 #endif
-#include "nccl_ofi_idpool.h"
-#include "nccl_ofi_math.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_sendrecv.h"
-#include "nccl_ofi_topo.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;

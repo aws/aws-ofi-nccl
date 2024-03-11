@@ -1,4 +1,5 @@
-#include <stdlib.h>
+
+#include <stddef.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"

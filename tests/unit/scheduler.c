@@ -2,13 +2,14 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include <stdint.h>
-
-#include "config.h"
+#include <errno.h>
+#include <stddef.h>
+#include <stdlib.h>
 
 #include "nccl-headers/error.h"
 #include "nccl-headers/net.h"
 
+#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_scheduler.h"
 

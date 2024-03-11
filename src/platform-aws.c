@@ -3,19 +3,25 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
-
-#define _GNU_SOURCE
-#include <inttypes.h>
-#include <limits.h>
+#include <dlfcn.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
+#include <strings.h>
+
+#include "config.h"
+
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
-#include <dlfcn.h>
+#include <rdma/fabric.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_errno.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"

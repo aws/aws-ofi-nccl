@@ -2,11 +2,8 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
-
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
-
 
 static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t* props)
 {

@@ -3,13 +3,18 @@
  */
 
 #include <assert.h>
+#include <errno.h>
 #include <pthread.h>
-
-#include "config.h"
+#include <stddef.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_freelist.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_scheduler.h"
+
 
 /*
  * @brief	Size of s schedule struct capable to store `num_rails' xfer info objects

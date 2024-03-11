@@ -2,11 +2,11 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
 
-#include "config.h"
-
-#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_msgbuff.h"
 

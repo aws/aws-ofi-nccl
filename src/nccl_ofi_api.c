@@ -3,11 +3,18 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
+#include <assert.h>
+#include <errno.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include "config.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
-
+#include "nccl_ofi_log.h"
 
 _Static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE,
 	       "Size of OFI Handle is too large");
@@ -327,7 +334,8 @@ ncclResult_t nccl_net_ofi_connect_v4(int dev, void *handle, void **sendComm)
 }
 
 
-ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type, void **mhandle)
+ncclResult_t nccl_net_ofi_regMr(
+	void *comm, void *data, long unsigned int size, int type, void **mhandle)
 {
 	int ret = 0;
 
@@ -570,8 +578,13 @@ ncclResult_t nccl_net_ofi_isend_v4(
 }
 
 
-ncclResult_t nccl_net_ofi_irecv(
-	void *rComm, int n, void **buffers, int *sizes, int *tags, void **mhandles, void **req)
+ncclResult_t nccl_net_ofi_irecv(void *rComm,
+				int n,
+				void **buffers,
+				const int *sizes,
+				int *tags,
+				void **mhandles,
+				void **req)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
@@ -633,7 +646,7 @@ ncclResult_t nccl_net_ofi_test(void *req, int *done, int *size)
 
 
 ncclResult_t nccl_net_ofi_iflush(
-	void *rComm, int n, void **buffers, int *sizes, void **mhandles, void **req)
+	void *rComm, int n, void **buffers, const int *sizes, void **mhandles, void **req)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;

@@ -2,21 +2,47 @@
  * Copyright (c) 2023=2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <rdma/fabric.h>
+#include <rdma/fi_cm.h>
+#include <rdma/fi_domain.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_eq.h>
+#include <rdma/fi_errno.h>
+#include <rdma/fi_rma.h>
+#include <rdma/fi_tagged.h>
+
 #include "config.h"
 
+#include "nccl-headers/error.h"
+#include "nccl-headers/net.h"
+
 #include "nccl_ofi.h"
+#include "nccl_ofi_deque.h"
+#include "nccl_ofi_freelist.h"
+#include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
+#include "nccl_ofi_msgbuff.h"
+
+#include <sys/uio.h>
+
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
+
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
-#include "nccl_ofi_memcheck.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
@@ -2303,7 +2329,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	return ret;
 }
 
-#define __compiler_barrier()                     \
+#define compiler_barrier()                       \
 	do {                                     \
 		asm volatile("" : : : "memory"); \
 	} while (0)
@@ -3152,7 +3178,7 @@ static int process_cq_if_pending(nccl_net_ofi_rdma_ep_t *ep)
 static int recv(nccl_net_ofi_recv_comm_t *recv_comm,
 		int n,
 		void **buffers,
-		int *sizes,
+		const int *sizes,
 		int *tags,
 		nccl_net_ofi_mr_handle_t **mhandles,
 		nccl_net_ofi_req_t **base_req)
@@ -3473,7 +3499,7 @@ exit:
 static int flush(nccl_net_ofi_recv_comm_t *recv_comm,
 		 int n,
 		 void **buffers,
-		 int *sizes,
+		 const int *sizes,
 		 nccl_net_ofi_mr_handle_t **mhandles,
 		 nccl_net_ofi_req_t **base_req)
 {
@@ -3760,7 +3786,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
 				     16,
 				     16,
-				     4 * NCCL_OFI_MAX_REQUESTS,
+				     (size_t)(4 * NCCL_OFI_MAX_REQUESTS),
 				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d", dev_id);
@@ -4810,7 +4836,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm,
 	 * request if not able to finalize connection.
 	 */
 	if (OFI_UNLIKELY(!s_comm->connected)) {
-		__compiler_barrier();
+		compiler_barrier();
 
 		/* Progress our engine to get completions. If the
 		 * connect response message has arrived, the
@@ -5039,7 +5065,7 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
 
 	// TODO: We might want to use READ_ONCE to read variable `connected'
 	while (!s_comm->connected) {
-		__compiler_barrier();
+		compiler_barrier();
 		int ret = 0;
 		/* Progress our engine to get completions. If the
 		 * connect response message has arrived, the

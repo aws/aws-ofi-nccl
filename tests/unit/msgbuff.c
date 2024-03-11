@@ -2,10 +2,10 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include <stdint.h>
 #include <stdio.h>
 
-#include "config.h"
-
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_msgbuff.h"
 
 #include "test-common.h"

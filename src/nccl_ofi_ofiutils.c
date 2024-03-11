@@ -3,26 +3,31 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
+#include <errno.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include <rdma/fabric.h>
+#include <rdma/fi_domain.h>
+#include <rdma/fi_endpoint.h>
+#include <rdma/fi_eq.h>
+#include <rdma/fi_errno.h>
+
 #include "config.h"
 
-#define _GNU_SOURCE
-#include <ctype.h>
-#include <inttypes.h>
-#include <limits.h>
+#include "nccl_ofi_log.h"
+
+#define GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
-#include <unistd.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 
 #include "tracepoint.h"
 #if HAVE_CUDA
-#include "nccl_ofi_cuda.h"
 #endif
-#include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 
 #define EFA_PROVIDER_NAME     "efa"

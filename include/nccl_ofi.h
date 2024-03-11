@@ -451,7 +451,7 @@ struct nccl_net_ofi_recv_comm {
 	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm,
 		    int n,
 		    void **data,
-		    int *sizes,
+		    const int *sizes,
 		    int *tags,
 		    nccl_net_ofi_mr_handle_t **mhandles,
 		    nccl_net_ofi_req_t **req);
@@ -459,7 +459,7 @@ struct nccl_net_ofi_recv_comm {
 	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm,
 		     int n,
 		     void **data,
-		     int *sizes,
+		     const int *sizes,
 		     nccl_net_ofi_mr_handle_t **mhandles,
 		     nccl_net_ofi_req_t **req);
 
@@ -574,7 +574,7 @@ int platform_init(const char **provider_filter) __attribute__((weak));
  * symbol so that linkage will not break if no platform specific hook
  * is provided; in that case platform_config_endpoint will be NULL at runtime.
  */
-int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
+int platform_config_endpoint(struct fi_info *info, struct fid_ep *endpoint) __attribute__((weak));
 
 #ifdef _cplusplus
 }  // End extern "C"

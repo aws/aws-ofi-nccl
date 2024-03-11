@@ -3,11 +3,13 @@
  */
 
 #include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stddef.h>
+#include <stdlib.h>
 
-#include "config.h"
-
-#include "nccl_ofi.h"
 #include "nccl_ofi_deque.h"
+#include "nccl_ofi_log.h"
 
 int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p)
 {
