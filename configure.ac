@@ -6,8 +6,9 @@
 #
 
 # Initialization
-AC_INIT([aws-ofi-nccl], [GitHub-dev], [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
+AC_INIT([aws-ofi-nccl],[GitHub-dev],[al-ofi-nccl-team@amazon.com],[],[http://github.com/aws/aws-ofi-nccl])
 AC_PREREQ([2.69])
+AC_LANG([C])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([config.h])
@@ -29,6 +30,7 @@ NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 # Checks for programs
 AC_PROG_CC
 m4_version_prereq([2.70], [], [AC_PROG_CC_STDC])
+AC_USE_SYSTEM_EXTENSIONS
 AC_C_INLINE
 
 dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
