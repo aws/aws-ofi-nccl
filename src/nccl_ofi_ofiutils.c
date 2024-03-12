@@ -166,6 +166,7 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	int rc = 0;
 	struct fi_info *providers = NULL, *prov = NULL, *last_prov;
 	char *selected_prov_name = NULL;
+	*num_prov_infos = 0;
 
 	rc = fi_getinfo(required_version, NULL, NULL, 0ULL, hints, &providers);
 	if (rc != 0)
@@ -173,6 +174,9 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 
 	if (!providers)
 		goto error;
+	if (!num_prov_infos) {
+		goto error;
+	}
 
 	/* Pick a provider name to use.  If there is a prov_include
 	 * provided, use the first provider which matches the list,
@@ -201,7 +205,6 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	prov = providers;
 	providers = NULL;
 	last_prov = NULL;
-	*num_prov_infos = 0;
 	while (prov) {
 		struct fi_info *prov_next = prov->next;
 		prov->next = NULL;
