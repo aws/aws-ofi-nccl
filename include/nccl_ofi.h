@@ -529,7 +529,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
  * Set required behavior flags (and print debugging information) for
  * local_mr, virt_addr_mr, and endpoint_mr.
  */
-int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
+int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
 
 /* Declare a platform-specific initialization hook that can be
