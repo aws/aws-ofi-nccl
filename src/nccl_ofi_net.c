@@ -499,7 +499,7 @@ int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 }
 
 
-int nccl_net_ofi_query_provider_capabilities(struct fi_info *selected_provider,
+int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers)
 {
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
