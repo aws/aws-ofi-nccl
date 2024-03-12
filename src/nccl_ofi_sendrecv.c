@@ -1,11 +1,13 @@
 /*
  * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
+
 #include "config.h"
 
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -2476,7 +2478,17 @@ found:
 			/* The provider may return support for a larger key size. Use
 			* the size requested by the user to allow them to limit the
 			* size of the mr_keys table. */
-			ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
+			const size_t shift = (ofi_nccl_mr_key_size() * 8);
+			const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
+			if (shift > (size_t_bits - 1)) {
+				NCCL_OFI_WARN(
+					"Provided mr keypool size of %lu must be less than %zu",
+					ofi_nccl_mr_key_size(),
+					size_t_bits);
+				ret = -EINVAL;
+				goto error;
+			}
+			ret = nccl_ofi_idpool_init(&device->key_pool, 1 << shift);
 		} else {
 			/* Mark key pool as not in use */
 			ret = nccl_ofi_idpool_init(&device->key_pool, 0);
