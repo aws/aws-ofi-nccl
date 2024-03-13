@@ -259,7 +259,12 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 		goto error;
 	}
 
-	cq_attr.format = FI_CQ_FORMAT_TAGGED;
+	if (info->caps & FI_TAGGED) {
+		cq_attr.format = FI_CQ_FORMAT_TAGGED;
+	} else {
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+	}
+
 	ret = fi_cq_open(domain, &cq_attr, cq, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
