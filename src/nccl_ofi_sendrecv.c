@@ -2105,9 +2105,8 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	if (ep->ref_cnt == 0) {
-		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info,
-							device->domain, &ep->ofi_ep, &ep->av,
-							&ep->cq);
+		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info, device->domain, &ep->ofi_ep,
+							&ep->av, &ep->cq);
 		if (ret != 0) {
 			goto unlock;
 		}

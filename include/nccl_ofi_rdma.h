@@ -60,6 +60,13 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_SEND_CONN_RESP,
 } nccl_net_ofi_rdma_req_type_t;
 
+typedef enum nccl_ofi_rdma_msg_type {
+	NCCL_OFI_RDMA_MSG_CONN,
+	NCCL_OFI_RDMA_MSG_CONN_RESP,
+	NCCL_OFI_RDMA_MSG_CTRL,
+	NCCL_OFI_RDMA_MSG_EAGER
+} nccl_ofi_rdma_msg_type_t;
+
 /*
  * @brief	Rdma memory registration handle
 
@@ -77,6 +84,16 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
 /* Contents of ctrl message sent from receiver to sender to advertise
    destination buffer */
 typedef struct nccl_net_ofi_rdma_ctrl_msg {
+	/* Message type, must be NCCL_OFI_RDMA_MSG_CTRL */
+	uint16_t type;
+
+	/* Message sequence number */
+	uint16_t msg_seq_num;
+
+	/* A comm identitifer that uniquely identifies the comm
+	 * on the receiver side */
+	uint32_t remote_comm_id;
+
 	uint64_t buff_addr;
 	uint64_t buff_len;
 	uint64_t buff_mr_key[MAX_NUM_RAILS];
@@ -296,12 +313,21 @@ typedef struct nccl_ofi_rdma_ep_name {
  * connection information.
  */
 typedef struct nccl_ofi_rdma_connection_info {
+	/* Message type
+	 * either NCCL_OFI_RDMA_MSG_CONN or NCCL_OFI_RDMA_MSG_CONN_RESP
+	 */
+	uint16_t type;
+
+	/* Number of rails */
+	uint16_t num_rails;
+
 	/* A comm identitifer that uniquely identifies the comm on the sender
 	   side. The receiver must use this ID when sending messages to sender */
 	uint32_t local_comm_id;
 
-	/* Number of rails */
-	int num_rails;
+	/* A comm identitifer that uniquely identifies the comm
+	 * on the receiver side */
+	uint32_t remote_comm_id;
 
 	/* Array of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
 	 * structs. The member `num_rails` indicates the number of
@@ -342,6 +368,7 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	/* Comm ID provided by the local endpoint */
 	uint32_t local_comm_id;
+
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
@@ -420,6 +447,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	/* Comm ID provided by the local endpoint */
 	uint32_t local_comm_id;
+
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
