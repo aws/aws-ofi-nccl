@@ -3877,12 +3877,13 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		ret = -EINVAL;
 	}
 
- exit:
-
+ exit:;
 	/* Close receive communicator in case listen operation failed */
-	ret = close_listen_recv_comm(l_comm);
-
-	return ret;
+	int close_ret = close_listen_recv_comm(l_comm);
+	if (close_ret) {
+		NCCL_OFI_WARN("Failed to close listen communicator");
+	}
+	return ret ? ret : close_ret;
 }
 
 static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
@@ -5992,7 +5993,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 
 	goto exit;
 
- error:;
+ error:
 	if (base_devs) {
 		for (nccl_net_ofi_device_t **base_dev = base_devs; base_dev != base_devs + num_devs; ++base_dev) {
 			nccl_net_ofi_rdma_device_t *device =
