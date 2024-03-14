@@ -3,6 +3,7 @@
 
 #include <linux/limits.h>
 #include <float.h>
+#include "config.h"
 #include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_param.h"
 

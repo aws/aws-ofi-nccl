@@ -7,7 +7,7 @@
 
 #if HAVE_CUDA
 #include "nccl-headers/nvidia/err.h"
-#else
+#elif HAVE_NEURON
 #include "nccl-headers/neuron/error.h"
 #endif
 
