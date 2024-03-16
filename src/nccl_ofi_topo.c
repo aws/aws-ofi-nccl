@@ -1300,9 +1300,13 @@ static int write_pci_tag(FILE *file, int indent,
 			 "<pci "
 			 "busid=\"%04x:%02x:%02x.%01x\" "
 			 "link_speed=\"%s GT/s PCIe/s\" "
-			 "link_width=\"%ld\"/>\n",
-			 indent, "",
-			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func,
+			 "link_width=\"%zu\"/>\n",
+			 indent,
+			 "",
+			 pcidev->domain,
+			 pcidev->bus,
+			 pcidev->dev,
+			 pcidev->func,
 			 pcie_gen[speed_idx],
 			 width);
 
