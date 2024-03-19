@@ -18,7 +18,7 @@
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_math.h"
-#include "tracepoint.h"
+#include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_memcheck.h"

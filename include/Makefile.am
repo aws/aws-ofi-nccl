@@ -25,7 +25,8 @@ noinst_HEADERS = \
 	nccl_ofi_topo.h \
 	nccl_ofi_tuner.h \
 	nccl_ofi_ofiutils.h \
-	tracepoint.h \
+	nccl_ofi_tracepoint.h \
+	tracing_impl/lttng.h \
 	nccl-headers/net.h \
 	nccl-headers/error.h \
 	nccl-headers/nvidia/err.h \

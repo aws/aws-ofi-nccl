@@ -18,7 +18,7 @@
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_ofiutils.h"
-#include "tracepoint.h"
+#include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_math.h"
 
 
