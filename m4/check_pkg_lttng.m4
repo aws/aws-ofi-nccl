@@ -35,7 +35,7 @@ AC_DEFUN([CHECK_PKG_LTTNG], [
          LIBS="${check_pkg_LIBS_save}"
          $2])
 
-  AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
+  AC_DEFINE_UNQUOTED([HAVE_LIBLTTNG_UST], [${check_pkg_found}], [Defined to 1 if lttng-ust is requested and available])
 
   AS_UNSET([check_pkg_found])
   AS_UNSET([check_pkg_define])
