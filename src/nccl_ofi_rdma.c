@@ -726,6 +726,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req_t *req,
 
 		/* Trace this completion */
 		NCCL_OFI_TRACE_COMPLETIONS(req, req);
+                NCCL_OFI_TRACE_POP();
 	}
 
 	ret = pthread_mutex_unlock(&req->req_lock);
@@ -817,9 +818,12 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_req_t *recv_req = send_ctrl_data->recv_req;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
+        NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(recv_req);
+
 	ret = pthread_mutex_lock(&req->req_lock);
 	if (OFI_UNLIKELY(ret)) {
 		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
+                NCCL_OFI_TRACE_POP();
 		return -ret;
 	}
 
@@ -827,14 +831,16 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 	req->ncompls = 1;
 	req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
-	NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(recv_req);
+
 
 	ret = pthread_mutex_unlock(&req->req_lock);
 	if (OFI_UNLIKELY(ret)) {
 		NCCL_OFI_WARN("Failed to unlock req_lock mutex");
+                NCCL_OFI_TRACE_POP();
 		return -ret;
 	}
 
+        NCCL_OFI_TRACE_POP();
 	/* Add completion to parent request */
 	return inc_req_completion(recv_req, 0, recv_data->total_num_compls);
 }
@@ -954,14 +960,14 @@ static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
 	/* First, repost this bounce buffer */
 	ret = send_progress(bounce_req);
 	if (ret == -FI_EAGAIN) {
+                NCCL_OFI_TRACE_PENDING_INSERT(bounce_req);
 		/* Add to pending reqs queue */
 		ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &bounce_req->pending_reqs_elem);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 			return ret;
 		}
-		NCCL_OFI_TRACE_PENDING_INSERT(bounce_req);
-
+		NCCL_OFI_TRACE_POP();
 		return ret;
 	} else if (OFI_UNLIKELY(ret != 0)) {
 		return ret;
@@ -1052,13 +1058,14 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		/* Initiate rdma write */
 		ret = send_progress(req);
 		if (ret == -FI_EAGAIN) {
+                        NCCL_OFI_TRACE_PENDING_INSERT(req);
 			/* Add to pending reqs queue */
 			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 				return ret;
 			}
-			NCCL_OFI_TRACE_PENDING_INSERT(req);
+                        NCCL_OFI_TRACE_POP();
 		}
 		else if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
@@ -1225,14 +1232,16 @@ static inline int handle_bounce_recv(struct fi_cq_tagged_entry *cq_entry, int ra
 		nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)comm;
 		assert(s_comm->local_comm_id == local_comm_id);
 		assert(bounce_data->recv_len == sizeof(nccl_net_ofi_rdma_ctrl_msg_t));
-
-		return handle_ctrl_recv(s_comm, msg_seq_num, bounce_req, ep);
+                int ret = handle_ctrl_recv(s_comm, msg_seq_num, bounce_req, ep);
+                NCCL_OFI_TRACE_POP();
+                return ret;
 	} else if (comm->type == NCCL_NET_OFI_RECV_COMM) {
 		/* Eager message */
 		NCCL_OFI_TRACE_EAGER_RECV(comm->dev_id, rail_id, comm, msg_seq_num);
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)comm;
-
-		return handle_eager_recv(r_comm, msg_seq_num, bounce_req, ep);
+                int ret = handle_eager_recv(r_comm, msg_seq_num, bounce_req, ep);
+                NCCL_OFI_TRACE_POP();
+		return ret;
 	} else {
 		NCCL_OFI_WARN("Wrong comm type");
 		return -EINVAL;
@@ -1278,13 +1287,14 @@ static inline int handle_write_comp(struct fi_cq_tagged_entry *cq_entry,
                                              nccl_net_ofi_rdma_ep_t *ep,
 					     int rail_id)
 {
-	int ret;
+	int ret = 0;
 
 	nccl_net_ofi_rdma_req_t *req = get_req_from_imm_data(ep, cq_entry->data);
 	if (!req) {
 		return -EINVAL;
 	}
 	assert(req->type == NCCL_OFI_RDMA_RECV);
+    NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, cq_entry->len, req);
 
 	rdma_req_recv_data_t *recv_data = get_recv_data(req);
 	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
@@ -1292,13 +1302,8 @@ static inline int handle_write_comp(struct fi_cq_tagged_entry *cq_entry,
 	uint64_t total_segms = GET_NUM_SEG_FROM_IMM(cq_entry->data);
 
 	ret = inc_recv_seg_completion(recv_segms_req, cq_entry->len, total_segms);
-	if (OFI_UNLIKELY(ret != 0)) {
-		return ret;
-	}
-
-	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, cq_entry->len, req);
-
-	return 0;
+    NCCL_OFI_TRACE_POP();
+    return ret;
 }
 
 static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm);
@@ -1455,10 +1460,9 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 			/* Type 5: Local-initiated write is complete */
 			req = op_ctx;
 			rdma_req_send_data_t *send_data = get_send_data(req);
-
-			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail->rail_id, req->comm, req->msg_seq_num, req);
-
 			ret = inc_req_completion(req, 0, send_data->total_num_compls);
+                        NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail->rail_id, req->comm, req->msg_seq_num, req);
+                        NCCL_OFI_TRACE_POP();
 			if (OFI_UNLIKELY(ret != 0)) {
 				goto exit;
 			}
@@ -1596,9 +1600,11 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		/* Extract ep */
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+                NCCL_OFI_TRACE_PENDING_INSERT(req);
 		/* Place in pending requests queue for next try */
 		int ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue,
 						     &req->pending_reqs_elem);
+                NCCL_OFI_TRACE_POP();
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 			return ret;
@@ -1606,7 +1612,7 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 			rc = 0;
 		}
 
-		NCCL_OFI_TRACE_PENDING_INSERT(req);
+
 	}
 
 	return rc;
@@ -4261,6 +4267,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	} else if (rc == 0) {
 		/* TODO: use a better trace for eager send? */
 		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
+                NCCL_OFI_TRACE_POP();
 	}
 
 	return rc;
@@ -4526,13 +4533,14 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
 		/* Attempt to re-post bounce buffer */
 		ret = send_progress(bounce_req);
 		if (ret == -FI_EAGAIN) {
+                        NCCL_OFI_TRACE_PENDING_INSERT(bounce_req);
 			/* Place in pending requests queue for next try */
 			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &bounce_req->pending_reqs_elem);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 				return ret;
 			}
-			NCCL_OFI_TRACE_PENDING_INSERT(bounce_req);
+                        NCCL_OFI_TRACE_POP();
 			return ret;
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
@@ -4705,19 +4713,22 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 
 		ret = send_progress(req);
 		if (ret == -FI_EAGAIN) {
+                        NCCL_OFI_TRACE_PENDING_INSERT(req);
 			/* Add to pending reqs queue */
 			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 				goto error;
 			}
-			NCCL_OFI_TRACE_PENDING_INSERT(req);
+                        NCCL_OFI_TRACE_POP();
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			/* TODO: Remove req from message buffer */
 			ret = -ENOTSUP;
 			goto error;
 		}
 	}
+
+        NCCL_OFI_TRACE_POP();
 
 	/* Return request to NCCL */
 	*base_req = &req->base;

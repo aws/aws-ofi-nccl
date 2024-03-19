@@ -106,6 +106,8 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 		}
 
 		update_nccl_ofi_req(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry[comp_idx].len);
+                /* FIXME: placement of tp start makes very little sense, what is this measuring?! */
+                NCCL_OFI_TRACE_POP();
 	}
 
  exit:
@@ -876,6 +878,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			goto error;
 		}
 
+                NCCL_OFI_TRACE_POP();
 	}
 
 	(r_comm->num_inflight_reqs)++;
@@ -1025,6 +1028,8 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		flush_mr_desc = fi_mr_desc(r_comm->flush_buff.mr_handle);
 	}
 
+        NCCL_OFI_TRACE_FLUSH(req, base_req);
+
 	if (mr_handle != NULL) {
 		/* Extract remote key */
 		cuda_key = fi_mr_key(mr_handle);
@@ -1034,8 +1039,6 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			goto error;
 		}
 	}
-
-	NCCL_OFI_TRACE_FLUSH(req, base_req);
 
 	/* Issue RDMA read */
 	do {
@@ -1085,13 +1088,15 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	*base_req = &req->base;
 
-	return ret;
+        goto out;
 
  error:
 	if (req)
 		free_req_recv_comm(r_comm, dev_id, req, false);
  exit:
 	*base_req = NULL;
+ out:
+        NCCL_OFI_TRACE_POP();
 	return ret;
 }
 
@@ -1667,6 +1672,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	if (req)
 		free_req_send_comm(s_comm, dev_id, req, false);
  exit:
+        NCCL_OFI_TRACE_POP();
 	return ret;
 }
 

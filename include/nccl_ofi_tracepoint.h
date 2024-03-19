@@ -56,3 +56,5 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_remove, request); \
 	} while(0)
 
+#define NCCL_OFI_TRACE_POP(...) do { \
+	} while(0)
