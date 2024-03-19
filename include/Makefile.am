@@ -27,6 +27,7 @@ noinst_HEADERS = \
 	nccl_ofi_ofiutils.h \
 	nccl_ofi_tracepoint.h \
 	tracing_impl/lttng.h \
+	tracing_impl/nvtx.h \
 	nccl-headers/net.h \
 	nccl-headers/error.h \
 	nccl-headers/nvidia/err.h \
