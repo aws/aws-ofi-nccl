@@ -71,6 +71,7 @@ CHECK_GCC_BUILTIN([__builtin_ffsll])
 # Checks for external packages
 CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])
 
+CHECK_PKG_NVTX()
 CHECK_PKG_LTTNG()
 
 have_device_interface=no
