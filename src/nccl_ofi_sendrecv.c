@@ -877,8 +877,6 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			ret = rc;
 			goto error;
 		}
-
-                NCCL_OFI_TRACE_POP();
 	}
 
 	(r_comm->num_inflight_reqs)++;
@@ -892,6 +890,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (req)
 		free_req_recv_comm(r_comm, dev_id, req, false);
  exit:
+    NCCL_OFI_TRACE_POP();
 	return ret;
 }
 

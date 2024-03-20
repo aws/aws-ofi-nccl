@@ -4240,6 +4240,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 			      rc, fi_strerror(-rc));
 	} else if (rc == 0) {
 		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
+        NCCL_OFI_TRACE_POP();
 	}
 
 	return rc;
@@ -4267,7 +4268,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	} else if (rc == 0) {
 		/* TODO: use a better trace for eager send? */
 		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
-                NCCL_OFI_TRACE_POP();
+        NCCL_OFI_TRACE_POP();
 	}
 
 	return rc;
@@ -4567,6 +4568,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 			 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
+    bool tracing = false;
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)send_comm;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	nccl_net_ofi_rdma_req_t *req = NULL;
@@ -4707,6 +4709,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	(s_comm->num_inflight_reqs)++;
 
 	NCCL_OFI_TRACE_SEND(req->dev_id, size, s_comm, msg_seq_num, req, base_req);
+    tracing = true;
 
 	/* Try posting RDMA write for received RDMA control messages */
 	if (have_ctrl || eager) {
@@ -4728,8 +4731,6 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		}
 	}
 
-        NCCL_OFI_TRACE_POP();
-
 	/* Return request to NCCL */
 	*base_req = &req->base;
 	/* Increment next_msg_seq_num for next call */
@@ -4742,6 +4743,9 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	if (req)
 		req->free(req, false);
 	*base_req = NULL;
+    if (tracing) {
+        NCCL_OFI_TRACE_POP();
+    }
  exit:
 	return ret;
 }
