@@ -207,8 +207,7 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 /*
  * @brief	Get endpoint communicator with given ID
  */
-static inline nccl_net_ofi_comm_t *get_comm(nccl_net_ofi_rdma_ep_t *ep,
-			       	     	    int64_t local_comm_id)
+static inline nccl_net_ofi_comm_t *get_comm(nccl_net_ofi_rdma_ep_t *ep, uint32_t local_comm_id)
 {
 	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 	return ep->comms[local_comm_id];
@@ -218,7 +217,7 @@ static inline nccl_net_ofi_comm_t *get_comm(nccl_net_ofi_rdma_ep_t *ep,
  * @brief	Set endpoint communicator with given ID
  */
 static inline void set_comm(nccl_net_ofi_rdma_ep_t *ep,
-			    int64_t local_comm_id,
+			    uint32_t local_comm_id,
 			    nccl_net_ofi_comm_t *comm)
 {
 	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
@@ -228,8 +227,7 @@ static inline void set_comm(nccl_net_ofi_rdma_ep_t *ep,
 /*
  * @brief	Get endpoint send communicator with given ID
  */
-static inline nccl_net_ofi_rdma_send_comm_t *get_send_comm(nccl_net_ofi_rdma_ep_t *ep,
-						    	   uint64_t local_comm_id)
+static inline nccl_net_ofi_rdma_send_comm_t *get_send_comm(nccl_net_ofi_rdma_ep_t *ep, uint32_t local_comm_id)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)
 		get_comm(ep, local_comm_id);
@@ -241,7 +239,7 @@ static inline nccl_net_ofi_rdma_send_comm_t *get_send_comm(nccl_net_ofi_rdma_ep_
  * @brief	Get endpoint recv communicator with given comm_id
  */
 static inline nccl_net_ofi_rdma_recv_comm_t *get_recv_comm(nccl_net_ofi_rdma_ep_t *ep,
-							   uint64_t local_comm_id)
+							   uint32_t local_comm_id)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)
 		get_comm(ep, local_comm_id);
@@ -1209,7 +1207,7 @@ static inline int handle_bounce_recv(struct fi_cq_tagged_entry *cq_entry, int ra
 		return -EINVAL;
 	}
 
-	uint64_t local_comm_id = GET_TAG_FROM_IMM(cq_entry->data);
+	uint32_t local_comm_id = GET_TAG_FROM_IMM(cq_entry->data);
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 
@@ -1248,7 +1246,7 @@ static inline int handle_bounce_recv(struct fi_cq_tagged_entry *cq_entry, int ra
 static inline nccl_net_ofi_rdma_req_t *get_req_from_imm_data
 	(nccl_net_ofi_rdma_ep_t *ep, uint64_t data)
 {
-	uint16_t comm_id = GET_TAG_FROM_IMM(data);
+	uint32_t comm_id = GET_TAG_FROM_IMM(data);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = get_recv_comm(ep, comm_id);
 
 	uint16_t msg_seq_num = GET_SEQ_NUM_FROM_IMM(data);
@@ -2207,7 +2205,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 	/* Validate received comm ID */
 	if (OFI_UNLIKELY(conn_resp->local_comm_id >= device->num_comm_ids)) {
-		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", conn_resp->local_comm_id,
+		NCCL_OFI_WARN("Received an invalid communicator ID %u for device %d", conn_resp->local_comm_id,
 						dev_id);
 		return -EINVAL;
 	}
@@ -3331,7 +3329,7 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	/* Release communicator ID */
 	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", r_comm->local_comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
 	}
 
 	free(r_comm);
@@ -3557,7 +3555,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		r_comm->local_comm_id = ~0;
 		goto error;
 	}
-	r_comm->local_comm_id = (uint64_t)comm_id;
+	r_comm->local_comm_id = (uint32_t)comm_id;
 
 	/* Validate received comm ID */
 	if (OFI_UNLIKELY(conn_msg->local_comm_id >= device->num_comm_ids)) {
@@ -3654,7 +3652,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		if (~0 != r_comm->local_comm_id) {
 			ret = nccl_ofi_idpool_free_id(ep->comm_idpool, r_comm->local_comm_id);
 			if (ret != 0) {
-				NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", r_comm->local_comm_id);
+				NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
 			}
 		}
 		free(r_comm);
@@ -4009,7 +4007,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	/* Release communicator ID */
 	ret = nccl_ofi_idpool_free_id(((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool, l_comm->comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", l_comm->comm_id);
 	}
 
 	free(l_comm);
@@ -4064,7 +4062,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		ret = comm_id;
 		goto error;
 	}
-	l_comm->comm_id = (uint64_t)comm_id;
+	l_comm->comm_id = (uint32_t)comm_id;
 	handle->comm_id = l_comm->comm_id;
 
 	/* Prepare receive request to accept connections */
@@ -4094,7 +4092,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
  error:
 	if (l_comm && ~0 != l_comm->comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, l_comm->comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
+			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", l_comm->comm_id);
 		}
 	}
 	free(l_comm);
@@ -4770,7 +4768,7 @@ static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	/* Release communicator ID */
 	ret = nccl_ofi_idpool_free_id(ep->comm_idpool, s_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", s_comm->local_comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", s_comm->local_comm_id);
 	}
 
 	free(s_comm);
@@ -4833,10 +4831,8 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
  * @return	Connection information, on success
  *		NULL, on others
  */
-static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep,
-			      int dev_id, uint64_t local_comm_id,
-			      nccl_net_ofi_conn_handle_t *handle,
-			      nccl_ofi_rdma_connection_info_t* conn_msg)
+static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep, int dev_id, uint32_t local_comm_id,
+					 nccl_net_ofi_conn_handle_t *handle, nccl_ofi_rdma_connection_info_t *conn_msg)
 {
 	int num_rails = ep->num_rails;
 
@@ -5027,7 +5023,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		ret = comm_id;
 		goto error;
 	}
-	ret_s_comm->local_comm_id = (uint64_t)comm_id;
+	ret_s_comm->local_comm_id = (uint32_t)comm_id;
 
 	/* Add ourselves to ep's lookup array */
 	set_comm(ep, ret_s_comm->local_comm_id, &ret_s_comm->base.base);
@@ -5079,7 +5075,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
  error:
 	if (ret_s_comm && ~0 != ret_s_comm->local_comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(ep->comm_idpool, ret_s_comm->local_comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", ret_s_comm->local_comm_id);
+			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", ret_s_comm->local_comm_id);
 		}
 	}
 	free(ret_s_comm);
@@ -5747,7 +5743,7 @@ static int calculate_num_comm_ids(nccl_net_ofi_rdma_device_t *device)
 	} else {
 		/* Set maximum tag information; Reserving 2 bits for control information */
 		/* RDMA write protocol has maximum 12-bit tag due to 32-bit immediate data restriction */
-		device->num_comm_ids = (uint64_t)NCCL_OFI_RDMA_MAX_COMMS;
+		device->num_comm_ids = (uint32_t)NCCL_OFI_RDMA_MAX_COMMS;
 	}
 
 	return ret;

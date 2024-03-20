@@ -1478,7 +1478,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	local_ep_name = get_local_address(ep->ofi_ep);
 
 	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
-	handle->comm_id = tag;
+	handle->comm_id = (uint32_t)tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
 	num_addrs = fi_av_insert(ep->av, (void *)local_ep_name, 1,
@@ -1727,7 +1727,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Get tag and remote name from handle */
 	memcpy(&remote_ep_addr, handle->ep_name, MAX_EP_ADDR);
-	memcpy(&tag, &handle->comm_id, sizeof(tag));
+	memcpy(&tag, &handle->comm_id, sizeof(handle->comm_id));
 	if (tag < 1 || tag > max_tag) {
 		NCCL_OFI_WARN("Received an invalid tag %lu for device %d", tag,
 			      device->base.dev_id);

@@ -298,7 +298,7 @@ typedef struct nccl_ofi_rdma_ep_name {
 typedef struct nccl_ofi_rdma_connection_info {
 	/* A comm identitifer that uniquely identifies the comm on the sender
 	   side. The receiver must use this ID when sending messages to sender */
-	uint64_t local_comm_id;
+	uint32_t local_comm_id;
 
 	/* Number of rails */
 	int num_rails;
@@ -341,9 +341,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
-	uint64_t local_comm_id;
+	uint32_t local_comm_id;
 	/* Comm ID provided by remote endpoint */
-	uint64_t remote_comm_id;
+	uint32_t remote_comm_id;
 
 	/* Request to receive connect response message to finalize
 	 * connection establishment */
@@ -419,9 +419,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
-	uint64_t local_comm_id;
+	uint32_t local_comm_id;
 	/* Comm ID provided by remote endpoint */
-	uint64_t remote_comm_id;
+	uint32_t remote_comm_id;
 
 	/* The flush buffer */
 	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
@@ -447,7 +447,7 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 	nccl_net_ofi_listen_comm_t base;
 
 	/* Comm ID provided by local endpoint */
-	uint64_t comm_id;
+	uint32_t comm_id;
 	struct fid_ep *leader_local_ep;
 
 	/* Communicator created while accept routine is executed */
@@ -623,7 +623,7 @@ typedef struct nccl_net_ofi_rdma_device {
 	char *prov_name;
 
 	/* Maximum number of supported communicator IDs */
-	uint64_t num_comm_ids;
+	uint32_t num_comm_ids;
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
