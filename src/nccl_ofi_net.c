@@ -376,6 +376,18 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		dev_props.name = strdup(nic_info->device_attr->name);
 	}
 
+	/*
+	 * Determine the scope of MRs for providers to report global
+	 * registration support to NCCL
+	 */
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT) {
+		dev_props.mr_scope = NCCL_OFI_MR_SCOPE_ENDPOINT;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with endpoints");
+	} else {
+		dev_props.mr_scope = NCCL_OFI_MR_SCOPE_DOMAIN;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with domains");
+	}
+
 	/* Speed reported in Mbps */
 	dev_props.port_speed = nic_info->link_attr->speed / (1e6);
 

@@ -37,6 +37,7 @@ noinst_HEADERS = \
 	nccl-headers/nvidia/net_v5.h \
 	nccl-headers/nvidia/net_v6.h \
 	nccl-headers/nvidia/net_v7.h \
+	nccl-headers/nvidia/net_v8.h \
 	nccl-headers/nvidia/types.h \
 	nccl-headers/nvidia/tuner.h \
 	nccl-headers/neuron/net.h \

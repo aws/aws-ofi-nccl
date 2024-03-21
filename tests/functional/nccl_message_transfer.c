@@ -25,7 +25,7 @@ int main(int argc, char* argv[])
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
 	test_nccl_net_t *extNet = NULL;
-	ncclNetDeviceHandle_v7_t *s_ignore, *r_ignore;
+	ncclNetDeviceHandle_v8_t *s_ignore, *r_ignore;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
 
 	ofi_log_function = logger;
