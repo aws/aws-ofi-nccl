@@ -316,8 +316,13 @@ ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 	return ret;
 }
 
+ncclResult_t nccl_net_ofi_regMr_v7(void *comm, void *data, int size, int type,
+				   void **mhandle)
+{
+	return nccl_net_ofi_regMr(comm, data, (size_t)size, type, mhandle);
+}
 
-ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
+ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
 				void **mhandle)
 {
 	int ret = 0;
@@ -364,42 +369,6 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, int size, int type,
 
 	return nccl_net_ofi_retval_translate(ret);
 }
-
-
-ncclResult_t nccl_net_ofi_regMr_sizet(void *comm, void *data, size_t size, int type,
-				void **mhandle)
-{
-	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
-	if (OFI_UNLIKELY(base_comm == NULL)) {
-		NCCL_OFI_WARN("Invalid comm object provided");
-		return ncclInternalError;
-	}
-
-	int ret = 0;
-
-	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->regMr(send_comm, data, size, type, mhandle);
-		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMr(recv_comm, data, size, type, mhandle);
-		break;
-	default:
-		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
-			      base_comm->type);
-		ret = -EINVAL;
-		break;
-	}
-
-	return nccl_net_ofi_retval_translate(ret);
-}
-
 
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
