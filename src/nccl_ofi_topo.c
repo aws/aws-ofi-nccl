@@ -599,11 +599,15 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
  */
 static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
 {
+	int status;
 	nccl_ofi_topo_data_t *data = NULL;
 
 	/* Iterate over user data that stores libfabric NIC info structs */
 	nccl_ofi_topo_data_iterator_t data_iter;
-	nccl_ofi_topo_set_to_begin(topo, &data_iter);
+	if ((status = nccl_ofi_topo_set_to_begin(topo, &data_iter)) < 0) {
+		return status;
+	}
+
 	while ((data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
 		if (!data->info_list) {
@@ -1296,7 +1300,7 @@ static int write_pci_tag(FILE *file, int indent,
 			 "<pci "
 			 "busid=\"%04x:%02x:%02x.%01x\" "
 			 "link_speed=\"%s GT/s PCIe/s\" "
-			 "link_width=\"%ld\"/>\n",
+			 "link_width=\"%zu\"/>\n",
 			 indent, "",
 			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func,
 			 pcie_gen[speed_idx],

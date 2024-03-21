@@ -91,12 +91,14 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 0;
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -112,12 +114,14 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 0;
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -129,6 +133,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -138,6 +143,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -149,6 +155,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -158,6 +165,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -169,6 +177,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -178,6 +187,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -193,12 +203,14 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 0;
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -210,6 +222,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 2;
@@ -222,6 +235,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -233,6 +247,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 2;
@@ -245,6 +260,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -256,6 +272,7 @@ int test_multiplexing_schedule()
 	ret = create_multiplexed(size, num_rails, align, &schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+		free(ref_schedule);
 		return ret;
 	}
 	ref_schedule->num_xfer_infos = 3;
@@ -271,6 +288,7 @@ int test_multiplexing_schedule()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	free(schedule);
@@ -291,6 +309,7 @@ int test_threshold_scheduler()
 	nccl_net_ofi_scheduler_t *scheduler;
 	if (nccl_net_ofi_threshold_scheduler_init(num_rails, rr_threshold, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
+		free(ref_schedule);
 		return -1;
 	}
 
@@ -298,6 +317,7 @@ int test_threshold_scheduler()
 	schedule = scheduler->get_schedule(scheduler, rr_threshold + 1, num_rails);
 	if (!schedule) {
 		NCCL_OFI_WARN("Failed to get schedule");
+		free(ref_schedule);
 		return -1;
 	}
 	ref_schedule->num_xfer_infos = 2;
@@ -310,6 +330,7 @@ int test_threshold_scheduler()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	nccl_net_ofi_release_schedule(scheduler, schedule);
@@ -318,6 +339,7 @@ int test_threshold_scheduler()
 	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
 	if (!schedule) {
 		NCCL_OFI_WARN("Failed to get schedule");
+		free(ref_schedule);
 		return -1;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -327,6 +349,7 @@ int test_threshold_scheduler()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	nccl_net_ofi_release_schedule(scheduler, schedule);
@@ -334,6 +357,7 @@ int test_threshold_scheduler()
 	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
 	if (!schedule) {
 		NCCL_OFI_WARN("Failed to get schedule");
+		free(ref_schedule);
 		return -1;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -343,6 +367,7 @@ int test_threshold_scheduler()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	nccl_net_ofi_release_schedule(scheduler, schedule);
@@ -350,6 +375,7 @@ int test_threshold_scheduler()
 	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
 	if (!schedule) {
 		NCCL_OFI_WARN("Failed to get schedule");
+		free(ref_schedule);
 		return -1;
 	}
 	ref_schedule->num_xfer_infos = 1;
@@ -359,6 +385,7 @@ int test_threshold_scheduler()
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
+		free(ref_schedule);
 		return ret;
 	}
 	nccl_net_ofi_release_schedule(scheduler, schedule);
