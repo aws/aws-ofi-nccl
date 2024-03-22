@@ -5743,8 +5743,8 @@ static void get_hints(struct fi_info *hints)
 
 	hints->mode = 0;
 
-	hints->tx_attr->msg_order = FI_ORDER_SAS;
-	hints->rx_attr->msg_order = FI_ORDER_SAS;
+	hints->tx_attr->msg_order = FI_ORDER_NONE;
+	hints->rx_attr->msg_order = FI_ORDER_NONE;
 
 	hints->ep_attr->type = FI_EP_RDM;
 
