@@ -468,6 +468,23 @@ static int post_recv_conn(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 }
 
 /*
+ * @brief	Returns the domain, dependent on the platform.
+ *
+ * @return	fid_domain for the device (P-series) or endpoint (Neuron).
+ * @return	0 on success
+ *
+ */
+
+static int get_domain(nccl_net_ofi_ep_t *base_ep, struct fid_domain **domain)
+{
+	nccl_net_ofi_sendrecv_ep_t *ep =
+		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
+	*domain = ep->domain;
+	return 0;
+}
+
+
+/*
  * @brief	Registers memory region (both HOST and CUDA)
  *
  * @return	OFI memory handle for data transfer operations
@@ -667,6 +684,7 @@ static int reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
+	int ret;
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
@@ -685,7 +703,13 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	int dev_id = device->base.dev_id;
 
 	nccl_ofi_idpool_t *key_pool = &device->key_pool;
-	return reg_mr_base(device->domain, ep->ofi_ep, key_pool,
+	struct fid_domain *domain;
+	ret = get_domain(base_comm->ep, &domain);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Failure retrieving domain ret=%d", ret);
+		return ret;
+	}
+	return reg_mr_base(domain, ep->ofi_ep, key_pool,
 			   dev_id, data, size, type, mhandle);
 }
 
@@ -1167,6 +1191,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 {
 	int ret = 0;
 	fi_addr_t remote_ep;
+	struct fid_domain *domain;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
 	nccl_ofi_idpool_t *key_pool = &device->key_pool;
@@ -1214,13 +1239,19 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 		return NULL;
 	}
 
+	ret = get_domain(&ep->base, &domain);
+	if (OFI_UNLIKELY(ret != 0)) {
+		free(r_comm);
+		return NULL;
+	}
+
 	/*
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
 	 * flush operations
 	 */
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
-		ret = alloc_and_reg_flush_buff(device->domain, ep->ofi_ep, key_pool,
+		ret = alloc_and_reg_flush_buff(domain, ep->ofi_ep, key_pool,
 					       &r_comm->flush_buff, dev_id);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(r_comm);
@@ -2074,14 +2105,27 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	 * initialize endpoint if necessary. */
 	nccl_net_ofi_sendrecv_ep_t *ep = pthread_getspecific(device->ep_key);
 	if (!ep) {
+
 		/* Allocate endpoint */
 		ep = calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
 		if (!ep) {
 			ret = -ENOMEM;
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Unable to allocate sendrecv endpoint");
+			"Unable to allocate sendrecv endpoint");
 			goto unlock;
 		}
+#if HAVE_NEURON
+		ret = fi_domain(device->fabric, device->info,
+			&ep->domain, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				ret, fi_strerror(-ret));
+			free(ep);
+			goto unlock;
+		}
+#else
+		ep->domain = device->domain;
+#endif /* HAVE_NEURON */
 
 		/* Initialize base endpoint */
 		ep->base.device = &device->base;
@@ -2105,8 +2149,13 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	if (ep->ref_cnt == 0) {
+		struct fid_domain *domain;
+		ret = get_domain(&ep->base, &domain);
+		if (ret) {
+			goto unlock;
+		}
 		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info,
-							device->domain, &ep->ofi_ep, &ep->av,
+							domain, &ep->ofi_ep, &ep->av,
 							&ep->cq);
 		if (ret != 0) {
 			goto unlock;
@@ -2159,6 +2208,13 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 		goto error;
 	}
 
+	/*
+	 * On Neuron, create the domain in the endpoint structure.  On P-series, keep it
+	 * in the device structure.  This is because, on Neuron, we lock when accessing the
+	 * domain, so retaining separate domains per thread and per endpoint reduces contention
+	 * for that lock.
+	 */
+#if !HAVE_NEURON
 	/* Create domain */
 	ret = fi_domain(device->fabric, device->info,
 			&device->domain, NULL);
@@ -2167,6 +2223,7 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 			      ret, fi_strerror(-ret));
 		goto error;
 	}
+#endif /* !HAVE_NEURON */
 
 	return ret;
  error:

@@ -304,6 +304,22 @@ static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
 }
 
 /*
+ * @brief return the domain for the endpoint and rail.
+ */
+
+static int get_domain(nccl_net_ofi_ep_t *base_ep, int rail, struct fid_domain **domain)
+{
+	nccl_net_ofi_rdma_ep_t *ep =
+		(nccl_net_ofi_rdma_ep_t *)base_ep;
+	nccl_net_ofi_rdma_device_t *device =
+		(nccl_net_ofi_rdma_device_t *)ep->base.device;
+	nccl_net_ofi_rdma_device_rail_t *dev_rail = &device->device_rails[rail];
+
+	*domain = dev_rail->domain;
+	return 0;
+}
+
+/*
  * @brief	Unlink temporary NCCL topology file written by `write_topo_file()`
  *
  * This function is guarded by `topo_file_lock`.
@@ -2527,6 +2543,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	struct fi_mr_attr mr_attr = {0};
 	struct iovec iov = {0};
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
+	struct fid_domain *domain;
 	*mhandle = NULL;
 
 	assert(ep);
@@ -2560,10 +2577,17 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	/* Register memory on each rail */
 	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_device_rail_t *dev_rail = get_device_rail(device, rail_id);
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		ret = get_domain(&ep->base, rail_id, &domain);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Could not get domain for dev: %d rail: %d", dev_id, rail_id);
+			dereg_rails(ret_handle);
+			free(ret_handle);
+			ret_handle = NULL;
+			break;
+		}
 
-		ret = register_rail_mr_buffer(dev_rail->domain, rail->ofi_ep,
+		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -5420,10 +5444,16 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 			nccl_net_ofi_rdma_device_rail_t *dev_rail,
 			nccl_net_ofi_ep_rail_t *ep_rail)
 {
+	struct fid_domain *domain;
 	int ret = 0;
 
+	ret = get_domain(&ep->base, rail_id, &domain);
+	if (ret != 0) {
+		return ret;
+	}
+
 	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18),
-						dev_rail->info, dev_rail->domain,
+						dev_rail->info, domain,
 						&ep_rail->ofi_ep, &ep_rail->av, &ep_rail->cq);
 	if (ret != 0) {
 		return ret;
