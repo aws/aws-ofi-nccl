@@ -17,9 +17,9 @@ float nccl_ofi_tuner_compute_base_cost(ncclFunc_t func, int algo, int proto)
 	return nccl_base_lat[algo][proto];
 }
 
-float nccl_ofi_tuner_compute_cost(ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size)
+float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, struct nccl_ofi_tuner_model_dims *dims,
+                                  ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size)
 {
-	struct nccl_ofi_tuner_model_params *params = &nccl_ofi_tuner_ctx->model_params;
 	float cost = -1;
 	float latency = 0;
 	float bw = 0;
@@ -45,22 +45,22 @@ float nccl_ofi_tuner_compute_cost(ncclFunc_t func, int algo, int proto, int pipe
 	case ncclFuncAllReduce:
 		switch(algo) {
 		case NCCL_ALGO_RING:
-			num_steps = 2 * (nccl_ofi_tuner_ctx->num_ranks - 1);
-			num_internode_steps = 2 * nccl_ofi_tuner_ctx->num_nodes;
+			num_steps = 2 * (dims->num_ranks - 1);
+			num_internode_steps = 2 * dims->num_nodes;
 			latency = (num_internode_steps * net_lat)
 				  + (num_steps - num_internode_steps) * p2p_lat;
 			bw = params->internode_bw * params->num_rails * ofi_nccl_tuner_num_channels();
 			break;
 
 		case NCCL_ALGO_NVLS_TREE:
-			latency = 2 * (p2p_lat + (log2(nccl_ofi_tuner_ctx->num_nodes) * net_lat));
+			latency = 2 * (p2p_lat + (log2(dims->num_nodes) * net_lat));
 			bw = NCCL_OFI_MIN(params->intranode_bw, (params->internode_bw * params->num_rails) / 2)
 			     * ofi_nccl_tuner_num_channels();
 			break;
 
 		case NCCL_ALGO_TREE:
-			latency = ((2 * ((nccl_ofi_tuner_ctx->num_ranks / nccl_ofi_tuner_ctx->num_nodes) - 1) * p2p_lat)
-				   + (2 * log2(nccl_ofi_tuner_ctx->num_nodes) * net_lat));
+			latency = ((2 * ((dims->num_ranks / dims->num_nodes) - 1) * p2p_lat)
+				   + (2 * log2(dims->num_nodes) * net_lat));
 			bw = (params->internode_bw * params->num_rails * ofi_nccl_tuner_num_channels()) / 2;
 			break;
 
@@ -99,14 +99,14 @@ float nccl_ofi_tuner_compute_cost(ncclFunc_t func, int algo, int proto, int pipe
  * Compute the base costs for each of the algorithms at plugin initialization
  * time using only the comm size.
  */
-void nccl_ofi_tuner_model_costs()
+void nccl_ofi_tuner_model_costs(struct nccl_ofi_tuner_context *ctx)
 {
 	ncclFunc_t func;
 	int algo, proto = 0;
 	for (func = 0; func < NCCL_NUM_FUNCTIONS; func++) {
 		for (algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 			for(proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
-				nccl_ofi_tuner_ctx->base_costs[func][algo][proto] = 
+				ctx->base_costs[func][algo][proto] =
 					nccl_ofi_tuner_compute_base_cost(func, algo, proto);
 			}
 		}
