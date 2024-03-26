@@ -83,24 +83,22 @@ struct nccl_ofi_tuner_model_params {
 	int num_rails;
 };
 
-struct nccl_ofi_tuner_context {
+struct nccl_ofi_tuner_model_dims {
 	/* communicator size */
 	int num_ranks;
 	int num_nodes;
+};
 
+struct nccl_ofi_tuner_context {
+    struct nccl_ofi_tuner_model_dims dims;
 	struct nccl_ofi_tuner_model_params model_params;
 
 	float base_costs[NCCL_NUM_FUNCTIONS][NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS];
 };
 
-/*
- * Global context, allocated at _init(). This is allocated and initialized once
- * per process.
- */
-extern struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
-
 /* Modeling functions */
-void nccl_ofi_tuner_model_costs();
-float nccl_ofi_tuner_compute_cost(ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size);
+void nccl_ofi_tuner_model_costs(struct nccl_ofi_tuner_context *ctx);
+float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, struct nccl_ofi_tuner_model_dims *dims,
+                                  ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size);
 
 #endif /* NCCL_OFI_TUNER_H_ */
