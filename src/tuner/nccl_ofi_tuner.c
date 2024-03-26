@@ -7,32 +7,15 @@
 #include "nccl_ofi_tuner.h"
 #include "nccl_ofi_log.h"
 
-struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
 
-ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction)
+ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
 	ofi_log_function = logFunction;
+	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
 
-	/*
-	 * NCCL parses these variables and applies user filters inside its
-	 * current tuner logic. Ideally, this should be done regardless of the
-	 * use of NCCL's internal tuner or an external tuner plugin. For the
-	 * time being, given the external tuner is an opt-in, detect if a user
-	 * has set one of them and bail when an external tuner is loaded.
-	 */
-	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
-		NCCL_OFI_WARN("The tuner plugin can not be loaded when explicitly choosing an algorithm or protocol with NCCL_ALGO/NCCL_PROTO");
-		// FIXME: "ncclInvalidUsage should be returned when the error is
-		// most likely a user error" per nccl docs, which arguably makes
-		// it a better return code here than ncclInvalidArgument, but
-		// the former is currently not vended in ext-net headers, so
-		// we're returning ncclInvalidArgument instead.
-		return ncclInvalidArgument;
-	}
-
-	struct nccl_ofi_tuner_model_params params = {
+	const struct nccl_ofi_tuner_model_params params = {
 		.net_lat = ofi_nccl_tuner_net_latency(),
 		.internode_bw = NCCL_OFI_TUNER_INTERNODE_BW,
 		.intranode_bw = NCCL_OFI_TUNER_INTRANODE_BW,
@@ -44,38 +27,38 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	 * initialization. For now, init a plugin-lobal context once.
 	 */ 
 	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
 	if (!nccl_ofi_tuner_ctx) {
-		nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
-		if (!nccl_ofi_tuner_ctx) {
-			NCCL_OFI_WARN("Context allocation failed.");
-			return ncclInternalError;
-		}
-
-		nccl_ofi_tuner_ctx->num_ranks = nRanks;
-		nccl_ofi_tuner_ctx->num_nodes = nNodes;
-		nccl_ofi_tuner_ctx->model_params = params;
-
-		/*
-		 * Build cost model to use from nccl_ofi_tuner_get_coll_info.
-		 */
-		nccl_ofi_tuner_model_costs();
+		NCCL_OFI_WARN("Context allocation failed.");
+		return ncclInternalError;
 	}
+
+	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
+	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
+	nccl_ofi_tuner_ctx->model_params = params;
+
+	/*
+	 * Build cost model to use from nccl_ofi_tuner_get_coll_info.
+	 */
+	nccl_ofi_tuner_model_costs(nccl_ofi_tuner_ctx);
+	*context = (void*)nccl_ofi_tuner_ctx;
 	pthread_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	NCCL_OFI_TRACE(NCCL_TUNING, "Tuner init: comm with %ld ranks and %ld nodes.", nRanks, nNodes);
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_ofi_tuner_get_coll_info(ncclFunc_t collType, size_t nBytes,
+ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, size_t nBytes,
 				  int collNetSupport, int nvlsSupport, int numPipeOps,
 				  int *algorithm, int *protocol, int* nChannels)
 {
 	float cost = 0;
 	float lowest = FLT_MAX;
 	int algo, proto = 0;
+	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = (struct nccl_ofi_tuner_context *)context;
 
 	/* Skip runs smaller than 2 nodes and fallback to NCCL's internal tunings */
-	if (nccl_ofi_tuner_ctx->num_nodes <= 2)
+	if (nccl_ofi_tuner_ctx->dims.num_nodes <= 2)
 		return ncclSuccess;
 
 	/*
@@ -100,7 +83,8 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(ncclFunc_t collType, size_t nBytes,
 			if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
 				continue;
 
-			cost = nccl_ofi_tuner_compute_cost(collType, algo, proto, numPipeOps,  nBytes);
+			cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->model_params, &nccl_ofi_tuner_ctx->dims,
+							   collType, algo, proto, numPipeOps,  nBytes);
 			if (cost < 0)
 				continue;
 
@@ -118,21 +102,76 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(ncclFunc_t collType, size_t nBytes,
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_ofi_tuner_destroy()
+ncclResult_t nccl_ofi_tuner_destroy(void *context)
 {
 	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	free(nccl_ofi_tuner_ctx);
-	/* Prevent other threads from freeing a dangling global ctx */
-	nccl_ofi_tuner_ctx = NULL;
+	if (context != NULL) {
+		free(context);
+	}
 	pthread_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	return ncclSuccess;
 }
 
+const ncclTuner_v2_t ncclTunerPlugin_v2 = {
+	.name = "nccl_ofi_tuner",
+	.init = nccl_ofi_tuner_init,
+	.getCollInfo = nccl_ofi_tuner_get_coll_info,
+	.destroy = nccl_ofi_tuner_destroy
+};
+
+#if !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
+static struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx_internal;
+
+static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
+{
+	void *context = NULL;
+
+	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	if (nccl_ofi_tuner_ctx_internal != NULL) {
+		/* Prevent other threads from freeing a dangling global ctx */
+		context = (void*)nccl_ofi_tuner_ctx_internal;
+		nccl_ofi_tuner_ctx_internal = NULL;
+	}
+	pthread_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+
+	return nccl_ofi_tuner_destroy(context);
+}
+
+static ncclResult_t nccl_ofi_tuner_init_v1(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction)
+{
+	/*
+	 * NCCL parses these variables and applies user filters inside its
+	 * current tuner logic. Ideally, this should be done regardless of the
+	 * use of NCCL's internal tuner or an external tuner plugin. For the
+	 * time being, given the external tuner is an opt-in, detect if a user
+	 * has set one of them and bail when an external tuner is loaded.
+	 */
+	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
+		NCCL_OFI_WARN("The tuner plugin can not be loaded when explicitly choosing an algorithm or protocol with NCCL_ALGO/NCCL_PROTO");
+		// FIXME: "ncclInvalidUsage should be returned when the error is
+		// most likely a user error" per nccl docs, which arguably makes
+		// it a better return code here than ncclInvalidArgument, but
+		// the former is currently not vended in ext-net headers, so
+		// we're returning ncclInvalidArgument instead.
+		return ncclInvalidArgument;
+	}
+	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, (void**)&nccl_ofi_tuner_ctx_internal);
+}
+
+static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(ncclFunc_t collType, size_t nBytes, int collNetSupport,
+						    int nvlsSupport, int numPipeOps, int *algorithm, int *protocol,
+						    int *nChannels)
+{
+	return nccl_ofi_tuner_get_coll_info(&nccl_ofi_tuner_ctx_internal, collType, nBytes,
+					    collNetSupport, nvlsSupport, numPipeOps, algorithm,
+					    protocol, nChannels);
+}
 
 const ncclTuner_v1_t ncclTunerPlugin_v1 = {
   .name = "nccl_ofi_tuner",
-  .init = nccl_ofi_tuner_init,
-  .getCollInfo = nccl_ofi_tuner_get_coll_info,
-  .destroy = nccl_ofi_tuner_destroy
+  .init = nccl_ofi_tuner_init_v1,
+  .getCollInfo = nccl_ofi_tuner_get_coll_info_v1,
+  .destroy = nccl_ofi_tuner_destroy_v1
 };
+#endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */
