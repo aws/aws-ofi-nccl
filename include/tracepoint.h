@@ -136,21 +136,21 @@ LTTNG_UST_TRACEPOINT_EVENT(
     Recv,
     LTTNG_UST_TP_ARGS(
             int, dev,
-            int, tag,
+            int, comm_id,
             int, size,
             void *, request,
             void *, nccl_req
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
-            lttng_ust_field_integer(int, tag, tag)
+            lttng_ust_field_integer(int, comm_id, comm_id)
             lttng_ust_field_integer(int, size, size)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
     )
 )
-#define NCCL_OFI_TRACE_RECV(dev, tag, size, request, nccl_req) \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req)
+#define NCCL_OFI_TRACE_RECV(dev, comm_id, size, request, nccl_req) \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm_id, size, request, nccl_req)
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,

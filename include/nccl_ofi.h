@@ -191,10 +191,13 @@ typedef struct nccl_ofi_connection_info {
 	uint64_t connect_to_self;
 	nccl_net_ofi_req_t* req;
 } nccl_ofi_connection_info_t;
+/* Since this is a message on the wire, check that it has the expected size */
+_Static_assert(sizeof(nccl_ofi_connection_info_t) == 80,
+	       "Wrong size for SENDRECV connect message");
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
-	uint64_t comm_id;
+	uint32_t comm_id;
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
