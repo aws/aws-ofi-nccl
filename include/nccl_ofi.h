@@ -191,6 +191,9 @@ typedef struct nccl_ofi_connection_info {
 	uint64_t connect_to_self;
 	nccl_net_ofi_req_t* req;
 } nccl_ofi_connection_info_t;
+/* Since this is a message on the wire, check that it has the expected size */
+_Static_assert(sizeof(nccl_ofi_connection_info_t) == 80,
+	       "Wrong size for SENDRECV connect message");
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];

@@ -98,6 +98,9 @@ typedef struct nccl_net_ofi_rdma_ctrl_msg {
 	uint64_t buff_len;
 	uint64_t buff_mr_key[MAX_NUM_RAILS];
 } nccl_net_ofi_rdma_ctrl_msg_t;
+/* Since this is a message on the wire, check that it has the expected size */
+_Static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 56,
+	       "Wrong size for RDMA Control message");
 
 /* Structure used to store control messages in a free list */
 typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
@@ -334,6 +337,9 @@ typedef struct nccl_ofi_rdma_connection_info {
 	 * entries that are in use. */
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
+/* Since this is a message on the wire, check that it has the expected size */
+_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 236,
+	       "Wrong size for RDMA connect message");
 
 /*
  * @brief	Send communicator rail
