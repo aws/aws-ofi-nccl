@@ -628,9 +628,6 @@ struct nccl_net_ofi_rdma_ep {
 	 * and its base struct. */
 	nccl_net_ofi_ep_t base;
 
-	/* ID pool */
-	nccl_ofi_idpool_t *comm_idpool;
-
 	/* Number of rails */
 	int num_rails;
 
@@ -648,10 +645,6 @@ struct nccl_net_ofi_rdma_ep {
 	 * zero. rdma_release_ep() releases the resources if the
 	 * reference counter is decreased down to zero. */
 	int ref_cnt;
-
-	/* Array of open comms associated with this endpoint. This is needed for fast
-	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms;
 
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
@@ -733,6 +726,13 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
+
+	/* ID pool */
+	nccl_ofi_idpool_t *comm_idpool;
+
+	/* Array of open comms associated with this endpoint. This is needed for fast
+	   lookup of comms in the RDMA protocol. */
+	nccl_net_ofi_comm_t **comms;
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
