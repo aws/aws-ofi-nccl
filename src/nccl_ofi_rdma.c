@@ -3070,7 +3070,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	/* Return request to NCCL */
 	*base_req = (nccl_net_ofi_req_t *)req;
 	/* Increment next_msg_seq_num for next call */
-	++(r_comm->next_msg_seq_num);
+	r_comm->next_msg_seq_num = (r_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
 
 	goto exit;
 
@@ -3531,7 +3531,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 	}
 
 	/* Allocate message buffer */
-	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE);
+	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NUM_MSG_SEQ_NUM_BITS);
 	if (!r_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
 		free(r_comm);
@@ -4612,7 +4612,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	/* Return request to NCCL */
 	*base_req = &req->base;
 	/* Increment next_msg_seq_num for next call */
-	++(s_comm->next_msg_seq_num);
+	s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
 
 	goto exit;
 
@@ -4961,7 +4961,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 				     &ret_s_comm->conn_msg);
 
 	/* Allocate message buffer */
-	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE);
+	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NUM_MSG_SEQ_NUM_BITS);
 	if (!ret_s_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
 		ret = -ENOMEM;
