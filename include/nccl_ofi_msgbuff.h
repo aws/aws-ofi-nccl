@@ -15,19 +15,32 @@ extern "C" {
 #include <stdint.h>
 
 /**
- * A "modified circular buffer" used to track in-flight messages. Messages are identified
- * by a 16-bit wrapping sequence number. The buffer maintains two pointers: msg_next and
- * msg_last_incomplete.
+ * A "modified circular buffer" used to track in-flight (or INPROGRESS) messages.
+ * Messages are identified by a wrapping sequence number (with bit width chosen during
+ * initialization). The buffer maintains two pointers: msg_next and msg_last_incomplete.
  *   - msg_next: one after inserted message with highest sequence number
  *   - msg_last_incomplete: not-completed message with lowest sequence number
  *
- * The actual buffer size represents the number of in-flight messages allowed, and should
- * be smaller (less than half) than the range of sequence numbers (65536). This allows
- * distinguishing completed messages from not-started messages. The modulus of the
- * sequence number is used to index the backing buffer.
+ * The msgbuff features a custom number of bits used for the sequence numbers.
+ * The space of all sequence numbers is divided in 3 contiguous, moving sections:
  *
- * This buffer stores void* elements: the user of the buffer is responsible for managing
- * the memory of buffer elements.
+ *   1. One section for in-flight messages, whose max size N is chosen during initialization.
+ *      Only this section has elements actually stored in the backing buffer. The max size N
+ *      of this section (and the buffer) represents the maximum number of in-flight messages
+ *      allowed, and should be smaller (less than half) than the overall range of sequence
+ *      numbers, to leave space for the other sections.
+ *      The modulus of the sequence number is used to index the backing buffer.
+ *   2. One section for completed messages. This section has always size N and
+ *      is always preceding section 1. All the N sequence numbers preceding section 1, with
+ *      possible wraparound, are implicitly considered belonging to completed messages.
+ *      Every time the pending message with the smaller sequence number is completed, the
+ *      msg_last_incomplete pointer is incremented (possibly more than once if the following
+ *      sequence numbers also belong to messages completed out-of-order). This moves the bottom
+ *      of section 1 forward and implicitly also the bottom of section 2.
+ *   3. All other sequence numbers are considered messages that haven't been started.
+ *
+ * The buffer for in-flight messages stores void* elements: the user of the buffer is
+ * responsible for managing the memory of buffer elements.
  */
 
 /* Enumeration to keep track of different msg statuses. */
@@ -73,8 +86,16 @@ typedef struct {
 typedef struct {
 	// Element storage buffer. Allocated in msgbuff_init
 	nccl_ofi_msgbuff_elem_t *buff;
-	// Number of elements in storage buffer
-	uint16_t buff_size;
+	/* Max number of INPROGRESS elements. These are the only
+	 * ones backed by the storage buffer, so this is also the
+	 * size of the storage buffer */
+	uint16_t max_inprogress;
+
+	/* Size of the range of all possible sequence numbers,
+	 * which depends on how many bits are used for them. */
+	uint16_t field_size;
+	/* Bit mask for the sequence numbers */
+	uint16_t field_mask;
 	// Points to the not-finished message with the lowest sequence number
 	uint16_t msg_last_incomplete;
 	// Points to the message after the inserted message with highest sequence number.
@@ -84,11 +105,15 @@ typedef struct {
 } nccl_ofi_msgbuff_t;
 
 /**
- * Allocates and initializes a new message buffer. Buffer size should be a power of 2.
+ * Allocates and initializes a new message buffer.
+ * @param max_inprogress max number of INPROGRESS elements, which are backed by
+ *                       the storage buffer
+ * @param bit_width bit_width of the sequence numbers, which provides the range
+ *                  of elements tracked by this msgbuff
  *
  * @return a new msgbuff, or NULL if initialization failed
  */
-nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t buffer_size);
+nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width);
 
 /**
  * Destroy a message buffer (free memory used by buffer).
