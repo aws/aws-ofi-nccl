@@ -37,7 +37,7 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /*
  * @brief	Number of bits used for the communicator ID
  */
-#define NUM_COMM_ID_BITS           ((uint64_t)12)
+#define NUM_COMM_ID_BITS           ((uint64_t)18)
 
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
@@ -51,13 +51,13 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
  * communicator ID, and the message sequence number (msg_seq_num).
  * The data is encoded as follows:
  *
- * | 4-bit segment count | 12-bit comm ID | 16-bit msg_seq_num |
+ * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
  *
  * - Segment count: number of RDMA writes that will be delivered as part of this message
  * - Comm ID: the ID for this communicator
  * - Message sequence number: message identifier
  */
-#define NUM_MSG_SEQ_NUM_BITS ((uint64_t) 16)
+#define NUM_MSG_SEQ_NUM_BITS       ((uint64_t)10)
 
 /*
  * @brief	Number of bits used for number of segments value
