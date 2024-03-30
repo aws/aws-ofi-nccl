@@ -1,5 +1,8 @@
+#include "config.h"
+
 #include <stdlib.h>
 #include <pthread.h>
+
 #include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_tuner.h"
 #include "nccl_ofi_log.h"

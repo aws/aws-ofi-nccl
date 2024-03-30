@@ -30,7 +30,6 @@
  *
  */
 
-#include "config.h"
 #if HAVE_LIBLTTNG_UST == 1
 
 /*
