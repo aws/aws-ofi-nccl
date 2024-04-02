@@ -60,6 +60,9 @@ bool virt_addr_mr = false;
 /* Selected communication protocol. */
 const char *nccl_ofi_selected_protocol = "SENDRECV";
 
+/* Allocate one domain per process (0) or per thread (1) */
+int domain_per_thread = 0;
+
 /* Internode network latency. */
 float net_latency = .0;
 

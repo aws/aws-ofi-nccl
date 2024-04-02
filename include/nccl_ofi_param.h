@@ -139,6 +139,17 @@ OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
 OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
 
 /*
+ * Override the platform default for domain allocation, with
+ * respect to the process or thread.
+ *
+ * -1 (unset default): use the platform-specific configuration.
+ * 0: Allocate one domain per process
+ * 1: Allocate one domain per thread
+ */
+
+OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
+
+/*
  * When enabled and RDMA communication protocol is used, write NCCL
  * topology file and set environment variable `NCCL_TOPO_FILE`. By
  * default, OFI plugin writes the NCCL topology file to a unique
