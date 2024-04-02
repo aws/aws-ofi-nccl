@@ -305,29 +305,35 @@ int main(int argc, char *argv[])
 
 	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
-exit:
+exit:;
+
+	ncclResult_t close_res = ncclSuccess;
+
 	/* Deallocate buffers */
 	for (int idx = 0; idx < NUM_REQUESTS; idx++) {
 		if (send_buf[idx]) {
-			res = deallocate_buffer(send_buf[idx], buffer_type);
-			if (res != ncclSuccess) {
-				NCCL_OFI_WARN("Send buffer deallocation failure: %d", res);
+			close_res = deallocate_buffer(send_buf[idx], buffer_type);
+			if (close_res != ncclSuccess) {
+				NCCL_OFI_WARN("Send buffer deallocation failure: %d", close_res);
+				res = res ? res : close_res;
 			}
 			send_buf[idx] = NULL;
 		}
 		if (recv_buf[idx]) {
-			res = deallocate_buffer(recv_buf[idx], buffer_type);
-			if (res != ncclSuccess) {
-				NCCL_OFI_WARN("Recv buffer deallocation failure: %d", res);
+			close_res = deallocate_buffer(recv_buf[idx], buffer_type);
+			if (close_res != ncclSuccess) {
+				NCCL_OFI_WARN("Recv buffer deallocation failure: %d", close_res);
+				res = res ? res : close_res;
 			}
 			recv_buf[idx] = NULL;
 		}
 	}
 
 	if (expected_buf) {
-		res = deallocate_buffer(expected_buf, NCCL_PTR_HOST);
-		if (res != ncclSuccess) {
-			NCCL_OFI_WARN("Expected buffer deallocation failure: %d", res);
+		close_res = deallocate_buffer(expected_buf, NCCL_PTR_HOST);
+		if (close_res != ncclSuccess) {
+			NCCL_OFI_WARN("Expected buffer deallocation failure: %d", close_res);
+			res = res ? res : close_res;
 		}
 		expected_buf = NULL;
 	}
