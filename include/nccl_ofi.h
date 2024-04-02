@@ -131,6 +131,15 @@ extern bool virt_addr_mr;
  */
 extern const char *nccl_ofi_selected_protocol;
 
+/*
+ * Determine whether to allocate the domain per process or per
+ * thread.
+ * 0: allocate domain per process
+ * 1: allocate domain per thread
+ */
+
+extern int domain_per_thread;
+
 /* Internode network latency reported to NCCL. */
 extern float net_latency;
 
