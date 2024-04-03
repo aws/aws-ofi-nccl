@@ -18,9 +18,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
-#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
-#endif
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 

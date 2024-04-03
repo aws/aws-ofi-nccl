@@ -18,9 +18,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "tracepoint.h"
-#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
-#endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_topo.h"
@@ -149,28 +147,17 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	assert(system_page_size > 0);
 
 #if HAVE_CUDA
-	ret = nccl_net_ofi_cuda_init();
-	if (ret != 0) {
-		NCCL_OFI_WARN("CUDA initialization failed.");
-		goto exit;
-	}
-
-	int cuda_version;
-	if (nccl_net_ofi_cuDriverGetVersion(&cuda_version) != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("cuDriverGetVersion failed");
+	int cuda_version = nccl_net_ofi_cuda_get_version();
+	if (cuda_version == -1) {
+		NCCL_OFI_WARN("Could not query cuda_version");
 		ret = -ENOTSUP;
 		goto exit;
 	}
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA driver version %d", cuda_version);
 	if (ofi_nccl_cuda_flush_enable()) {
-		if (nccl_net_ofi_cuFlushGPUDirectRDMAWrites == NULL) {
-			NCCL_OFI_WARN("CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
-			cuda_flush = false;
-		} else {
-			NCCL_OFI_WARN("CUDA flush enabled");
-			cuda_flush = true;
-		}
+        NCCL_OFI_WARN("CUDA flush enabled");
+        cuda_flush = true;
 	}
 #endif
 
@@ -402,17 +389,21 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		int num_gpus_visible, active_cuda_device, gpus_per_conn;
 		size_t c;
 
-		if (nccl_net_ofi_cuDeviceGetCount(&num_gpus_visible) != CUDA_SUCCESS) {
+        num_gpus_visible = nccl_net_ofi_cuda_get_device_count();
+        if (num_gpus_visible == -1) {
 			NCCL_OFI_WARN("Error getting CUDA device count");
 			ret = -ENOTSUP;
 			goto error;
-		}
+        }
 
-		if (nccl_net_ofi_cuCtxGetDevice(&active_cuda_device) != CUDA_SUCCESS) {
+        active_cuda_device = nccl_net_ofi_cuda_get_active_dev();
+        if (active_cuda_device == -1) {
 			NCCL_OFI_WARN("Error getting current CUDA device");
 			ret = -ENOTSUP;
 			goto error;
-		}
+        }
+
+
 
 		gpus_per_conn = num_gpus_visible / num_devices;
 		if (gpus_per_conn == 0) gpus_per_conn = 1;

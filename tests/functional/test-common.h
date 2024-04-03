@@ -17,7 +17,29 @@
 #include <unistd.h>
 #include <dlfcn.h>
 #include <stdarg.h>
+
+#pragma weak cuMemAlloc
+#pragma weak cuMemFree
+#pragma weak cuMemHostAlloc
+#pragma weak cuMemFreeHost
+#pragma weak cuMemsetD8
+#pragma weak cuMemcpyDtoH
+#pragma weak cuInit
+#pragma weak cuGetErrorString
+#pragma weak cuCtxCreate
+#pragma weak cuCtxSetCurrent
+
+#pragma weak cuMemAlloc_v2
+#pragma weak cuMemFree_v2
+#pragma weak cuMemHostAlloc_v2
+#pragma weak cuMemFreeHost_v2
+#pragma weak cuMemsetD8_v2
+#pragma weak cuMemcpyDtoH_v2
+#pragma weak cuGetErrorString_v2
+#pragma weak cuCtxSetCurrent_v2
+#pragma weak cuCtxCreate_v2
 #include <cuda.h>
+#include "nccl_ofi_cuda.h"
 
 #define STR2(v)		#v
 #define STR(v)		STR2(v)

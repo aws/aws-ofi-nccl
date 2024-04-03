@@ -30,8 +30,7 @@ if ENABLE_NEURON
   libnccom_net_la_SOURCES = $(sources)
 else
   lib_LTLIBRARIES = libnccl-net.la
-  sources += nccl_ofi_cuda.c \
-	nccl_ofi_interface_nvidia.c
+  sources += nccl_ofi_interface_nvidia.c
   libnccl_net_la_SOURCES = $(sources)
 
 if WANT_PLATFORM_AWS

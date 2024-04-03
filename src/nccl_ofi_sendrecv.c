@@ -11,9 +11,7 @@
 #include <unistd.h>
 
 #include "nccl_ofi.h"
-#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
-#endif
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_freelist.h"
@@ -953,19 +951,13 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
 
-#if CUDA_VERSION >= 11030
+#if HAVE_CUDA
 	if (cuda_flush) {
-		CUresult cuda_ret = nccl_net_ofi_cuFlushGPUDirectRDMAWrites(
-			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
-			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER);
-
-		if (cuda_ret != CUDA_SUCCESS) {
-			ret = -EPERM;
+        ret = nccl_net_ofi_cuda_do_flush_gdr_rdma_writes();
+        if (ret != 0) {
 			NCCL_OFI_WARN("Error performing CUDA GDR flush");
-			goto exit;
-		}
-
-		goto exit;
+        }
+        goto exit;
 	}
 #endif
 

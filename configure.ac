@@ -61,6 +61,10 @@ AC_FUNC_MALLOC
 AC_CHECK_FUNC([memset], [], [AC_MSG_ERROR([NCCL OFI Plugin requires memset function.])])
 AC_CHECK_FUNC([realpath], [], [AC_MSG_ERROR([NCCL OFI Plugin requires realpath function.])])
 AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
+AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires math])])
+AC_SEARCH_LIBS([pthread_create], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads])])
+
+LDFLAGS="${LDFLAGS} -Wl,--as-needed -Wl,--no-undefined -Wl,--no-allow-shlib-undefined"
 
 # Check for GCC builtin functions
 CHECK_GCC_BUILTIN([__builtin_expect])
