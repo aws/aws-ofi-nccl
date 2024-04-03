@@ -97,7 +97,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 		}
 	}
 
-	NCCL_OFI_TRACE(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
+	NCCL_OFI_INFO(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
 				    *algorithm, *protocol, lowest, collType, nBytes);
 	return ncclSuccess;
 }
