@@ -4693,9 +4693,9 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
 	}
 
 	// TODO: We might want to use READ_ONCE to read variable `connected'
+	int ret = 0;
 	while (!s_comm->connected) {
 		__compiler_barrier();
-		int ret = 0;
 		/* Progress our engine to get completions. If the
 		 * connect response message has arrived, the
 		 * connection establishment will be finalized. */
@@ -4704,9 +4704,10 @@ static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
 			return ret;
 		}
 	}
-	send_close(s_comm);
 
-	return 0;
+	ret = send_close(s_comm);
+
+	return ret;
 }
 
 /*
