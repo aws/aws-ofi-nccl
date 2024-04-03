@@ -447,6 +447,9 @@ int platform_init(const char **provider_filter)
 	 * Setting this unconditionally without relying on ncclGetVersion symbol
 	 * being available, since the parameter did not exist in versions prior
 	 * to v2.20.
+	 *
+	 * The NVLSTree chunk size can not be larger than the NVLS chunk size,
+	 * so we ensure both are set to 512KiB.
 	 */
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NVLSTREE_MAX_CHUNKSIZE to 512KiB");
 	ret = setenv("NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288", 0);
@@ -456,6 +459,13 @@ int platform_init(const char **provider_filter)
 		goto exit;
 	}
 
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NVLS_CHUNKSIZE to 512KiB");
+	ret = setenv("NCCL_NVLS_CHUNKSIZE", "524288", 0);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to set NCCL_NVLS_CHUNKSIZE");
+		ret = -errno;
+		goto exit;
+	}
 #endif
 
 	/*
