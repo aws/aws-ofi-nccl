@@ -9,6 +9,24 @@
 #include "config.h"
 #include "tracing_impl/lttng.h"
 
+/***** SENDRECV PROTOCOL *****/
+#define NCCL_OFI_TRACE_SEND_SENDRECV(dev, size, comm, msg_seq_num, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, msg_seq_num, request, nccl_req); \
+} while (0)
+
+#define NCCL_OFI_TRACE_RECV_SENDRECV(dev, tag, size, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req); \
+} while(0)
+
+#define NCCL_OFI_TRACE_FLUSH_SENDRECV(request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Flush, request, nccl_req); \
+} while(0)
+
+#define NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(request,ctx) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, ProcessCompletions, request,ctx); \
+} while(0)
+
+/***** RDMA PROTOCL *****/
 #define NCCL_OFI_TRACE_SEND(dev, size, comm, msg_seq_num, request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, msg_seq_num, request, nccl_req); \
 	} while(0)
