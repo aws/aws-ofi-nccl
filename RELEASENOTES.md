@@ -17,6 +17,7 @@ New Features:
 * Support v8 plugin interface introduced with NCCL 2.20.  This enables
   the use of the user memory registration feature recently introduced
   in NCCL.
+* Update the tuner component to use NCCL's v2 ext-tuner interface.
 * Reduce ordering constraints for control messages, to reduce head of
   line blocking under congestion.
 
