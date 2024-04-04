@@ -19,6 +19,7 @@ extern "C" {
 #include "nccl_ofi_deque.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_tracepoint.h"
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear
@@ -170,6 +171,10 @@ typedef struct {
 	/* Total number of completions. Expect one completion for receiving the
 	 * control message and one completion for each send segment. */
 	int total_num_compls;
+#if HAVE_NVTX_TRACING
+	nvtxRangeId_t trace_id;
+	nvtxRangeId_t seg_trace_id[MAX_NUM_RAILS];
+#endif
 } rdma_req_send_data_t;
 
 /*
@@ -184,6 +189,9 @@ typedef struct {
 	nccl_net_ofi_schedule_t *ctrl_schedule;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
+#if HAVE_NVTX_TRACING
+	nvtxRangeId_t trace_id;
+#endif
 } rdma_req_send_ctrl_data_t;
 
 typedef struct {
@@ -224,6 +232,9 @@ typedef struct {
 	 * For eager messages, the second completion will be received
 	 * when the local read into the destination buffer is complete */
 	int total_num_compls;
+#if HAVE_NVTX_TRACING
+	nvtxRangeId_t trace_id;
+#endif
 } rdma_req_recv_data_t;
 
 /*
@@ -403,8 +414,13 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	 * and `num_init_rails' is adjusted. */
 	int num_init_rails;
 
+#if HAVE_NVTX_TRACING
+	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
+#endif
+
 	/* Array of `num_rails` communicator rails */
 	nccl_net_ofi_rdma_send_comm_rail_t rails[];
+
 } nccl_net_ofi_rdma_send_comm_t;
 
 /*
@@ -464,6 +480,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	/* Free list to track control buffers, for sending RDMA control messages */
 	nccl_ofi_freelist_t *ctrl_buff_fl;
+
+#if HAVE_NVTX_TRACING
+	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
+#endif
 
 	/* Number of rails */
 	int num_rails;
@@ -662,6 +682,10 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
+
+#if HAVE_NVTX_TRACING
+	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
+#endif
 } nccl_net_ofi_rdma_device_t;
 
 /*
