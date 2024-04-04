@@ -1242,7 +1242,7 @@ static inline int handle_bounce_recv(nccl_ofi_rdma_msg_type_t msg_type, nccl_net
 		ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
 		s_comm = get_send_comm(ep, ctrl_msg->remote_comm_id);
 
-		NCCL_OFI_TRACE_SEND_CTRL_RECV(r_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
+		NCCL_OFI_TRACE_SEND_CTRL_RECV(s_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
 
 		ret = handle_ctrl_recv(s_comm, ctrl_msg->msg_seq_num, bounce_req);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -1437,14 +1437,15 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 
 			} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
 				/* CTRL message send completion */
+				NCCL_OFI_TRACE_SEND_CTRL_END(req->dev_id, rail->rail_id, req->comm, req, req->msg_seq_num);
 				ret = set_send_ctrl_completed(req);
 
 			} else if (req->type == NCCL_OFI_RDMA_SEND) {
 				/* Eager message send completion */
+				NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail->rail_id, req->comm, req->msg_seq_num, req);
 				send_data = get_send_data(req);
 				assert(send_data->eager);
 				ret = inc_req_completion(req, 0, send_data->total_num_compls);
-
 			} else {
 				NCCL_OFI_WARN("Send completion from unexpected request type");
 				ret = -EINVAL;
@@ -2272,6 +2273,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 	/* Determine whether the request has finished without error and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
+
 		size_t req_size;
 		ret = pthread_mutex_lock(&req->req_lock);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2314,6 +2316,12 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 				ret = -EINVAL;
 				goto exit;
 			}
+		}
+
+		if (req->type == NCCL_OFI_RDMA_SEND) {
+			NCCL_OFI_TRACE_SEND_END(req);
+		} else if (req->type == NCCL_OFI_RDMA_RECV) {
+			NCCL_OFI_TRACE_RECV_END(req);
 		}
 
 		assert(req->free);
@@ -3239,6 +3247,13 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		goto exit;
 	}
 
+	/* Destroy domain */
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
+	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
+		nvtxDomainDestroy(r_comm->nvtx_domain[i]);
+	}
+#endif
+
 	/* Not strictly necessary, but why leave dangling pointers? */
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) base_ep;
 	set_comm(ep, r_comm->local_comm_id, NULL);
@@ -3556,6 +3571,16 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
 		return NULL;
 	}
+
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
+	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
+	{
+		/* Create nvtx domain */
+		char name[64];
+		snprintf(name, 64, "aws-ofi-nccl r_comm %p_%d", r_comm, i);
+		r_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+	}
+#endif
 
 	return r_comm;
 
@@ -4163,8 +4188,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_senddata failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
 	} else if (rc == 0) {
-		/* TODO: use a better trace for eager send? */
-		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
+		NCCL_OFI_TRACE_EAGER_SEND_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
 	}
 
 	return rc;
@@ -4292,6 +4316,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	assert(xfer_info->rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
 
+	NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, xfer_info->rail_id, req->comm, req, req->msg_seq_num);
 	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->ctrl_msg, sizeof(nccl_net_ofi_rdma_ctrl_msg_t), desc,
 			     comm_rail->remote_addr, req);
 
@@ -4674,6 +4699,13 @@ static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
 		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", s_comm->local_comm_id);
 	}
 
+	/* Destroy domain */
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
+	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
+		nvtxDomainDestroy(s_comm->nvtx_domain[i]);
+	}
+#endif
+
 	free(s_comm);
 
  exit:
@@ -4979,6 +5011,15 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		goto error;
 	}
 
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
+	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
+	{
+		/* Create nvtx domain */
+		char name[64];
+		snprintf(name, 64, "aws-ofi-nccl s_comm %p_%d", ret_s_comm, i);
+		ret_s_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+	}
+#endif
 	*s_comm = ret_s_comm;
 	return ret;
 
@@ -6020,6 +6061,16 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		if (ret != 0) {
 			goto error;
 		}
+
+		/* NVTX domain */
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
+		for (int i = 0; i < device->num_rails; ++i) {
+			/* Create nvtx domain */
+			char name[64];
+			snprintf(name, 64, "aws-ofi-nccl dev %d_%d", dev_id, i);
+			device->nvtx_domain[i] = nvtxDomainCreateA(name);
+		}
+#endif
 	}
 
 	goto exit;
