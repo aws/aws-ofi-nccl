@@ -12,11 +12,17 @@ release) was only available in one of the two variants, we note that
 in the release notes.
 
 # v1.9.0-aws release notes
+This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0)
+or later and supports [NCCL 2.21.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.21.5-1)
+while maintaining backward compatibility with older NCCL versions
+([NCCL v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
 
 New Features:
 * Support v8 plugin interface introduced with NCCL 2.20.  This enables
   the use of the user memory registration feature recently introduced
   in NCCL.
+* Update the tuner component to support v2 ext-tuner interface introduced
+  with NCCL 2.21.
 * Reduce ordering constraints for control messages, to reduce head of
   line blocking under congestion.
 
