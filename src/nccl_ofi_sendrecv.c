@@ -94,7 +94,7 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 		comp_flags = cq_entry[comp_idx].flags;
 		req = container_of(op_ctx, nccl_net_ofi_sendrecv_req_t, ctx);
 
-		NCCL_OFI_TRACE_COMPLETIONS(req, &req->ctx);
+		NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req, &req->ctx);
 
 		/* Determine if this is control message */
 		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {
@@ -871,7 +871,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			desc = fi_mr_desc(mr_handles[recv_n]);
 		}
 
-		NCCL_OFI_TRACE_RECV(dev_id, r_comm->tag, sizes[recv_n], req, base_req);
+		NCCL_OFI_TRACE_RECV_SENDRECV(dev_id, r_comm->tag, sizes[recv_n], req, base_req);
 
 		/*
 		 * TODO: Use NCCL provided tags when plugin supports grouped
@@ -1052,7 +1052,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		}
 	}
 
-	NCCL_OFI_TRACE_FLUSH(req, base_req);
+	NCCL_OFI_TRACE_FLUSH_SENDRECV(req, base_req);
 
 	/* Issue RDMA read */
 	do {
@@ -1654,7 +1654,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	if (mr_handle != NULL)
 		desc = fi_mr_desc(mr_handle);
 
-	NCCL_OFI_TRACE_SEND(req->dev_id, size, s_comm, 0, req, base_req);
+	NCCL_OFI_TRACE_SEND_SENDRECV(req->dev_id, size, s_comm, 0, req, base_req);
 
 	/*
 	 * Try sending data to remote EP; Return NULL request
