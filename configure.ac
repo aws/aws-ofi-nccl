@@ -6,7 +6,7 @@
 #
 
 # Initialization
-AC_INIT([aws-ofi-nccl], [1.9.0a1-aws], [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
+AC_INIT([aws-ofi-nccl], [1.9.0-aws], [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
 AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
