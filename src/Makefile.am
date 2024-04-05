@@ -6,6 +6,9 @@
 
 AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
 
+#
+# net plugin
+#
 sources = \
 	nccl_ofi_api.c \
 	nccl_ofi_net.c \
@@ -25,15 +28,36 @@ sources += platform-aws.c
 endif
 
 if ENABLE_NEURON
-  lib_LTLIBRARIES = libnccom-net.la
   sources += nccl_ofi_interface_neuron.c
-  libnccom_net_la_SOURCES = $(sources)
 else
-  lib_LTLIBRARIES = libnccl-net.la
   sources += nccl_ofi_cuda.c \
 	nccl_ofi_interface_nvidia.c
-  libnccl_net_la_SOURCES = $(sources)
+endif
 
+# Build an internal-only library that can be used by unit tests as
+# well as the actual nccl_net.so / nccom_net.so libraries.  This saves
+# us writing dlopen() handlers for simple unit tests.
+noinst_LTLIBRARIES = libinternal_net_plugin.la
+libinternal_net_plugin_la_SOURCES = $(sources)
+libinternal_net_plugin_la_LDFLAGS = -avoid-version
+
+if ENABLE_NEURON
+  lib_LTLIBRARIES = libnccom-net.la
+  libnccom_net_la_SOURCES =
+  libnccom_net_la_LIBADD = libinternal_net_plugin.la
+  libnccom_net_la_LDFLAGS = -module -avoid-version
+else
+  lib_LTLIBRARIES = libnccl-net.la
+  libnccl_net_la_SOURCES =
+  libnccl_net_la_LIBADD = libinternal_net_plugin.la
+  libnccl_net_la_LDFLAGS = -module -avoid-version
+endif
+
+
+#
+# Tuner
+#
+if HAVE_CUDA
 if WANT_PLATFORM_AWS
   # NCCL tuner plugin
   lib_LTLIBRARIES += libnccl-ofi-tuner.la
@@ -41,5 +65,6 @@ if WANT_PLATFORM_AWS
 	tuner/nccl_ofi_model.c \
 	tuner/nccl_ofi_tuner.c
   libnccl_ofi_tuner_la_SOURCES = $(tuner_sources)
+  libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
 endif
 endif

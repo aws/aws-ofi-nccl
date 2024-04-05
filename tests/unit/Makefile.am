@@ -5,7 +5,7 @@
 #
 
 AM_CPPFLAGS = -I$(top_srcdir)/include
-LDADD = $(top_builddir)/src/lib$(OFI_NCCL_ARCHIVE).la
+LDADD = $(top_builddir)/src/libinternal_net_plugin.la
 
 noinst_HEADERS = test-common.h
 
