@@ -62,6 +62,7 @@ AC_CHECK_FUNC([memset], [], [AC_MSG_ERROR([NCCL OFI Plugin requires memset funct
 AC_CHECK_FUNC([realpath], [], [AC_MSG_ERROR([NCCL OFI Plugin requires realpath function.])])
 AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
 AC_SEARCH_LIBS([pthread_getspecific], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads.])])
+AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2 library function.])])
 
 # Check for GCC builtin functions
 CHECK_GCC_BUILTIN([__builtin_expect])
