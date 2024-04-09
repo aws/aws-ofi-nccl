@@ -31,7 +31,15 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_CHECK_HEADERS([cuda.h], [], [check_pkg_found=no])])
 
-  AS_IF([test "${check_pkg_found}" = "yes"],
+  dnl We only need to include libcuda.so for the functional tests, as
+  dnl the plugins themselves dynamicly load libcuda at runtime.  This
+  dnl is a problem when building in a container on a non-GPU instance,
+  dnl as frequently libcuda is pulled from the base AMI when using
+  dnl containers and not there on non-GPU instances, and this check
+  dnl would break the build in that situation.  Since unit tests don't
+  dnl have to be built, only check for libcuda.so if we're building
+  dnl the unit tests.
+  AS_IF([test "${check_pkg_found}" = "yes" -a "${enable_tests}" != "no"],
         [AC_SEARCH_LIBS([cuMemHostAlloc], [cuda], [CUDA_LIBS="-lcuda"], [check_pkg_found=no])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
