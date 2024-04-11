@@ -543,6 +543,7 @@ int platform_init(const char **provider_filter)
 	if (domain_per_thread == -1) {
 		domain_per_thread = platform_data->domain_per_thread;
 	}
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s", domain_per_thread ? "process" : "thread");
 
 exit:
 	return ret;
