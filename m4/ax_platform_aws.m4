@@ -33,5 +33,5 @@ AC_DEFUN([AX_CHECK_PLATFORM_AWS],[
 ]])],
              [AC_MSG_RESULT([yes])],
              [AC_MSG_RESULT([no])
-	      AC_MSG_ERROR([On AWS platforms, Libfabric 1.18.0 or later is required])])])])
-])
+	      AC_MSG_ERROR([On AWS platforms, Libfabric 1.18.0 or later is required])])
+        NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --enable-platform-aws=${enable_platform_aws}"])])
