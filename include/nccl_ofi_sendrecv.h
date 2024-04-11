@@ -110,6 +110,9 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	/* Endpoint handle to communicate to */
 	struct fid_ep *ofi_ep;
 
+	/* Access Domain handle */
+	struct fid_domain *domain;
+
 	/* Address vector handle */
 	struct fid_av *av;
 

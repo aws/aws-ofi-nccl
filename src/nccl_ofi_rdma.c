@@ -250,6 +250,15 @@ static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
 }
 
 /*
+ * @brief return the domain for the endpoint and rail.
+ */
+
+static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
+{
+	return get_rail(ep, rail_id)->domain;
+}
+
+/*
  * @brief	Unlink temporary NCCL topology file written by `write_topo_file()`
  *
  * This function is guarded by `topo_file_lock`.
@@ -2428,6 +2437,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	struct fi_mr_attr mr_attr = {0};
 	struct iovec iov = {0};
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
+	struct fid_domain *domain;
 	*mhandle = NULL;
 
 	assert(ep);
@@ -2461,10 +2471,10 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	/* Register memory on each rail */
 	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_device_rail_t *dev_rail = get_device_rail(device, rail_id);
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		domain = get_domain_from_endpoint(ep, rail_id);
 
-		ret = register_rail_mr_buffer(dev_rail->domain, rail->ofi_ep,
+		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -5312,7 +5322,19 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 {
 	int ret = 0;
 
-	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, dev_rail->domain, &ep_rail->ofi_ep,
+	if (domain_per_thread == 1) {
+		ret = fi_domain(dev_rail->fabric, dev_rail->info,
+			&ep_rail->domain, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				ret, fi_strerror(-ret));
+			return ret;
+		}
+	} else {
+		ep_rail->domain = dev_rail->domain;
+	}
+
+	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, ep_rail->domain, &ep_rail->ofi_ep,
 						&ep_rail->av, &ep_rail->cq);
 	if (ret != 0) {
 		return ret;
@@ -5582,13 +5604,21 @@ static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_
 		goto error;
 	}
 
-	/* Create domain */
-	ret = fi_domain(rail_dev->fabric, rail_dev->info,
-			&rail_dev->domain, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
+	/*
+         * In the domain-per-thread case, create the domain in the endpoint structure.  In the
+         * domain-per-process case, keep it in the device structure.  This is because, on some
+         * platforms, libfabric locks when accessing the domain, so retaining separate domains
+         * per thread and per endpoint reduces contention for that lock.
+         */
+	if (domain_per_thread == 0) {
+		/* Create domain */
+		ret = fi_domain(rail_dev->fabric, rail_dev->info,
+				&rail_dev->domain, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			goto error;
+		}
 	}
 
 	return ret;
