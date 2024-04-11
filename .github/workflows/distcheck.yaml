@@ -72,10 +72,12 @@ jobs:
           then
             ./configure --with-libfabric=$PWD/libfabric/install \
                         --with-cuda=/usr/local/cuda/ \
+                        --enable-platform-aws \
                         CC=${{ matrix.cc }}
           else
             ./configure --with-libfabric=$PWD/libfabric/install \
                         --enable-neuron \
+                        --enable-platform-aws \
                         CC=${{ matrix.cc }}
           fi
           make -j $(nproc)
