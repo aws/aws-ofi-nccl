@@ -11,6 +11,24 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.9.1-aws release notes
+This is a bugfix release which requires [Libfabric
+v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and
+supports [NCCL 2.21.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.21.5-1)
+while maintaining backward compatibility with older NCCL versions ([NCCL
+v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+
+Bug Fixes:
+* Fix release distribution generation to include missing headers introduced in
+  v1.9.0. This fixes issue #382.
+* Restrict libcuda link-time dependency to builds with testing enabled
+* Build fixes to explicitly link against libm and libpthread used by the plugin
+
+The plugin has been tested with following libfabric providers using tests
+bundled in the source code and
+[nccl-tests](https://github.com/NVIDIA/nccl-tests) suite:
+* efa
+
 # v1.9.0-aws release notes
 This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0)
 or later and supports [NCCL 2.21.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.21.5-1)
