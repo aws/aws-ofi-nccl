@@ -4975,7 +4975,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
 			      dev_id, ret);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto error;
 	}
 
 	/* Store remote address of first rail in communicator */
@@ -4991,7 +4992,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI request free list for dev %d rail %d",
 			      dev_id, rail_id);
-		return ret;
+		goto error;
 	}
 
 	/* Allocate and initialize connect message */
