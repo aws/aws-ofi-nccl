@@ -163,7 +163,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(ncclFunc_t collType, size_t 
 						    int nvlsSupport, int numPipeOps, int *algorithm, int *protocol,
 						    int *nChannels)
 {
-	return nccl_ofi_tuner_get_coll_info(&nccl_ofi_tuner_ctx_internal, collType, nBytes,
+	return nccl_ofi_tuner_get_coll_info(nccl_ofi_tuner_ctx_internal, collType, nBytes,
 					    collNetSupport, nvlsSupport, numPipeOps, algorithm,
 					    protocol, nChannels);
 }
