@@ -1424,7 +1424,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 
 			if (req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP) {
 				/* CONN or CONN_RESP send completion */
-				ret = inc_req_completion(req, cq_entry[comp_idx].len, 1);
+				ret = inc_req_completion(req, sizeof(nccl_ofi_rdma_connection_info_t), 1);
 
 			} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
 				/* CTRL message send completion */
