@@ -1145,11 +1145,12 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm);
  * 		connect messages (l_comm), connect response messages (s_comm),
  * 		RDMA control messages (s_comm), eager messages (r_comm).
  */
-static inline int handle_bounce_recv(nccl_ofi_rdma_msg_type_t msg_type, nccl_net_ofi_rdma_ep_t *ep, int rail_id,
-				     struct fi_cq_data_entry *cq_entry, nccl_net_ofi_rdma_req_t *bounce_req)
+static inline int handle_bounce_recv(nccl_net_ofi_rdma_ep_t *ep, int rail_id, struct fi_cq_data_entry *cq_entry,
+				     nccl_net_ofi_rdma_req_t *bounce_req, bool eager)
 {
 	int ret;
 	rdma_req_bounce_data_t *bounce_data = NULL;
+	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = NULL;
 	nccl_ofi_rdma_connection_info_t *conn_msg = NULL;
 	nccl_ofi_rdma_connection_info_t *conn_resp_msg = NULL;
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = NULL;
@@ -1168,13 +1169,16 @@ static inline int handle_bounce_recv(nccl_ofi_rdma_msg_type_t msg_type, nccl_net
 
 	bounce_data = get_bounce_data(bounce_req);
 	bounce_data->recv_len = cq_entry->len;
+	bounce_fl_item = bounce_data->bounce_fl_item;
+
+	nccl_ofi_rdma_msg_type_t msg_type = eager ? NCCL_OFI_RDMA_MSG_EAGER : *(uint16_t *)&bounce_fl_item->bounce_msg;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
 		/* CONN receive completion */
 		assert(sizeof(nccl_ofi_rdma_connection_info_t) == cq_entry->len);
 
-		conn_msg = get_bounce_connection_msg(bounce_data->bounce_fl_item);
+		conn_msg = get_bounce_connection_msg(bounce_fl_item);
 		l_comm = get_listen_comm(ep, conn_msg->remote_comm_id);
 
 		assert(l_comm->req.comm->type == NCCL_NET_OFI_LISTEN_COMM);
@@ -1199,7 +1203,7 @@ static inline int handle_bounce_recv(nccl_ofi_rdma_msg_type_t msg_type, nccl_net
 		/* CONN_RESP receive completion */
 		assert(sizeof(nccl_ofi_rdma_connection_info_t) == cq_entry->len);
 
-		conn_resp_msg = get_bounce_connection_msg(bounce_data->bounce_fl_item);
+		conn_resp_msg = get_bounce_connection_msg(bounce_fl_item);
 		s_comm = get_send_comm(ep, conn_resp_msg->remote_comm_id);
 
 		assert(NULL != s_comm->conn_resp_req);
@@ -1230,7 +1234,7 @@ static inline int handle_bounce_recv(nccl_ofi_rdma_msg_type_t msg_type, nccl_net
 		/* CTRL receive completion */
 		assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == cq_entry->len);
 
-		ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
+		ctrl_msg = get_bounce_ctrl_msg(bounce_fl_item);
 		s_comm = get_send_comm(ep, ctrl_msg->remote_comm_id);
 
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(r_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
@@ -1401,7 +1405,6 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 	uint64_t comp_idx = 0, comp_flags = 0;
 
 	rdma_req_send_data_t *send_data = NULL;
-	uint16_t *msg_type = NULL;
 
 	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
 		/* The context for these operations is req.
@@ -1442,17 +1445,9 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 			}
 		} else if (comp_flags & FI_RECV) {
 			/* Receive completions */
+			ret = handle_bounce_recv(ep, rail->rail_id, &cq_entry[comp_idx], req,
+						 comp_flags & FI_REMOTE_CQ_DATA);
 
-			if (!(comp_flags & FI_REMOTE_CQ_DATA)) {
-				/* CONN, CONN_RESP, or CTRL message */
-				msg_type = (uint16_t *)cq_entry[comp_idx].buf;
-				ret = handle_bounce_recv(*msg_type, ep, rail->rail_id, &cq_entry[comp_idx], req);
-
-			} else {
-				/* Eager message receive completion */
-				ret = handle_bounce_recv(NCCL_OFI_RDMA_MSG_EAGER, ep, rail->rail_id,
-							 &cq_entry[comp_idx], req);
-			}
 		} else if (comp_flags & FI_REMOTE_WRITE) {
 			/* Remote-initiated write is complete */
 			ret = handle_write_comp(&cq_entry[comp_idx], ep, rail->rail_id);
