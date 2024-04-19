@@ -109,7 +109,14 @@ _Static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 56,
 typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
 	nccl_ofi_freelist_reginfo_t fl_reginfo;
 	nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
+	char msg_prefix[];
 } nccl_net_ofi_rdma_ctrl_fl_item_t;
+
+/* Structure used to store eager prefix buffers in a free list */
+typedef struct nccl_ofi_rdma_eager_prefix_fl_item {
+	nccl_ofi_freelist_reginfo_t fl_reginfo;
+	char msg_prefix[];
+} nccl_ofi_rdma_eager_prefix_fl_item_t;
 
 /* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
 #define BOUNCE_BUFFER_ALIGNMENT 128
@@ -152,6 +159,8 @@ typedef struct {
 typedef struct {
 	/* True for eager messages */
 	bool eager;
+	/* Pointer to the allocated eager prefix buffer from freelist */
+	nccl_ofi_rdma_eager_prefix_fl_item_t *eager_prefix_fl_item;
 	/* Remote destination buffer address */
 	uint64_t remote_buff;
 	/* Remote buffer length */
@@ -402,9 +411,17 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	 * response message */
 	nccl_ofi_rdma_connection_info_t conn_msg;
 
+	/* Opaque prefix space used by libfabric,
+	 * for connection messages */
+	void *msg_prefix;
+
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff_t *msgbuff;
+
+	/* Free list to track eager prefix buffers,
+	   for sending RDMA eager messages */
+	nccl_ofi_freelist_t *eager_prefix_fl;
 
 	/* Number of rails */
 	int num_rails;
@@ -518,6 +535,10 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 	/* Message struct send connect message and receive connect
 	 * response message */
 	nccl_ofi_rdma_connection_info_t conn_msg;
+
+	/* Opaque prefix space used by libfabric,
+	 * for connection response messages */
+	void *msg_prefix;
 } nccl_net_ofi_rdma_listen_comm_t;
 
 /*
@@ -683,6 +704,10 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
+
+	/* Size of the opaque prefix space required by
+	   the libfabric provider for each send/recv */
+	size_t msg_prefix_size;
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
