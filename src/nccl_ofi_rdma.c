@@ -1171,7 +1171,8 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_ep_t *ep, int rail_id, st
 	bounce_data->recv_len = cq_entry->len;
 	bounce_fl_item = bounce_data->bounce_fl_item;
 
-	nccl_ofi_rdma_msg_type_t msg_type = eager ? NCCL_OFI_RDMA_MSG_EAGER : *(uint16_t *)&bounce_fl_item->bounce_msg;
+	nccl_ofi_rdma_msg_type_t msg_type =
+		eager ? NCCL_OFI_RDMA_MSG_EAGER : *(nccl_ofi_rdma_msg_type_t *)&bounce_fl_item->bounce_msg;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
