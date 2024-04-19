@@ -59,12 +59,16 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_SEND_CONN_RESP,
 } nccl_net_ofi_rdma_req_type_t;
 
-typedef enum nccl_ofi_rdma_msg_type {
+enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CONN,
 	NCCL_OFI_RDMA_MSG_CONN_RESP,
 	NCCL_OFI_RDMA_MSG_CTRL,
 	NCCL_OFI_RDMA_MSG_EAGER
-} nccl_ofi_rdma_msg_type_t;
+};
+/* This goes on the wire, so we want the datatype
+ * size to be fixed.
+ */
+typedef uint16_t nccl_ofi_rdma_msg_type_t;
 
 /*
  * @brief	Rdma memory registration handle
@@ -84,7 +88,7 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
    destination buffer */
 typedef struct nccl_net_ofi_rdma_ctrl_msg {
 	/* Message type, must be NCCL_OFI_RDMA_MSG_CTRL */
-	uint16_t type;
+	nccl_ofi_rdma_msg_type_t type;
 
 	/* Message sequence number */
 	uint16_t msg_seq_num;
@@ -328,7 +332,7 @@ typedef struct nccl_ofi_rdma_connection_info {
 	/* Message type
 	 * either NCCL_OFI_RDMA_MSG_CONN or NCCL_OFI_RDMA_MSG_CONN_RESP
 	 */
-	uint16_t type;
+	nccl_ofi_rdma_msg_type_t type;
 
 	/* Number of rails */
 	uint16_t num_rails;
