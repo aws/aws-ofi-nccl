@@ -1,0 +1,9 @@
+general:
+  timeout: 180
+cluster:
+  cluster_type: manual_cluster
+testing:
+  test_target: aws-ofi-nccl
+  test_type: pr
+  test_list:
+    - test_nccl_test
