@@ -37,6 +37,7 @@ int main(int argc, const char **argv)
 						double cost = nccl_ofi_tuner_compute_cost(
 							&context->model_params,
 							&context->dims,
+							&context->base_costs,
 							ncclFuncAllReduce,
 							algo,
 							proto,
