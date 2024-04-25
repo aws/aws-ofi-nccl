@@ -83,8 +83,14 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 			if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
 				continue;
 
-			cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->model_params, &nccl_ofi_tuner_ctx->dims,
-							   collType, algo, proto, numPipeOps,  nBytes);
+			cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->model_params,
+							   &nccl_ofi_tuner_ctx->dims,
+							   &nccl_ofi_tuner_ctx->base_costs,
+							   collType,
+							   algo,
+							   proto,
+							   numPipeOps,
+							   nBytes);
 			if (cost < 0)
 				continue;
 

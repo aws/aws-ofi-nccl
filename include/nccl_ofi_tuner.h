@@ -89,17 +89,25 @@ struct nccl_ofi_tuner_model_dims {
 	int num_nodes;
 };
 
+typedef float nccl_ofi_tuner_cost_table_t[NCCL_NUM_FUNCTIONS][NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS];
+
 struct nccl_ofi_tuner_context {
     struct nccl_ofi_tuner_model_dims dims;
 	struct nccl_ofi_tuner_model_params model_params;
 
-	float base_costs[NCCL_NUM_FUNCTIONS][NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS];
+	nccl_ofi_tuner_cost_table_t base_costs;
 };
 
 /* Modeling functions */
 void nccl_ofi_tuner_model_costs(struct nccl_ofi_tuner_context *ctx);
-float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, struct nccl_ofi_tuner_model_dims *dims,
-                                  ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size);
+float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params,
+				  struct nccl_ofi_tuner_model_dims *dims,
+				  const nccl_ofi_tuner_cost_table_t *base_costs,
+				  ncclFunc_t func,
+				  int algo,
+				  int proto,
+				  int pipe_ops,
+				  size_t size);
 
 
 #if defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
