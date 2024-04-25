@@ -18,13 +18,12 @@ float nccl_ofi_tuner_compute_base_cost(ncclFunc_t func, int algo, int proto)
 }
 
 float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, struct nccl_ofi_tuner_model_dims *dims,
+				  const nccl_ofi_tuner_cost_table_t *base_costs,
                                   ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size)
 {
 	float cost = -1;
 	float latency = 0;
 	float bw = 0;
-	float p2p_lat = 0;
-	float net_lat = 0;
 	int num_steps = 0;
 	int num_internode_steps = 0;
 
@@ -35,11 +34,11 @@ float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, st
 	 * device. Costs associated with out-of-order completions that could
 	 * stall the pipeline should be captured here as well.
 	 */
-	net_lat = (proto == NCCL_PROTO_SIMPLE)
-		    ? params->net_lat + ofi_nccl_tuner_net_comp_overhead()
-		    : params->net_lat;
-
-	p2p_lat = nccl_nvlink_lat[algo][proto];
+	const float base_latency = (*base_costs)[func][algo][proto];
+	const float net_lat = (proto == NCCL_PROTO_SIMPLE)
+		? params->net_lat + ofi_nccl_tuner_net_comp_overhead()
+		: params->net_lat;
+	const float p2p_lat = nccl_nvlink_lat[algo][proto];
 
 	switch(func) {
 	case ncclFuncAllReduce:
@@ -89,7 +88,7 @@ float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, st
 	 * functions and pick with a model config env rather than overwriting
 	 * this one cost function.
 	 */
-	cost = (latency * pipe_ops) + size / bw;
+	cost = ((latency + base_latency) * pipe_ops) + size / bw;
 
 	return cost;
 }
