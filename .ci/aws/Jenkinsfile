@@ -1,0 +1,106 @@
+/* SPDX-License-Identifier: BSD-2-Clause OR GPL-2.0-only */
+/* SPDX-FileCopyrightText: Copyright Amazon.com, Inc. or its affiliates. All rights reserved. */
+// Use milestones to abort old builds when the user force pushes
+def buildNumber = env.BUILD_NUMBER as int
+if (buildNumber > 1) milestone(buildNumber - 1)
+milestone(buildNumber)
+
+pipeline {
+    agent {
+        ecs {
+            inheritFrom 'fargate-large'
+        }
+    }
+    options {
+        buildDiscarder(logRotator(daysToKeepStr: "90"))
+        timeout(time: 8, unit: 'HOURS')
+    }
+    environment {
+        // AWS region where the cluster is created
+        REGION="us-west-2"
+    }
+    stages {
+        // Cleanup workspace before job start.
+        stage("Clean up workspace") {
+            steps{
+                deleteDir()
+            }
+        }
+        stage("Checkout SCM repo") {
+            steps {
+                checkout scm
+            }
+        }
+        stage("Download and extract PortaFiducia") {
+            steps {
+                script {
+                    sh 'printenv'
+                    def common = load ".ci/aws/common.groovy"
+                    common.download_and_extract_portafiducia('PortaFiducia')
+                }
+            }
+        }
+        stage("Install PortaFiducia") {
+            steps {
+                script {
+                    def common = load ".ci/aws/common.groovy"
+                    common.install_porta_fiducia()
+                }
+
+            }
+        }
+        stage("Test OFI NCCL Plugin") {
+            steps {
+                script {
+                    def common = load ".ci/aws/common.groovy"
+                    def stages = [:]
+                    def nccl_version = "v2.20.5-1"
+                    def addl_args_pr = "--enable-live-log true --test-aws-ofi-nccl-pr $env.CHANGE_ID --test-nccl-version ${nccl_version}"
+                    def config = ".ci/aws/aws_ofi_nccl_pr_ci.yaml"
+                    def num_instances = 4
+                    def p4d_lock_label = "p4d-1-4node"
+                    def p4d_region = "us-east-2"
+                    def p4d_odcr = "cr-0e5eebb3c896f6af0"
+                    def p4d_addl_args = "${addl_args_pr} --odcr ${p4d_odcr}"
+
+                    // p4d tests
+                    stages["4_p4d_alinux2"] = common.get_test_stage_with_lock("4_p4d_alinux2", env.BUILD_TAG, "alinux2", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_addl_args)
+                    stages["4_p4d_ubuntu2004"] = common.get_test_stage_with_lock("4_p4d_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_addl_args)
+                    stages["4_p4d_ubuntu2204"] = common.get_test_stage_with_lock("4_p4d_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_addl_args)
+
+                    parallel stages
+                }
+            }
+        }
+        stage('check build_ok') {
+            steps {
+                script {
+                    def common = load ".ci/aws/common.groovy"
+                    if (common.build_ok) {
+                        currentBuild.result = "SUCCESS"
+                    }
+                    else {
+                        currentBuild.result = "FAILURE"
+                    }
+                }
+            }
+        }
+    }
+    post {
+        always {
+            sh 'find outputs -name "*.xml" | xargs du -shc'
+            junit testResults: 'outputs/**/*.xml', keepLongStdio: false
+            archiveArtifacts artifacts: 'outputs/**/*.*'
+        }
+        failure {
+            sh 'echo "Jenkins pipeline has failed."'
+        }
+        aborted {
+            sh '. venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name "$BUILD_TAG"\'*\' --region $REGION'
+        }
+        // Cleanup workspace after job completes.
+        cleanup {
+            deleteDir()
+        }
+    }
+}
