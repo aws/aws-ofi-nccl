@@ -73,7 +73,7 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 
 int test_multiplexing_schedule()
 {
-	nccl_net_ofi_schedule_t *schedule;
+	nccl_net_ofi_schedule_t *schedule = NULL;
 	nccl_net_ofi_schedule_t *ref_schedule = malloc(sizeof(nccl_net_ofi_schedule_t)
 						       + 3 * sizeof(nccl_net_ofi_xfer_info_t));
 	if (!ref_schedule) {
