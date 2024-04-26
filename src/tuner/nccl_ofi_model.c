@@ -49,19 +49,18 @@ float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, st
 			num_internode_steps = 2 * dims->num_nodes;
 			latency = (num_internode_steps * net_lat)
 				  + (num_steps - num_internode_steps) * p2p_lat;
-			bw = params->internode_bw * params->num_rails * ofi_nccl_tuner_num_channels();
+			bw = params->internode_bw * params->num_rails;
 			break;
 
 		case NCCL_ALGO_NVLS_TREE:
 			latency = 2 * (p2p_lat + (log2(dims->num_nodes) * net_lat));
-			bw = NCCL_OFI_MIN(params->intranode_bw, (params->internode_bw * params->num_rails) / 2)
-			     * ofi_nccl_tuner_num_channels();
+			bw = NCCL_OFI_MIN(params->intranode_bw, (params->internode_bw * params->num_rails) / 2);
 			break;
 
 		case NCCL_ALGO_TREE:
 			latency = ((2 * ((dims->num_ranks / dims->num_nodes) - 1) * p2p_lat)
 				   + (2 * log2(dims->num_nodes) * net_lat));
-			bw = (params->internode_bw * params->num_rails * ofi_nccl_tuner_num_channels()) / 2;
+			bw = (params->internode_bw * params->num_rails) / 2;
 			break;
 
 		default:
@@ -89,7 +88,12 @@ float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, st
 	 * functions and pick with a model config env rather than overwriting
 	 * this one cost function.
 	 */
-	cost = (latency * pipe_ops) + size / bw;
+	if (algo == NCCL_ALGO_RING) {
+		const size_t ring_steps = 2;
+		cost = (latency * pipe_ops) + (ring_steps * size) / bw;
+	} else {
+		cost = (latency * pipe_ops) + size / bw;
+	}
 
 	return cost;
 }

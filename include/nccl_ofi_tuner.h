@@ -10,6 +10,7 @@
  * The plugin interface lets us tune the number of channels as well, but that
  * can come later (once a proto+algo combination is chosen, we can compute the
  * cost with different channel count and optimize for it.
+ * NOTE: this parameter is not currently used by the model
  */
 OFI_NCCL_PARAM_INT(tuner_num_channels, "TUNER_NUM_CHANNELS", 8);
 
