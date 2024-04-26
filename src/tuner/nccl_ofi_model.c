@@ -93,7 +93,12 @@ float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params,
 	 * functions and pick with a model config env rather than overwriting
 	 * this one cost function.
 	 */
-	cost = ((latency + base_latency) * pipe_ops) + size / bw;
+	if (algo == NCCL_ALGO_RING) {
+		const size_t ring_steps = 2;
+		cost = ((latency + base_latency) * pipe_ops) + (ring_steps * size) / bw;
+	} else {
+		cost = ((latency + base_latency) * pipe_ops) + size / bw;
+	}
 
 	return cost;
 }
