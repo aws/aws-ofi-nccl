@@ -55,7 +55,7 @@ pipeline {
                     def common = load ".ci/aws/common.groovy"
                     def stages = [:]
                     def nccl_version = "v2.20.5-1"
-                    def addl_args_pr = "--enable-live-log true --test-aws-ofi-nccl-pr $env.CHANGE_ID --test-nccl-version ${nccl_version}"
+                    def addl_args_pr = "--test-aws-ofi-nccl-pr $env.CHANGE_ID --test-nccl-version ${nccl_version}"
                     def config = ".ci/aws/aws_ofi_nccl_pr_ci.yaml"
                     def num_instances = 4
                     def p4d_lock_label = "p4d-1-4node"
