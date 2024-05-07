@@ -15,6 +15,6 @@
  *
  */
 
-#include <tracepoint.h>
+#include <tracing_impl/lttng.h>
 
 #endif // HAVE_LIBLTTNG_UST == 1
