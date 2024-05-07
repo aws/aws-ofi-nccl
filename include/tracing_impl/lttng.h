@@ -2,11 +2,6 @@
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef LTTNG_H_
-#define LTTNG_H_
-
-#if HAVE_LTTNG_UST
-
 #undef LTTNG_UST_TRACEPOINT_PROVIDER
 #define LTTNG_UST_TRACEPOINT_PROVIDER nccl_ofi_plugin
 
@@ -37,15 +32,18 @@
  *
  */
 
+#if HAVE_LIBLTTNG_UST == 1
+
 /*
  * LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ must be included so that the tracepoints
  * can be defined and compiled from tracepoint.c, and so they can be referenced
  * from any other files.
  *
+ * Sample header syntax: https://lttng.org/man/3/lttng-ust/v2.13/#doc-creating-tp
  */
 
-#if !defined(NCCL_OFI_TRACEPOINT_H) || defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ)
-#define NCCL_OFI_TRACEPOINT_H
+#if !defined(LTTNG_H) || defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ)
+#define LTTNG_H
 
 #include <lttng/tracepoint.h>
 
@@ -258,12 +256,12 @@ LTTNG_UST_TRACEPOINT_EVENT(
     )
 )
 
-#endif /* NCCL_OFI_TRACEPOINT_H */
+#endif /* !defined(LTTNG_H) || defined(LTTNG_UST_TRACEPOINT_HEADER_MULTI_READ) */
 
 #include <lttng/tracepoint-event.h>
 
 #else
-#define lttng_ust_tracepoint(...)
-#endif
 
-#endif /* LTTNG_H_ */
+#define lttng_ust_tracepoint(...)
+
+#endif /* HAVE_LIBLTTNG_UST == 1 */
