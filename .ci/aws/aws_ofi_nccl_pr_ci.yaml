@@ -6,5 +6,6 @@ cluster:
 testing:
   test_target: aws-ofi-nccl
   test_type: pr
+  aws_ofi_nccl_build_type: debug
   test_list:
     - test_nccl_test
