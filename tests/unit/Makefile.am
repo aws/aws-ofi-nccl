@@ -13,10 +13,18 @@ noinst_PROGRAMS = \
 	deque \
 	freelist \
 	msgbuff \
+	show_tuner_decisions \
+	show_tuner_costs \
 	scheduler \
 	idpool
 
 TESTS = $(noinst_PROGRAMS)
+
+show_tuner_decisions_SOURCES = show_tuner_decisions.c
+show_tuner_decisions_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
+
+show_tuner_costs_SOURCES = show_tuner_costs.c
+show_tuner_costs_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
 
 deque_SOURCES = deque.c
 freelist_SOURCES = freelist.c

@@ -101,4 +101,11 @@ void nccl_ofi_tuner_model_costs(struct nccl_ofi_tuner_context *ctx);
 float nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_params *params, struct nccl_ofi_tuner_model_dims *dims,
                                   ncclFunc_t func, int algo, int proto, int pipe_ops, size_t size);
 
+
+#if defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
+extern const ncclTuner_v2_t ncclTunerPlugin_v2;
+#else
+extern const ncclTuner_v1_t ncclTunerPlugin_v1;
+#endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */
+
 #endif /* NCCL_OFI_TUNER_H_ */

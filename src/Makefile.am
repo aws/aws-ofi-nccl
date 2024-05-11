@@ -57,13 +57,17 @@ endif
 #
 # Tuner
 #
+noinst_LTLIBRARIES += libinternal_tuner_plugin.la
+tuner_sources = \
+	tuner/nccl_ofi_model.c \
+	tuner/nccl_ofi_tuner.c
+libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
+libinternal_tuner_plugin_la_LDFLAGS = -avoid-version
+
 if HAVE_CUDA
 if WANT_PLATFORM_AWS
   # NCCL tuner plugin
   lib_LTLIBRARIES += libnccl-ofi-tuner.la
-  tuner_sources = \
-	tuner/nccl_ofi_model.c \
-	tuner/nccl_ofi_tuner.c
   libnccl_ofi_tuner_la_SOURCES = $(tuner_sources)
   libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
 endif
