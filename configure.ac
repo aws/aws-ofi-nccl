@@ -21,13 +21,13 @@ dnl AM_PROG_AR
 AX_CHECK_ENABLE_DEBUG([no])
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
-
 LT_INIT([shared disable-static pic-only])
 
 NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 
 # Checks for programs
 AC_PROG_CC
+AM_PROG_CC_C_O
 m4_version_prereq([2.70], [], [AC_PROG_CC_STDC])
 AC_C_INLINE
 

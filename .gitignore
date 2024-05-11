@@ -1,6 +1,7 @@
 *~
 
 src/*.o
+src/tuner/*.o
 src/*.lo
 src/*.la
 libnccl-net.so
@@ -23,6 +24,8 @@ tests/unit/freelist
 tests/unit/deque
 tests/unit/scheduler
 tests/unit/idpool
+tests/unit/show_tuner_decisions
+tests/unit/show_tuner_costs
 
 # http://www.gnu.org/software/automake
 .deps/
