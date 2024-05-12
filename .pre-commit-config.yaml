@@ -45,3 +45,14 @@ repos:
       rev: v0.10.0.1
       hooks:
           - id: shellcheck
+    - repo: https://github.com/pocc/pre-commit-hooks
+      rev: v1.3.5
+      hooks:
+          # xxx: difficult to use right now, need to manually supply include
+          # args to make dependencies resolve. Need compile_commands.json in our
+          # build system longterm.
+          - id: include-what-you-use
+            stages: [manual]
+            files: (src/.*[.]c|include/.*[.]h)
+            exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
+            args: [-Xiwyu, --mapping_file=.iwyu.imp]

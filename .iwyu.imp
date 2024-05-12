@@ -1,0 +1,5 @@
+[
+    { "symbol": ["ENOMEM", "private", "<errno.h>", "public"] },
+    { "symbol": ["EINVAL", "private", "<errno.h>", "public"] },
+    { "symbol": ["memset", "private", "<string.h>", "public"] }
+]
