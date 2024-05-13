@@ -13,3 +13,7 @@ repos:
           - id: mixed-line-ending
           - id: check-added-large-files
           - id: check-shebang-scripts-are-executable
+    - repo: https://github.com/jumanjihouse/pre-commit-hook-yamlfmt
+      rev: 0.2.3
+      hooks:
+          - id: yamlfmt
