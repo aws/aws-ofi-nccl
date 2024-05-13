@@ -1,121 +1,122 @@
+---
 name: PR CI
 on: [push, pull_request]
 env:
-  APT_PACKAGES: >-
-    build-essential
-    clang
-    gcc
-    git
-    libhwloc-dev
-    make
+    APT_PACKAGES: >-
+        build-essential
+        clang
+        gcc
+        git
+        libhwloc-dev
+        make
 jobs:
-  distcheck:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        cc:
-          - gcc
-          - clang
-        sdk:
-          - cuda
-          - neuron
-      fail-fast: false
-    steps:
-      - uses: actions/checkout@v4
+    distcheck:
+        runs-on: ubuntu-22.04
+        strategy:
+            matrix:
+                cc:
+                    - gcc
+                    - clang
+                sdk:
+                    - cuda
+                    - neuron
+            fail-fast: false
+        steps:
+            - uses: actions/checkout@v4
 
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ env.APT_PACKAGES }}
-      - name: Install CUDA SDK
-        if: matrix.sdk == 'cuda'
-        run: |
-          sudo apt-get install -y nvidia-cuda-toolkit
-      - name: Install Neuron SDK
-        if: matrix.sdk == 'neuron'
-        run: |
-          # Configure Linux for Neuron repository updates
-          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
-          deb https://apt.repos.neuron.amazonaws.com jammy main
-          EOF
-          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
-          sudo apt update -y
+            - name: Install Dependencies
+              run: |
+                  sudo apt-get update -y
+                  sudo apt-get install -y ${{ env.APT_PACKAGES }}
+            - name: Install CUDA SDK
+              if: matrix.sdk == 'cuda'
+              run: |
+                  sudo apt-get install -y nvidia-cuda-toolkit
+            - name: Install Neuron SDK
+              if: matrix.sdk == 'neuron'
+              run: |
+                  # Configure Linux for Neuron repository updates
+                  sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
+                  deb https://apt.repos.neuron.amazonaws.com jammy main
+                  EOF
+                  wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
+                  sudo apt update -y
 
-          # Install Neuron Runtime
-          sudo apt-get install aws-neuronx-runtime-lib -y
+                  # Install Neuron Runtime
+                  sudo apt-get install aws-neuronx-runtime-lib -y
 
-      - name: Install Libfabric
-        run: |
-          # We're just doing distchecks, so it is fine if we
-          # just grab the latest master and built a lean build.
-          git clone --depth 1 https://github.com/ofiwg/libfabric.git
-          pushd libfabric
-          ./autogen.sh
-          ./configure --prefix=$PWD/install \
-                      --disable-sockets \
-                      --disable-udp \
-                      --disable-mrail \
-                      --disable-opx \
-                      CC=${{ matrix.cc }}
-          make -j $(nproc)
-          make install
-          popd
+            - name: Install Libfabric
+              run: |
+                  # We're just doing distchecks, so it is fine if we
+                  # just grab the latest master and built a lean build.
+                  git clone --depth 1 https://github.com/ofiwg/libfabric.git
+                  pushd libfabric
+                  ./autogen.sh
+                  ./configure --prefix=$PWD/install \
+                              --disable-sockets \
+                              --disable-udp \
+                              --disable-mrail \
+                              --disable-opx \
+                              CC=${{ matrix.cc }}
+                  make -j $(nproc)
+                  make install
+                  popd
 
-      - name: Build Plugin
-        run: |
-          set -x
+            - name: Build Plugin
+              run: |
+                  set -x
 
-          # actions/checkout@v4 would drop the plugin source in $PWD,
-          # so go ahead and build it.
-          ./autogen.sh
-          if [ ${{ matrix.sdk }} == "cuda" ]
-          then
-            ./configure --with-libfabric=$PWD/libfabric/install \
-                        --with-cuda=/usr/local/cuda/ \
-                        --enable-platform-aws \
-                        CC=${{ matrix.cc }}
-          else
-            ./configure --with-libfabric=$PWD/libfabric/install \
-                        --enable-neuron \
-                        --enable-platform-aws \
-                        CC=${{ matrix.cc }}
-          fi
-          make -j $(nproc)
+                  # actions/checkout@v4 would drop the plugin source in $PWD,
+                  # so go ahead and build it.
+                  ./autogen.sh
+                  if [ ${{ matrix.sdk }} == "cuda" ]
+                  then
+                    ./configure --with-libfabric=$PWD/libfabric/install \
+                                --with-cuda=/usr/local/cuda/ \
+                                --enable-platform-aws \
+                                CC=${{ matrix.cc }}
+                  else
+                    ./configure --with-libfabric=$PWD/libfabric/install \
+                                --enable-neuron \
+                                --enable-platform-aws \
+                                CC=${{ matrix.cc }}
+                  fi
+                  make -j $(nproc)
 
-      - name: Run Dist Check
-        run: make distcheck
+            - name: Run Dist Check
+              run: make distcheck
 
-      - name: Upload build logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.cc }}-config.log
-          path: config.log
+            - name: Upload build logs
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.cc }}-config.log
+                  path: config.log
 
-      - uses: actions/setup-python@v5
-        if: matrix.cc == 'clang'
-        with:
-          python-version: '3.9'
+            - uses: actions/setup-python@v5
+              if: matrix.cc == 'clang'
+              with:
+                  python-version: '3.9'
 
-      - name: Run CodeChecker
-        if: matrix.cc == 'clang'
-        uses: whisperity/codechecker-analysis-action@v1
-        id: codechecker
-        with:
+            - name: Run CodeChecker
+              if: matrix.cc == 'clang'
+              uses: whisperity/codechecker-analysis-action@v1
+              id: codechecker
+              with:
           # clean and rebuild so that compile_commands.json can be detected
-          build-command: "make clean && make"
-          ctu: true
+                  build-command: make clean && make
+                  ctu: true
 
-      - name: Save CodeChecker HTML output.
-        if: matrix.cc == 'clang'
-        uses: actions/upload-artifact@v4
-        with:
-          name: "CodeChecker Bug Reports for ${{ matrix.sdk }}"
-          path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
+            - name: Save CodeChecker HTML output.
+              if: matrix.cc == 'clang'
+              uses: actions/upload-artifact@v4
+              with:
+                  name: CodeChecker Bug Reports for ${{ matrix.sdk }}
+                  path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
 
-      - name: CodeChecker Pass Or Fail?
-        if: matrix.cc == 'clang' && ${{ steps.codechecker.outputs.warnings-in-diff == 'true' }}
-        shell: bash
-        run: |
-          echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
-          exit 0
+            - name: CodeChecker Pass Or Fail?
+              if: matrix.cc == 'clang' && ${{ steps.codechecker.outputs.warnings-in-diff == 'true' }}
+              shell: bash
+              run: |
+                  echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
+                  exit 0
