@@ -52,13 +52,13 @@ jobs:
                   git clone --depth 1 https://github.com/ofiwg/libfabric.git
                   pushd libfabric
                   ./autogen.sh
-                  ./configure --prefix=$PWD/install \
+                  ./configure --prefix="$PWD/install" \
                               --disable-sockets \
                               --disable-udp \
                               --disable-mrail \
                               --disable-opx \
-                              CC=${{ matrix.cc }}
-                  make -j $(nproc)
+                              CC="${{ matrix.cc }}"
+                  make -j "$(nproc)"
                   make install
                   popd
 
@@ -69,19 +69,19 @@ jobs:
                   # actions/checkout@v4 would drop the plugin source in $PWD,
                   # so go ahead and build it.
                   ./autogen.sh
-                  if [ ${{ matrix.sdk }} == "cuda" ]
+                  if [ "${{ matrix.sdk }}" == "cuda" ]
                   then
-                    ./configure --with-libfabric=$PWD/libfabric/install \
+                    ./configure --with-libfabric="$PWD/libfabric/install" \
                                 --with-cuda=/usr/local/cuda/ \
                                 --enable-platform-aws \
-                                CC=${{ matrix.cc }}
+                                CC="${{ matrix.cc }}"
                   else
-                    ./configure --with-libfabric=$PWD/libfabric/install \
+                    ./configure --with-libfabric="$PWD/libfabric/install" \
                                 --enable-neuron \
                                 --enable-platform-aws \
-                                CC=${{ matrix.cc }}
+                                CC="${{ matrix.cc }}"
                   fi
-                  make -j $(nproc)
+                  make -j "$(nproc)"
 
             - name: Run Dist Check
               run: make distcheck
@@ -115,7 +115,7 @@ jobs:
                   path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
 
             - name: CodeChecker Pass Or Fail?
-              if: matrix.cc == 'clang' && ${{ steps.codechecker.outputs.warnings-in-diff == 'true' }}
+              if: matrix.cc == 'clang' && steps.codechecker.outputs.warnings-in-diff == 'true'
               shell: bash
               run: |
                   echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
