@@ -2,9 +2,16 @@
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 
 /*

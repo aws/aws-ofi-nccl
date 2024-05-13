@@ -10,8 +10,12 @@ extern "C" {
 #endif
 
 #include <assert.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <pthread.h>
+
+#include "nccl_ofi_log.h"
 
 /*
  * Internal: deque element structure
