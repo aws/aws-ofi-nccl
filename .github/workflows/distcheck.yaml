@@ -214,6 +214,7 @@ jobs:
           # clean and rebuild so that compile_commands.json can be detected
           build-command: "make clean && make"
           ctu: true
+          config: .github/codechecker.yaml
 
       - name: Save CodeChecker HTML output.
         if: matrix.cc == 'clang'
