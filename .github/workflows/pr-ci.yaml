@@ -109,7 +109,7 @@ jobs:
               if: failure()
               uses: actions/upload-artifact@v4
               with:
-                  name: ${{ matrix.cc }}-config.log
+                  name: ${{ matrix.cc }}-${{ matrix.sdk }}-config.log
                   path: config.log
 
             - uses: actions/setup-python@v5
