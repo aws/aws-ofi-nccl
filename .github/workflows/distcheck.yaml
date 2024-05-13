@@ -74,6 +74,9 @@ jobs:
         cc:
           - gcc
           - clang
+        tracing:
+          - lttng
+          - none
         sdk:
           - cuda
           - neuron
@@ -149,6 +152,13 @@ jobs:
         with:
           packages: aws-neuronx-runtime-lib
           version: neuron-packages
+
+      - name: Install lttng
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.tracing == 'lttng'
+        with:
+          packages: liblttng-ust-dev
+          version: lttng
 
       - name: Install Libfabric
         run: |
