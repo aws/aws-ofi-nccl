@@ -186,7 +186,7 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
 /*
  * Maximum size of a message in bytes before message is multiplexed
  */
-OFI_NCCL_PARAM_INT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", (256 * 1024));
+OFI_NCCL_PARAM_INT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", (256UL * 1024UL));
 
 /*
  * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
