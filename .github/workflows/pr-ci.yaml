@@ -35,14 +35,19 @@ jobs:
             - uses: actions/checkout@v4
 
             - name: Install Dependencies
-              run: |
-                  sudo apt-get update -y
-                  sudo apt-get install -y ${{ env.APT_PACKAGES }}
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: ${{ env.APT_PACKAGES }}
+                  version: base-packages
+
             - name: Install CUDA SDK
               if: matrix.sdk == 'cuda'
-              run: |
-                  sudo apt-get install -y nvidia-cuda-toolkit
-            - name: Install Neuron SDK
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: nvidia-cuda-toolkit
+                  version: cuda-packages
+
+            - name: Configure Neuron SDK Repository
               if: matrix.sdk == 'neuron'
               run: |
                   # Configure Linux for Neuron repository updates
@@ -52,8 +57,12 @@ jobs:
                   wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
                   sudo apt update -y
 
-                  # Install Neuron Runtime
-                  sudo apt-get install aws-neuronx-runtime-lib -y
+            - name: Install Neuron SDK
+              if: matrix.sdk == 'neuron'
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: aws-neuronx-runtime-lib
+                  version: neuron-packages
 
             - name: Install Libfabric
               run: |
