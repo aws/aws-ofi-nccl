@@ -7,21 +7,22 @@ The plugin request address (req) is used to associate requests between NCCL call
 The NCCL request address (request) is used to associate calls from NCCL to the plugin.
 
 To trace aws-ofi-nccl using LTTNG Tracing:
+
 1. Install the LTTNG libraries and dependencies as documented at https://lttng.org/docs/v2.13/#doc-building-from-source
-2. Configure aws-ofi-nccl as normal, but with the addition of the --with-lttng=<prefix> flag to ./configure.  Use as
+1. Configure aws-ofi-nccl as normal, but with the addition of the --with-lttng=<prefix> flag to ./configure.  Use as
    <prefix> the location you chose in the previous step for LTTNG.  For example,
    --with-lttng=/usr/local
-3. Start the LTTNG session daemon.
+1. Start the LTTNG session daemon.
    lttng-sessiond --daemonize
-4. Enable up to 1 Gigabyte of tracing in a memory ring as a single tracing channel.
+1. Enable up to 1 Gigabyte of tracing in a memory ring as a single tracing channel.
    lttng enable-channel --userspace --overwrite --subbuf-size=1M --num-subbuf=1024 efa
-5. Enable all tracepoints on the channel you configured.
+1. Enable all tracepoints on the channel you configured.
    lttng enable-event --userspace -a --channel=efa
-6. Start tracing
+1. Start tracing
    lttng start
-7. Run your test.  Traces should be recorded.
-8. Destroy the tracing that was enabled.
+1. Run your test.  Traces should be recorded.
+1. Destroy the tracing that was enabled.
    lttng destroy
-9. To read and print the traces LTTNG recorded, install the babelfish2 utility.
-10. Print the traces.
-    babelfish2 ~/lttng-traces
+1. To read and print the traces LTTNG recorded, install the babelfish2 utility.
+1. Print the traces.
+   babelfish2 ~/lttng-traces

@@ -36,8 +36,8 @@ reports if that is the case.
 
 The plugin is regularly tested on the following operating systems:
 
-* Amazon Linux 2
-* Ubuntu 20.04 LTS and 22.04 LTS
+- Amazon Linux 2
+- Ubuntu 20.04 LTS and 22.04 LTS
 
 Other operating systems are likely to work; there is very little
 distribution-specific code in the plugin.

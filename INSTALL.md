@@ -60,8 +60,7 @@ the following config option:
 
 In case plugin is configured with `--enable-asan` and the executable
 binary is not compiled and linked with ASAN support, it is required to
-preload the ASAN library, i.e., run the application with `export
-LD_PRELOAD=<path to libasan.so>`.
+preload the ASAN library, i.e., run the application with `export LD_PRELOAD=<path to libasan.so>`.
 
 In case plugin is configured with `--enable-asan` and the plugin is
 run within a CUDA application, environment variable `ASAN_OPTIONS`
