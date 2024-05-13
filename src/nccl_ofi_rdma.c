@@ -1,7 +1,6 @@
 /*
  * Copyright (c) 2023=2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
-#include "config.h"
 
 #include <assert.h>
 #include <inttypes.h>

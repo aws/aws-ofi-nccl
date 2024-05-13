@@ -8,7 +8,6 @@
  * will fail if a direct cuda call is made from the plugin.
  */
 
-#include "config.h"
 
 #include "nccl_ofi_api.h"
 

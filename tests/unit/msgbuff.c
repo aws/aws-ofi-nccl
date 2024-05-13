@@ -4,7 +4,6 @@
 
 #include <stdio.h>
 
-#include "config.h"
 
 #include "nccl_ofi_msgbuff.h"
 

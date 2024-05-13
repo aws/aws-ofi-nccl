@@ -3,7 +3,6 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
 
 #include <limits.h>
 #include <stdio.h>

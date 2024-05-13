@@ -11,7 +11,6 @@ AC_PREREQ([2.69])
 AC_LANG([C])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
-AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIRS([m4])
 
 AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects tar-pax])

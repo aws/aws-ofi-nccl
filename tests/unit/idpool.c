@@ -2,7 +2,6 @@
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
 
 #include <stdio.h>
 

@@ -2,7 +2,6 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
 
 #include <stdlib.h>
 #include <inttypes.h>

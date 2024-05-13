@@ -7,7 +7,6 @@
  * data transfer APIs
  */
 
-#include "config.h"
 
 #include "test-common.h"
 

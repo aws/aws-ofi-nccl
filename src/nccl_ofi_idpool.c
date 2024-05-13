@@ -2,7 +2,6 @@
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_idpool.h"

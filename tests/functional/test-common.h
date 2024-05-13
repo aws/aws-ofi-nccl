@@ -13,7 +13,6 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 #include "mpi.h"
-#include "config.h"
 #include <unistd.h>
 #include <dlfcn.h>
 #include <stdarg.h>
