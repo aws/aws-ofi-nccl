@@ -1,0 +1,6 @@
+---
+analyzer:
+    - --disable=clang-diagnostic-unused-parameter
+    - --ignore=.github/codechecker_skips.txt
+    - --analyzer-config=clangsa:unroll-loops=true
+    - --report-hash=context-free-v2

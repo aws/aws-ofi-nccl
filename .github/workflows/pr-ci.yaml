@@ -194,6 +194,7 @@ jobs:
                   # clean and rebuild so that no files are skipped.
                   build-command: make clean && make
                   ctu: true
+                  config: .github/codechecker.yaml
 
             - name: Save CodeChecker HTML output.
               if: matrix.cc == 'clang'
