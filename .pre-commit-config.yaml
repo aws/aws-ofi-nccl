@@ -56,3 +56,10 @@ repos:
             files: (src/.*[.]c|include/.*[.]h)
             exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
             args: [-Xiwyu, --mapping_file=.iwyu.imp]
+          # This works partially without compile_commands.json, better than
+          # iwyu, but is disabled for the same reason.
+          - id: clang-tidy
+            files: (src/.*[.]c|include/.*[.]h)
+            stages: [manual]
+            exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
+            args: [--config-file=.clang-tidy]
