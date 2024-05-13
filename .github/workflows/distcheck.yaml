@@ -3,8 +3,6 @@ on: [push, pull_request]
 env:
   APT_PACKAGES: >-
     build-essential
-    clang
-    gcc
     git
     libhwloc-dev
     make
@@ -65,17 +63,70 @@ jobs:
     runs-on: ubuntu-22.04
     strategy:
       matrix:
+        cc-variant:
+          - latest
+          - legacy
         cc:
           - gcc
           - clang
         sdk:
           - cuda
           - neuron
+
+        include:
+          - cc-variant: latest
+            cc: clang
+            cc-version: 19
+          - cc-variant: latest
+            cc: gcc
+            cc-version: 13
+
+        exclude:
+          # fails with
+          # > checking if __builtin_expect is available... no
+          # > configure: error: __builtin_expect not available
+          # clang-19 definitely supports this, so it's something in our m4.
+          - cc: clang
+            cc-variant: latest
       fail-fast: false
+    name: u2204/${{ matrix.sdk }}/libfabric@git/${{matrix.cc}}(${{matrix.cc-variant}})/distcheck/
     steps:
       - uses: actions/checkout@v4
+      - name: Configure Neuron SDK Repository
+        if: matrix.sdk == 'neuron'
+        run: |
+          # Configure Linux for Neuron repository updates
+          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
+          deb https://apt.repos.neuron.amazonaws.com jammy main
+          EOF
+          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
+          sudo apt update -y
 
-      - name: Install Dependencies
+      - name: Add compiler repositories
+        if: matrix.cc-variant == 'latest'
+        run: |
+          if [ "${{ matrix.cc }}" == "clang" ]; then
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            # Delete the last line, allowing us to use the cache below for
+            # actually installing the package; this just adds the
+            # repository.
+            sed -i '$ d' llvm.sh
+            sudo ./llvm.sh ${{ matrix.cc-version }}
+          fi
+
+          if [ "${{ matrix.cc }}" == "gcc" ]; then
+            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          fi
+
+      - name: Install Latest Compiler
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.cc-variant == 'latest'
+        with:
+          packages: ${{ matrix.cc }}-${{matrix.cc-version}}
+          version: compiler-${{ matrix.cc }}-${{matrix.cc-version}}
+
+      - name: Install Base Dependencies
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: ${{ env.APT_PACKAGES }}
@@ -87,16 +138,6 @@ jobs:
         with:
           packages: nvidia-cuda-toolkit
           version: cuda-packages
-
-      - name: Configure Neuron SDK Repository
-        if: matrix.sdk == 'neuron'
-        run: |
-          # Configure Linux for Neuron repository updates
-          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
-          deb https://apt.repos.neuron.amazonaws.com jammy main
-          EOF
-          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
-          sudo apt update -y
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
@@ -112,12 +153,13 @@ jobs:
           git clone --depth 1 https://github.com/ofiwg/libfabric.git
           pushd libfabric
           ./autogen.sh
+
+          export CC="${{ matrix.realcc || matrix.cc }}"
           ./configure --prefix="$PWD/install" \
                       --disable-sockets \
                       --disable-udp \
                       --disable-mrail \
-                      --disable-opx \
-                      CC="${{ matrix.cc }}"
+                      --disable-opx
           make -j "$(nproc)"
           make install
           popd
@@ -126,6 +168,8 @@ jobs:
         run: |
           set -x
 
+          export CC="${{ matrix.realcc || matrix.cc }}"
+
           # actions/checkout@v4 would drop the plugin source in $PWD,
           # so go ahead and build it.
           ./autogen.sh
@@ -133,13 +177,11 @@ jobs:
           then
             ./configure --with-libfabric="$PWD/libfabric/install" \
                         --with-cuda=/usr/local/cuda/ \
-                        --enable-platform-aws \
-                        CC="${{ matrix.cc }}"
+                        --enable-platform-aws
           else
             ./configure --with-libfabric="$PWD/libfabric/install" \
                         --enable-neuron \
-                        --enable-platform-aws \
-                        CC="${{ matrix.cc }}"
+                        --enable-platform-aws
           fi
           make -j "$(nproc)"
 
@@ -150,7 +192,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.cc }}-${{ matrix.sdk }}-config.log
+          name: ${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.sdk }}-config.log
           path: config.log
           if-no-files-found: ignore
 
@@ -173,7 +215,7 @@ jobs:
         if: matrix.cc == 'clang'
         uses: actions/upload-artifact@v4
         with:
-          name: "CodeChecker Bug Reports for ${{ matrix.sdk }}"
+          name: CodeChecker Bug Reports for ${{ matrix.sdk }}-${{ matrix.cc-version }}
           path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
 
       - name: CodeChecker Pass Or Fail?
