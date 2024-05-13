@@ -150,8 +150,10 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.cc }}-config.log
+          name: ${{ matrix.cc }}-${{ matrix.sdk }}-config.log
           path: config.log
+          if-no-files-found: ignore
+
 
       - uses: actions/setup-python@v5
         if: matrix.cc == 'clang'
