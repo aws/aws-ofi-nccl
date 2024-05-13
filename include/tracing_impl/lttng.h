@@ -6,7 +6,7 @@
 #define LTTNG_UST_TRACEPOINT_PROVIDER nccl_ofi_plugin
 
 #undef LTTNG_UST_TRACEPOINT_INCLUDE
-#define LTTNG_UST_TRACEPOINT_INCLUDE "include/tracing_impl/lttng.h"
+#define LTTNG_UST_TRACEPOINT_INCLUDE "tracing_impl/lttng.h"
 
 /*
  * To add a tracepoint at the nccl_ofi_plugin layer:
