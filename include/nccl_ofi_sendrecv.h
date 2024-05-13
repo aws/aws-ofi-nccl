@@ -193,7 +193,7 @@ typedef struct nccl_net_ofi_sendrecv_device {
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
 } nccl_net_ofi_sendrecv_device_t;
-	
+
 typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_req_t base;
 

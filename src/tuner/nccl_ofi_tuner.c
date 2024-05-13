@@ -24,7 +24,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	/*
 	 * The tuner API is missing a mechanism to pass around context after
 	 * initialization. For now, init a plugin-lobal context once.
-	 */ 
+	 */
 	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 	nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
 	if (!nccl_ofi_tuner_ctx) {
@@ -63,7 +63,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	/*
 	 * Ideally, this should just be a lookup and not be in-flight math
 	 * We do not want divs in the hot path, but working with the API we've
-	 * got now. 
+	 * got now.
 	 */
 	for (algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 		/* No CollNet on AWS today */

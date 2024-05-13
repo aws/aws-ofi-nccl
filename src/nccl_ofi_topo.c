@@ -1010,7 +1010,7 @@ static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
 	return child;
 }
 
-/* 
+/*
  * @brief	Return PCI device property of PCI device
  *
  * This function reads first `MAX_DEV_PROPERTY_LENGTH` characters from
@@ -1031,7 +1031,7 @@ static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
  *		File name of the device property
  * @return	Pointer to an element of a char array to write device property to.
  *		The array has to be allocated by the caller of this function.
- *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH` 
+ *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH`
  *		characters in addition to the delimiting `\0`.
  * @return	0, on sucess
  *		non-zero, on error

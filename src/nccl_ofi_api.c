@@ -212,7 +212,7 @@ ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 
 /*
  * @brief	Non-blocking connect which returns sComm as NULL
- *		with an expectation that it will be called again until 
+ *		with an expectation that it will be called again until
  *		sComm != NULL
  *
  * The callee obtains one endpoint handle via the device's get_ep()

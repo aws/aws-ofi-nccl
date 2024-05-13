@@ -235,7 +235,7 @@ static int validate_rdma_write(struct fid_ep *ep)
 		ret = -EINVAL;
 		goto exit;
 	}
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d", 
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d",
 		       optval);
 #else
 	NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA write.");
@@ -487,7 +487,7 @@ int platform_init(const char **provider_filter)
 #endif
 
 	/*
-	 * Update topology if platform topology is available and 
+	 * Update topology if platform topology is available and
 	 * environment variable NCCL_TOPO_FILE is not set.
 	 */
 	if (getenv("NCCL_TOPO_FILE")) {

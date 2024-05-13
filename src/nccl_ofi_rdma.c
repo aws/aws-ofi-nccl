@@ -436,7 +436,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
  * @return	Populated I/O vector, on success
  * @return	0 on success
  *		non-zero on error
- */ 
+ */
 static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 				    void *data, size_t size, int type,
 				    struct fi_mr_attr *mr_attr, struct iovec *iov)
@@ -452,7 +452,7 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 	mr_attr->iov_count = 1;
 	mr_attr->access = FI_SEND | FI_RECV;
 
-	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
+	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write)
 	   for RDMA send/recv buffers */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
 
@@ -819,7 +819,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 	int ret = 0;
 	bool segms_received;
-	
+
 	ret = pthread_mutex_lock(&req->req_lock);
 	if (OFI_UNLIKELY(ret)) {
 		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
@@ -834,7 +834,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	/* The arrival of the last segment is treated as a single
 	 * request completion of the parent request */
 	segms_received = req->ncompls == total_nsegms;
-	
+
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
 		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
@@ -853,7 +853,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
 			return -ret;
 		}
-		
+
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
 	} else {
@@ -1277,7 +1277,7 @@ exit:
 
 /**
  * @brief	Get request associated with RDMA write immediate data
- * 
+ *
  * @param	ep, to look up r_comm from ID encoded in data
  * @param	data, the immediate data
  */
@@ -1766,7 +1766,7 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 					 bool dec_inflight_reqs)
 {
 	int ret = 0;
-	
+
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Provided null request for cleanup");
@@ -5981,7 +5981,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			ret = -EINVAL;
 			goto error;
 		}
-	
+
 		/* Allocate device */
 		nccl_net_ofi_rdma_device_t *device = calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
 		if (!device) {
