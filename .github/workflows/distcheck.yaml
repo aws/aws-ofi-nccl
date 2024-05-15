@@ -9,6 +9,58 @@ env:
     libhwloc-dev
     make
 jobs:
+  al2build:
+    runs-on: codebuild-ghactions-al2-${{ github.run_id }}-${{ github.run_attempt }}
+    strategy:
+      matrix:
+        sdk:
+          - cuda
+        efainstaller:
+          - latest
+          - 1.32.0
+          - 1.31.0
+          - 1.30.0
+    name: al2/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/distcheck
+    steps:
+      # note, do not bump to v4: https://github.com/actions/checkout/issues/1590
+      - uses: actions/checkout@v3
+      - name: Fetch and Install EFA Installer Dependencies
+        run: |
+          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz
+          tar -xvf aws-efa-installer-*.tar.gz
+          cd aws-efa-installer/RPMS/ALINUX2/x86_64
+          find . | grep rpm$ | xargs sudo yum -y localinstall
+
+      - name: Install hwloc, utilities.
+        run: |
+          sudo yum -y install hwloc-devel yum-utils
+
+      - name: Configure EPEL and Install CUDA
+        run: |
+          sudo yum -y install \
+             https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
+          sudo yum-config-manager --add-repo \
+             http://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo \
+             --save
+          sudo yum -y clean expire-cache
+          sudo yum -y install cuda libcudnn8-devel
+
+      - name: Call `autoreconf -ivf`
+        run: ./autogen.sh
+
+      - name: Call `./configure`
+        run: |
+          ./configure --prefix=/opt/aws-ofi-nccl --with-mpi=/opt/amazon/openmpi \
+             --with-libfabric=/opt/amazon/efa \
+             --with-cuda=/usr/local/cuda \
+             --enable-platform-aws
+
+      - name: Call `make distcheck`
+        run: make distcheck -j
+
+      - name: Call `make install`
+        run: sudo make install
+
   distcheck:
     runs-on: ubuntu-22.04
     strategy:
