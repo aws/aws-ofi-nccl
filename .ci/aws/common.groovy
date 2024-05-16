@@ -47,7 +47,7 @@ def kill_all_clusters(instance_type, region) {
         script: "echo ${instance_type} | tr -d '.\\n'",
         returnStdout: true
     )
-    sh ". venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name \'*${instance_type_without_period}*\' --region ${region}"
+    sh ". venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name \'*${instance_type_without_period}*\' --region ${region} || true"
 }
 
 
