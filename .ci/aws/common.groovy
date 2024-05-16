@@ -42,10 +42,28 @@ def install_porta_fiducia() {
     '''
 }
 
+def kill_all_clusters(instance_type, region) {
+    def instance_type_without_period = sh(
+        script: "echo ${instance_type} | tr -d '.\\n'",
+        returnStdout: true
+    )
+    sh ". venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name \'*${instance_type_without_period}*\' --region ${region}"
+}
+
+
 def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, config, addl_args) {
     /*
      * Run PortaFiducia/tests/test_orchestrator.py with given command line arguments
      */
+
+    /*
+     * This is a temporary workaround to deal with clusters not getting cleaned up
+     * Attempt to cleanup all instances types in a region when you get the lock.
+     * This is required b/c milestones send multiple SIG_TERM, followed by a SIG_KILL after 20s.
+     * This stops us from being able to add additional capacity to the Jenkins service.
+     */
+    kill_all_clusters(instance_type, region)
+
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
     def args = "--config ${config} --os ${os} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
     def ret = sh (
@@ -82,7 +100,7 @@ def get_cluster_name(build_tag, os, instance_type) {
                 )
 
     def cluster_name = sh(
-                        script: "echo '${build_tag.take(28)}-${os.take(10)}-${instance_type.take(10)}-'${get_random_string(8)} | tr -d '.\\n'",
+                        script: "echo '${build_tag.take(28)}-${os.take(10)}-${instance_type}-'${get_random_string(8)} | tr -d '.\\n'",
                         returnStdout: true
                      )
 
