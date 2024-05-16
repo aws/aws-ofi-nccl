@@ -105,9 +105,8 @@ pipeline {
             sh 'echo "Jenkins pipeline has failed."'
         }
         aborted {
-            sh '. venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name "$BUILD_TAG"\'*\' --region $REGION'
+            sh 'echo "Jenkins pipeline aborted."'
         }
-        // Cleanup workspace after job completes.
         cleanup {
             deleteDir()
         }
