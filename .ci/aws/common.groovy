@@ -50,8 +50,12 @@ def kill_all_clusters(instance_type, region) {
     sh ". venv/bin/activate; ./PortaFiducia/scripts/delete_manual_cluster.py --cluster-name \'*${instance_type_without_period}*\' --region ${region} || true"
 }
 
+def wait_for_odcr_capacity(region, instance_count, odcr) {
+    sh ". venv/bin/activate; ./PortaFiducia/scripts/wait_for_odcr_capacity.py --region ${region} --odcr-id ${odcr} --required-capacity ${instance_count}"
+}
 
-def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, config, addl_args) {
+
+def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, config, odcr, addl_args) {
     /*
      * Run PortaFiducia/tests/test_orchestrator.py with given command line arguments
      */
@@ -63,9 +67,10 @@ def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_
      * This stops us from being able to add additional capacity to the Jenkins service.
      */
     kill_all_clusters(instance_type, region)
+    wait_for_odcr_capacity(region, instance_count, odcr)
 
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
-    def args = "--config ${config} --os ${os} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
+    def args = "--config ${config} --os ${os} --odcr ${odcr} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
     def ret = sh (
                     script: ". venv/bin/activate; ./PortaFiducia/tests/test_orchestrator.py ${args}",
                     returnStatus: true
@@ -108,7 +113,7 @@ def get_cluster_name(build_tag, os, instance_type) {
 }
 
 
-def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, lock_label, lock_count, config, addl_args) {
+def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, lock_label, lock_count, config, odcr, addl_args) {
     /*
      * Generate a single test stage that run test_orchestrator.py with the given parameters.
      * The job will queue until it acquires the given number of locks. The locks will be released
@@ -121,13 +126,14 @@ def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, l
      * param@ lock_label: str, the label of the lockable resources.
      * param@ lock_count: int, the quantity of the lockable resources.
      * param@ config: the name of the PortaFiducia config file
+     * param@ odcr: The on demand capacity reservation ID to create instances in
      * param@ addl_args: additional arguments passed to test_orchestrator.py
      * return@: the test stage.
      */
     return {
         stage("${stage_name}") {
             lock(label: lock_label, quantity: lock_count) {
-                this.run_test_orchestrator_once(stage_name, build_tag, os, instance_type, lock_count, region, config, addl_args)
+                this.run_test_orchestrator_once(stage_name, build_tag, os, instance_type, lock_count, region, config, odcr, addl_args)
             }
         }
     }
