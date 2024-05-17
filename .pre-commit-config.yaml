@@ -1,0 +1,77 @@
+---
+fail_fast: false
+exclude: |
+    (?x)^(
+      include/nccl-headers
+    ).*$
+repos:
+    - repo: https://github.com/pre-commit/pre-commit-hooks
+      rev: v4.6.0
+      hooks:
+          - id: trailing-whitespace
+          - id: end-of-file-fixer
+          - id: check-merge-conflict
+          - id: detect-private-key
+          - id: mixed-line-ending
+          - id: check-added-large-files
+          - id: check-shebang-scripts-are-executable
+    - repo: https://github.com/jumanjihouse/pre-commit-hook-yamlfmt
+      rev: 0.2.3
+      hooks:
+          - id: yamlfmt
+    - repo: https://github.com/rhysd/actionlint
+      rev: v1.7.0
+      hooks:
+          - id: actionlint
+    - repo: https://github.com/executablebooks/mdformat
+      rev: 0.7.17
+      hooks:
+          - id: mdformat
+            additional_dependencies:
+                - mdformat-gfm
+                - mdformat-black
+                - mdformat-web
+                - mdformat-toc
+                - mdformat-tables
+                - mdformat-footnote
+                - mdformat-simple-breaks
+    - repo: https://github.com/compilerla/conventional-pre-commit
+      rev: v3.2.0
+      hooks:
+          - id: conventional-pre-commit
+            stages: [commit-msg]
+            args: [misc, build, ci, docs, feat, fix, perf, refactor, style, test, nit]
+    - repo: https://github.com/shellcheck-py/shellcheck-py
+      rev: v0.10.0.1
+      hooks:
+          - id: shellcheck
+    - repo: https://github.com/pocc/pre-commit-hooks
+      rev: v1.3.5
+      hooks:
+          # xxx: difficult to use right now, need to manually supply include
+          # args to make dependencies resolve. Need compile_commands.json in our
+          # build system longterm.
+          - id: include-what-you-use
+            stages: [manual]
+            files: (src/.*[.]c|include/.*[.]h)
+            exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
+            args: [-Xiwyu, --mapping_file=.iwyu.imp]
+          # This works partially without compile_commands.json, better than
+          # iwyu, but is disabled for the same reason.
+          - id: clang-tidy
+            files: (src/.*[.]c|include/.*[.]h)
+            stages: [manual]
+            exclude: (include/.*memcheck.*[.]h|include/nccl-headers.*|src/nccl_ofi_interface_neuron.c)
+            args: [--config-file=.clang-tidy]
+    - repo: https://github.com/pre-commit/mirrors-clang-format
+      rev: v18.1.5
+      hooks:
+          - id: clang-format
+            stages: [manual]
+            types_or: [c++, c, cuda]
+    - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+      rev: 2.7.3
+      hooks:
+          - id: editorconfig-checker
+            stages: [manual]
+            alias: ec

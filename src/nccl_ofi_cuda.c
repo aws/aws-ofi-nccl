@@ -3,7 +3,6 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
 
-#include "config.h"
 
 #include <dlfcn.h>
 
@@ -75,7 +74,7 @@ int nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
 	CUresult cuda_ret_mem = nccl_net_ofi_cuPointerGetAttribute(&mem_type,
 								   CU_POINTER_ATTRIBUTE_MEMORY_TYPE,
 								   (CUdeviceptr) data);
-	CUresult cuda_ret_dev = nccl_net_ofi_cuPointerGetAttribute(&device_ordinal,	
+	CUresult cuda_ret_dev = nccl_net_ofi_cuPointerGetAttribute(&device_ordinal,
 								   CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL,
 								   (CUdeviceptr) data);
 
@@ -96,4 +95,3 @@ int nccl_net_ofi_get_cuda_device(void *data, int *dev_id)
 	*dev_id = cuda_device;
 	return ret;
 }
-

@@ -2,10 +2,16 @@
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
+#include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 
 /*
@@ -102,7 +108,7 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 	int entry_index = 0;
 	int id = -1;
 	for (size_t i = 0; i < num_long_elements; i++) {
-		entry_index = __builtin_ffsll(idpool->ids[i]);
+		entry_index = __builtin_ffsll((signed long long)idpool->ids[i]);
 		if (0 != entry_index) {
 			/* Found one available ID */
 

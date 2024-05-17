@@ -1,0 +1,61 @@
+---
+BasedOnStyle: Google
+InsertNewlineAtEOF: true
+LineEnding: LF
+ColumnLimit: 100
+TabWidth: 8
+IndentWidth: 8
+BracedInitializerIndentWidth: 8
+ContinuationIndentWidth: 8
+SpacesBeforeTrailingComments: 2
+ReflowComments: true
+IndentCaseLabels: false
+
+BreakBeforeBraces: Linux
+UseTab: ForContinuationAndIndentation
+MaxEmptyLinesToKeep: 2
+AlignOperands: Align
+AllowAllArgumentsOnNextLine: false
+BinPackArguments: false
+BinPackParameters: false
+AlignConsecutiveDeclarations: false
+AlignConsecutiveAssignments: false
+
+AlignTrailingComments:
+    Kind: Always
+    OverEmptyLines: 0
+AlignConsecutiveShortCaseStatements:
+    Enabled: true
+    AcrossEmptyLines: true
+    AcrossComments: true
+    AlignCaseColons: false
+AlignConsecutiveMacros:
+    Enabled: true
+    AcrossEmptyLines: true
+    AcrossComments: true
+
+AlignConsecutiveBitFields:
+    Enabled: true
+    AcrossEmptyLines: true
+    AcrossComments: true
+
+PointerAlignment: Right
+ReferenceAlignment: Right
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+RemoveParentheses: MultipleParentheses
+InsertBraces: true
+
+SortIncludes: CaseSensitive
+IncludeBlocks: Regroup
+IncludeCategories:
+  # External dependencies at the top.
+    - Regex: ^([<].*[.]h[>])$
+      Priority: -50
+      SortPriority: -50
+
+  # local headers below them.
+    - Regex: ^(["].*[.]h["])$
+      Priority: -10
+      SortPriority: -10

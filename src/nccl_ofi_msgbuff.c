@@ -2,8 +2,11 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
 
+#include <assert.h>
+#include <inttypes.h>
+#include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <inttypes.h>
 

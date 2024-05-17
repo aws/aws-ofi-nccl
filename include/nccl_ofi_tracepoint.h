@@ -6,7 +6,6 @@
 #ifndef NCCL_OFI_TRACEPOINT_H_
 #define NCCL_OFI_TRACEPOINT_H_
 
-#include "config.h"
 #include "tracing_impl/nvtx.h"
 #include "tracing_impl/lttng.h"
 

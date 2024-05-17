@@ -274,8 +274,8 @@ struct nccl_net_ofi_device {
 	 * 		nccl_ofi_device.  Create if it does not exist. Store
 	 * 		in pthread key. Increase reference counter. Must be
 	 * 		protected by lock stored in device.
-	 * 
-	 * 		During the plugin initialization, this function will be 
+	 *
+	 * 		During the plugin initialization, this function will be
 	 * 		called once per process using one of the instantiated device structs
 	 * 		to create and configure the endpoint of the initializing thread.
 	 */

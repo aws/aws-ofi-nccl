@@ -1,0 +1,303 @@
+---
+name: PR CI
+on: [push, pull_request, workflow_dispatch]
+env:
+    GCC_LATEST: 13
+    LLVM_LATEST: 19
+    APT_PACKAGES: >-
+        build-essential
+        git
+        libhwloc-dev
+        make
+jobs:
+    pre-commit:
+        runs-on: ubuntu-latest
+        name: pre-commit formatting checks
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.9'
+            - uses: pre-commit/action@v3.0.1
+    distcheck:
+        runs-on: ubuntu-22.04
+        needs: pre-commit
+        strategy:
+            matrix:
+                cc-version:
+                    - latest
+                    - legacy
+                cc:
+                    - gcc
+                    - clang
+                sdk:
+                    - cuda
+                    - neuron
+
+                exclude:
+                    # Disable clang-latest runs.
+                    - cc: clang
+                      cc-version: latest
+                    # fails with
+                    # > checking if __builtin_expect is available... no
+                    # > configure: error: __builtin_expect not available
+                    # clang-19 definitely supports this, so it's something in our m4.
+            fail-fast: false
+        name: u2204/${{matrix.cc}}(${{matrix.cc-version}})/distcheck/${{ matrix.sdk }}
+        steps:
+            - uses: actions/checkout@v4
+
+            - name: Configure Neuron SDK Repository
+              if: matrix.sdk == 'neuron'
+              run: |
+                  # Configure Linux for Neuron repository updates
+                  sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
+                  deb https://apt.repos.neuron.amazonaws.com jammy main
+                  EOF
+                  wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
+                  sudo apt update -y
+
+            - name: Add compiler repositories
+              if: matrix.cc-version == 'latest'
+              run: |
+                  wget https://apt.llvm.org/llvm.sh
+                  chmod +x llvm.sh
+                  # Delete the last line, allowing us to use the cache below for
+                  # actually installing the package; this just adds the
+                  # repository.
+                  sed -i '$ d' llvm.sh
+                  sudo ./llvm.sh ${{ env.LLVM_LATEST }}
+                  sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+
+            - name: Install GCC
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              if: matrix.cc-version == 'legacy' && matrix.cc == 'gcc'
+              with:
+                  packages: gcc
+                  version: compiler-${{ matrix.cc }}-${{ matrix.cc-version }}
+
+            - name: Install Latest GCC
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              if: matrix.cc-version == 'latest' && matrix.cc == 'gcc'
+              with:
+                  packages: gcc-${{ env.GCC_LATEST }}
+                  version: compiler-${{ matrix.cc }}-${{ matrix.cc-version }}
+
+            - name: Install Clang
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              if: matrix.cc-version == 'legacy' && matrix.cc == 'clang'
+              with:
+                  packages: clang
+                  version: compiler-${{ matrix.cc }}-${{ matrix.cc-version }}
+
+            - name: Install Latest Clang
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              if: matrix.cc-version == 'latest' && matrix.cc == 'clang'
+              with:
+                  packages: clang-${{ env.LLVM_LATEST }}
+                  version: compiler-${{ matrix.cc }}-${{ matrix.cc-version }}
+
+            - name: Install Base Dependencies
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: ${{ env.APT_PACKAGES }}
+                  version: base-packages
+
+            - name: Install CUDA SDK
+              if: matrix.sdk == 'cuda'
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: nvidia-cuda-toolkit
+                  version: cuda-packages
+
+            - name: Install Neuron SDK
+              if: matrix.sdk == 'neuron'
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: aws-neuronx-runtime-lib
+                  version: neuron-packages
+
+            - name: Install Libfabric
+              run: |
+                  # We're just doing distchecks, so it is fine if we
+                  # just grab the latest master and built a lean build.
+                  git clone --depth 1 https://github.com/ofiwg/libfabric.git
+                  pushd libfabric
+                  ./autogen.sh
+
+                  export CC="${{ matrix.cc }}"
+                  if [ "${{ matrix.cc-version }}" == "latest" ]; then
+                     if [ "${{ matrix.cc }}" == "clang" ]; then
+                        export CC="$CC-${{ env.LLVM_LATEST }}"
+                     else
+                        export CC="$CC-${{ env.GCC_LATEST }}"
+                     fi
+                  fi
+
+                  ./configure --prefix="$PWD/install" \
+                              --disable-sockets \
+                              --disable-udp \
+                              --disable-mrail \
+                              --disable-opx
+                  make -j "$(nproc)"
+                  make install
+                  popd
+
+            - name: Build Plugin
+              run: |
+                  set -x
+
+                  export CC="${{ matrix.cc }}"
+                  if [ "${{ matrix.cc-version }}" == "latest" ]; then
+                     if [ "${{ matrix.cc }}" == "clang" ]; then
+                        export CC="$CC-${{ env.LLVM_LATEST }}"
+                     else
+                        export CC="$CC-${{ env.GCC_LATEST }}"
+                     fi
+                  fi
+
+                  # actions/checkout@v4 would drop the plugin source in $PWD,
+                  # so go ahead and build it.
+                  ./autogen.sh
+                  if [ "${{ matrix.sdk }}" == "cuda" ]
+                  then
+                    ./configure --with-libfabric="$PWD/libfabric/install" \
+                                --with-cuda=/usr/local/cuda/ \
+                                --enable-platform-aws
+                  else
+                    ./configure --with-libfabric="$PWD/libfabric/install" \
+                                --enable-neuron \
+                                --enable-platform-aws
+                  fi
+                  make -j "$(nproc)"
+
+            - name: Run Dist Check
+              run: make distcheck
+
+            - name: Upload build logs
+              if: failure()
+              uses: actions/upload-artifact@v4
+              with:
+                  name: ${{ matrix.cc }}-${{ matrix.sdk }}-config.log
+                  path: config.log
+
+    codechecker:
+        runs-on: ubuntu-22.04
+        name: CodeChecker - ${{ matrix.sdk }}
+        needs: [pre-commit, distcheck]
+        strategy:
+            matrix:
+                sdk:
+                    - cuda
+                    - neuron
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.9'
+
+            - name: Configure Neuron SDK Repository
+              if: matrix.sdk == 'neuron'
+              run: |
+                  # Configure Linux for Neuron repository updates
+                  sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
+                  deb https://apt.repos.neuron.amazonaws.com jammy main
+                  EOF
+                  wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
+                  sudo apt update -y
+
+            - name: Install Base Dependencies
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: ${{ env.APT_PACKAGES }}
+                  version: base-packages
+
+            - name: Install CUDA SDK
+              if: matrix.sdk == 'cuda'
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: nvidia-cuda-toolkit
+                  version: cuda-packages
+
+            - name: Install Neuron SDK
+              if: matrix.sdk == 'neuron'
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: aws-neuronx-runtime-lib
+                  version: neuron-packages
+
+            - name: Add compiler repositories
+              run: |
+                  wget https://apt.llvm.org/llvm.sh
+                  chmod +x llvm.sh
+                  # Delete the last line, allowing us to use the cache below for
+                  # actually installing the package; this just adds the
+                  # repository.
+                  sed -i '$ d' llvm.sh
+                  sudo ./llvm.sh ${{ env.LLVM_LATEST }}
+                  sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+
+            - name: Install Latest Clang
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: clang-${{ env.LLVM_LATEST }}
+                  version: compiler-clang-latest
+
+            - name: Install cppcheck
+              uses: awalsh128/cache-apt-pkgs-action@latest
+              with:
+                  packages: cppcheck
+                  version: codechecker-cppcheck
+
+            - name: Install Libfabric
+              run: |
+                  # We're just doing distchecks, so it is fine if we
+                  # just grab the latest master and built a lean build.
+                  git clone --depth 1 https://github.com/ofiwg/libfabric.git
+                  pushd libfabric
+                  ./autogen.sh
+                  export CC="clang-${{ env.LLVM_LATEST }}"
+                  ./configure --prefix="$PWD/install" \
+                              --disable-sockets \
+                              --disable-udp \
+                              --disable-mrail \
+                              --disable-opx
+                  make -j "$(nproc)"
+                  make install
+                  popd
+
+            - name: Run Configure
+              run: |
+                  ./autogen.sh
+                  if [ "${{ matrix.sdk }}" == "neuron" ]; then
+                    ./configure \
+                      --with-libfabric="$PWD/libfabric/install" \
+                      --enable-neuron \
+                      --enable-platform-aws
+                  else
+                    ./configure \
+                      --with-libfabric="$PWD/libfabric/install" \
+                      --with-cuda=/usr/local/cuda/ \
+                      --enable-platform-aws
+                  fi
+
+            - name: Run CodeChecker
+              uses: whisperity/codechecker-analysis-action@v1
+              id: codechecker
+              with:
+                  build-command: make
+                  ctu: true
+                  config: .github/codechecker.yaml
+
+            - name: Save CodeChecker HTML output.
+              uses: actions/upload-artifact@v4
+              with:
+                  name: CodeChecker Bug Reports for ${{ matrix.sdk }}
+                  path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
+
+            - name: CodeChecker Pass Or Fail?
+              if: steps.codechecker.outputs.warnings-in-diff == 'true'
+              shell: bash
+              run: |
+                  echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
+                  exit 0

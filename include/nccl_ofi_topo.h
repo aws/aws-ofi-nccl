@@ -141,7 +141,7 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * groups with the exception that the first groups get assigned an
  * additional member.
  *
- * 
+ *
  * The example below shows a schematic representation of the topology
  * while executing the grouping algorithm. The topology shows one
  * bridge, two nodes that correspond to a Nvidia GPUs and four nodes
@@ -149,33 +149,33 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * Note that the schematic view below is a simplification of an actual
  * hardware topology. It is also only a selective view of a
  * hypothetical hardware topology.
- * 
+ *
  * Legend:
  * Topology nodes:
  * X:YZ
  *  |
- * 
+ *
  * Topology node type X:
  * B: Bridge
  * G: GPU
  * N: Node corresponding to a NIC
- * 
+ *
  * num_groups Y:
  * Number indicating the group count
- * 
+ *
  * Mark Z:
  * u: Unmarked node
  * m: Marked node
- * 
+ *
  * Pointer "|":
  * The symbol "|" indicates the libfabric NIC info list pointer stored in
  * the user data of the topology node. The list pointer may be NULL (no
  * list) or stores a list of info objects (NIC0, NIC1, NIC2, NIC3, NIC4).
- * 
- * 
+ *
+ *
  * Initial state after NCCL OFI topology has been created via function
  * nccl_ofi_topo_create().
- * 
+ *
  *                            /
  *                        B:0u
  *       /        /    |        |       \        \
@@ -184,10 +184,10 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * G:0u     G:0u     N:0u     N:0u        N:0u    N:0u
  *  |        |        |        |           |        |
  *                    NIC0     NIC1        NIC2     NIC3
- * 
+ *
  * State after step 1. Topology nodes with libfabric NIC info structs and
  * the nodes' ancestors are marked.
- * 
+ *
  *                            /
  *                        B:0m
  *       /        /   |        |       \        \
@@ -196,10 +196,10 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * G:0u     G:0u     N:0m     N:0m        N:0m    N:0m
  *  |        |        |        |           |        |
  *                    NIC0     NIC1        NIC2     NIC3
- * 
+ *
  * State after step 2. 'num_groups' of bridge node (closest marked node of
  * GPU topology nodes) is increased to two.
- * 
+ *
  *                            /
  *                        B:2m
  *       /        /   |        |       \        \
@@ -208,10 +208,10 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * G:0u     G:0u     N:0m     N:0m        N:0m    N:0m
  *  |        |        |        |           |        |
  *                    NIC0     NIC1        NIC2     NIC3
- * 
+ *
  * State after step 3. The libfabric NIC info structs are lifted up to
  * bridge node (node with 'num_groups' larger then zero).
- * 
+ *
  *                             NIC0-NIC1-NIC2-NIC3
  *                            /
  *                        B:2m
@@ -220,11 +220,11 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  *   /         /      |        |         \        \
  * G:0u     G:0u     N:0m     N:0m        N:0m    N:0m
  *  |        |        |        |           |        |
- * 
+ *
  * State after step 4. List of libfabric NIC info structs is split into
  * two groups. Each group is attached to the topology node of the head of
  * the list.
- * 
+ *
  *                            /
  *                        B:0m
  *       /        /   |        |       \        \
@@ -235,7 +235,7 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  *                    NIC0                 NIC2
  *                    |                    |
  *                    NIC1                 NIC3
- * 
+ *
  * @param	topo
  *		The NCCL OFI topology.
  *

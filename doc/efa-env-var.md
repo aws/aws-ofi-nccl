@@ -97,7 +97,7 @@ support both EFA and NVIDIA GPUDirect Remote Direct Memory Access (RDMA).
       <th>Actions</th>
    </thead>
 
-   <tr>
+<tr>
       <td>p5.48xlarge</td>
       <td>
          • cuda>=12.0<br>

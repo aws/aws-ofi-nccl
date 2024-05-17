@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
+
 int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    int required_version,
 				    struct fi_info *hints,

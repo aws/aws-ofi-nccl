@@ -6,6 +6,8 @@
 #ifndef NET_OFI_API_H_
 #define NET_OFI_API_H_
 
+#include <inttypes.h>
+
 #include "nccl-headers/net.h"
 #include "nccl-headers/error.h"
 

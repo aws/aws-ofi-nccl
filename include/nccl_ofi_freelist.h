@@ -10,8 +10,10 @@ extern "C" {
 #endif
 
 #include <assert.h>
-#include <stdlib.h>
 #include <pthread.h>
+#include <stdbool.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_memcheck.h"

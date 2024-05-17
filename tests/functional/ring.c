@@ -2,7 +2,6 @@
  * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include "config.h"
 
 #include "test-common.h"
 

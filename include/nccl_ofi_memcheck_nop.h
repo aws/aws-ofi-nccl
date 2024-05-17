@@ -9,6 +9,9 @@
 extern "C" {
 #endif
 
+#include <inttypes.h>
+#include <stddef.h>
+
 /**
  * @file This module provides empty implementations of the interface
  * for providing hints about the expected state of a memory region.

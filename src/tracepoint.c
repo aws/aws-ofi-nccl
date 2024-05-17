@@ -2,7 +2,6 @@
  * Copyright (c) 2022 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include <config.h>
 #if HAVE_LIBLTTNG_UST == 1
 
 #define TRACEPOINT_CREATE_PROBES
