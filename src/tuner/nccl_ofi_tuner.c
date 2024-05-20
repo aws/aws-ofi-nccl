@@ -1,11 +1,18 @@
+/*
+ * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ */
 #include "config.h"
 
-#include <stdlib.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <float.h>
+#include <math.h>
 
 #include "nccl-headers/nvidia/tuner.h"
-#include "nccl_ofi_tuner.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_math.h"
+#include "nccl_ofi_tuner.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
@@ -13,34 +20,21 @@ ncclDebugLogger_t ofi_log_function = NULL;
 ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
 	ofi_log_function = logFunction;
-	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx;
-
-	const struct nccl_ofi_tuner_model_params params = {
-		.net_lat = ofi_nccl_tuner_net_latency(),
-		.internode_bw = NCCL_OFI_TUNER_INTERNODE_BW,
-		.intranode_bw = NCCL_OFI_TUNER_INTRANODE_BW,
-		.num_rails = NCCL_OFI_TUNER_NET_NUM_RAILS
-	};
 
 	/*
 	 * The tuner API is missing a mechanism to pass around context after
 	 * initialization. For now, init a plugin-lobal context once.
 	 */ 
 	pthread_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
-	if (!nccl_ofi_tuner_ctx) {
+	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx =
+		calloc(1, sizeof(struct nccl_ofi_tuner_context));
+	if (nccl_ofi_tuner_ctx == NULL) {
 		NCCL_OFI_WARN("Context allocation failed.");
 		return ncclInternalError;
 	}
 
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
-	nccl_ofi_tuner_ctx->model_params = params;
-
-	/*
-	 * Build cost model to use from nccl_ofi_tuner_get_coll_info.
-	 */
-	nccl_ofi_tuner_model_costs(nccl_ofi_tuner_ctx);
 	*context = (void*)nccl_ofi_tuner_ctx;
 	pthread_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
 
@@ -52,9 +46,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 				  int collNetSupport, int nvlsSupport, int numPipeOps,
 				  int *algorithm, int *protocol, int* nChannels)
 {
-	float cost = 0;
-	float lowest = FLT_MAX;
-	int algo, proto = 0;
+	double lowest = DBL_MAX;
 	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = (struct nccl_ofi_tuner_context *)context;
 
 	/* Skip runs smaller than 2 nodes and fallback to NCCL's internal tunings */
@@ -66,7 +58,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	 * We do not want divs in the hot path, but working with the API we've
 	 * got now. 
 	 */
-	for (algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
+	for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 		/* No CollNet on AWS today */
 		if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN)
 			continue;
@@ -78,24 +70,20 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 		if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE))
 			continue;
 
-		for (proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
+		for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
 			/* This is not a supported combination in NCCL */
 			if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
 				continue;
 
-			cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->model_params,
-							   &nccl_ofi_tuner_ctx->dims,
-							   &nccl_ofi_tuner_ctx->base_costs,
-							   collType,
-							   algo,
-							   proto,
-							   numPipeOps,
-							   nBytes);
-			if (cost < 0)
-				continue;
+			const double cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
+									collType,
+									algo,
+									proto,
+									numPipeOps,
+									nBytes);
 
 			NCCL_OFI_TRACE(NCCL_TUNING, "Computed cost for algo %d proto %d pipe %d: cost %.8f µsecs.", algo, proto, numPipeOps, cost);
-			if (cost < lowest) {
+			if (cost < lowest && cost > 0 && cost < INFINITY) {
 				*algorithm = algo;
 				*protocol = proto;
 				lowest = cost;
