@@ -35,9 +35,7 @@ int main(int argc, const char **argv)
 					for (size_t nmibytes = 1; nmibytes <= 32 * 1024;
 					     nmibytes <<= 1) {
 						double cost = nccl_ofi_tuner_compute_cost(
-							&context->model_params,
 							&context->dims,
-							&context->base_costs,
 							ncclFuncAllReduce,
 							algo,
 							proto,
