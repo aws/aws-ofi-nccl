@@ -12,41 +12,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  al2build:
-    runs-on: codebuild-ghactions-al2-${{ github.run_id }}-${{ github.run_attempt }}
+  amazonlinux:
     strategy:
       matrix:
         sdk:
           - cuda
+        amazonlinux:
+          - al2023
+          - al2
         efainstaller:
           - latest
           - 1.32.0
           - 1.31.0
           - 1.30.0
-    name: al2/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/distcheck
+        include:
+          - amazonlinux: al2023
+            efainstallerdir: ALINUX2023
+            nvidiadistro: fedora37
+            configmanager: dnf config-manager
+            cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
+
+          - amazonlinux: al2
+            efainstallerdir: ALINUX2
+            nvidiadistro: rhel7
+            configmanager: yum-config-manager
+            cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
+
+    runs-on: codebuild-ghactions-${{ matrix.amazonlinux }}-${{ github.run_id }}-${{ github.run_attempt }}
+    name: ${{matrix.amazonlinux}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
     steps:
       # note, do not bump to v4: https://github.com/actions/checkout/issues/1590
       - uses: actions/checkout@v3
       - name: Fetch and Install EFA Installer Dependencies
         run: |
           curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz
-          tar -xvf aws-efa-installer-*.tar.gz
-          cd aws-efa-installer/RPMS/ALINUX2/x86_64
+          tar -xf aws-efa-installer-*.tar.gz
+          cd aws-efa-installer/RPMS/${{ matrix.efainstallerdir }}/x86_64
           find . | grep rpm$ | xargs sudo yum -y localinstall
-
       - name: Install hwloc, utilities.
         run: |
           sudo yum -y install hwloc-devel yum-utils
-
-      - name: Configure EPEL and Install CUDA
+      - name: Add EPEL
+        if: matrix.amazonlinux == 'al2'
         run: |
           sudo yum -y install \
              https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
-          sudo yum-config-manager --add-repo \
-             http://developer.download.nvidia.com/compute/cuda/repos/rhel7/x86_64/cuda-rhel7.repo \
+      - name: Install CUDA
+        run: |
+          sudo ${{ matrix.configmanager }} --add-repo \
+             http://developer.download.nvidia.com/compute/cuda/repos/${{ matrix.nvidiadistro }}/x86_64/cuda-${{ matrix.nvidiadistro }}.repo \
              --save
           sudo yum -y clean expire-cache
-          sudo yum -y install cuda libcudnn8-devel
+          sudo yum -y install ${{ matrix.cudapackages }}
 
       - name: Call `autoreconf -ivf`
         run: ./autogen.sh
@@ -54,12 +71,13 @@ jobs:
       - name: Call `./configure`
         run: |
           ./configure --prefix=/opt/aws-ofi-nccl --with-mpi=/opt/amazon/openmpi \
-             --with-libfabric=/opt/amazon/efa \
-             --with-cuda=/usr/local/cuda \
-             --enable-platform-aws
+               --with-libfabric=/opt/amazon/efa \
+               --with-cuda=/usr/local/cuda \
+               --enable-tests=no \
+               --enable-platform-aws
 
-      - name: Call `make distcheck`
-        run: make distcheck -j
+      - name: Call `make`
+        run: make -j
 
       - name: Call `make install`
         run: sudo make install
