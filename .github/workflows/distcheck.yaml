@@ -6,6 +6,11 @@ env:
     git
     libhwloc-dev
     make
+
+concurrency:
+  group: ${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   al2build:
     runs-on: codebuild-ghactions-al2-${{ github.run_id }}-${{ github.run_attempt }}
