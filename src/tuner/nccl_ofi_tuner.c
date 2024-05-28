@@ -1,19 +1,20 @@
 /*
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
-#include "config.h"
-
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <float.h>
-#include <math.h>
 
-#include "nccl-headers/nvidia/tuner.h"
+#include "config.h"
+
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
-#include "nccl_ofi_tuner.h"
 #include "nccl_ofi_pthread.h"
+#include "nccl_ofi_tuner.h"
+
+#include "nccl-headers/nvidia/tuner.h"
+#include <float.h>
+#include <math.h>
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
@@ -36,7 +37,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
-	*context = (void*)nccl_ofi_tuner_ctx;
+	*context = (void *)nccl_ofi_tuner_ctx;
 	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	NCCL_OFI_TRACE(NCCL_TUNING, "Tuner init: comm with %ld ranks and %ld nodes.", nRanks, nNodes);
@@ -68,35 +69,46 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	 * We do not want divs in the hot path, but working with the API we've
 	 * got now. 
 	 */
-	for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
-		/* No CollNet on AWS today */
-		if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN)
-			continue;
-
-		/* Skip NCCL_ALGO_NVLS used only for single-node jobs */
-		if (algo == NCCL_ALGO_NVLS)
-			continue;
-
-		if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE))
-			continue;
-
-		for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
-			/* This is not a supported combination in NCCL */
-			if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
+	for (size_t nChan = 2; nChan <= 16; nChan += 2) {
+		for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
+			/* No CollNet on AWS today */
+			if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN)
 				continue;
 
-			const double cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
-									collType,
-									algo,
-									proto,
-									numPipeOps,
-									nBytes);
+			/* Skip NCCL_ALGO_NVLS used only for single-node jobs */
+			if (algo == NCCL_ALGO_NVLS)
+				continue;
 
-			NCCL_OFI_TRACE(NCCL_TUNING, "Computed cost for algo %d proto %d pipe %d: cost %.8f µsecs.", algo, proto, numPipeOps, cost);
-			if (cost < lowest && cost > 0 && cost < INFINITY) {
-				*algorithm = algo;
-				*protocol = proto;
-				lowest = cost;
+			if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE))
+				continue;
+
+			for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
+				/* This is not a supported combination in NCCL */
+				if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
+					continue;
+
+				const double cost =
+					nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
+								    collType,
+								    algo,
+								    proto,
+								    numPipeOps,
+								    nChan,
+								    nBytes);
+
+				NCCL_OFI_TRACE(NCCL_TUNING,
+					       "Computed cost for algo %d proto %d pipe %d: cost "
+					       "%.8f µsecs.",
+					       algo,
+					       proto,
+					       numPipeOps,
+					       cost);
+				if (cost < lowest && cost > 0 && cost < INFINITY) {
+					*algorithm = algo;
+					*protocol = proto;
+					*nChannels = nChan;
+					lowest = cost;
+				}
 			}
 		}
 	}

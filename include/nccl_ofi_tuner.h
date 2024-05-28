@@ -35,6 +35,7 @@ double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const* dims,
 				   int algo,
 				   int proto,
 				   int pipe_ops,
+				   size_t nChan,
 				   size_t size);
 
 
