@@ -315,7 +315,7 @@ nodes,ranks,size,algorithm,protocol
 16,128,512MiB,nvlstree,simple
 16,128,1024MiB,ring,simple
 16,128,2048MiB,ring,simple
-16,128,4096MiB,ring,simple
+16,128,4096MiB,nvlstree,simple
 16,128,8192MiB,ring,simple
 16,128,16384MiB,ring,simple
 16,128,32768MiB,ring,simple

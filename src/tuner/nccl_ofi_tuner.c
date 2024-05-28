@@ -53,6 +53,15 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	if (nccl_ofi_tuner_ctx->dims.num_nodes <= 2)
 		return ncclSuccess;
 
+	if (collType == ncclFuncAllReduce && nccl_ofi_tuner_ctx->dims.num_nodes == 16 &&
+	    nccl_ofi_tuner_ctx->dims.num_ranks == 128 && nvlsSupport && nBytes > 3ULL * 1024ULL * 1024ULL * 1024ULL &&
+	    nBytes <= 5ULL * 1024ULL * 1024ULL * 1024ULL) {
+		lowest = 0;
+		*algorithm = NCCL_ALGO_NVLS_TREE;
+		*protocol = NCCL_PROTO_SIMPLE;
+		goto exit;
+	}
+
 	/*
 	 * Ideally, this should just be a lookup and not be in-flight math
 	 * We do not want divs in the hot path, but working with the API we've
@@ -91,6 +100,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 		}
 	}
 
+exit:
 	NCCL_OFI_INFO(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
 				    *algorithm, *protocol, lowest, collType, nBytes);
 	return ncclSuccess;
