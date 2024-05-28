@@ -17,7 +17,7 @@ void dummy_logger(ncclDebugLogLevel level, unsigned long flags, const char *file
 
 int main(int argc, const char **argv)
 {
-	printf("nodes,ranks,size,algorithm,protocol\n");
+	printf("nodes,ranks,size,channels,algorithm,protocol\n");
 	for (size_t nodes = 1; nodes <= 1024; nodes <<= 1) {
 		for (size_t ranks_per_node = 1; ranks_per_node <= 8; ranks_per_node <<= 1) {
 			void *context = NULL;
@@ -44,10 +44,11 @@ int main(int argc, const char **argv)
 					return 1;
 				}
 
-				printf("%lu,%lu,%luMiB,%s,%s\n",
+				printf("%lu,%lu,%luMiB,%d,%s,%s\n",
 				       nodes,
 				       nodes * ranks_per_node,
 				       nmibytes,
+				       nChannels,
 				       algorithm >= 0 && algorithm <= 5 ? algo_names[algorithm]
 									: "none",
 				       protocol >= 0 && protocol <= 2 ? proto_names[protocol]
