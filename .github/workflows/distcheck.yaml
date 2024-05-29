@@ -178,22 +178,12 @@ jobs:
           packages: liblttng-ust-dev
           version: lttng
 
-      - name: Install Libfabric
+      - name: Fetch and Install EFA Installer Dependencies
         run: |
-          # We're just doing distchecks, so it is fine if we
-          # just grab the latest master and built a lean build.
-          git clone --depth 1 https://github.com/ofiwg/libfabric.git
-          pushd libfabric
-          ./autogen.sh
-
-          export CC="${{ matrix.realcc || matrix.cc }}"
-          ./configure --prefix="$PWD/install" \
-                      --disable-sockets \
-                      --disable-udp \
-                      --disable-mrail \
-                      --disable-opx
-          make -j "$(nproc)"
-          make install
+          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
+          tar -xf aws-efa-installer-*.tar.gz
+          pushd aws-efa-installer/
+              sudo ./efa_installer.sh -y --skip-kmod
           popd
 
       - name: Build Plugin
@@ -207,11 +197,13 @@ jobs:
           ./autogen.sh
           if [ "${{ matrix.sdk }}" == "cuda" ]
           then
-            ./configure --with-libfabric="$PWD/libfabric/install" \
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
                         --with-cuda=/usr/local/cuda/ \
+                        --enable-tests \
                         --enable-platform-aws
           else
-            ./configure --with-libfabric="$PWD/libfabric/install" \
+            ./configure --with-libfabric=/opt/amazon/efa \
                         --enable-neuron \
                         --enable-platform-aws
           fi
@@ -280,20 +272,12 @@ jobs:
           packages: cppcheck
           version: codechecker-cppcheck
 
-      - name: Install Libfabric
+      - name: Fetch and Install EFA Installer Dependencies
         run: |
-          # We're just doing distchecks, so it is fine if we
-          # just grab the latest master and built a lean build.
-          git clone --depth 1 https://github.com/ofiwg/libfabric.git
-          pushd libfabric
-          ./autogen.sh
-          ./configure --prefix="$PWD/install" \
-                      --disable-sockets \
-                      --disable-udp \
-                      --disable-mrail \
-                      --disable-opx
-          make -j "$(nproc)"
-          make install
+          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
+          tar -xf aws-efa-installer-*.tar.gz
+          pushd aws-efa-installer/
+              sudo ./efa_installer.sh -y --skip-kmod
           popd
 
       - name: Run Configure
@@ -301,13 +285,15 @@ jobs:
           ./autogen.sh
           if [ "${{ matrix.sdk }}" == "neuron" ]; then
             ./configure \
-              --with-libfabric="$PWD/libfabric/install" \
+              --with-libfabric="/opt/amazon/efa" \
               --enable-neuron \
               --enable-platform-aws
           else
             ./configure \
-              --with-libfabric="$PWD/libfabric/install" \
+              --with-libfabric="/opt/amazon/efa" \
+              --with-mpi="/opt/amazon/openmpi" \
               --with-cuda=/usr/local/cuda/ \
+              --enable-tests \
               --enable-platform-aws
           fi
 
