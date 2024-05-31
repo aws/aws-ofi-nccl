@@ -54,7 +54,6 @@ def wait_for_odcr_capacity(region, instance_count, odcr) {
     sh ". venv/bin/activate; ./PortaFiducia/scripts/wait_for_odcr_capacity.py --region ${region} --odcr-id ${odcr} --required-capacity ${instance_count}"
 }
 
-
 def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, config, odcr, addl_args) {
     /*
      * Run PortaFiducia/tests/test_orchestrator.py with given command line arguments
@@ -68,6 +67,15 @@ def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_
      */
     kill_all_clusters(instance_type, region)
     wait_for_odcr_capacity(region, instance_count, odcr)
+
+    /*
+     * p3dn clusters are getting ICE'ed within an ODCR, when we try to launch them back to back.
+     * This is a non-deterministic work around to help us increase our chances of not getting ICE'ed.
+     * Worst case, this increases our time to publish results on PR's by 15 minutes.
+     */
+    if (instance_type == "p3dn.24xlarge") {
+        sh "sleep 300"
+    }
 
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
     def args = "--config ${config} --os ${os} --odcr ${odcr} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
