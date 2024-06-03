@@ -22,6 +22,7 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_pthread.h"
 
 
 static int selected_api_version = 0;
@@ -1313,9 +1314,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		pthread_mutex_lock(&(device->ep_lock));
+		nccl_net_ofi_mutex_lock(&(device->ep_lock));
 		ep->ref_cnt++;
-		pthread_mutex_unlock(&(device->ep_lock));
+		nccl_net_ofi_mutex_unlock(&(device->ep_lock));
 
 		/* Prepare receive request to accept connections */
 		req = prepare_recv_req(l_comm);
@@ -2037,7 +2038,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		goto exit;
 	}
 
-	pthread_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
 	/* Decrease reference counter of endpoint. */
 	ep->ref_cnt--;
@@ -2067,7 +2068,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		ep->cq = NULL;
 	}
 
-	pthread_mutex_unlock(&device->ep_lock);
+	nccl_net_ofi_mutex_unlock(&device->ep_lock);
 
  exit:
 	return ret;
@@ -2088,7 +2089,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	/* Obtain lock */
-	pthread_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
 	/* Obtain thread-local sendrecv endpoint. Allocate and
 	 * initialize endpoint if necessary. */
@@ -2150,7 +2151,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	*base_ep = &ep->base;
 
  unlock:
-	pthread_mutex_unlock(&device->ep_lock);
+	nccl_net_ofi_mutex_unlock(&device->ep_lock);
 
  exit:
 	return ret;
@@ -2235,7 +2236,7 @@ static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
 	}
 
 	/* Intiaialize mutex for endpoint access */
-	ret = pthread_mutex_init(&devices->ep_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&devices->ep_lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Unable to initialize mutex");
