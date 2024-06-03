@@ -13,6 +13,8 @@ extern "C" {
 #include <stdlib.h>
 #include <pthread.h>
 
+#include "nccl_ofi_pthread.h"
+
 /*
  * Internal: deque element structure
  *
@@ -73,15 +75,10 @@ int nccl_ofi_deque_finalize(nccl_ofi_deque_t *deque);
  */
 static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
 {
-	int ret = 0;
 	assert(deque);
 	assert(deque_elem);
 
-	ret = pthread_mutex_lock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to lock deque mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&deque->lock);
 
 	deque_elem->next = &deque->head;
 	deque_elem->prev = deque->head.prev;
@@ -90,12 +87,9 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
 	deque->head.prev->next = deque_elem;
 	deque->head.prev = deque_elem;
 
-	ret = pthread_mutex_unlock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock deque mutex");
-		return -ret;
-	}
-	return ret;
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+
+	return 0;
 }
 
 /*
@@ -106,15 +100,10 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
  */
 static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
 {
-	int ret = 0;
 	assert(deque);
 	assert(deque_elem);
 
-	ret = pthread_mutex_lock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to lock deque mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&deque->lock);
 
 	deque_elem->next = deque->head.next;
 	deque_elem->prev = &deque->head;
@@ -123,12 +112,9 @@ static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_
 	deque->head.next->prev = deque_elem;
 	deque->head.next = deque_elem;
 
-	ret = pthread_mutex_unlock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock deque mutex");
-		return -ret;
-	}
-	return ret;
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+
+	return 0;
 }
 
 /*
@@ -148,7 +134,6 @@ static inline bool nccl_ofi_deque_isempty(nccl_ofi_deque_t *deque)
  */
 static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t **deque_elem)
 {
-	int ret = 0;
 	assert(deque);
 	assert(deque_elem);
 
@@ -158,12 +143,7 @@ static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_
 		return 0;
 	}
 
-	ret = pthread_mutex_lock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to lock deque mutex");
-		*deque_elem = NULL;
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&deque->lock);
 
 	/* Check for empty deque. We need to do this again because the check above
 	   was before we acquired the lock. */
@@ -177,12 +157,9 @@ static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_
 	(*deque_elem)->next->prev = &deque->head;
 
 unlock:
-	ret = pthread_mutex_unlock(&deque->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock deque mutex");
-		return -ret;
-	}
-	return ret;
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+
+	return 0;
 }
 
 #ifdef _cplusplus

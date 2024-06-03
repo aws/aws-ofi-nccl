@@ -23,6 +23,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_memcheck.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_pthread.h"
 
 /* Template path used to write temporary NCCL topology file */
 static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
@@ -265,13 +266,7 @@ static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t
  */
 static void unlink_topo_file()
 {
-	int rc = 0;
-
-	rc = pthread_mutex_lock(&topo_file_lock);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Locking NCCL topology filename lock failed: %s", strerror(rc));
-		return;
-	}
+	nccl_net_ofi_mutex_lock(&topo_file_lock);
 
 	/* No filename stored to be unlinked */
 	if (topo_file_unlink == NULL) {
@@ -288,10 +283,7 @@ static void unlink_topo_file()
 	topo_file_unlink = NULL;
 
  unlock:
-	rc = pthread_mutex_unlock(&topo_file_lock);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Unlocking NCCL topology filename lock failed: %s", strerror(rc));
-	}
+	nccl_net_ofi_mutex_unlock(&topo_file_lock);
 }
 
 /*
@@ -332,12 +324,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 		goto exit;
 	}
 
-	rc = pthread_mutex_lock(&topo_file_lock);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Locking NCCL topology file lock failed: %s", strerror(rc));
-		ret = -rc;
-		goto exit;
-	}
+	nccl_net_ofi_mutex_lock(&topo_file_lock);
 
 	if (topo_file_unlink) {
 		/* A topology file has already been written and stored
@@ -408,12 +395,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	}
 
  unlock:
-	rc = pthread_mutex_unlock(&topo_file_lock);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Unlocking NCCL topology filename lock failed: %s", strerror(rc));
-		ret = -rc;
-		goto exit;
-	}
+	nccl_net_ofi_mutex_unlock(&topo_file_lock);
 
  exit:
 	return ret;
@@ -664,11 +646,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req_t *req,
 {
 	int ret = 0;
 	int ncompls;
-	ret = pthread_mutex_lock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	req->size += size;
 	ncompls = ++(req->ncompls);
@@ -683,10 +661,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req_t *req,
 		NCCL_OFI_TRACE_COMPLETIONS(req, req);
 	}
 
-	ret = pthread_mutex_unlock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-	}
+	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	return -ret;
 }
@@ -716,21 +691,13 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_req_t *recv_req = eager_copy_data->recv_req;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
-	ret = pthread_mutex_lock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Set send ctrl request completed */
 	req->ncompls = 1;
 	req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
-	ret = pthread_mutex_unlock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	/* Get size of received data */
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(eager_copy_data->eager_bounce_req);
@@ -767,16 +734,11 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
-	int ret = 0;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 	nccl_net_ofi_rdma_req_t *recv_req = send_ctrl_data->recv_req;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
-	ret = pthread_mutex_lock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Set send ctrl request completed */
 	req->ncompls = 1;
@@ -784,11 +746,7 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 
 	NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(recv_req);
 
-	ret = pthread_mutex_unlock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	/* Add completion to parent request */
 	return inc_req_completion(recv_req, 0, recv_data->total_num_compls);
@@ -821,11 +779,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	int ret = 0;
 	bool segms_received;
 	
-	ret = pthread_mutex_lock(&req->req_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Sum up segment sizes */
 	req->size += size;
@@ -849,20 +803,12 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 		 * receive request is set to completed to avoid
 		 * unlocking receive segment request after it has been
 		 * freed in `test()` */
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 		
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
 	} else {
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 	}
 
 	return ret;
@@ -935,20 +881,12 @@ static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
 static inline int decrease_bounce_buff_cnt(nccl_net_ofi_rdma_ep_t *ep,
 					   nccl_net_ofi_ep_rail_t *rail)
 {
-	int ret = pthread_mutex_lock(&rail->bounce_mutex);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to lock bounce_mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&rail->bounce_mutex);
 
 	assert(rail->num_bounce_posted > 0);
 	rail->num_bounce_posted--;
 
-	ret = pthread_mutex_unlock(&rail->bounce_mutex);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to unlock bounce_mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&rail->bounce_mutex);
 
 	return check_post_bounce_buffers_rail(ep, rail);
 }
@@ -1774,12 +1712,7 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 		goto exit;
 	}
 
-	ret = pthread_mutex_destroy(&req->req_lock);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Failed to destroy req_lock");
-		ret = -ret;
-		goto exit;
-	}
+	nccl_net_ofi_mutex_destroy(&req->req_lock);
 
 	/* Update free list */
 	if (OFI_UNLIKELY(nccl_ofi_reqs_fl == NULL)) {
@@ -2010,20 +1943,12 @@ static inline int handle_bounce_eagain(nccl_net_ofi_rdma_ep_t *ep,
 	}
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
-	ret = pthread_mutex_lock(&rail->bounce_mutex);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to lock bounce_mutex: %d", ret);
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&rail->bounce_mutex);
 
 	assert(rail->num_bounce_posted >= num_buffs_failed);
 	rail->num_bounce_posted -= num_buffs_failed;
 
-	ret = pthread_mutex_unlock(&rail->bounce_mutex);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock bounce_mutex: %d", ret);
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&rail->bounce_mutex);
 
 	return ret;
 }
@@ -2033,21 +1958,13 @@ static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
 {
 	int ret = 0;
 
-	ret = pthread_mutex_lock(&rail->bounce_mutex);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to lock bounce_mutex: %d", ret);
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&rail->bounce_mutex);
 
 	size_t buffers_needed = rail->max_bounce_posted -
 				rail->num_bounce_posted;
 	rail->num_bounce_posted = rail->max_bounce_posted;
 
-	ret = pthread_mutex_unlock(&rail->bounce_mutex);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock bounce_mutex: %d", ret);
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&rail->bounce_mutex);
 
 	/* Post all the bounce buffers we need */
 	for (size_t i = 0; i < buffers_needed; ++i) {
@@ -2271,21 +2188,11 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	if (OFI_LIKELY(req->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
 
 		size_t req_size;
-		ret = pthread_mutex_lock(&req->req_lock);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-			ret = -ret;
-			goto exit;
-		}
+		nccl_net_ofi_mutex_lock(&req->req_lock);
 
 		req_size = req->size;
 
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			ret = -ret;
-			goto exit;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 		if (size)
 			*size = req_size;
@@ -2370,7 +2277,7 @@ static int prepare_recv_conn_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	req->comm = &l_comm->base.base;
 	req->dev_id = l_comm->base.base.dev_id;
 	/* Initialize mutex for request access */
-	ret = pthread_mutex_init(&req->req_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&req->req_lock, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;
@@ -2696,7 +2603,7 @@ static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 	req->ncompls = 0;
 
 	/* Initialize mutex for request access */
-	if (pthread_mutex_init(&req->req_lock, NULL)) {
+	if (nccl_net_ofi_mutex_init(&req->req_lock, NULL)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		goto cleanup;
 	}
@@ -3784,17 +3691,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Check if the connect message is received */
-		ret = pthread_mutex_lock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_lock(&req->req_lock);
 		req_state = req->state;
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 		/* Wait until connect message is sent */
 		if (req_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
@@ -3860,17 +3759,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Check if the connect response message is sent */
-		ret = pthread_mutex_lock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_lock(&req->req_lock);
 		req_state = req->state;
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 		/* Wait until connect response message is sent */
 		if (req_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
@@ -3886,9 +3777,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		pthread_mutex_lock(&(device->ep_lock));
+		nccl_net_ofi_mutex_lock(&(device->ep_lock));
 		ep->ref_cnt++;
-		pthread_mutex_unlock(&(device->ep_lock));
+		nccl_net_ofi_mutex_unlock(&(device->ep_lock));
 
 		*recv_comm = &r_comm->base;
 
@@ -3941,7 +3832,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 		}
 	}
 
-	ret = pthread_mutex_destroy(&l_comm->req.req_lock);
+	ret = nccl_net_ofi_mutex_destroy(&l_comm->req.req_lock);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to destroy req_lock");
 		return -ret;
@@ -4425,11 +4316,7 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
 
 	nccl_net_ofi_ep_rail_t *rail = bounce_data->rail;
 
-	ret = pthread_mutex_lock(&rail->bounce_mutex);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to lock bounce_mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&rail->bounce_mutex);
 
 	bool need_post = false;
 	if (rail->num_bounce_posted < rail->max_bounce_posted) {
@@ -4437,11 +4324,7 @@ static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
 		need_post = true;
 	}
 
-	ret = pthread_mutex_unlock(&rail->bounce_mutex);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to unlock bounce_mutex");
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&rail->bounce_mutex);
 
 	if (need_post) {
 		/* Attempt to re-post bounce buffer */
@@ -4842,11 +4725,7 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		rail->max_bounce_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
 		);
-		ret = pthread_mutex_init(&rail->bounce_mutex, NULL);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to init bounce_mutex");
-			return ret;
-		}
+		nccl_net_ofi_mutex_init(&rail->bounce_mutex, NULL);
 	}
 
 	return ret;
@@ -4878,11 +4757,7 @@ static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-		ret = pthread_mutex_destroy(&rail->bounce_mutex);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to destroy bounce_mutex");
-			return ret;
-		}
+		nccl_net_ofi_mutex_destroy(&rail->bounce_mutex);
 	}
 
 	return ret;
@@ -5246,17 +5121,9 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Check if the connect message is sent */
-		ret = pthread_mutex_lock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Unable to acquire req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_lock(&req->req_lock);
 		conn_msg_state = req->state;
-		ret = pthread_mutex_unlock(&req->req_lock);
-		if (OFI_UNLIKELY(ret)) {
-			NCCL_OFI_WARN("Failed to unlock req_lock mutex");
-			return -ret;
-		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 		/* Wait until connect message is sent */
 		if (conn_msg_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
@@ -5441,7 +5308,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		goto exit;
 	}
 
-	pthread_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
 	/* Decrease reference counter of endpoint. */
 	ep->ref_cnt--;
@@ -5494,11 +5361,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	}
 
  unlock:
-	ret = pthread_mutex_unlock(&device->ep_lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to unlock ep_lock");
-		ret = -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&device->ep_lock);
 
  exit:
 	return ret;
@@ -5519,7 +5382,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	}
 
 	/* Obtain lock */
-	pthread_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
 	/* Obtain thread-local rdma endpoint. Allocate and
 	 * initialize endpoint if necessary. */
@@ -5620,7 +5483,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	*base_ep = &ep->base;
 
  unlock:
-	pthread_mutex_unlock(&device->ep_lock);
+	nccl_net_ofi_mutex_unlock(&device->ep_lock);
 
  exit:
 	return ret;
@@ -5711,7 +5574,7 @@ static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
 	}
 
 	/* Intiaialize mutex for endpoint access */
-	ret = pthread_mutex_init(&devices->ep_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&devices->ep_lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;

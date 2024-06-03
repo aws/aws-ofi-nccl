@@ -15,6 +15,7 @@ extern "C" {
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_memcheck.h"
+#include "nccl_ofi_pthread.h"
 
 /*
  * Internal: freelist element structure, only has meaning when the
@@ -256,11 +257,7 @@ static inline void *nccl_ofi_freelist_entry_alloc(nccl_ofi_freelist_t *freelist)
 
 	assert(freelist);
 
-	ret = pthread_mutex_lock(&freelist->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Locking freelist mutex failed: %s", strerror(ret));
-		return NULL;
-	}
+	nccl_net_ofi_mutex_lock(&freelist->lock);
 
 	if (!freelist->entries) {
 		ret = nccl_ofi_freelist_add(freelist, freelist->increase_entry_count);
@@ -278,11 +275,7 @@ static inline void *nccl_ofi_freelist_entry_alloc(nccl_ofi_freelist_t *freelist)
 	nccl_ofi_freelist_entry_set_undefined(freelist, buf);
 
 cleanup:
-	ret = pthread_mutex_unlock(&freelist->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unlocking freelist mutex failed: %s", strerror(ret));
-		return NULL;
-	}
+	nccl_net_ofi_mutex_unlock(&freelist->lock);
 
 	return buf;
 }
@@ -296,18 +289,13 @@ cleanup:
  */
 static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, void *entry_p)
 {
-	int ret;
 	struct nccl_ofi_freelist_elem_t *entry;
 	size_t user_entry_size = freelist->entry_size - MEMCHECK_REDZONE_SIZE;
 
 	assert(freelist);
 	assert(entry_p);
 
-	ret = pthread_mutex_lock(&freelist->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Locking freelist mutex failed: %s", strerror(ret));
-		return;
-	}
+	nccl_net_ofi_mutex_lock(&freelist->lock);
 
 	if (freelist->have_reginfo) {
 		entry = (struct nccl_ofi_freelist_elem_t *)((char*)entry_p + freelist->reginfo_offset);
@@ -322,11 +310,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 
 	nccl_net_ofi_mem_noaccess(entry_p, user_entry_size);
 
-	ret = pthread_mutex_unlock(&freelist->lock);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unlocking freelist mutex failed: %s", strerror(ret));
-		return;
-	}
+	nccl_net_ofi_mutex_unlock(&freelist->lock);
 }
 
 #ifdef _cplusplus

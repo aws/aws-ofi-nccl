@@ -10,6 +10,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_pthread.h"
 
 /*
  * @brief	Size of s schedule struct capable to store `num_rails' xfer info objects
@@ -60,30 +61,21 @@ static inline int set_round_robin_schedule(nccl_net_ofi_threshold_scheduler_t *s
 					   nccl_net_ofi_schedule_t *schedule)
 {
 	int rail_id;
-	int ret;
 
-	ret = pthread_mutex_lock(&scheduler->rr_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Locking threshold scheduler mutex failed: %s", strerror(ret));
-		return -ret;
-	}
+	nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
 
 	/* Retieve and increment round-robin counter; wrap around if required */
 	rail_id = (scheduler->rr_counter)++;
 	scheduler->rr_counter = scheduler->rr_counter == num_rails ? 0 : scheduler->rr_counter;
 
-	ret = pthread_mutex_unlock(&scheduler->rr_lock);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unlocking threshold scheduler mutex failed: %s", strerror(ret));
-		return -ret;
-	}
+	nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
 
 	schedule->num_xfer_infos = 1;
 	schedule->rail_xfer_infos[0].rail_id = rail_id;
 	schedule->rail_xfer_infos[0].offset = 0;
 	schedule->rail_xfer_infos[0].msg_size = size;
 
-	return ret;
+	return 0;
 }
 
 /*
@@ -201,7 +193,7 @@ static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
 	assert(scheduler_p);
 	assert(scheduler_p->schedule_fl);
 
-	ret = pthread_mutex_destroy(&scheduler->rr_lock);
+	ret = nccl_net_ofi_mutex_destroy(&scheduler->rr_lock);
 	if (ret) {
 		NCCL_OFI_WARN("Could not destroy threshold scheduler pthread mutex");
 		return -ret;
@@ -268,7 +260,7 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails,
 	scheduler->rr_counter = 0;
 	scheduler->rr_threshold = rr_threshold;
 
-	ret = pthread_mutex_init(&scheduler->rr_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
 	if (ret) {
 		NCCL_OFI_WARN("Could not initialize mutex for round robin counter");
 		scheduler_fini(&scheduler->base);

@@ -20,6 +20,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_pthread.h"
 
 struct ec2_platform_data {
 	const char* name;
@@ -116,10 +117,10 @@ static const char* get_platform_type(void)
 	static char *platform_type = NULL;
 	static pthread_mutex_t platform_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-	pthread_mutex_lock(&platform_mutex);
+	nccl_net_ofi_mutex_lock(&platform_mutex);
 
 	if (init) {
-		pthread_mutex_unlock(&platform_mutex);
+		nccl_net_ofi_mutex_unlock(&platform_mutex);
 		return platform_type;
 	}
 
@@ -166,7 +167,7 @@ exit:
 	if (fd)
 		fclose(fd);
 
-	pthread_mutex_unlock(&platform_mutex);
+	nccl_net_ofi_mutex_unlock(&platform_mutex);
 
 	return platform_type;
 }
@@ -187,17 +188,17 @@ struct ec2_platform_data *get_platform_data()
 	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
 	const char* platform_type = NULL;
 
-	pthread_mutex_lock(&mutex);
+	nccl_net_ofi_mutex_lock(&mutex);
 
 	if (init) {
-		pthread_mutex_unlock(&mutex);
+		nccl_net_ofi_mutex_unlock(&mutex);
 		return platform_data;
 	}
 	init = true;
 
 	platform_type = get_platform_type();
 	if (platform_type == NULL) {
-		pthread_mutex_unlock(&mutex);
+		nccl_net_ofi_mutex_unlock(&mutex);
 		return NULL;
 	}
 
@@ -206,7 +207,7 @@ struct ec2_platform_data *get_platform_data()
 			platform_data = &platform_data_map[idx];
 	}
 
-	pthread_mutex_unlock(&mutex);
+	nccl_net_ofi_mutex_unlock(&mutex);
 
 	return platform_data;
 }
@@ -618,7 +619,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		goto exit;
 	}
 
-	pthread_mutex_lock(&mutex);
+	nccl_net_ofi_mutex_lock(&mutex);
 	/* If we know we need byte delivery ordering (need_ordering ==
 	 * true) or this is the first time that we're configuring an
 	 * endpoint (nccl_proto_configured == false), then try to
@@ -687,7 +688,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		}
 	}
 unlock:
-	pthread_mutex_unlock(&mutex);
+	nccl_net_ofi_mutex_unlock(&mutex);
 #endif // HAVE_CUDA
 
 exit:
