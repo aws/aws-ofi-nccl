@@ -155,7 +155,6 @@ static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
 static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
 			       ncclNetDeviceHandle_v7_t** sendDevComm)
 {
-	*sendDevComm = NULL;
 	return nccl_net_ofi_connect(dev, handle, sendComm);
 }
 
@@ -163,7 +162,6 @@ static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
 static ncclResult_t accept_v7(void* listenComm, void** recvComm,
 			      ncclNetDeviceHandle_v7_t** recvDevComm)
 {
-	*recvDevComm = NULL;
 	return nccl_net_ofi_accept(listenComm, recvComm);
 }
 
