@@ -214,6 +214,19 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
  */
 OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 
+/*
+ * Decide whether or not mutexes should default to errorcheck mode.
+ * Defaults to no, unless debugging is enabled, in which case it
+ * defaults to 1.
+ */
+#if defined(NDEBUG) && NDEBUG != 0
+#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT 0
+#else
+#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT 1
+#endif
+OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
+		   OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT)
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
