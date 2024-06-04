@@ -22,13 +22,6 @@ extern "C" {
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 
-#ifdef __GNUC__
-#define OFI_LIKELY(x)	__builtin_expect((x), 1)
-#define OFI_UNLIKELY(x)	__builtin_expect((x), 0)
-#else
-#define OFI_LIKELY(x)	(x)
-#define OFI_UNLIKELY(x)	(x)
-#endif
 
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
@@ -74,9 +67,6 @@ extern "C" {
  * requests.
  */
 #define NCCL_OFI_MAX_SEND_REQUESTS (NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS)
-
-/* Maximum length of directory path */
-#define PATH_MAX	4096
 
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE	4

@@ -10,11 +10,24 @@ AC_INIT([aws-ofi-nccl], [GitHub-dev], [al-ofi-nccl-team@amazon.com], , [http://g
 AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
 AC_CONFIG_AUX_DIR([build-aux])
-AC_CONFIG_HEADERS([config.h])
+AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIRS([m4])
 
 AM_INIT_AUTOMAKE([-Wall -Werror foreign subdir-objects tar-pax])
 AM_SILENT_RULES([yes])
+
+AH_TOP([/*
+ * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ */
+
+#ifndef NCCL_OFI_CONFIG_H
+#define NCCL_OFI_CONFIG_H
+
+])
+AH_BOTTOM([
+#include "nccl_ofi_config_bottom.h"
+#endif /* NCCL_OFI_CONFIG_H */
+])
 
 dnl AX_CHECK_ENABLE_DEBUG must be called before AC_PROG_CC or
 dnl AM_PROG_AR
@@ -49,6 +62,7 @@ AC_CHECK_HEADER([stdlib.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires stdlib.h]
 AC_CHECK_HEADER([string.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires string.h])])
 AC_CHECK_HEADER([unistd.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires unistd.h])])
 
+AC_CHECK_HEADERS([linux/limits.h])
 
 # Checks for types
 AC_TYPE_SIZE_T
