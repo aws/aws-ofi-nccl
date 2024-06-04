@@ -678,9 +678,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	/* Array of 'num_rails' device rails */
 	nccl_net_ofi_rdma_device_rail_t *device_rails;
 
-	/* Pointer to provider name of first NIC */
-	char *prov_name;
-
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 

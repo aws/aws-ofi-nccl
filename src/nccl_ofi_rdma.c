@@ -5835,6 +5835,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			ret = -EINVAL;
 			goto error;
 		}
+
 		/* Ensure that number of rails are the same across devices */
 		int length = ofi_info_list_length(info_list);
 		if (topo->max_group_size != length) {
@@ -5885,7 +5886,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		assert(device->scheduler);
 
 		/* Set NIC information */
-		device->prov_name = info_list->fabric_attr->prov_name;
 		device->num_rails = length;
 		device->device_rails = create_device_rail_array(info_list, length);
 		if (!device->device_rails) {
