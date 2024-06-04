@@ -750,12 +750,6 @@ typedef struct nccl_net_ofi_rdma_device_rail {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-
-	/* Access domain handles */
-	struct fid_domain *domain;
-
-	/* Completion Queue handle */
-	struct fid_cq *cq;
 } nccl_net_ofi_rdma_device_rail_t;
 
 /*
@@ -806,13 +800,32 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	bool use_long_rkeys;
 
-	/* List of endpoints and set of addresses they have connections to */
-	nccl_ofi_ep_addr_list_t *ep_addr_list;
-
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 } nccl_net_ofi_rdma_device_t;
+
+
+typedef struct nccl_net_ofi_rdma_domain_rail {
+	/* Access domain handles */
+	struct fid_domain *domain;
+
+	struct fid_cq *cq;
+} nccl_net_ofi_rdma_domain_rail_t;
+
+
+typedef struct nccl_net_ofi_rdma_domain {
+	nccl_net_ofi_domain_t base;
+
+	int num_rails;
+	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t key_pool;
+
+	/* List of endpoints and set of addresses they have connections to */
+	nccl_ofi_ep_addr_list_t *ep_addr_list;
+} nccl_net_ofi_rdma_domain_t;
 
 
 struct nccl_net_ofi_rdma_plugin {
