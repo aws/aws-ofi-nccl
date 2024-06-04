@@ -133,15 +133,21 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 
 
-static nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device(nccl_net_ofi_rdma_ep_t *ep)
+static nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain(nccl_net_ofi_rdma_ep_t *ep)
 {
-	return (nccl_net_ofi_rdma_device_t*)ep->base.device;
+	return (nccl_net_ofi_rdma_domain_t*)ep->base.domain;
 }
 
 
-static nccl_net_ofi_rdma_plugin_t *rdma_endpoint_get_plugin(nccl_net_ofi_rdma_ep_t *ep)
+static nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device(nccl_net_ofi_rdma_ep_t *ep)
 {
-	return (nccl_net_ofi_rdma_plugin_t*)ep->base.device->plugin;
+	return (nccl_net_ofi_rdma_device_t*)rdma_endpoint_get_domain(ep)->base.device;
+}
+
+
+static nccl_net_ofi_rdma_device_t *rdma_domain_get_device(nccl_net_ofi_rdma_domain_t *domain)
+{
+	return (nccl_net_ofi_rdma_device_t*)domain->base.device;
 }
 
 
@@ -159,7 +165,7 @@ static nccl_net_ofi_rdma_ep_t *rdma_req_get_ep(nccl_net_ofi_rdma_req_t *req)
 
 static nccl_net_ofi_rdma_device_t *rdma_req_get_device(nccl_net_ofi_rdma_req_t *req)
 {
-	return (nccl_net_ofi_rdma_device_t *)rdma_req_get_ep(req)->base.device;
+	return (nccl_net_ofi_rdma_device_t *)rdma_req_get_ep(req)->base.domain->device;
 }
 
 /*
@@ -308,6 +314,16 @@ static inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(nccl_net_ofi
 	assert(rail_id < device->num_rails);
 	return &device->device_rails[rail_id];
 }
+
+
+static inline nccl_net_ofi_rdma_domain_rail_t *rdma_domain_get_rail(nccl_net_ofi_rdma_domain_t *domain,
+								    int rail_id)
+{
+	assert(domain->domain_rails);
+	assert(rail_id < domain->num_rails);
+	return &domain->domain_rails[rail_id];
+}
+
 
 /*
  * @brief Return endpoint rail with index `rail_id`
@@ -2153,7 +2169,7 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 
 	if (send_ctrl_data->ctrl_schedule != NULL) {
-		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
+		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
 		nccl_net_ofi_release_schedule(device->scheduler, send_ctrl_data->ctrl_schedule);
 		send_ctrl_data->ctrl_schedule = NULL;
 	}
@@ -2845,7 +2861,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
 	*mhandle = NULL;
-	struct fid_domain *domain;
+	struct fid_domain *ofi_domain;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
 
@@ -2853,11 +2869,14 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	int dev_id = device->base.dev_id;
 	int num_rails = ep->num_rails;
 	int num_control_rails = ep->num_control_rails;
 
-	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
 
 	/* Allocate rdma memory registration handle */
 	ret_handle = calloc_rdma_mr_handle(num_rails, num_control_rails);
@@ -2881,9 +2900,9 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
-		domain = rdma_endpoint_get_ofi_domain(ep, rail_id);
+		ofi_domain = rdma_endpoint_get_ofi_domain(ep, rail_id);
 
-		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
+		ret = register_rail_mr_buffer(ofi_domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr, regattr_flags,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2899,9 +2918,9 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	ret_handle->num_control_rails = num_control_rails;
 	for (int rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
-		domain = rdma_endpoint_get_ofi_control_domain(ep, rail_id);
+		ofi_domain = rdma_endpoint_get_ofi_control_domain(ep, rail_id);
 
-		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
+		ret = register_rail_mr_buffer(ofi_domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr, regattr_flags,
 					      &ret_handle->control_mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2945,11 +2964,10 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 
 	assert(ep);
 
-	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	assert(device != NULL);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
-	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -3064,13 +3082,13 @@ static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	assert(device != NULL);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	return reg_mr_ep(ep,
 			 ckey,
 			 type,
-			 device->base.mr_cache,
+			 domain->base.mr_cache,
 			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
@@ -3079,13 +3097,13 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	assert(device != NULL);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	return reg_mr_ep(ep,
 			 ckey,
 			 type,
-			 device->base.mr_cache,
+			 domain->base.mr_cache,
 			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
@@ -3124,7 +3142,7 @@ static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, vo
 	}
 
 	freelist_handle->mr_handle = mr_handle;
-	freelist_handle->key_pool = &(rdma_endpoint_get_device(ep))->base.mr_rkey_pool;
+	freelist_handle->key_pool = &(rdma_endpoint_get_domain(ep))->base.mr_rkey_pool;
 	*handle = (void *)freelist_handle;
 	return 0;
 }
@@ -3154,12 +3172,11 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
 	assert(ep != NULL);
 
-	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	assert(device != NULL);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
+	return dereg_mr_ep(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
 }
 
 /*
@@ -3635,13 +3652,13 @@ static inline bool is_flush_buff_enabled(void)
  * 		error, on others
  */
 static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-							nccl_net_ofi_rdma_device_t *device)
+							nccl_net_ofi_rdma_domain_t *domain)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = r_comm->flush_buff.mr_handle;
 
 	if (mr_handle) {
-		ret = dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, NULL);
+		ret = dereg_mr_ep(mr_handle, &domain->base.mr_rkey_pool, NULL);
 	}
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
@@ -3734,6 +3751,7 @@ static inline void free_rdma_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm) {
 static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
 	nccl_net_ofi_rdma_device_t *device = NULL;
+	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
@@ -3743,6 +3761,9 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return ret;
 	}
+
+	domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
@@ -3755,7 +3776,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	}
 
 	if (is_flush_buff_enabled()) {
-		ret = dealloc_and_dereg_flush_buff(r_comm, device);
+		ret = dealloc_and_dereg_flush_buff(r_comm, domain);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
 			return ret;
@@ -4450,7 +4471,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device_t *device,
+static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain_t *domain,
 							nccl_net_ofi_rdma_ep_t *l_comm_ep,
 							nccl_ofi_rdma_connection_info_t *conn_msg)
 {
@@ -4459,6 +4480,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 	int comm_id = 0;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain);
 	int dev_id = device->base.dev_id;
 	int num_rails = l_comm_ep->num_rails;
 	int num_control_rails = l_comm_ep->num_control_rails;
@@ -4524,7 +4546,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 	{
 		nccl_ofi_rdma_ep_name_t *remote_rail0_ep_name = &conn_msg->ep_names[0];
 		nccl_net_ofi_ep_t *ep_for_addr = NULL;
-		ret = nccl_ofi_ep_addr_list_get(device->ep_addr_list, remote_rail0_ep_name->ep_name,
+		ret = nccl_ofi_ep_addr_list_get(domain->ep_addr_list, remote_rail0_ep_name->ep_name,
 			remote_rail0_ep_name->ep_name_len, &ep_for_addr);
 		if (ret != 0) {
 			goto error;
@@ -4532,7 +4554,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 
 		if (ep_for_addr == NULL) {
 			nccl_net_ofi_ep_t *new_base_ep;
-			ret = device->base.create_endpoint(&device->base, &new_base_ep);
+			ret = domain->base.create_endpoint(&domain->base, &new_base_ep);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to allocate new ep: %s", strerror(-ret));
 				goto error;
@@ -4543,7 +4565,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 
 			ep_for_addr = &new_ep->base;
 
-			ret = nccl_ofi_ep_addr_list_insert(device->ep_addr_list, ep_for_addr,
+			ret = nccl_ofi_ep_addr_list_insert(domain->ep_addr_list, ep_for_addr,
 				remote_rail0_ep_name->ep_name, remote_rail0_ep_name->ep_name_len);
 			if (ret != 0) {
 				goto error;
@@ -4853,7 +4875,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(l_comm_ep);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(l_comm_ep);
+	assert(domain != NULL);
+	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain);
 	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
@@ -4928,7 +4952,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Prepare receive communicator object for the received peer connection */
-		r_comm = prepare_recv_comm(device, l_comm_ep, conn_msg);
+		r_comm = prepare_recv_comm(domain, l_comm_ep, conn_msg);
 		if (OFI_UNLIKELY(r_comm == NULL)) {
 			ret = -EINVAL;
 			goto exit;
@@ -4949,9 +4973,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(device->base.device_lock));
+		nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
 		ep->base.ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(device->base.device_lock));
+		nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
 
 		/* Reset request state for connect response message */
 		prepare_send_conn_resp_req(l_comm);
@@ -5164,13 +5188,12 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
 	assert(ep != NULL);
 
-	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	assert(device != NULL);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
+	return dereg_mr_ep(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
 }
 
 static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
@@ -6588,7 +6611,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_rdma_send_comm_t *)comm_state->comm;
 
 	/* Retrieve and validate devices */
-	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)base_ep->device;
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)base_ep->domain->device;
 	assert(device != NULL);
 
 	/* Connection establishment is not done yet */
@@ -6810,33 +6833,30 @@ static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *r
 static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 			int dev_id, int rail_id,
 			nccl_net_ofi_rdma_device_rail_t *dev_rail,
+			nccl_net_ofi_rdma_domain_rail_t *domain_rail,
 			nccl_net_ofi_ep_rail_t *ep_rail,
 			uint32_t tclass)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_plugin_t *plugin = rdma_endpoint_get_plugin(ep);
 	struct fi_info *rail_info = dev_rail->info;
 
-	if (plugin->base.domain_per_thread) {
-		ret = fi_domain(dev_rail->fabric, dev_rail->info,
-			&ep_rail->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				ret, fi_strerror(-ret));
-			return ret;
-		}
-	} else {
-		ep_rail->domain = dev_rail->domain;
-	}
+	ep_rail->domain = domain_rail->domain;
+	if (ep_rail->cq == NULL) {
+		/* cq will be NULL most of the time, but there's a
+		   hack in init_rail_ofi_resources to have the control
+		   rails share the data rail's cq.  So respect that
+		   override for now.
 
-	if (dev_rail->cq != NULL) {
-		ep_rail->cq = dev_rail->cq;
+		   domain_rail->cq will be NULL if we're not using an endpoint
+		   per communicator, in which case, init_connection() below
+		   will allocate us a CQ */
+		ep_rail->cq = domain_rail->cq;
 	}
 
 #ifndef NDEBUG
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		assert(ep_rail->cq != NULL);
-		assert(dev_rail->cq != NULL);
+		assert(domain_rail->cq != NULL);
 	}
 #endif
 
@@ -6878,21 +6898,24 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
  * @brief	Initialize libfabric resources of endpoint rails
  */
 static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
+				   nccl_net_ofi_rdma_domain_t *domain,
 					    nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret = 0;
 	int dev_id = device->base.dev_id;
 	nccl_net_ofi_rdma_device_rail_t *rail_dev;
+	nccl_net_ofi_rdma_domain_rail_t *domain_rail;
 	nccl_net_ofi_ep_rail_t *rail;
 	nccl_net_ofi_ep_rail_t *control_rail;
 	uint32_t tc = (ofi_nccl_use_low_lat_tc() == 0) ? FI_TC_UNSPEC : FI_TC_LOW_LATENCY;
 
 	/* Initialize libfabric resources of endpoint rails */
-	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
+	for (int rail_id = 0; rail_id != device->num_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
+		domain_rail = rdma_domain_get_rail(domain, rail_id);
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail, FI_TC_UNSPEC);
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, domain_rail, rail, FI_TC_UNSPEC);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing rail %d failed", rail_id);
 			goto exit;
@@ -6902,11 +6925,12 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	/* Initialize libfabric resources of endpoint control rails */
 	for (int rail_id = 0; rail_id != ep->num_control_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
+		domain_rail = rdma_domain_get_rail(domain, rail_id);
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 		control_rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
 		control_rail->cq = rail->cq;
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, control_rail, tc);
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, domain_rail, control_rail, tc);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing control rail %d failed", rail_id);
 			goto exit;
@@ -6940,19 +6964,18 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 	 * type.  Otherwise, we use the base code release function.
 	 */
 	if (ep->is_endpoint_per_communicator_ep) {
-		nccl_net_ofi_rdma_device_t *device = NULL;
+		nccl_net_ofi_rdma_domain_t *domain = NULL;
 
-		/* Validate device */
-		device = rdma_endpoint_get_device(ep);
-		if (OFI_UNLIKELY(device == NULL)) {
-			NCCL_OFI_WARN("Invalid device provided");
+		domain = rdma_endpoint_get_domain(ep);
+		if (OFI_UNLIKELY(domain == NULL)) {
+			NCCL_OFI_WARN("Invalid domain provided");
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_mutex_lock(&device->base.device_lock);
+		nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 		if ((--ep->base.ref_cnt) == 0) {
-			ret = nccl_ofi_ep_addr_list_delete(device->ep_addr_list, &ep->base);
+			ret = nccl_ofi_ep_addr_list_delete(domain->ep_addr_list, &ep->base);
 			if (ret != 0) {
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
 				goto unlock;
@@ -6966,7 +6989,7 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 		}
 
  unlock:
-		nccl_net_ofi_mutex_unlock(&device->base.device_lock);
+		nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 	} else {
 		ret = nccl_net_ofi_endpoint_release(&ep->base);
 	}
@@ -6988,7 +7011,7 @@ static int nccl_net_ofi_rdma_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 		return -EINVAL;
 	}
 
-	device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	device = rdma_endpoint_get_device(ep);
 
 	/* Ideally we would "un-post" the bounce buffers, but this
 	   should be accomplished by closing the endpoint. */
@@ -7037,19 +7060,22 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 
 
 /* Caller must hold the device lock */
-static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_dev,
+static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_domain,
 						    nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
 
-	/* Retrieve and validate device */
-	device = (nccl_net_ofi_rdma_device_t *)base_dev;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
+	domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
+	if (OFI_UNLIKELY(domain == NULL)) {
+		NCCL_OFI_WARN("Invalid domain provided");
 		return -EINVAL;
 	}
+
+	device = rdma_domain_get_device(domain);
+	assert(device != NULL);
 
 	/* Allocate endpoint */
 	ep = (nccl_net_ofi_rdma_ep_t *)calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
@@ -7058,7 +7084,7 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_endpoint_init(&device->base, &ep->base);
+	ret = nccl_net_ofi_endpoint_init(&domain->base, &ep->base);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing endpoint base failed");
 		goto error;
@@ -7069,7 +7095,22 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 	ep->base.release_ep = nccl_net_ofi_rdma_endpoint_release;
 	ep->base.free_ep = nccl_net_ofi_rdma_endpoint_free;
 
-	ep->num_rails = device->num_rails;
+	ep->num_rails = domain->num_rails;
+
+	if (ofi_nccl_rdma_rr_ctrl_msg()) {
+		/*
+		 * Round robin the control message across all rails by using dedicated
+		 * endpoints with CQs shared with the data endpoints.
+		 */
+		ep->num_control_rails = domain->num_rails;
+	} else {
+		/*
+		 * Use a single rail for control messages, with a dedicated
+		 * endpoint and a CQ shared with the data endpoint.
+		 */
+		ep->num_control_rails = 1;
+	}
+
 	ep->use_long_rkeys = device->use_long_rkeys;
 
 	ep->rails = (nccl_net_ofi_ep_rail_t *)calloc(ep->num_rails,
@@ -7078,20 +7119,6 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 		NCCL_OFI_WARN("Unable to allocate rdma rails");
 		ret = -ENOMEM;
 		goto error;
-	}
-
-	if (ofi_nccl_rdma_rr_ctrl_msg()) {
-		/*
-		 * Round robin the control message across all rails by using dedicated
-		 * endpoints with CQs shared with the data endpoints.
-		 */
-		ep->num_control_rails = device->num_rails;
-	} else {
-		/*
-		 * Use a single rail for control messages, with a dedicated
-		 * endpoint and a CQ shared with the data endpoint.
-		 */
-		ep->num_control_rails = 1;
 	}
 
 	ep->control_rails = (nccl_net_ofi_ep_rail_t *)calloc(ep->num_control_rails, sizeof(nccl_net_ofi_ep_rail_t));
@@ -7112,7 +7139,7 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 
 	ep->is_endpoint_per_communicator_ep = false;
 
-	ret = init_rail_ofi_resources(device, ep);
+	ret = init_rail_ofi_resources(device, domain, ep);
 	if (ret != 0) {
 		goto error;
 	}
@@ -7154,6 +7181,128 @@ error:
 	return ret;
 }
 
+
+static int
+nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
+{
+	int ret;
+	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
+
+	for (int i = 0 ; i < domain->num_rails ; ++i) {
+		if (domain->domain_rails[i].cq != NULL) {
+			fi_close(&domain->domain_rails[i].cq->fid);
+			domain->domain_rails[i].cq = NULL;
+		}
+		fi_close(&domain->domain_rails[i].domain->fid);
+	}
+	free(domain->domain_rails);
+
+	if (domain->ep_addr_list) {
+		nccl_ofi_ep_addr_list_fini(domain->ep_addr_list);
+		domain->ep_addr_list = NULL;
+	}
+
+	ret = nccl_net_ofi_domain_fini(&domain->base);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to delete domain");
+		goto cleanup;
+	}
+
+cleanup:
+	free(domain);
+
+	return 0;
+}
+
+
+static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_ofi_device_t *base_dev)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_domain_t *domain = NULL;
+	nccl_net_ofi_rdma_device_t *device = NULL;
+
+	device = (nccl_net_ofi_rdma_device_t *)base_dev;
+	if (OFI_UNLIKELY(device == NULL)) {
+		NCCL_OFI_WARN("Invalid device provided");
+		return NULL;
+	}
+
+	domain = (nccl_net_ofi_rdma_domain_t *)calloc(1, sizeof(nccl_net_ofi_rdma_domain_t));
+	if (!domain) {
+		NCCL_OFI_WARN("Unable to allocate rdma domain");
+		return NULL;
+	}
+
+	ret = nccl_net_ofi_domain_init(&device->base, &domain->base);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing base domain failed: %d", ret);
+		goto error;
+	}
+
+	domain->base.free = nccl_net_ofi_rdma_domain_free;
+	domain->base.create_endpoint = nccl_net_ofi_rdma_domain_create_endpoint;
+
+	domain->num_rails = device->num_rails;
+
+	if (ofi_nccl_endpoint_per_communicator() != 0) {
+		domain->ep_addr_list = nccl_ofi_ep_addr_list_init(MAX_EP_ADDR);
+		if (domain->ep_addr_list == NULL) {
+			NCCL_OFI_WARN("Failed to init ep addr list");
+			ret = -ENOMEM;
+			goto error;
+		}
+	} else {
+		domain->ep_addr_list = NULL;
+	}
+
+	domain->domain_rails = (nccl_net_ofi_rdma_domain_rail_t *)calloc(domain->num_rails,
+									 sizeof(nccl_net_ofi_rdma_domain_rail_t));
+	if (domain->domain_rails == NULL) {
+		NCCL_OFI_WARN("Unable to allocate rdma rails");
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	for (int i = 0; i < domain->num_rails ; i++) {
+		nccl_net_ofi_rdma_device_rail_t *device_rail = rdma_device_get_rail(device, i);
+		nccl_net_ofi_rdma_domain_rail_t *domain_rail = rdma_domain_get_rail(domain, i);
+
+		ret = fi_domain(device_rail->fabric, device_rail->info,
+				&domain_rail->domain, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			goto error;
+		}
+
+		/* need the shared CQ here as well */
+		if (ofi_nccl_endpoint_per_communicator() != 0) {
+			/* Create device-shared completion queue */
+			struct fi_cq_attr cq_attr = {};
+			cq_attr.format = FI_CQ_FORMAT_DATA;
+			ret = fi_cq_open(domain_rail->domain, &cq_attr, &domain_rail->cq, NULL);
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
+					      ret, fi_strerror(-ret));
+				goto error;
+			}
+			assert(domain_rail->cq != NULL);
+		} else {
+			domain_rail->cq = NULL;
+		}
+	}
+
+
+error:
+	if (ret != 0) {
+		domain->base.release(&(domain->base));
+		domain = NULL;
+	}
+
+	return (nccl_net_ofi_domain_t *)domain;
+}
+
+
 /*
  * @brief	Allocates and initialises various libfabric resources like
  *		fabric and domain to make device rail ready for rail creation.
@@ -7162,10 +7311,6 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *dev
 						 nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_plugin_t *plugin;
-
-	plugin = rdma_device_get_plugin(device);
-	assert(plugin != NULL);
 
 	/* Create fabric */
 	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, NULL);
@@ -7175,45 +7320,9 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *dev
 		goto error;
 	}
 
-	/*
-         * In the domain-per-thread case, create the domain in the endpoint structure.  In the
-         * domain-per-process case, keep it in the device structure.  This is because, on some
-         * platforms, libfabric locks when accessing the domain, so retaining separate domains
-         * per thread and per endpoint reduces contention for that lock.
-         */
-	if (!plugin->base.domain_per_thread) {
-		/* Create domain */
-		ret = fi_domain(rail_dev->fabric, rail_dev->info,
-				&rail_dev->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			goto error;
-		}
-	}
-
-	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		/* Create device-shared completion queue */
-		struct fi_cq_attr cq_attr = {};
-		cq_attr.format = FI_CQ_FORMAT_DATA;
-		ret = fi_cq_open(rail_dev->domain, &cq_attr, &rail_dev->cq, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-					ret, fi_strerror(-ret));
-			goto error;
-		}
-		assert(rail_dev->cq != NULL);
-	} else {
-		rail_dev->cq = NULL;
-	}
 
 	return ret;
  error:
-	if (rail_dev->domain) {
-		fi_close((fid_t)rail_dev->domain);
-		rail_dev->domain = NULL;
-	}
-
 	if (rail_dev->fabric) {
 		fi_close((fid_t)rail_dev->fabric);
 		rail_dev->fabric = NULL;
@@ -7252,21 +7361,11 @@ static void release_device_ofi_resources(nccl_net_ofi_rdma_device_t *device)
 	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
 
 	for (; begin != end; ++begin) {
-		if (begin->domain) {
-			fi_close(&begin->domain->fid);
-		}
 		if (begin->fabric) {
 			fi_close(&begin->fabric->fid);
 		}
 		if (begin->info) {
 			fi_freeinfo(begin->info);
-		}
-		if (begin->cq) {
-			assert(ofi_nccl_endpoint_per_communicator() != 0);
-			int r = fi_close(&begin->cq->fid);
-			if (r) {
-				NCCL_OFI_WARN("Failed to close cq: %d", r);
-			}
 		}
 	}
 }
@@ -7337,9 +7436,9 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_endpoints = HASH_COUNT(device->base.endpoint_table);
-	if (num_endpoints > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u endpoints still active at close", num_endpoints);
+	unsigned num_domains = HASH_COUNT(device->base.domain_table);
+	if (num_domains > 0) {
+		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
 	}
 
 	if (device->device_rails != NULL) {
@@ -7371,11 +7470,6 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		}
 		free(device->comm_idpool);
 		device->comm_idpool = NULL;
-	}
-
-	if (device->ep_addr_list) {
-		nccl_ofi_ep_addr_list_fini(device->ep_addr_list);
-		device->ep_addr_list = NULL;
 	}
 
 	ret = nccl_net_ofi_device_fini(base_device);
@@ -7416,9 +7510,9 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	device->base.get_properties = get_properties;
-	device->base.create_endpoint = nccl_net_ofi_rdma_device_create_endpoint;
-	device->base.release = nccl_net_ofi_rdma_device_release;
 	device->base.get_mr_key = get_mr_key;
+	device->base.release = nccl_net_ofi_rdma_device_release;
+	device->base.create_domain = nccl_net_ofi_rdma_device_create_domain;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -7453,17 +7547,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	device->num_comm_ids = (uint32_t)NCCL_OFI_RDMA_MAX_COMMS;
-
-	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		device->ep_addr_list = nccl_ofi_ep_addr_list_init(MAX_EP_ADDR);
-		if (!device->ep_addr_list) {
-			NCCL_OFI_WARN("Failed to init ep addr list");
-			ret = -ENOMEM;
-			goto error;
-		}
-	} else {
-		device->ep_addr_list = NULL;
-	}
 
 	/* Initialize libfabric resources of rdma device */
 	ret = device_prepare_for_connection(device);

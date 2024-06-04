@@ -132,6 +132,7 @@ extern size_t system_page_size;
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;
+struct nccl_net_ofi_domain;
 struct nccl_net_ofi_ep;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_mr_handle;
@@ -142,6 +143,7 @@ struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
+typedef struct nccl_net_ofi_domain nccl_net_ofi_domain_t;
 typedef struct nccl_net_ofi_ep nccl_net_ofi_ep_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
@@ -232,11 +234,8 @@ typedef struct nccl_ofi_properties {
  * Device Data
  *
  * A device is roughly a NIC (or a port on a NIC) or a multi-rail
- * group.  While a multi-threaded app may create multiple endpoints
- * per device, the device data should be shared across multiple
- * threads in the same process.  Sharable structures such as address
- * vectors, fabrics, and domains should be associated with a device
- * instead of an endpoint.
+ * group.  The device is the unit of bandwidth sharing and general NIC
+ * propoeries, and accessing domains (ie, groups of NIC resources).
  */
 struct nccl_net_ofi_device {
 	struct nccl_net_ofi_plugin *plugin;
@@ -251,37 +250,22 @@ struct nccl_net_ofi_device {
 	 */
 	char *name;
 
-	/*
-	 * Protocol-agnostic MR cache for this device. Note that Registrations
-	 * are tied to domains in libfabric, but we do not have a
-	 * domain-specific object today, so stashing it in the device itself.
-	 * This should change if we were to break up nccl_net_ofi_device into
-	 * separate device and domain objects.
-	 */
-	nccl_ofi_mr_cache_t *mr_cache;
-
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
 	 * selected.
 	 */
 	bool need_mr_rkey_pool;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t mr_rkey_pool;
-
 	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
 			      nccl_ofi_properties_t *props);
 
-	/*
-	 * @brief	Get nccl_ofi_ep for given
-	 * 		nccl_ofi_device.  Create if it does not exist. Store
-	 * 		in pthread key. Increase reference counter. Must be
-	 * 		protected by lock stored in device.
-	 *
-	 * 		During the plugin initialization, this function will be
-	 * 		called once per process using one of the instantiated device structs
-	 * 		to create and configure the endpoint of the initializing thread.
+	/* Retrieve a domain associated with this device.  There may
+	 * be more than one domain per device, depending on a number
+	 * of performance tradeoffs (be sure to read the domain
+	 * description below).
 	 */
+	nccl_net_ofi_domain_t *(*get_domain)(nccl_net_ofi_device_t *dev);
+
 	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
 		      nccl_net_ofi_ep_t **ep);
 
@@ -293,24 +277,91 @@ struct nccl_net_ofi_device {
 	 */
 	int (*release)(nccl_net_ofi_device_t *device);
 
-	/* Lock for concurrency since endpoints can be shared by
+	/* Lock for concurrency since domains can be shared by
 	 * multiple entities. */
 	pthread_mutex_t device_lock;
 
 /* private */
-	/**
-	 * Create a new endpoint
+	/*
+	 * create a new domain.  This funcion is a private pure
+	 * virtual function, which is called from the base
+	 * implementation of get_domain() and should not be called
+	 * from the more general case.
+	 */
+	nccl_net_ofi_domain_t *(*create_domain)(nccl_net_ofi_device_t *dev);
+
+	/*
+	 * hash table indexed by thread id of active domains.
+	 */
+	nccl_net_ofi_domain_t *domain_table;
+};
+
+
+/**
+ * Domain Object - Represents a protection and thread safety domain
+ *
+ * A domain is a weird combination of a Libfabric domain (and related
+ * resources like an AV and CQ) as well as a general thread boundary.
+ * Transports are free to implement fine grained threads, but
+ * generally it is expected that calls into resources that share the
+ * same domain will share the same lock.
+ */
+struct nccl_net_ofi_domain {
+	/* Backpointer to the device associated with this domain. */
+	nccl_net_ofi_device_t *device;
+
+        /*
+	 * Retrieve an endpoint for this domain.  If a suitable
+	 * endpoint does not exist, call create_endpoint() to create
+	 * one and return that endpoint.  This function is a pure
+	 * virtual function that must be implemented by inheriting
+	 * classes.
+	 */
+	int (*get_ep)(nccl_net_ofi_domain_t *domain,
+		      nccl_net_ofi_ep_t **endpoint);
+
+	/*
+	 * Destructor - release resources associated with the domain
+	 */
+	int (*release)(nccl_net_ofi_domain_t *domain);
+
+	/*
+	 * Protocol-agnostic MR cache for this device.
+	 */
+	nccl_ofi_mr_cache_t *mr_cache;
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t mr_rkey_pool;
+
+	pthread_mutex_t domain_lock;
+
+/* Private */
+	/* pure virtual function called when resources associated with
+	 * the ep should be destroyed.  Device lock will be held when
+	 * this function is called.
+	 */
+	int (*free)(nccl_net_ofi_domain_t *domain);
+
+	/* Create a new endpoint
 	 *
 	 * Pure virtual function to allocate a new endpoint structure
 	 */
-	int (*create_endpoint)(nccl_net_ofi_device_t *device,
+	int (*create_endpoint)(nccl_net_ofi_domain_t *domain,
 			       nccl_net_ofi_ep_t **ep);
 
 	/* hash table of active endpoints.  We reuse endpoints based
 	 * on the thread that calls get_ep().
 	 */
 	nccl_net_ofi_ep_t *endpoint_table;
+
+	/* thread id of the thread that called get_domain().  Used as
+	   the hash key for the domain hash */
+	long creating_thread_id;
+
+	/* hash table handle */
+	UT_hash_handle hh;
 };
+
 
 /**
  * Endpoint - A per-Proxy Thread device abstraction
@@ -328,8 +379,8 @@ struct nccl_net_ofi_device {
  * implementation.
  */
 struct nccl_net_ofi_ep {
-	/* Backpointer to the device associated with this ep. */
-	nccl_net_ofi_device_t *device;
+	/* Backpointer to the domain associated with this ep. */
+	nccl_net_ofi_domain_t *domain;
 
 	/* Create a receiving object and provide a handle to it.
 	 *
@@ -558,11 +609,32 @@ struct nccl_net_ofi_plugin {
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
 
+/* base implementation of endpoint release.  endpoint_init() will set
+ * the release pointer to this function, although transports can
+ * override that function pointer and later call this function
+ * directly.
+ */
 int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep);
 
-int nccl_net_ofi_endpoint_init(nccl_net_ofi_device_t *device, nccl_net_ofi_ep_t *ep);
+/* initialize resources associated with the endpoint base class.
+ * Expectation is that this will be called by a transport's endpoint
+ * creation function */
+int nccl_net_ofi_endpoint_init(nccl_net_ofi_domain_t *domain, nccl_net_ofi_ep_t *ep);
 
+/* free resources associated with the endpoint base class.
+ * Expectation is that this will be called by a transport's endpoint
+ * free function. */
 int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep);
+
+/* initialize resources associated with the domain base class.
+ * Expectation is that this will be called by a transport's domain
+ * creation routine */
+int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain);
+
+/* free resources associated with the domain base class.  Expectation
+ * is that this will be called by a transport's domain free
+ * function. */
+int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain);
 
 /**
  * Constructor for a device object
