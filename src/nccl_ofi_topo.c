@@ -13,7 +13,6 @@
 #include <assert.h>
 
 #include "nccl_ofi_log.h"
-#include "nccl_ofi.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"

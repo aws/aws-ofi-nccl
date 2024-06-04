@@ -10,8 +10,8 @@ extern "C" {
 #endif
 
 #include <pthread.h>
+#include <string.h>
 
-#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
 

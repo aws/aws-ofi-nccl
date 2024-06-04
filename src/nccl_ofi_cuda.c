@@ -6,9 +6,11 @@
 #include "config.h"
 
 #include <dlfcn.h>
+#include <errno.h>
+#include <stdio.h>
 
-#include "nccl_ofi.h"
 #include "nccl_ofi_cuda.h"
+#include "nccl_ofi_log.h"
 
 CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion) = NULL;
 CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr) = NULL;

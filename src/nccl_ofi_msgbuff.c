@@ -4,11 +4,12 @@
 
 #include "config.h"
 
+#include <assert.h>
+#include <errno.h>
 #include <stdlib.h>
 #include <inttypes.h>
 
 #include "nccl_ofi_msgbuff.h"
-#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"
 
