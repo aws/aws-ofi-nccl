@@ -6,7 +6,6 @@ src/*.lo
 src/*.la
 libnccl-net.so
 tags
-config.h
 
 src/tuner/.dirstamp
 src/tuner/*.lo
@@ -45,7 +44,6 @@ autom4te.cache
 /aclocal.m4
 /compile
 /config.guess
-/config.h.in
 /config.log
 /config.status
 /config.sub
@@ -56,6 +54,9 @@ autom4te.cache
 /install-sh
 /missing
 /stamp-h1
+/include/stamp-h1
+/include/config.h
+/include/config.h.in
 
 # https://www.gnu.org/software/libtool/
 /ltmain.sh
