@@ -5,9 +5,13 @@
 #include "config.h"
 
 #include <assert.h>
+#include <errno.h>
+#include <pthread.h>
+#include <stdlib.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 
 /*

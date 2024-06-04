@@ -10,8 +10,8 @@ extern "C" {
 #endif
 
 #include <assert.h>
-#include <stdlib.h>
 #include <pthread.h>
+#include <stdbool.h>
 
 #include "nccl_ofi_pthread.h"
 

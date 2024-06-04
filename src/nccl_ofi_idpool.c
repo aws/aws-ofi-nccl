@@ -4,7 +4,9 @@
 
 #include "config.h"
 
-#include "nccl_ofi.h"
+#include <errno.h>
+#include <stdlib.h>
+
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"

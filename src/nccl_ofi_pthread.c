@@ -8,7 +8,6 @@
 #include <pthread.h>
 #include <stdlib.h>
 
-#include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 
