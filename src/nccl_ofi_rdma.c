@@ -5829,7 +5829,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 
 		/* Retrieve NIC info list from topology */
 		info_list = nccl_ofi_topo_next_info_list(&data_iter);
-
+		/* Verify NIC info list from topology */
+		if (!info_list) {
+			NCCL_OFI_WARN("Unable to retrieve next NIC info list from topology");
+			ret = -EINVAL;
+			goto error;
+		}
 		/* Ensure that number of rails are the same across devices */
 		int length = ofi_info_list_length(info_list);
 		if (topo->max_group_size != length) {
@@ -5839,13 +5844,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			goto error;
 		}
 
-		/* Verify NIC info list from topology */
-		if (!info_list) {
-			NCCL_OFI_WARN("Unable to retrieve next NIC info list from topology");
-			ret = -EINVAL;
-			goto error;
-		}
-	
 		/* Allocate device */
 		nccl_net_ofi_rdma_device_t *device = calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
 		if (!device) {
