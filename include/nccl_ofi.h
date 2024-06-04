@@ -30,9 +30,6 @@ extern "C" {
 #define OFI_UNLIKELY(x)	(x)
 #endif
 
-#define MAX_PROV_INFO		(15)
-#define MAX_BDF_LEN		(25)
-
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
  * An endpoint address buffer of 56 bytes *should* be large enough to hold
