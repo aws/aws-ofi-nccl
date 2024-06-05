@@ -5490,6 +5490,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	return ret;
 }
 
+
 /*
  * @brief	Allocates and initialises various libfabric resources like
  *		fabric and domain to make device rail ready for rail creation.
@@ -5547,8 +5548,6 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 	int ret = 0;
 	nccl_net_ofi_rdma_device_rail_t *begin = device->device_rails;
 	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
-
-	device->num_comm_ids = (uint32_t)NCCL_OFI_RDMA_MAX_COMMS;
 
 	for (; begin != end; ++begin) {
 		ret = init_device_rail_ofi_resources(begin);
@@ -5653,6 +5652,165 @@ error:
 		}
 	}
 	free(device_rails);
+
+	return NULL;
+}
+
+
+/**
+ * Destroy an rdma device object
+ */
+static int
+nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
+{
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)base_device;
+	int ret, first_error = 0;
+
+	if (device == NULL) {
+		return 0;
+	}
+
+	if (device->device_rails != NULL) {
+		release_device_ofi_resources(device);
+		free(device->device_rails);
+	}
+
+	if (device->scheduler) {
+		ret = device->scheduler->fini(device->scheduler);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of device failed, scheduler_fini returned %s",
+				      strerror(-ret));
+			if (first_error == 0) {
+				first_error = ret;
+			}
+		}
+	}
+
+	ret = nccl_net_ofi_device_fini(base_device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
+			      strerror(-ret));
+		if (first_error == 0) {
+			first_error = ret;
+		}
+	}
+
+	free(device);
+
+	return first_error;
+}
+
+
+/**
+ * Create an rdma device object
+ */
+static nccl_net_ofi_rdma_device_t *
+nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
+				int dev_id, struct fi_info *info_list,
+				nccl_ofi_topo_t *topo, size_t rr_threshold)
+{
+	int ret;
+
+	nccl_net_ofi_rdma_device_t *device = calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
+	if (device == NULL) {
+		NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+		return NULL;
+	}
+
+	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
+				       info_list->fabric_attr->prov_name);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
+		return NULL;
+	}
+
+	device->base.get_properties = get_properties;
+	device->base.get_ep = get_ep;
+	device->base.release = nccl_net_ofi_rdma_device_release;
+
+	/* at this point, we can safely call the destructor to clean
+	 * up */
+
+	ret = device_init_thread_local(device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing device %i thread support failed: %s",
+			      dev_id, strerror(-ret));
+		goto error;
+	}
+
+	/* Ensure that number of rails are the same across devices */
+	int length = ofi_info_list_length(info_list);
+	if (topo->max_group_size != length) {
+		NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
+			      dev_id, topo->max_group_size, length);
+		goto error;
+	}
+
+	/* Create scheduler */
+	ret = nccl_net_ofi_threshold_scheduler_init(length,
+						    rr_threshold,
+						    &device->scheduler);
+	if (ret != 0) {
+		goto error;
+	}
+	assert(device->scheduler);
+
+	/* Set NIC information */
+	device->num_rails = length;
+	device->device_rails = create_device_rail_array(info_list, length);
+	if (device->device_rails == NULL) {
+		NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
+		goto error;
+	}
+
+	device->num_comm_ids = (uint32_t)NCCL_OFI_RDMA_MAX_COMMS;
+
+	/* Initialize libfabric resources of rdma device */
+	ret = device_prepare_for_connection(device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("preparing for connection failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	/* Initialize mr key pool */
+	bool provide_own_mr_key = true;
+	ret = nccl_ofi_mr_keys_need_own_key(info_list, &provide_own_mr_key);
+	if (ret != 0) {
+		NCCL_OFI_WARN("MR key config parsing failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	if (provide_own_mr_key) {
+		/* The provider may return support for a larger key size. Use
+		 * the size requested by the user to allow them to limit the
+		 * size of the mr_keys table. */
+		ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
+	} else {
+		/* Mark key pool as not in use */
+		ret = nccl_ofi_idpool_init(&device->key_pool, 0);
+	}
+	if (ret != 0) {
+		NCCL_OFI_WARN("Creating id pool failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	/* NVTX domain */
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
+	for (int i = 0; i < device->num_rails; ++i) {
+		/* Create nvtx domain */
+		char name[64];
+		snprintf(name, 64, "aws-ofi-nccl dev %d_%d", dev_id, i);
+		device->nvtx_domain[i] = nvtxDomainCreateA(name);
+	}
+#endif
+
+	return device;
+
+error:
+	device->base.release(&device->base);
 
 	return NULL;
 }
@@ -5870,19 +6028,13 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			goto error;
 		}
 
-		/* Ensure that number of rails are the same across devices */
-		int length = ofi_info_list_length(info_list);
-		if (topo->max_group_size != length) {
-			NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
-				      dev_id, topo->max_group_size, length);
-			ret = -EINVAL;
-			goto error;
-		}
-
 		/* Allocate device */
-		nccl_net_ofi_rdma_device_t *device = calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
-		if (!device) {
-			NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+		nccl_net_ofi_rdma_device_t *device =
+			nccl_net_ofi_rdma_device_create(plugin, dev_id,
+							info_list, topo,
+							rr_threshold);
+		if (device == NULL) {
+			NCCL_OFI_WARN("Device creation failed");
 			ret = -ENOMEM;
 			goto error;
 		}
@@ -5892,105 +6044,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
 			goto error;
 		}
-
-		device->base.plugin = plugin;
-
-		/* Set device index */
-		device->base.dev_id = dev_id;
-
-		/* Set base device data */
-		device->base.name = strdup(info_list->fabric_attr->prov_name);
-		if (!device->base.name) {
-			NCCL_OFI_WARN("Unable to allocate device name array");
-			ret = -ENOMEM;
-			goto error;
-		}
-
-		device->base.get_properties = get_properties;
-		device->base.get_ep = get_ep;
-
-		/* Initialize rdma endpoint */
-		ret = device_init_thread_local(device);
-		if (ret != 0) {
-			goto error;
-		}
-
-		/* Create scheduler */
-		ret = nccl_net_ofi_threshold_scheduler_init(length,
-							    rr_threshold,
-							    &device->scheduler);
-		if (ret) {
-			goto error;
-		}
-		assert(device->scheduler);
-
-		/* Set NIC information */
-		device->num_rails = length;
-		device->device_rails = create_device_rail_array(info_list, length);
-		if (!device->device_rails) {
-			NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
-			ret = -ENOMEM;
-			goto error;
-		}
-
-		/* Initialize libfabric resources of rdma device */
-		ret = device_prepare_for_connection(device);
-		if (ret != 0) {
-			goto error;
-		}
-
-		/* Initialize mr key pool */
-		bool provide_own_mr_key = true;
-		ret = nccl_ofi_mr_keys_need_own_key(provider_list, &provide_own_mr_key);
-		if (ret != 0) {
-			goto exit;
-		}
-
-		if (provide_own_mr_key) {
-			/* The provider may return support for a larger key size. Use
-			* the size requested by the user to allow them to limit the
-			* size of the mr_keys table. */
-			ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
-		} else {
-			/* Mark key pool as not in use */
-			ret = nccl_ofi_idpool_init(&device->key_pool, 0);
-		}
-		if (ret != 0) {
-			goto error;
-		}
-
-		/* NVTX domain */
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
-		for (int i = 0; i < device->num_rails; ++i) {
-			/* Create nvtx domain */
-			char name[64];
-			snprintf(name, 64, "aws-ofi-nccl dev %d_%d", dev_id, i);
-			device->nvtx_domain[i] = nvtxDomainCreateA(name);
-		}
-#endif
 	}
 
 	goto exit;
 
  error:
 	if (plugin != NULL) {
-		size_t num_devs = plugin->get_num_devices(plugin);
-
-		for (size_t i = 0 ; i < num_devs ; i++) {
-			nccl_net_ofi_rdma_device_t *device =
-				(nccl_net_ofi_rdma_device_t *)plugin->get_device(plugin, i);
-			if (device == NULL) continue;
-
-			if (device->device_rails) {
-				release_device_ofi_resources(device);
-				free(device->device_rails);
-			}
-			if (device->scheduler) device->scheduler->fini(device->scheduler);
-			if (device->base.name) free(device->base.name);
-
-			free(device);
-		}
-
 		plugin->release_plugin(plugin);
 		plugin = NULL;
 	}

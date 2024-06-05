@@ -612,11 +612,45 @@ int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
 
 int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
-	/* TODO: there is currently no destructor in the device class,
-	 * so we need the caller to dispatch that appropriately today.
-	 */
+	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
+		if (plugin->p_devs[i] != NULL) {
+			plugin->p_devs[i]->release(plugin->p_devs[i]);
+		}
+	}
+
 	free(plugin->p_devs);
 	plugin->p_num_devs = 0;
+
+	return 0;
+}
+
+
+int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
+			     int device_index, const char *device_name)
+{
+	device->plugin = plugin;
+	device->dev_id = device_index;
+	device->name = strdup(device_name);
+	if (device->name == NULL) {
+		NCCL_OFI_WARN("Unable to allocate device name");
+		return -ENOMEM;
+	}
+
+	device->release = nccl_net_ofi_device_fini;
+
+	return 0;
+}
+
+
+int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
+{
+	if (device == NULL) {
+		return 0;
+	}
+
+	if (device->name != NULL) {
+		free(device->name);
+	}
 
 	return 0;
 }

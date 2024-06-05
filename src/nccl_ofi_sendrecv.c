@@ -2248,6 +2248,134 @@ static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
 }
 
 
+/**
+ * Destroy an rdma device object
+ */
+static int
+nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
+{
+	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
+	int ret, first_error = 0;
+
+	if (device == NULL) {
+		return 0;
+	}
+
+	if (device->info != NULL) {
+		fi_freeinfo(device->info);
+	}
+
+	ret = nccl_net_ofi_device_fini(base_device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
+			      strerror(-ret));
+		if (first_error == 0) {
+			first_error = ret;
+		}
+	}
+
+	free(device);
+
+	return 0;
+}
+
+/**
+ * Create an rdma device object
+ */
+static nccl_net_ofi_sendrecv_device_t *
+nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
+				int dev_id, struct fi_info *info)
+{
+	int ret;
+
+	nccl_net_ofi_sendrecv_device_t *device = calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
+	if (device == NULL) {
+		NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+		return NULL;
+	}
+
+	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
+				       info->fabric_attr->prov_name);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
+		return NULL;
+	}
+
+
+	device->base.get_properties = get_properties;
+	device->base.get_ep = get_ep;
+	device->base.release = nccl_net_ofi_sendrecv_device_release;
+
+	/* at this point, we can safely call the destructor to clean
+	 * up */
+
+	/* Initialize sendrecv endpoint */
+	ret = device_init_thread_local(device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing device %i thread support failed: %s",
+			      dev_id, strerror(-ret));
+		goto error;
+	}
+
+	/* Set device provider */
+	device->info = fi_dupinfo(info);
+	if (!device->info) {
+		NCCL_OFI_WARN("Failed to duplicate NIC info struct");
+		goto error;
+	}
+	device->prov_name = device->info->fabric_attr->prov_name;
+
+	ret = device_prepare_for_connection(device);
+	if (ret != 0) {
+		NCCL_OFI_WARN("preparing for connection failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	/* Indicates if the provider selects MR keys */
+	bool provide_own_mr_key = true;
+	ret = nccl_ofi_mr_keys_need_own_key(info, &provide_own_mr_key);
+	if (ret != 0) {
+		NCCL_OFI_WARN("MR key config parsing failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	/* Initialize mr key pool */
+	if (provide_own_mr_key) {
+		/* The provider may return support for a larger key size. Use
+		 * the size requested by the user to allow them to limit the
+		 * size of the mr_keys table. */
+		const size_t shift = (ofi_nccl_mr_key_size() * 8);
+		const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
+		if (shift > (size_t_bits - 1)) {
+			NCCL_OFI_WARN(
+				"Provided mr keypool size of %lu must be less than %zu",
+				ofi_nccl_mr_key_size(),
+				size_t_bits);
+			ret = -EINVAL;
+			goto error;
+		}
+		ret = nccl_ofi_idpool_init(&device->key_pool, 1 << shift);
+	} else {
+		/* Mark key pool as not in use */
+		ret = nccl_ofi_idpool_init(&device->key_pool, 0);
+	}
+
+	if (ret != 0) {
+		NCCL_OFI_WARN("Creating id pool failed: %s",
+			      strerror(-ret));
+		goto error;
+	}
+
+	return device;
+
+error:
+	device->base.release(&device->base);
+
+	return NULL;
+}
+
 static void get_hints(struct fi_info *hints, int req_gdr)
 {
 	hints->caps = FI_LOCAL_COMM | FI_REMOTE_COMM | FI_TAGGED | FI_MSG;
@@ -2475,13 +2603,6 @@ found:
 		goto exit;
 	}
 
-	/* Indicates if the provider selects MR keys */
-	bool provide_own_mr_key = true;
-	ret = nccl_ofi_mr_keys_need_own_key(provider_list, &provide_own_mr_key);
-	if (ret != 0) {
-		goto exit;
-	}
-
 	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, &plugin);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
@@ -2494,85 +2615,14 @@ found:
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			ret = -EINVAL;
-			goto exit;
+			goto error;
 		}
 
-		/* Allocate device */
-		nccl_net_ofi_sendrecv_device_t *device = malloc(sizeof(nccl_net_ofi_sendrecv_device_t));
-		if (!device) {
+		nccl_net_ofi_sendrecv_device_t *device =
+			nccl_net_ofi_sendrecv_device_create(plugin, dev_id, info);
+		if (device == NULL) {
 			NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
 			ret = -ENOMEM;
-			goto error;
-		}
-
-		device->base.plugin = plugin;
-
-		/* Set device index */
-		device->base.dev_id = dev_id;
-
-		/* Set base device data */
-		device->base.name = strdup(info->fabric_attr->prov_name);
-		if (!device->base.name) {
-			NCCL_OFI_WARN("Unable to allocate device name array");
-			ret = -ENOMEM;
-			free(device);
-			goto error;
-		}
-
-		device->base.get_properties = get_properties;
-		device->base.get_ep = get_ep;
-
-		/* Initialize sendrecv endpoint */
-		ret = device_init_thread_local(device);
-		if (ret != 0) {
-			free(device->base.name);
-			free(device);
-			goto error;
-		}
-
-		/* Set device provider */
-		device->info = fi_dupinfo(info);
-		if (!device->info) {
-			free(device->base.name);
-			free(device);
-			NCCL_OFI_WARN("Failed to duplicate NIC info struct");
-			goto error;
-		}
-		device->prov_name = device->info->fabric_attr->prov_name;
-
-		ret = device_prepare_for_connection(device);
-		if (ret != 0) {
-			fi_freeinfo(device->info);
-			free(device->base.name);
-			free(device);
-			goto error;
-		}
-
-		/* Initialize mr key pool */
-		if (provide_own_mr_key) {
-			/* The provider may return support for a larger key size. Use
-			* the size requested by the user to allow them to limit the
-			* size of the mr_keys table. */
-			const size_t shift = (ofi_nccl_mr_key_size() * 8);
-			const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
-			if (shift > (size_t_bits - 1)) {
-				NCCL_OFI_WARN(
-					"Provided mr keypool size of %lu must be less than %zu",
-					ofi_nccl_mr_key_size(),
-					size_t_bits);
-				ret = -EINVAL;
-				goto error;
-			}
-			ret = nccl_ofi_idpool_init(&device->key_pool, 1 << shift);
-		} else {
-			/* Mark key pool as not in use */
-			ret = nccl_ofi_idpool_init(&device->key_pool, 0);
-		}
-
-		if (ret != 0) {
-			fi_freeinfo(device->info);
-			free(device->base.name);
-			free(device);
 			goto error;
 		}
 
@@ -2590,18 +2640,6 @@ found:
 
  error:
 	if (plugin != NULL) {
-		size_t num_devs = plugin->get_num_devices(plugin);
-
-		for (size_t i = 0 ; i < num_devs ; i++) {
-			nccl_net_ofi_sendrecv_device_t *device =
-				(nccl_net_ofi_sendrecv_device_t *)plugin->get_device(plugin, i);
-			if (device == NULL) continue;
-
-			fi_freeinfo(device->info);
-			free(device->base.name);
-			free(device);
-		}
-
 		plugin->release_plugin(plugin);
 		plugin = NULL;
 	}

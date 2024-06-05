@@ -268,6 +268,11 @@ struct nccl_net_ofi_device {
 	 */
 	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
 			       nccl_net_ofi_ep_t **ep);
+
+	/**
+	 * destructor - releases resources associated with device
+	 */
+	int (*release)(nccl_net_ofi_device_t *device);
 };
 
 /**
@@ -482,6 +487,17 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
+
+/**
+ * Constructor for a device object
+ */
+int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
+			     int device_index, const char *device_name);
+
+/**
+ * Destructor for a device object
+ */
+int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device);
 
 /*
  * Constructor for the nccl_net_ofi_plugin class
