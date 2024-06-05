@@ -453,14 +453,52 @@ struct nccl_net_ofi_recv_comm {
  * on the plugin.
  */
 struct nccl_net_ofi_plugin {
+/* public */
+	int (*assign_device)(nccl_net_ofi_plugin_t *plugin,
+			     size_t device_index, nccl_net_ofi_device_t *device);
+
+	nccl_net_ofi_device_t *(*get_device)(nccl_net_ofi_plugin_t *plugin,
+					     size_t device_index);
+
+	size_t (*get_num_devices)(nccl_net_ofi_plugin_t *plugin);
+
+	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
+
+/* private */
 	/* Array of devices */
-	nccl_net_ofi_device_t **devs;
+	nccl_net_ofi_device_t **p_devs;
 
 	/* Number of devices in devs array */
-	int num_devs;
+	size_t p_num_devs;
 };
 
+
+/*
+ * Create a plugin object
+ *
+ * Create a plugin object and initialize all the resources,
+ * including devices, required for operation.  This function will pick
+ * the correct transport and call its create function to actually
+ * create the plugin (which is a little hacky, but it works).
+ */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
+
+/*
+ * Constructor for the nccl_net_ofi_plugin class
+ *
+ * Construct a nccl_net_ofi_plugin object.  This is expected to be
+ * called from the transport-specific plugin creation function, which
+ * is called from nccl_net_ofi_create_plugin().
+ */
+int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin, size_t num_devices);
+
+/*
+ * Destructor for the nccl_net_ofi_plugin class
+ *
+ * Destruct a nccl_net_ofi_plugin object.  This is expected to be
+ * called from the transport-specific plugin destructor.
+ */
+int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin);
 
 /*
  * @brief	Set properties obtained from libfabric NIC Info.
