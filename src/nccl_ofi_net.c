@@ -230,11 +230,10 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * resources. This initialization happens once per process, and thus it
 	 * does not matter which device is used to create the endpoint.
 	 */
-	int dev_id = 0;
-	nccl_net_ofi_device_t *base_dev = (*plugin_p)->devs[dev_id];
+	nccl_net_ofi_device_t *device = (*plugin_p)->get_device(*plugin_p, 0);
 	nccl_net_ofi_ep_t *base_ep = NULL;
 
-	ret = (*plugin_p)->devs[dev_id]->get_ep(base_dev, &base_ep);
+	ret = device->get_ep(device, &base_ep);
 	if (ret != 0) {
 		goto exit;
 	}
@@ -553,6 +552,71 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 			       selected_provider->fabric_attr->prov_name);
 		endpoint_mr = false;
 	}
+
+	return 0;
+}
+
+
+static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
+					     size_t device_index,
+					     nccl_net_ofi_device_t *device)
+{
+	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+		return -ENOSPC;
+	}
+
+	plugin->p_devs[device_index] = device;
+
+	return 0;
+}
+
+
+static nccl_net_ofi_device_t * nccl_net_ofi_plugin_get_device(nccl_net_ofi_plugin_t *plugin,
+							      size_t device_index)
+{
+	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+		NCCL_OFI_WARN("Invalid device index %zu", device_index);
+		return NULL;
+	}
+
+	return plugin->p_devs[device_index];
+}
+
+
+static size_t nccl_net_ofi_plugin_get_num_devices(nccl_net_ofi_plugin_t *plugin)
+{
+	return plugin->p_num_devs;
+}
+
+
+int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
+			     size_t num_devices)
+{
+	plugin->p_devs = calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
+	if (plugin->p_devs == NULL) {
+		NCCL_OFI_WARN("Unable to allocate "
+			      "nccl_net_ofi_rdma_device_t pointer array");
+		return -ENOMEM;
+	}
+
+	plugin->p_num_devs = num_devices;
+
+	plugin->assign_device = nccl_net_ofi_plugin_assign_device;
+	plugin->get_device = nccl_net_ofi_plugin_get_device;
+	plugin->get_num_devices = nccl_net_ofi_plugin_get_num_devices;
+	plugin->release_plugin = nccl_net_ofi_plugin_fini;
+
+	return 0;
+}
+
+
+int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+{
+	/* TODO: there is currently no destructor in the device class,
+	 * so we need the caller to dispatch that appropriately today.
+	 */
+	free(plugin->p_devs);
+	plugin->p_num_devs = 0;
 
 	return 0;
 }

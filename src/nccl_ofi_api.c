@@ -104,38 +104,28 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 		return ncclInvalidArgument;
 	}
 
-	*num_devices = plugin->num_devs;
+	*num_devices = plugin->get_num_devices(plugin);
 	return ncclSuccess;
 }
 
 
 ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_properties)
 {
+	nccl_net_ofi_device_t *device;
+
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
 		return ncclInvalidArgument;
 	}
 
-	/* Validate dev parameter */
-	if (OFI_UNLIKELY(dev_id < 0 || dev_id >= plugin->num_devs)) {
-		NCCL_OFI_WARN("Incorrect dev %d provided", dev_id);
+	device = plugin->get_device(plugin, dev_id);
+	if (device == NULL) {
+		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 		return ncclInternalError;
 	}
 
-	/* Validate devices */
-	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
-		return ncclInternalError;
-	}
-
-	/* Validate device */
-	if (OFI_UNLIKELY(plugin->devs[dev_id] == NULL)) {
-		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
-		return ncclInternalError;
-	}
-
-	int ret = plugin->devs[dev_id]->get_properties(plugin->devs[dev_id], ofi_properties);
+	int ret = device->get_properties(device, ofi_properties);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -143,7 +133,7 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 {
 	ncclResult_t ret = ncclSuccess;
-	nccl_net_ofi_device_t *base_dev = NULL;
+	nccl_net_ofi_device_t *device = NULL;
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	nccl_net_ofi_listen_comm_t **listen_comm =
 		(nccl_net_ofi_listen_comm_t **)lComm;
@@ -154,27 +144,11 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 		return ncclInvalidArgument;
 	}
 
-	/* Validate dev_id parameter */
-	if (OFI_UNLIKELY(dev_id < 0 || dev_id >= plugin->num_devs)) {
-		NCCL_OFI_WARN("Incorrect device ID %d provided. "
-			      "Correct values are from 0 to %d",
-			      dev_id, plugin->num_devs - 1);
+	device = plugin->get_device(plugin, dev_id);
+	if (device == NULL) {
+		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 		return ncclInternalError;
 	}
-
-	/* Validate devices */
-	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
-		return ncclInternalError;
-	}
-
-	/* Retrieve and validate device */
-	base_dev = plugin->devs[dev_id];
-	if (OFI_UNLIKELY(base_dev == NULL)) {
-		NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
-		return ncclInternalError;
-	}
-
 	/* Validate Handle */
 	if (OFI_UNLIKELY(handle == NULL)) {
 		NCCL_OFI_WARN("Provided handle is NULL");
@@ -182,7 +156,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 	}
 
 	/* Retrieve and validate endpoint */
-	plugin->devs[dev_id]->get_ep(base_dev, &base_ep);
+	device->get_ep(device, &base_ep);
 	if (OFI_UNLIKELY(base_ep == NULL)) {
 		NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
 		return ncclInternalError;
@@ -243,20 +217,6 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 		return ncclInvalidArgument;
 	}
 
-	/* Validate dev_id parameter */
-	if (OFI_UNLIKELY(dev_id < 0 || dev_id >= plugin->num_devs)) {
-		NCCL_OFI_WARN("Incorrect device ID %d provided. "
-			      "Correct values are from 0 to %d",
-			      dev_id, plugin->num_devs - 1);
-		return ncclInternalError;
-	}
-
-	/* Validate devices */
-	if (OFI_UNLIKELY(plugin->devs == NULL)) {
-		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
-		return ncclInternalError;
-	}
-
 	/* Retrieve and validate Handle */
 	nccl_net_ofi_conn_handle_t *ofi_handle =
 		(nccl_net_ofi_conn_handle_t *)handle;
@@ -268,16 +228,15 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	if (ofi_handle->state.stage == COMM_CREATE_START) {
-		/* Retrieve and validate device */
-		nccl_net_ofi_device_t *base_dev = plugin->devs[dev_id];
-		if (OFI_UNLIKELY(base_dev == NULL)) {
-			NCCL_OFI_WARN("Error accessing device. Device #%i has not been initialized.", dev_id);
+		nccl_net_ofi_device_t *device = plugin->get_device(plugin, dev_id);
+		if (device == NULL) {
+			NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 			return ncclInternalError;
 		}
 
-		ncclResult_t ret = base_dev->get_ep(base_dev, &base_ep);
-		if (OFI_UNLIKELY(ret != ncclSuccess)) {
-			return ret;
+		int ret = device->get_ep(device, &base_ep);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return nccl_net_ofi_retval_translate(ret);
 		}
 	} else {
 		base_ep = ofi_handle->state.comm->ep;

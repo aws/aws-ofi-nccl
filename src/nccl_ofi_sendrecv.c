@@ -35,6 +35,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		(nccl_net_ofi_sendrecv_device_t *)base_dev;
 	struct fi_info *info = device->info;
 	int dev_id = device->base.dev_id;
+	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
 	int ret;
 
 	/* Validate libfabric NIC info */
@@ -44,7 +45,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
+	ret = nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
@@ -2284,6 +2285,52 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 }
 
 
+static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+{
+	int ret, last_error = 0;
+
+	ret = nccl_net_ofi_plugin_fini(plugin);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Destructing base plugin failed: %s",
+			      strerror(-ret));
+		if (last_error == 0) {
+			last_error = ret;
+		}
+	}
+
+	free(plugin);
+
+	return 0;
+}
+
+
+static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
+					       nccl_net_ofi_plugin_t **plugin_p)
+{
+	int ret;
+	nccl_net_ofi_plugin_t *plugin = NULL;
+
+	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
+	if (plugin == NULL) {
+		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
+		return -ENOMEM;
+	}
+
+	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing base plugin failed: %s",
+			      strerror(-ret));
+		return ret;
+	}
+
+	plugin->release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
+
+	*plugin_p = plugin;
+
+	return 0;
+}
+
+
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p)
 {
@@ -2291,7 +2338,6 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	int dev_id = 0;
 	struct fi_info *provider_list = NULL, *info;
 	unsigned int num_providers;
-	nccl_net_ofi_device_t **base_devs = NULL;
 	nccl_net_ofi_plugin_t *plugin = NULL;
 	struct fi_info *hints;
 
@@ -2436,23 +2482,11 @@ found:
 		goto exit;
 	}
 
-	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
-	if (!plugin) {
+	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, &plugin);
+	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		ret = -ENOMEM;
 		goto exit;
 	}
-
-	base_devs = malloc(num_providers * sizeof(nccl_net_ofi_device_t *));
-	if (!base_devs) {
-		NCCL_OFI_WARN("Unable to allocate "
-			      "nccl_net_ofi_sendrecv_device_t pointer array");
-		ret = -ENOMEM;
-		goto exit;
-	}
-
-	plugin->devs = base_devs;
-	plugin->num_devs = num_providers;
 
 	/* Allocate and initialize nccl_net devices */
 	info = provider_list;
@@ -2542,7 +2576,11 @@ found:
 			goto error;
 		}
 
-		base_devs[dev_id] = &device->base;
+		ret = plugin->assign_device(plugin, dev_id, &device->base);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
+			goto error;
+		}
 
 		dev_id++;
 		info = info->next;
@@ -2551,18 +2589,22 @@ found:
 	goto exit;
 
  error:
-	while (dev_id > 0) {
-		--dev_id;
-		nccl_net_ofi_sendrecv_device_t *device =
-			(nccl_net_ofi_sendrecv_device_t *)base_devs[dev_id];
+	if (plugin != NULL) {
+		size_t num_devs = plugin->get_num_devices(plugin);
 
-		fi_freeinfo(device->info);
-		free(device->base.name);
-		free(device);
+		for (size_t i = 0 ; i < num_devs ; i++) {
+			nccl_net_ofi_sendrecv_device_t *device =
+				(nccl_net_ofi_sendrecv_device_t *)plugin->get_device(plugin, i);
+			if (device == NULL) continue;
+
+			fi_freeinfo(device->info);
+			free(device->base.name);
+			free(device);
+		}
+
+		plugin->release_plugin(plugin);
+		plugin = NULL;
 	}
-	free(base_devs);
-	free(plugin);
-	plugin = NULL;
 
  exit:
 	*plugin_p = plugin;

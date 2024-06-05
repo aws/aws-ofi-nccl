@@ -531,7 +531,8 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = device->device_rails[0].info;
-	int ret =  nccl_net_ofi_info_properties(info, dev_id, base_dev->plugin->num_devs, props);
+	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
+	int ret =  nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
@@ -5694,11 +5695,56 @@ static void get_hints(struct fi_info *hints)
 }
 
 
+static int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+{
+	int ret, last_error = 0;
+
+	ret = nccl_net_ofi_plugin_fini(plugin);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Destructing base plugin failed: %s",
+			      strerror(-ret));
+		if (last_error == 0) {
+			last_error = ret;
+		}
+	}
+
+	free(plugin);
+
+	return 0;
+}
+
+
+static int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
+					   nccl_net_ofi_plugin_t **plugin_p)
+{
+	int ret;
+	nccl_net_ofi_plugin_t *plugin = NULL;
+
+	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
+	if (plugin == NULL) {
+		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
+		return -ENOMEM;
+	}
+
+	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing base plugin failed: %s",
+			      strerror(-ret));
+		return ret;
+	}
+
+	plugin->release_plugin = nccl_net_ofi_rdma_plugin_fini;
+
+	*plugin_p = plugin;
+
+	return 0;
+}
+
+
 int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
-	nccl_net_ofi_device_t **base_devs = NULL;
 	int num_devs = 0;
 	struct fi_info *provider_list = NULL;
 	unsigned int num_providers;
@@ -5754,13 +5800,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 	eager_max_size = (size_t) ofi_nccl_eager_max_size();
 
-	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
-	if (!plugin) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		ret = -ENOMEM;
-		goto error;
-	}
-
 	/* Create NCCL OFI topology */
 	topo = nccl_ofi_topo_create(provider_list);
 	if (!topo) {
@@ -5804,16 +5843,11 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	base_devs = calloc(num_devs, sizeof(nccl_net_ofi_device_t *));
-	if (!base_devs) {
-		NCCL_OFI_WARN("Unable to allocate "
-			      "nccl_net_ofi_rdma_device_t pointer array");
-		ret = -ENOMEM;
-		goto error;
+	ret = nccl_net_ofi_rdma_plugin_create(num_devs, &plugin);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
+		goto exit;
 	}
-
-	plugin->devs = base_devs;
-	plugin->num_devs = num_devs;
 
 	/* Initialize user data iterator */
 	nccl_ofi_topo_data_iterator_t data_iter;
@@ -5852,7 +5886,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			ret = -ENOMEM;
 			goto error;
 		}
-		base_devs[dev_id] = &device->base;
+
+		ret = plugin->assign_device(plugin, dev_id, &device->base);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
+			goto error;
+		}
 
 		device->base.plugin = plugin;
 
@@ -5934,12 +5973,13 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	goto exit;
 
  error:
-	if (base_devs) {
-		for (nccl_net_ofi_device_t **base_dev = base_devs; base_dev != base_devs + num_devs; ++base_dev) {
-			nccl_net_ofi_rdma_device_t *device =
-				(nccl_net_ofi_rdma_device_t *)*base_dev;
+	if (plugin != NULL) {
+		size_t num_devs = plugin->get_num_devices(plugin);
 
-			if (!device) continue;
+		for (size_t i = 0 ; i < num_devs ; i++) {
+			nccl_net_ofi_rdma_device_t *device =
+				(nccl_net_ofi_rdma_device_t *)plugin->get_device(plugin, i);
+			if (device == NULL) continue;
 
 			if (device->device_rails) {
 				release_device_ofi_resources(device);
@@ -5950,10 +5990,8 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 
 			free(device);
 		}
-		free(base_devs);
-	}
-	if (plugin) {
-		free(plugin);
+
+		plugin->release_plugin(plugin);
 		plugin = NULL;
 	}
 
