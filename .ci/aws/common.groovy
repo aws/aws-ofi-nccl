@@ -74,7 +74,7 @@ def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_
      * Worst case, this increases our time to publish results on PR's by 15 minutes.
      */
     if (instance_type == "p3dn.24xlarge") {
-        sh "sleep 300"
+        sh "sleep 150"
     }
 
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
