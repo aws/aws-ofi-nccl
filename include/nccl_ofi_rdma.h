@@ -27,6 +27,29 @@ extern "C" {
  * NCCL comm structure. */
 #define MAX_NUM_RAILS (4)
 
+#define NCCL_OFI_RDMA_CTRL_TYPE_BITS (4)
+
+/*
+ * @brief      Number of bits used for the communicator ID
+ */
+#define NCCL_OFI_RDMA_COMM_ID_BITS (18)
+
+/*
+ * @brief	Number of bits used for message sequence number
+ *
+ * The immediate data associated with an RDMA write operation is 32
+ * bits and is divided into three parts, the segment count, the
+ * communicator ID, and the message sequence number (msg_seq_num).
+ * The data is encoded as follows:
+ *
+ * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
+ *
+ * - Segment count: number of RDMA writes that will be delivered as part of this message
+ * - Comm ID: the ID for this communicator
+ * - Message sequence number: message identifier
+ */
+#define NCCL_OFI_RDMA_SEQ_BITS     (10)
+
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -88,22 +111,40 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
    destination buffer */
 typedef struct nccl_net_ofi_rdma_ctrl_msg {
 	/* Message type, must be NCCL_OFI_RDMA_MSG_CTRL */
-	nccl_ofi_rdma_msg_type_t type;
+	uint32_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
 
 	/* Message sequence number */
-	uint16_t msg_seq_num;
+	uint32_t msg_seq_num:NCCL_OFI_RDMA_SEQ_BITS;
 
 	/* A comm identitifer that uniquely identifies the comm
 	 * on the receiver side */
-	uint32_t remote_comm_id;
+	uint32_t remote_comm_id:NCCL_OFI_RDMA_COMM_ID_BITS;
+
+	uint32_t buff_len;
 
 	uint64_t buff_addr;
-	uint64_t buff_len;
-	uint64_t buff_mr_key[MAX_NUM_RAILS];
+
+	union {
+		uint32_t short_buff_mr_key[MAX_NUM_RAILS];
+		uint64_t long_buff_mr_key[MAX_NUM_RAILS];
+	};
 } nccl_net_ofi_rdma_ctrl_msg_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 56,
-	       "Wrong size for RDMA Control message");
+_Static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 48,
+              "Wrong size for RDMA Control message");
+_Static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
+	       sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key) <= 32,
+	       "Short RDMA Control message larger than 32 bytes (EFA inline size)");
+
+#define NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key[0] ))
+#define NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->long_buff_mr_key[0] ))
+
+static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(size_t num_rails, bool use_long_rkeys)
+{
+	size_t rkey_len = (use_long_rkeys) ? NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE : NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE;
+	return offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) + num_rails * rkey_len;
+}
+
 
 /* Structure used to store control messages in a free list */
 typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
@@ -332,7 +373,8 @@ typedef struct nccl_ofi_rdma_connection_info {
 	/* Message type
 	 * either NCCL_OFI_RDMA_MSG_CONN or NCCL_OFI_RDMA_MSG_CONN_RESP
 	 */
-	nccl_ofi_rdma_msg_type_t type;
+	uint16_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
+	uint16_t pad:(16 - NCCL_OFI_RDMA_CTRL_TYPE_BITS);
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -583,6 +625,8 @@ struct nccl_net_ofi_rdma_ep {
 	/* Number of rails */
 	int num_rails;
 
+	bool use_long_rkeys;
+
 	/* Array of `num_rails` endpoint rails */
 	nccl_net_ofi_ep_rail_t *rails;
 
@@ -683,6 +727,8 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
+
+	bool use_long_rkeys;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];

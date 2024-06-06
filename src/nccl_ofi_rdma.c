@@ -35,30 +35,9 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
-/*
- * @brief	Number of bits used for the communicator ID
- */
-#define NUM_COMM_ID_BITS           ((uint64_t)18)
-
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
-#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NUM_COMM_ID_BITS)
-
-/*
- * @brief	Number of bits used for message sequence number
- *
- * The immediate data associated with an RDMA write operation is 32
- * bits and is divided into three parts, the segment count, the
- * communicator ID, and the message sequence number (msg_seq_num).
- * The data is encoded as follows:
- *
- * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
- *
- * - Segment count: number of RDMA writes that will be delivered as part of this message
- * - Comm ID: the ID for this communicator
- * - Message sequence number: message identifier
- */
-#define NUM_MSG_SEQ_NUM_BITS       ((uint64_t)10)
+#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
 
 /*
  * @brief	Number of bits used for number of segments value
@@ -68,12 +47,12 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /*
  * @brief	Communicator ID bitmask
  */
-#define COMM_ID_MASK               (((uint64_t)1 << NUM_COMM_ID_BITS) - 1)
+#define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
 
 /*
  * @brief	Message sequence number bitmask for immediate data
  */
-#define MSG_SEQ_NUM_MASK (((uint64_t)1 << NUM_MSG_SEQ_NUM_BITS) - 1)
+#define MSG_SEQ_NUM_MASK (((uint64_t)1 << NCCL_OFI_RDMA_SEQ_BITS) - 1)
 
 /*
  * @brief	Number of segments bitmask for immediate data
@@ -83,32 +62,32 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /*
  * @brief	Extract communicator ID from write completion immediate data
  *
- * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
-#define GET_COMM_ID_FROM_IMM(data) (((data) >> NUM_MSG_SEQ_NUM_BITS) & COMM_ID_MASK)
+#define GET_COMM_ID_FROM_IMM(data) (((data) >> NCCL_OFI_RDMA_SEQ_BITS) & COMM_ID_MASK)
 
 /*
  * @brief	Extract message sequence number from write completion immediate data
  *
- * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
 #define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
 
 /*
  * @brief	Extract number of segments from write completion immediate data
  *
- * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
-#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NUM_MSG_SEQ_NUM_BITS + NUM_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
+#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
 
 /*
  * @brief	Build write completion immediate data from comm ID, message seq
  *		number and number of segments used to transfer RDMA write
  *
- * The immediate data bit format is documented in the definition of NUM_MSG_SEQ_NUM_BITS
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
 #define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
-	((seq) | ((comm_id) << NUM_MSG_SEQ_NUM_BITS) | ((nseg) << (NUM_MSG_SEQ_NUM_BITS + NUM_COMM_ID_BITS)))
+	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
 
 /** Global variables **/
 
@@ -538,8 +517,8 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	 * reails have the same speed. */
 	if (ret == 0) {
 		props->port_speed *= device->num_rails;
-		_Static_assert(NUM_COMM_ID_BITS < 31,
-			       "NUM_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
+		_Static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
+			       "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
 	}
 	return ret;
@@ -828,8 +807,12 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
 
-	for (int rail_id = 0; rail_id != MAX_NUM_RAILS; ++rail_id) {
-		send_data->remote_mr_key[rail_id] = ctrl_msg->buff_mr_key[rail_id];
+	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
+		if (ep->use_long_rkeys) {
+			send_data->remote_mr_key[rail_id] = ctrl_msg->long_buff_mr_key[rail_id];
+		} else {
+			send_data->remote_mr_key[rail_id] = ctrl_msg->short_buff_mr_key[rail_id];
+		}
 	}
 
 	send_data->remote_buff = ctrl_msg->buff_addr;
@@ -1159,8 +1142,11 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_ep_t *ep, int rail_id, st
 	bounce_data->recv_len = cq_entry->len;
 	bounce_fl_item = bounce_data->bounce_fl_item;
 
+	/* The first 4 bits are the type, but we don't have a base
+	 * header type.  So cast to a control message and lookup the
+	 * type from there. */
 	nccl_ofi_rdma_msg_type_t msg_type =
-		eager ? NCCL_OFI_RDMA_MSG_EAGER : *(nccl_ofi_rdma_msg_type_t *)&bounce_fl_item->bounce_msg;
+		eager ? NCCL_OFI_RDMA_MSG_EAGER : ((nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg)->type;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
@@ -1221,7 +1207,7 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_ep_t *ep, int rail_id, st
 		break;
 	case NCCL_OFI_RDMA_MSG_CTRL:
 		/* CTRL receive completion */
-		assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == cq_entry->len);
+		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
 
 		ctrl_msg = get_bounce_ctrl_msg(bounce_fl_item);
 		s_comm = get_send_comm(ep, ctrl_msg->remote_comm_id);
@@ -2667,6 +2653,7 @@ static inline int insert_send_ctrl_req(
 				nccl_net_ofi_rdma_req_t *recv_req)
 {
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	nccl_net_ofi_rdma_req_t *send_ctrl_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_ctrl_req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI send control request for device %d",
@@ -2681,11 +2668,13 @@ static inline int insert_send_ctrl_req(
 	send_ctrl_req->msg_seq_num = msg_seq_num;
 
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(send_ctrl_req);
+	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
+
 	send_ctrl_data->recv_req = recv_req;
 	send_ctrl_data->ctrl_fl_item = NULL;
 	send_ctrl_data->ctrl_schedule = scheduler->get_schedule(scheduler,
-							   sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
-							   device->num_rails);
+								ctrl_msg_len,
+								device->num_rails);
 
 	if (OFI_UNLIKELY(!(send_ctrl_data->ctrl_schedule))) {
 		return -EINVAL;
@@ -2724,11 +2713,22 @@ static inline int insert_send_ctrl_req(
 
 	int rail_id = 0;
 	for (; rail_id < r_comm->num_rails; rail_id++) {
-		ctrl_fl_item->ctrl_msg.buff_mr_key[rail_id] = fi_mr_key(buff_mr_handle->mr[rail_id]);
+		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id]);
 
-		if (ctrl_fl_item->ctrl_msg.buff_mr_key[rail_id] == FI_KEY_NOTAVAIL) {
+		if (rkey == FI_KEY_NOTAVAIL) {
 			NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
 			return -ENOENT;
+		}
+
+		if (ep->use_long_rkeys) {
+			ctrl_fl_item->ctrl_msg.long_buff_mr_key[rail_id] = rkey;
+		} else {
+			if (rkey > (1ULL << (NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE * 8)) - 1) {
+				NCCL_OFI_WARN("Libfabric returned rkey larger than declared rkey size: %" PRIu64,
+					      rkey);
+				return -ENOTSUP;
+			}
+			ctrl_fl_item->ctrl_msg.short_buff_mr_key[rail_id] = rkey;
 		}
 	}
 
@@ -3500,7 +3500,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 	}
 
 	/* Allocate message buffer */
-	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NUM_MSG_SEQ_NUM_BITS);
+	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS);
 	if (!r_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
 		free(r_comm);
@@ -4231,6 +4231,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 	nccl_net_ofi_schedule_t *schedule = send_ctrl_data->ctrl_schedule;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	assert(schedule != NULL);
 
@@ -4251,7 +4252,12 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
 
 	NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, xfer_info->rail_id, req->comm, req, req->msg_seq_num);
-	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->ctrl_msg, sizeof(nccl_net_ofi_rdma_ctrl_msg_t), desc,
+
+	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
+
+	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->ctrl_msg,
+			     ctrl_msg_len,
+			     desc,
 			     comm_rail->remote_addr, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
@@ -4927,7 +4933,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 				     &ret_s_comm->conn_msg);
 
 	/* Allocate message buffer */
-	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NUM_MSG_SEQ_NUM_BITS);
+	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS);
 	if (!ret_s_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
 		ret = -ENOMEM;
@@ -5487,6 +5493,8 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 			goto unlock;
 		}
 
+		ep->use_long_rkeys = device->use_long_rkeys;
+
 		/* Create array of comms. */
 		/* TODO make this array expandable */
 		ep->comms = calloc(NCCL_OFI_RDMA_MAX_COMMS, sizeof(nccl_net_ofi_comm_t*));
@@ -5811,6 +5819,12 @@ nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
 	if (device->device_rails == NULL) {
 		NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
 		goto error;
+	}
+
+	if (info_list->domain_attr->mr_key_size <= NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE) {
+		device->use_long_rkeys = false;
+	} else {
+		device->use_long_rkeys = true;
 	}
 
 	device->num_comm_ids = (uint32_t)NCCL_OFI_RDMA_MAX_COMMS;
