@@ -1372,12 +1372,16 @@ static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
 static const char *nccl_net_ofi_req_str(nccl_net_ofi_rdma_req_t *req)
 {
 	static char buf[256];
-	snprintf(buf, sizeof(buf), "{ dev: %d, size: %zu, state: %s, type: %s }",
-		 req->dev_id,
-		 req->size,
-		 req_state_str(req->state),
-		 req_type_str(req->type)
-		);
+	if (req == NULL) {
+		snprintf(buf, sizeof(buf), "(nil)");
+	} else {
+		snprintf(buf, sizeof(buf), "{ dev: %d, size: %zu, state: %s, type: %s }",
+			 req->dev_id,
+			 req->size,
+			 req_state_str(req->state),
+			 req_type_str(req->type)
+			);
+	}
 	return buf;
 }
 
@@ -1510,6 +1514,31 @@ static inline int process_err_completion(nccl_net_ofi_rdma_device_t *device,
 	} else if (OFI_UNLIKELY(ret < 0)) {
 		NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
 			      ret, fi_strerror(-ret));
+		goto exit;
+	}
+
+	if (err_entry.err == FI_ECANCELED) {
+		/* Closing an EP with posted receives will generate cancellation events
+		   for the posted receives */
+		req = (nccl_net_ofi_rdma_req_t *)err_entry.op_context;
+		if (req == NULL || req->type != NCCL_OFI_RDMA_BOUNCE) {
+			NCCL_OFI_WARN("Received canceled event from unexpected request type. Type: %s",
+				nccl_net_ofi_req_str(req));
+			ret = -EIO;
+			goto exit;
+		}
+
+		rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
+		nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
+
+		/* Remove from posted buffs deque */
+		nccl_net_ofi_mutex_lock(&ep->posted_recv_req_list_lock);
+		DL_DELETE(ep->posted_recv_req_list, bounce_data);
+		nccl_net_ofi_mutex_unlock(&ep->posted_recv_req_list_lock);
+
+		NCCL_OFI_TRACE(NCCL_NET, "Processed canceled event for internal receive request %p", req);
+
+		ret = -err_entry.err;
 		goto exit;
 	}
 
@@ -1677,11 +1706,17 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
 			ret = process_err_completion(get_device_from_ep(ep), rail->cq);
-			if (ret == 0)
+			if (ret == 0) {
 				/* Error entry not available yet */
 				break;
-			else
+			} else if (ret == -FI_ECANCELED) {
+				/* Non-fatal cancellation event -- continue
+				   processing cq */
+				ret = 0;
+				continue;
+			} else {
 				goto exit;
+			}
 		} else if (rc == -FI_EAGAIN) {
 			/* No completions to process */
 			break;
@@ -4854,6 +4889,12 @@ static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret = 0;
 
+	if (ep->posted_recv_req_list != NULL) {
+		NCCL_OFI_WARN("Cannot finalize bounce buffers: recv buffers still posted");
+		ret = -EBUSY;
+		return ret;
+	}
+
 	ret = nccl_net_ofi_mutex_destroy(&ep->posted_recv_req_list_lock);
 	if (ret != 0) {
 		return ret;
@@ -5402,6 +5443,40 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	return ret;
 }
 
+static int cancel_posted_recv_ops(nccl_net_ofi_rdma_ep_t *ep)
+{
+	while (true) {
+		nccl_net_ofi_mutex_lock(&ep->posted_recv_req_list_lock);
+		/* Head element of list */
+		rdma_req_bounce_data_t *bounce_data = ep->posted_recv_req_list;
+
+		if (bounce_data == NULL) {
+			/* List is empty */
+			nccl_net_ofi_mutex_unlock(&ep->posted_recv_req_list_lock);
+			break;
+		}
+
+		struct fid_ep *ofi_ep = bounce_data->rail->ofi_ep;
+		nccl_net_ofi_rdma_req_t *req = container_of(bounce_data,
+			nccl_net_ofi_rdma_req_t, bounce_data);
+		int ret = fi_cancel(&ofi_ep->fid, req);
+
+		nccl_net_ofi_mutex_unlock(&ep->posted_recv_req_list_lock);
+
+		if (ret != 0) {
+			NCCL_OFI_WARN("Call to fi_cancel failed. RC: %d", ret);
+			return ret;
+		}
+
+		ret = ofi_process_cq(ep);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 static int release_ep(nccl_net_ofi_ep_t *base_ep)
 {
 	int ret = 0;
@@ -5447,8 +5522,33 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	 * deallocation.
 	 */
 	if (ep->ref_cnt == 0) {
-		/* Ideally we would "un-post" the bounce buffers, but this
-		   should be accomplished by closing the endpoint. */
+
+		/**
+		 * Before closing the endpoint, cancel currently posted receive
+		 * operations on the endpoint, and wait for the corresponding
+		 * FI_ECANCELED events. We do this for two reasons:
+		 *
+		 * 1. Current Libfabric versions incorrectly generate FI_ECANCELED
+		 *    events for in-progress receive ops when the endpoint is
+		 *    closed. Furthermore, the cancellation events incorrectly
+		 *    have the FI_SEND flag set instead of FI_RECV. Canceling
+		 *    the ops explicitly and waiting for the cancellation events
+		 *    before freeing the requests below ensures the context
+		 *    still points to a valid request when the event is
+		 *    processed, allowing us to verify that these events are
+		 *    from the expected request type before freeing the request
+		 *    below.
+		 *
+		 * 2. In the future (TODO), we should implement some form of
+		 *    accouting to ensure that no recv buffers were leaked from
+		 *    the freelist during the run, which requires explicitly
+		 *    handling the cancellation events.
+		 */
+		ret = cancel_posted_recv_ops(ep);
+		if (ret != 0) {
+			return ret;
+		}
+
 		release_rdma_ep_resources(ep, device->base.dev_id);
 
 		ret = fini_bounce_buffers(ep);
