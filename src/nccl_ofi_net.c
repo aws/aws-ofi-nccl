@@ -20,6 +20,8 @@
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"

@@ -20,6 +20,8 @@
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
@@ -299,12 +301,11 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 		goto error;
 	}
 
-
 	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
 	 * using the Libfabric 1.18 API with HMEM support.
 	 */
 	if (api_version == FI_VERSION(1,18) && support_gdr != GDR_UNSUPPORTED) {
-#if (HAVE_CUDA && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
+#if ((HAVE_CUDA || HAVE_ROCM) && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
 		bool optval = false;
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
 				FI_OPT_CUDA_API_PERMITTED, &optval,
