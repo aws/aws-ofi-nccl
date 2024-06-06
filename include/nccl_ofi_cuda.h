@@ -12,7 +12,15 @@ extern "C" {
 
 #include <cuda.h>
 
-int nccl_net_ofi_cuda_init(void);
+/*
+ * Error checking is currently just success or failure.
+ */
+enum {
+	GPU_SUCCESS = 0,
+	GPU_ERROR = 999  /* Match CUDA_UNKNOWN_ERROR value */
+};
+
+int nccl_net_ofi_gpu_init(void);
 
 /*
  * @brief	Gets the CUDA device associated with the buffer
@@ -27,18 +35,14 @@ int nccl_net_ofi_cuda_init(void);
  */
 int nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
 
-extern CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion);
-
-extern CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr);
-
-extern CUresult (*nccl_net_ofi_cuCtxGetDevice)(CUdevice *device);
-extern CUresult (*nccl_net_ofi_cuDeviceGetCount)(int* count);
+extern int nccl_net_ofi_gpuDriverGetVersion(int *driverVersion);
+extern int nccl_net_ofi_gpuCtxGetDevice(CUdevice *device);
+extern int nccl_net_ofi_gpuDeviceGetCount(int* count);
 
 #if CUDA_VERSION >= 11030
-extern CUresult (*nccl_net_ofi_cuFlushGPUDirectRDMAWrites)(CUflushGPUDirectRDMAWritesTarget target,
-							   CUflushGPUDirectRDMAWritesScope scope);
+extern int nccl_net_ofi_gpuFlushGPUDirectRDMAWrites();
 #else
-extern void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites;
+extern void *nccl_net_ofi_gpuFlushGPUDirectRDMAWrites;
 #endif
 
 #ifdef _cplusplus

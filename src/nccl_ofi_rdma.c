@@ -3368,11 +3368,9 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 #if CUDA_VERSION >= 11030
 	if (cuda_flush) {
-		CUresult cuda_ret = nccl_net_ofi_cuFlushGPUDirectRDMAWrites(
-			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
-			CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER);
+		int cuda_ret = nccl_net_ofi_gpuFlushGPUDirectRDMAWrites();
 
-		if (cuda_ret != CUDA_SUCCESS) {
+		if (cuda_ret != GPU_SUCCESS) {
 			ret = -ENOTSUP;
 			NCCL_OFI_WARN("Error performing CUDA GDR flush");
 			goto exit;
