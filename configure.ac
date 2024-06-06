@@ -93,10 +93,30 @@ CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
                         [AC_MSG_ERROR([Cannot enable both CUDA and neuron.])],
                         [want_cuda=no])
                   have_device_interface=neuron])
-CHECK_PKG_CUDA([have_device_interface=cuda])
-
+# Select CUDA if Neuron wasn't specified and --with-rocm was not used.
+CHECK_PKG_CUDA(AS_IF([test "${have_device_interface}" = "no"],
+	       AS_IF([test -z "$with_rocm"], [have_device_interface=cuda])))
+# If neither CUDA nor Neuron is being used, select ROCm
+CHECK_PKG_ROCM(AS_IF([test "${have_device_interface}" = "no"], [have_device_interface=rocm]))
 AS_IF([test "${have_device_interface}" = "no"],
-      [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
+      [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA, ROCm or Neuron runtime.])])
+
+do_cuda=0
+do_rocm=0
+AS_IF([test -n "$with_rocm"],
+	[AS_IF([test "$have_device_interface" = "rocm"],
+		[enable_tests="no"
+		 do_rocm=1
+		 ])],
+	[AS_IF([test "$have_device_interface" = "cuda"], [do_cuda=1])])
+
+AC_DEFINE_UNQUOTED([HAVE_CUDA], [${do_cuda}], [Defined to 1 if CUDA is available])
+AM_CONDITIONAL([HAVE_CUDA], [test ${do_cuda} = 1])
+
+AC_DEFINE_UNQUOTED([HAVE_ROCM], [${do_rocm}], [Defined to 1 if ROCm is available])
+AM_CONDITIONAL([HAVE_ROCM], [test ${do_rocm} = 1])
+AS_IF([test ${do_rocm} = 1],
+	AC_DEFINE_UNQUOTED( [__HIP_PLATFORM_AMD__], [ 1 ], [Select AMD/ROCm HIP APIs] ))
 
 CHECK_PKG_HWLOC([],
 		[AC_MSG_ERROR([Could not find the hwloc library. Use --with-hwloc to provide the path to non-standard hwloc installation.])])

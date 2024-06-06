@@ -264,7 +264,7 @@ exit:
 }
 
 
-#if HAVE_CUDA
+#if HAVE_CUDA || HAVE_ROCM
 static int configure_nccl_proto(void)
 {
 	int ret;

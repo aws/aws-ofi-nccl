@@ -14,6 +14,8 @@
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_param.h"
@@ -385,7 +387,7 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 		mr_attr->access |= FI_READ;
 		mr_attr->iface = FI_HMEM_SYSTEM;
 		break;
-#if HAVE_CUDA
+#if HAVE_CUDA || HAVE_ROCM
 	case NCCL_PTR_CUDA:
 		mr_attr->access |= FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_CUDA;

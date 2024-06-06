@@ -41,8 +41,10 @@ extern int nccl_net_ofi_gpuDeviceGetCount(int* count);
 
 #if CUDA_VERSION >= 11030
 extern int nccl_net_ofi_gpuFlushGPUDirectRDMAWrites();
+#define HAVE_FLUSH_GPU_DIRECT_RDMA_WRITE 1
 #else
 extern void *nccl_net_ofi_gpuFlushGPUDirectRDMAWrites;
+#define HAVE_FLUSH_GPU_DIRECT_RDMA_WRITE 0
 #endif
 
 #ifdef _cplusplus

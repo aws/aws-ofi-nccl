@@ -19,6 +19,8 @@
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
@@ -151,7 +153,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	assert(NCCL_OFI_IS_POWER_OF_TWO(system_page_size));
 	assert(system_page_size > 0);
 
-#if HAVE_CUDA
+#if HAVE_CUDA || HAVE_ROCM
 	ret = nccl_net_ofi_gpu_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("CUDA initialization failed.");
@@ -167,7 +169,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA driver version %d", cuda_version);
 	if (ofi_nccl_cuda_flush_enable()) {
-		if (nccl_net_ofi_gpuFlushGPUDirectRDMAWrites == NULL) {
+		if (HAVE_FLUSH_GPU_DIRECT_RDMA_WRITE) {
 			NCCL_OFI_WARN("CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
 			cuda_flush = false;
 		} else {
