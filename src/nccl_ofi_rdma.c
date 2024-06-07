@@ -960,6 +960,8 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 
 	nccl_net_ofi_rdma_req_t *req = elem;
 	rdma_req_send_data_t *send_data = get_send_data(req);
+	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
 
 	if (!send_data->eager) {
 		ret = update_send_data_from_remote(s_comm, bounce_req, req);
@@ -983,6 +985,19 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 			return ret;
 		}
 	} else {
+		/* If recv buffer is smaller than send buffer, we reduce the size of the send req, even if we have
+		   have already eagerly sent the whole send buffer. The receive side will discard the extra data. */
+		send_data->remote_len = ctrl_msg->buff_len;
+		nccl_net_ofi_mutex_lock(&req->req_lock);
+		if (send_data->remote_len < send_data->buff_len) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Remote recv buffer (%zu) smaller than send buffer (%zu) in eager send",
+				       send_data->remote_len, send_data->buff_len);
+			req->size = send_data->remote_len;
+			send_data->buff_len = send_data->remote_len;
+		}
+		nccl_net_ofi_mutex_unlock(&req->req_lock);
+
 		/* In the eager case, increment completion count for send req */
 		ret = inc_req_completion(req, 0, send_data->total_num_compls);
 		if (ret != 0) {
@@ -4256,9 +4271,9 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	/* Validate size of data */
 	if (recv_data->dst_len < bounce_data->recv_len) {
-		NCCL_OFI_WARN("Received size is %zu but destination buffer size is %zu",
-			      bounce_data->recv_len, recv_data->dst_len);
-		return -EIO;
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
+			       recv_data->dst_len, bounce_data->recv_len);
+		bounce_data->recv_len = recv_data->dst_len;
 	}
 
 	// Get communicator rail information to xfer the req
