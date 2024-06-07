@@ -815,8 +815,15 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	return ret;
 }
 
-static void copy_ctrl_data(nccl_net_ofi_rdma_req_t *bounce_req, nccl_net_ofi_rdma_req_t *req)
+static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_comm, nccl_net_ofi_rdma_req_t *bounce_req,
+				 nccl_net_ofi_rdma_req_t *req)
 {
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	assert(ep != NULL);
+
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
@@ -827,6 +834,29 @@ static void copy_ctrl_data(nccl_net_ofi_rdma_req_t *bounce_req, nccl_net_ofi_rdm
 
 	send_data->remote_buff = ctrl_msg->buff_addr;
 	send_data->remote_len = ctrl_msg->buff_len;
+
+	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
+	nccl_net_ofi_mutex_lock(&req->req_lock);
+	if (send_data->remote_len < send_data->buff_len) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Remote recv buffer (%zu) smaller than send buffer (%zu)",
+			       send_data->remote_len, send_data->buff_len);
+		req->size = send_data->remote_len;
+		send_data->buff_len = send_data->remote_len;
+	}
+	nccl_net_ofi_mutex_unlock(&req->req_lock);
+
+	send_data->schedule = scheduler->get_schedule(scheduler, send_data->buff_len, device->num_rails);
+	if (OFI_UNLIKELY(send_data->schedule == NULL)) {
+		return -EINVAL;
+	}
+
+	/* Set expected number of completions */
+	send_data->total_num_compls = send_data->schedule->num_xfer_infos;
+
+	send_data->wdata =
+		GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num, send_data->schedule->num_xfer_infos);
+
+	return 0;
 }
 
 /*
@@ -927,20 +957,15 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		NCCL_OFI_WARN("Invalid message retrieval result for msg %hu", msg_seq_num);
 		return -EINVAL;
 	}
+
 	nccl_net_ofi_rdma_req_t *req = elem;
 	rdma_req_send_data_t *send_data = get_send_data(req);
 
 	if (!send_data->eager) {
-		copy_ctrl_data(bounce_req, req);
-
-		/* We need to initiate RDMA write here. */
-		if (send_data->buff_len > send_data->remote_len) {
-			NCCL_OFI_WARN("Remote recv buffer (%zu) smaller than send buffer (%zu)!",
-					send_data->remote_len, send_data->buff_len);
-			set_request_state_to_error(req);
-			/* Success, as in this function succeeded. The error will go back
-			   up to NCCL via function test() which can process it as usual. */
-			return 0;
+		ret = update_send_data_from_remote(s_comm, bounce_req, req);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to copy ctrl data");
+			return ret;
 		}
 
 		/* Initiate rdma write */
@@ -957,13 +982,13 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		else if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
-	}
-
-	/* Increment completion count for send req */
-	ret = inc_req_completion(req, 0, send_data->total_num_compls);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to increase completion count");
-		return ret;
+	} else {
+		/* In the eager case, increment completion count for send req */
+		ret = inc_req_completion(req, 0, send_data->total_num_compls);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to increase completion count");
+			return ret;
+		}
 	}
 
 	/* Attempt to re-post bounce buffer */
@@ -3968,19 +3993,25 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	send_data->buff = buff;
 	send_data->buff_len = size;
 	send_data->buff_mr_handle = buff_mr_handle;
-	send_data->schedule = scheduler->get_schedule(scheduler, size, device->num_rails);
-	if (OFI_UNLIKELY(send_data->schedule == NULL)) {
-		return -EINVAL;
+
+	/* If this is not an eager send, the schedule is created after knowing the
+	   remote length received in the control message.
+	 */
+	if (eager) {
+		send_data->schedule = scheduler->get_schedule(scheduler, size, device->num_rails);
+		if (OFI_UNLIKELY(send_data->schedule == NULL)) {
+			return -EINVAL;
+		}
+
+		/* Set expected number of completions. Since this is an eager send, the ctrl msg
+		   has not arrived, so we expect one extra completion for the ctrl msg recv. */
+		send_data->total_num_compls = send_data->schedule->num_xfer_infos + 1;
+		send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num,
+							   send_data->schedule->num_xfer_infos);
 	}
 
 	send_data->eager = eager;
 	assert((!eager) || (send_data->schedule->num_xfer_infos == 1));
-	/* Set expected number of completions. If ctrl msg is outsanding then add one more. */
-	send_data->total_num_compls = (have_ctrl ? 0 : 1) + send_data->schedule->num_xfer_infos;
-
-	send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id,
-						   req->msg_seq_num,
-						   send_data->schedule->num_xfer_infos);
 
 	*ret_req = req;
 
@@ -4483,7 +4514,11 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		 * the RDMA write metadata from the bounce buffer
 		 */
 		nccl_net_ofi_rdma_req_t *bounce_req = elem;
-		copy_ctrl_data(bounce_req, req);
+		ret = update_send_data_from_remote(s_comm, bounce_req, req);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to copy ctrl data");
+			goto error;
+		}
 
 		/* Post if needed */
 		ret = check_post_bounce_req(bounce_req);
