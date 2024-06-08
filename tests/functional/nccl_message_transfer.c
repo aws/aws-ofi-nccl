@@ -16,7 +16,7 @@
 int main(int argc, char* argv[])
 {
 	ncclResult_t res = ncclSuccess;
-	int rank, proc_name_len, num_ranks = 0, local_rank = 0;
+	int rank, proc_name_len, num_ranks = 0, local_rank = 0, peer_rank = 0;
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
@@ -47,6 +47,17 @@ int main(int argc, char* argv[])
 	/* All processors IDs, used to find out the local rank */
 	char *all_proc_name = NULL;
 
+	/* Data sizes. We want to check send size greater, equal
+	   and smaller than recv size. And check values 1. below
+	   the eager threshold, 2. between eager and rr threshold,
+	   and 3. above the rr threshold. */
+	size_t send_sizes[] = {4 * 1024, 16 * 1024, 1024 * 1024,
+	                       5 * 1024, 17 * 1024, 2 * 1024 * 1024,
+	                       4 * 1024, 16 * 1024, 1024 * 1024};
+	size_t recv_sizes[] = {4 * 1024, 16 * 1024, 1024 * 1024,
+	                       4 * 1024, 16 * 1024, 1024 * 1024,
+	                       5 * 1024, 17 * 1024, 2 * 1024 * 1024};
+
 	/* For grouped recvs */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
@@ -56,11 +67,6 @@ int main(int argc, char* argv[])
 		NCCL_OFI_WARN("Failed to allocate memory");
 		res = ncclInternalError;
 		goto exit;
-	}
-
-	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
-		sizes[recv_n] = RECV_SIZE;
-		tags[recv_n] = tag;
 	}
 
 	MPI_Init(&argc, &argv);
@@ -88,7 +94,7 @@ int main(int argc, char* argv[])
 	/* Determine local rank */
 	for (int i = 0; i < num_ranks; i++) {
 		if (!strcmp(&all_proc_name[PROC_NAME_IDX(rank)],
-			    &all_proc_name[PROC_NAME_IDX(i)])) {
+				&all_proc_name[PROC_NAME_IDX(i)])) {
 			if (i < rank) {
 				++local_rank;
 			}
@@ -104,10 +110,6 @@ int main(int argc, char* argv[])
 	CUDACHECK(cuCtxCreate(&context, CU_CTX_SCHED_SPIN|CU_CTX_MAP_HOST, cuda_dev));
 	CUDACHECK(cuCtxSetCurrent(context));
 
-	/* Allocate and populate expected buffer */
-	OFINCCLCHECKGOTO(allocate_buff((void **)&expected_buf, SEND_SIZE, NCCL_PTR_HOST), res, exit);
-	OFINCCLCHECKGOTO(initialize_buff((void *)expected_buf, SEND_SIZE, NCCL_PTR_HOST), res, exit);
-
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
 	if (extNet == NULL) {
@@ -118,7 +120,7 @@ int main(int argc, char* argv[])
 	/* Init API */
 	OFINCCLCHECKGOTO(extNet->init(&logger), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.", rank,
-		      &all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
+			&all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
 
 	/* Devices API */
 	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
@@ -163,7 +165,7 @@ int main(int argc, char* argv[])
 		OFINCCLCHECKGOTO(extNet->listen(dev, (void *)&handle, (void **)&lComm), res, exit);
 
 		if (rank == 0) {
-			int peer_rank = (rank + 1) % num_ranks;
+			peer_rank = (rank + 1) % num_ranks;
 
 			/* MPI send */
 			MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD);
@@ -188,36 +190,8 @@ int main(int argc, char* argv[])
 			}
 			NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 					peer_rank);
-
-			/* Send NUM_REQUESTS to peer */
-			NCCL_OFI_INFO(NCCL_NET, "Send %d requests to rank %d", NUM_REQUESTS,
-					peer_rank);
-			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
-				OFINCCLCHECKGOTO(
-					allocate_buff((void **)&send_buf[idx], SEND_SIZE, buffer_type), res,
-					exit);
-				OFINCCLCHECKGOTO(
-					initialize_buff((void *)send_buf[idx], SEND_SIZE, buffer_type), res,
-					exit);
-
-				OFINCCLCHECKGOTO(extNet->regMr((void *)sComm, (void *)send_buf[idx],
-								SEND_SIZE, buffer_type, &mhandle[idx]),
-						res, exit);
-				NCCL_OFI_TRACE(NCCL_NET,
-						"Successfully registered send memory for request %d of rank %d",
-						idx, rank);
-				while (req[idx] == NULL) {
-					OFINCCLCHECKGOTO(extNet->isend((void *)sComm, (void *)send_buf[idx],
-									SEND_SIZE, tag, mhandle[idx],
-									(void **)&req[idx]),
-							res, exit);
-				}
-			}
-			NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
-					peer_rank);
-		}
-		else if (rank == 1) {
-			int peer_rank = (rank - 1) % num_ranks;
+		} else if (rank == 1) {
+			peer_rank = (rank - 1) % num_ranks;
 
 			/* MPI recv */
 			MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
@@ -241,94 +215,156 @@ int main(int argc, char* argv[])
 			}
 			NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 					peer_rank);
-
-			/* Receive NUM_REQUESTS from peer */
-			NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
-					NUM_REQUESTS);
-			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
-				OFINCCLCHECKGOTO(
-					allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res,
-					exit);
-				OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx],
-								RECV_SIZE, buffer_type, &mhandle[idx]),
-						res, exit);
-				NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
-				while (req[idx] == NULL) {
-					OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv,
-									(void *)&recv_buf[idx], sizes, tags,
-									&mhandle[idx], (void **)&req[idx]),
-							res, exit);
-				}
-			}
 		}
 
-		/* Test for completions */
-		while (inflight_reqs > 0) {
-			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
-				if (req_completed[idx])
-					continue;
+		for (size_t szidx = 0; szidx < sizeof(send_sizes) / sizeof(send_sizes[0]); szidx++) {
 
-				OFINCCLCHECKGOTO(extNet->test((void *)req[idx], &done, &received_size), res,
-						exit);
-				if (done) {
-					inflight_reqs--;
-					req_completed[idx] = 1;
+			for (int recv_n = 0; recv_n < nrecv; recv_n++) {
+				sizes[recv_n] = recv_sizes[szidx];
+				tags[recv_n] = tag;
+			}
 
-					if ((rank == 1) && (buffer_type == NCCL_PTR_CUDA)) {
-						NCCL_OFI_TRACE(NCCL_NET,
-								"Issue flush for data consistency. Request idx: %d",
-								idx);
-						nccl_net_ofi_req_t *iflush_req = NULL;
-						OFINCCLCHECKGOTO(
-							extNet->iflush((void *)rComm, nrecv,
-									(void **)&recv_buf[idx], sizes,
-									&mhandle[idx], (void **)&iflush_req),
-							res, exit);
-						done = 0;
-						if (iflush_req) {
-							while (!done) {
-								OFINCCLCHECKGOTO(
-									extNet->test((void *)iflush_req,
-											&done, NULL),
-									res, exit);
+			/* Allocate and populate expected buffer */
+			OFINCCLCHECKGOTO(allocate_buff((void **)&expected_buf, send_sizes[szidx], NCCL_PTR_HOST), res, exit);
+			OFINCCLCHECKGOTO(initialize_buff((void *)expected_buf, send_sizes[szidx], NCCL_PTR_HOST), res, exit);
+
+			if (rank == 0) {
+
+				/* Send NUM_REQUESTS to peer */
+				NCCL_OFI_INFO(NCCL_NET, "Send %d requests to rank %d", NUM_REQUESTS,
+						peer_rank);
+				for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+					OFINCCLCHECKGOTO(
+						allocate_buff((void **)&send_buf[idx], send_sizes[szidx], buffer_type),
+						res, exit);
+					OFINCCLCHECKGOTO(
+						initialize_buff((void *)send_buf[idx], send_sizes[szidx], buffer_type),
+						res, exit);
+
+					OFINCCLCHECKGOTO(extNet->regMr((void *)sComm, (void *)send_buf[idx],
+								       send_sizes[szidx], buffer_type, &mhandle[idx]),
+							 res, exit);
+					NCCL_OFI_TRACE(NCCL_NET,
+							"Successfully registered send memory for request %d of rank %d",
+							idx, rank);
+					while (req[idx] == NULL) {
+						OFINCCLCHECKGOTO(extNet->isend((void *)sComm, (void *)send_buf[idx],
+									       send_sizes[szidx], tag, mhandle[idx],
+									       (void **)&req[idx]),
+								 res, exit);
+					}
+				}
+				NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
+						peer_rank);
+			} else if (rank == 1) {
+
+				/* Receive NUM_REQUESTS from peer */
+				NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
+						NUM_REQUESTS);
+				for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+					OFINCCLCHECKGOTO(
+						allocate_buff((void **)&recv_buf[idx], recv_sizes[szidx], buffer_type),
+						res, exit);
+					OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx],
+								       recv_sizes[szidx], buffer_type, &mhandle[idx]),
+							 res, exit);
+					NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
+					while (req[idx] == NULL) {
+						OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv,
+										(void *)&recv_buf[idx], sizes, tags,
+										&mhandle[idx], (void **)&req[idx]),
+								res, exit);
+					}
+				}
+			}
+
+			/* Test for completions */
+			while (inflight_reqs > 0) {
+				for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+					if (req_completed[idx])
+						continue;
+
+					OFINCCLCHECKGOTO(extNet->test((void *)req[idx], &done, &received_size), res,
+							exit);
+					if (done) {
+						inflight_reqs--;
+						req_completed[idx] = 1;
+
+						if (received_size !=
+						    NCCL_OFI_MIN(send_sizes[szidx], recv_sizes[szidx])) {
+							NCCL_OFI_WARN(
+								"Wrong received size %d (send size: %d recv size %d)",
+								received_size, send_sizes[szidx], recv_sizes[szidx]);
+							res = ncclInternalError;
+							goto exit;
+						}
+
+						if ((rank == 1) && (buffer_type == NCCL_PTR_CUDA)) {
+							NCCL_OFI_TRACE(NCCL_NET,
+									"Issue flush for data consistency. Request idx: %d",
+									idx);
+							nccl_net_ofi_req_t *iflush_req = NULL;
+							OFINCCLCHECKGOTO(
+								extNet->iflush((void *)rComm, nrecv,
+										(void **)&recv_buf[idx], sizes,
+										&mhandle[idx], (void **)&iflush_req),
+								res, exit);
+							done = 0;
+							if (iflush_req) {
+								while (!done) {
+									OFINCCLCHECKGOTO(
+										extNet->test((void *)iflush_req,
+												&done, NULL),
+										res, exit);
+								}
 							}
 						}
-					}
 
-					/* Deregister memory handle */
-					if (rank == 0) {
-						OFINCCLCHECKGOTO(
-							extNet->deregMr((void *)sComm, mhandle[idx]), res,
-							exit);
-					}
-					else if (rank == 1) {
-						if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
-							/* Data validation may fail if flush operations are disabled */
-						} else
+						/* Deregister memory handle */
+						if (rank == 0) {
 							OFINCCLCHECKGOTO(
-								validate_data(recv_buf[idx], expected_buf,
-										SEND_SIZE, buffer_type),
-								res, exit);
-
-						OFINCCLCHECKGOTO(
-							extNet->deregMr((void *)rComm, mhandle[idx]), res,
-							exit);
+								extNet->deregMr((void *)sComm, mhandle[idx]), res,
+								exit);
+						}
+						else if (rank == 1) {
+							if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
+								/* Data validation may fail if flush operations are disabled */
+							} else {
+								OFINCCLCHECKGOTO(
+									validate_data(recv_buf[idx], expected_buf,
+										      send_sizes[szidx], buffer_type),
+									res, exit);
+							}
+							OFINCCLCHECKGOTO(
+								extNet->deregMr((void *)rComm, mhandle[idx]), res,
+								exit);
+						}
 					}
 				}
 			}
-		}
-		NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
-				NUM_REQUESTS, rank);
+			NCCL_OFI_INFO(NCCL_NET, "Got completions for %d requests for rank %d",
+					NUM_REQUESTS, rank);
 
-		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
-			if (send_buf[idx]) {
-				OFINCCLCHECKGOTO(deallocate_buffer(send_buf[idx], buffer_type), res, exit);
-				send_buf[idx] = NULL;
+			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+				if (send_buf[idx]) {
+					OFINCCLCHECKGOTO(deallocate_buffer(send_buf[idx], buffer_type), res, exit);
+					send_buf[idx] = NULL;
+				}
+				if (recv_buf[idx]) {
+					OFINCCLCHECKGOTO(deallocate_buffer(recv_buf[idx], buffer_type), res, exit);
+					recv_buf[idx] = NULL;
+				}
 			}
-			if (recv_buf[idx]) {
-				OFINCCLCHECKGOTO(deallocate_buffer(recv_buf[idx], buffer_type), res, exit);
-				recv_buf[idx] = NULL;
+
+			if (rank == 0) {
+				NCCL_OFI_INFO(NCCL_NET, "Successfully completed size %lu for rank %d",
+					      send_sizes[szidx], rank);
+			} else if (rank == 1) {
+				NCCL_OFI_INFO(NCCL_NET, "Successfully completed size %lu for rank %d",
+					      recv_sizes[szidx], rank);
 			}
+
+			MPI_Barrier(MPI_COMM_WORLD);
 		}
 
 		OFINCCLCHECKGOTO(extNet->closeListen((void *)lComm), res, exit);
@@ -341,7 +377,6 @@ int main(int argc, char* argv[])
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
 
-	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
 	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
