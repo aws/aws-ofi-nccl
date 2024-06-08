@@ -11,6 +11,7 @@
 #include "nccl-headers/net.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_math.h"
 #include "nccl_ofi_param.h"
 #include "mpi.h"
 #include "config.h"
