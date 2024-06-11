@@ -109,7 +109,11 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 			}
 		}
 
-		update_nccl_ofi_req(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry[comp_idx].len);
+		if (comp_flags & FI_RECV) {
+			update_nccl_ofi_req(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry[comp_idx].len);
+		} else {
+			update_nccl_ofi_req(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, req->size);
+		}
 	}
 
  exit:
@@ -1102,6 +1106,9 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	(r_comm->num_inflight_reqs)++;
 
+	/* Set request size */
+	req->size = r_comm->flush_buff.size;
+
 	*base_req = &req->base;
 
 	return ret;
@@ -1679,6 +1686,9 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	}
 
 	(s_comm->num_inflight_reqs)++;
+
+	/* Set request size */
+	req->size = size;
 
 	/* Return request to NCCL */
 	*base_req = &req->base;
