@@ -133,9 +133,10 @@ int main(int argc, char* argv[])
 		goto exit;
 	}
 
+	test_nccl_properties_t props = {0};
+
 	/* Get Properties for the device */
 	for (int dev = 0; dev < ndev; dev++) {
-		test_nccl_properties_t props = {0};
 		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
 
@@ -218,6 +219,13 @@ int main(int argc, char* argv[])
 		}
 
 		for (size_t szidx = 0; szidx < sizeof(send_sizes) / sizeof(send_sizes[0]); szidx++) {
+			if (props.regIsGlobal == 0 && send_sizes[szidx] > recv_sizes[szidx]) {
+				if (rank == 0) {
+					NCCL_OFI_TRACE(NCCL_NET, "Skipping test for send size %zu > recv size %zu",
+						      send_sizes[szidx], recv_sizes[szidx]);
+				}
+				continue;
+			}
 
 			for (int recv_n = 0; recv_n < nrecv; recv_n++) {
 				sizes[recv_n] = recv_sizes[szidx];
