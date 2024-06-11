@@ -98,6 +98,7 @@ void print_dev_props(int dev, test_nccl_properties_t *props)
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Port: %d", props->name, props->port);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Grouped Receives: %d", props->name, props->maxRecvs);
+	NCCL_OFI_TRACE(NCCL_NET, "%s: Global registration: %d", props->name, props->regIsGlobal);
 }
 
 int is_gdr_supported_nic(uint64_t ptr_support)
