@@ -208,10 +208,12 @@ LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
     ProcessCompletions,
     LTTNG_UST_TP_ARGS(
+	    int, dev,
             void *, request,
             void *, ctx
     ),
     LTTNG_UST_TP_FIELDS(
+	    lttng_ust_field_integer(int, dev, dev)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer(uint64_t, ctx, (uint64_t)ctx)
     )
