@@ -582,22 +582,6 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
 
-/* Declare a platform-specific initialization hook that can be
- * provided by platform-specific source files (such as the optionally
- * compiled platform_aws.c).  The function is declared as a weak
- * symbol so that linkage will not break if no platform specific hook
- * is provided; in that case platform_init will be NULL at runtime.
- */
-int platform_init(const char **provider_filter) __attribute__((weak));
-
-/* Declare a platform-specific endpoint configuration hook that can be
- * provided by platform-specific source files (such as the optionally
- * compiled platform_aws.c).  The function is declared as a weak
- * symbol so that linkage will not break if no platform specific hook
- * is provided; in that case platform_config_endpoint will be NULL at runtime.
- */
-int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
-
 #ifdef _cplusplus
 } // End extern "C"
 #endif
