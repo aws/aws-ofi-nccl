@@ -96,7 +96,7 @@ static inline int process_completions(struct fi_cq_tagged_entry *cq_entry,
 		comp_flags = cq_entry[comp_idx].flags;
 		req = container_of(op_ctx, nccl_net_ofi_sendrecv_req_t, ctx);
 
-		NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req, &req->ctx);
+		NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req, &req->ctx);
 
 		/* Determine if this is control message */
 		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {

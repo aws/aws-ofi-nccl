@@ -659,7 +659,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req_t *req,
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
 		/* Trace this completion */
-		NCCL_OFI_TRACE_COMPLETIONS(req, req);
+		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req, req);
 	}
 
 	nccl_net_ofi_mutex_unlock(&req->req_lock);
