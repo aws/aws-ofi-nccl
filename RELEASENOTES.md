@@ -11,6 +11,29 @@ AWS-specific parts a compile-time option.  When a feature (or entire
 release) was only available in one of the two variants, we note that
 in the release notes.
 
+# v1.9.2-aws release notes
+This is a bugfix release which requires [Libfabric
+v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and
+supports [NCCL 2.21.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.21.5-1)
+while maintaining backward compatibility with older NCCL versions ([NCCL
+v2.4.8](https://github.com/NVIDIA/nccl/releases/tag/v2.4.8-1) and later).
+
+Bug Fixes:
+* Improved tuner model to make better decisions on P5 instances.
+* Added support, in RDMA protocol, for truncation when receiving a size in the
+isend call greater than the size in the correspond irecv.
+* Fixed bug that prevented the tuner from getting loaded with NCCL 2.19 and
+2.20.
+* Fixed logging statement regarding if a domain is created per thread or per
+process.
+* Updated plugin to not advertise global MR support, to avoid a performance
+regression in user-registered buffers.
+
+The plugin has been tested with following libfabric providers using tests
+bundled in the source code and
+[nccl-tests](https://github.com/NVIDIA/nccl-tests) suite:
+* efa
+
 # v1.9.1-aws release notes
 This is a bugfix release which requires [Libfabric
 v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and
