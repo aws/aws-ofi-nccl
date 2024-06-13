@@ -26,6 +26,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_platform.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;

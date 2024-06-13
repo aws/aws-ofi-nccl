@@ -18,6 +18,7 @@
 #include <dlfcn.h>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_platform.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_rdma.h"

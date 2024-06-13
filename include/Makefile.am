@@ -47,4 +47,5 @@ noinst_HEADERS = \
 	nccl-headers/nvidia/tuner_v1.h \
 	nccl-headers/nvidia/tuner_v2.h \
 	nccl-headers/neuron/net.h \
-	nccl-headers/neuron/error.h
+	nccl-headers/neuron/error.h \
+	nccl_ofi_platform.h

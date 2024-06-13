@@ -23,6 +23,7 @@
 #endif
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_platform.h"
 
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
