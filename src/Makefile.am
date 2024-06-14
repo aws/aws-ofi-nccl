@@ -16,6 +16,7 @@ sources = \
 	nccl_ofi_rdma.c \
 	nccl_ofi_scheduler.c \
 	nccl_ofi_topo.c \
+	nccl_ofi_mr.c \
 	nccl_ofi_msgbuff.c \
 	nccl_ofi_freelist.c \
 	nccl_ofi_deque.c \
