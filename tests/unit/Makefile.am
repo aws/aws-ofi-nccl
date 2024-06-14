@@ -17,7 +17,8 @@ noinst_PROGRAMS = \
 	show_tuner_costs \
 	scheduler \
 	idpool \
-	ep_addr_list
+	ep_addr_list \
+	mr
 
 TESTS = $(noinst_PROGRAMS)
 
@@ -32,3 +33,4 @@ freelist_SOURCES = freelist.c
 msgbuff_SOURCES = msgbuff.c
 scheduler_SOURCES = scheduler.c
 ep_addr_list_SOURCES = ep_addr_list.c
+mr_SOURCES = mr.c
