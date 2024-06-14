@@ -737,3 +737,107 @@ unlock:
 exit:
 	return ret;
 }
+
+static int get_rail_vf_idx(struct fi_info *info)
+{
+	char guid_file[256], guid[20];
+	char *endptr;
+	int vf_idx;
+	FILE *fp;
+
+	snprintf(guid_file, sizeof(guid_file), "/sys/class/infiniband/%s/node_guid",
+		info->nic->device_attr->name);
+	fp = fopen(guid_file, "r");
+	if (fp == NULL) {
+		NCCL_OFI_WARN("Error opening file: %s", guid_file);
+		return -EIO;
+	}
+
+	if (fgets(guid, sizeof(guid), fp) == NULL) {
+		NCCL_OFI_WARN("Error reading file: %s", guid_file);
+		fclose(fp);
+		return -EIO;
+	}
+	fclose(fp);
+
+	/**
+	 * GUID is a 64-bit hex number with format:
+	 *
+	 * XXXX:XXXX:XXXX:XXXX
+	 *
+	 * The lowest 8 bits are the VF id.
+	 */
+	if (strlen(guid) != 19) {
+		NCCL_OFI_WARN("Bad GUID format: wrong size: %s", guid);
+		return -EINVAL;
+	}
+
+	if (guid[14] != ':') {
+		NCCL_OFI_WARN("Bad GUID format: wrong colon pos: %s", guid);
+		return -EINVAL;
+	}
+	/* guid[14...] string should now have format ":XXXX". Extract the final two digits
+	   as the vf idx */
+	vf_idx = (int)strtol(guid + 17, &endptr, 10);
+	if (endptr != guid + 19) {
+		/* No valid conversion was performed */
+		NCCL_OFI_WARN("Can't locate vf_idx in GUID %s", guid);
+		return -EINVAL;
+	}
+
+	return vf_idx;
+}
+
+void platform_sort_rails(struct fi_info **info_list, int num_rails)
+{
+	struct fi_info *info_list_in = *info_list;
+	struct fi_info *sorted_info_array[num_rails];
+	for (int i = 0; i < num_rails; ++i) {
+		sorted_info_array[i] = NULL;
+	}
+
+	int rail_map[2] = {0, 2};
+
+	for (int i = 0; i < num_rails; ++i) {
+		if (info_list_in == NULL) {
+			goto error;
+		}
+
+		int vf_idx = get_rail_vf_idx(info_list_in);
+		if (vf_idx < 0 || vf_idx >= 2) {
+			NCCL_OFI_WARN("Invalid vf_idx value %d", vf_idx);
+			goto error;
+		}
+
+		int rail_idx = rail_map[vf_idx];
+		rail_map[vf_idx]++;
+
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Assigning rail index %d to info list idx %d",
+			rail_idx, i);
+
+		if (sorted_info_array[rail_idx]) {
+			NCCL_OFI_WARN("Attempted to fill rail slot with duplicate infos");
+			goto error;
+		}
+		sorted_info_array[rail_idx] = info_list_in;
+
+		info_list_in = info_list_in->next;
+	}
+
+	/* Update info_list references to match sorted order */
+	*info_list = sorted_info_array[0];
+	struct fi_info *info_ptr = *info_list;
+	for (int i = 0; i < num_rails; ++i) {
+		assert(info_ptr);
+		assert(sorted_info_array[i]);
+		if (i == num_rails - 1) {
+			info_ptr->next = NULL;
+		} else {
+			info_ptr->next = sorted_info_array[i+1];
+		}
+		info_ptr = info_ptr->next;
+	}
+
+error:
+	return;
+}
