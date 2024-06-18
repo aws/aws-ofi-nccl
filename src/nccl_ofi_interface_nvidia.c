@@ -204,7 +204,7 @@ static ncclResult_t accept_v7(void* listenComm, void** recvComm,
 }
 
 
-const ncclNet_v2_t ncclNetPlugin_v2 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v2_t ncclNetPlugin_v2 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
@@ -224,7 +224,7 @@ const ncclNet_v2_t ncclNetPlugin_v2 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-const ncclNet_v3_t ncclNetPlugin_v3 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
@@ -243,7 +243,7 @@ const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-const ncclNet_v4_t ncclNetPlugin_v4 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
@@ -262,7 +262,7 @@ const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-const ncclNet_v5_t ncclNetPlugin_v5 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
@@ -281,7 +281,7 @@ const ncclNet_v5_t ncclNetPlugin_v5 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-const ncclNet_v6_t ncclNetPlugin_v6 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "AWS Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
@@ -301,7 +301,7 @@ const ncclNet_v6_t ncclNetPlugin_v6 = {
         .closeListen = nccl_net_ofi_closeListen,
 };
 
-const ncclNet_v7_t ncclNetPlugin_v7 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v7_t ncclNetPlugin_v7 = {
         .name = "AWS Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
@@ -323,7 +323,7 @@ const ncclNet_v7_t ncclNetPlugin_v7 = {
 	.irecvConsumed = NULL,
 };
 
-const ncclNet_v8_t ncclNetPlugin_v8 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v8_t ncclNetPlugin_v8 = {
         .name = "AWS Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,

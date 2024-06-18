@@ -9,6 +9,8 @@
 #define OFI_LIKELY(x)   __builtin_expect((x), 1)
 #define OFI_UNLIKELY(x) __builtin_expect((x), 0)
 
+#define NCCL_OFI_EXPORT_SYMBOL __attribute__((visibility("default")))
+
 /* Maximum length of directory path */
 #ifdef HAVE_LINUX_LIMITS_H
 #include <linux/limits.h>

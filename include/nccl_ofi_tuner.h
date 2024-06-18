@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_TUNER_H_
 #define NCCL_OFI_TUNER_H_
 
+#include "config.h"
 #include "nccl_ofi_param.h"
 
 #include "nccl-headers/nvidia/tuner.h"
@@ -44,9 +45,9 @@ double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const* dims,
  * in our configure script, but by definining this manually in cflags, you can
  * choose at plugin build-time which interface to implement. */
 #if defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
-extern const ncclTuner_v2_t ncclTunerPlugin_v2;
+NCCL_OFI_EXPORT_SYMBOL extern const ncclTuner_v2_t ncclTunerPlugin_v2;
 #else
-extern const ncclTuner_v1_t ncclTunerPlugin_v1;
+NCCL_OFI_EXPORT_SYMBOL extern const ncclTuner_v1_t ncclTunerPlugin_v1;
 #endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */
 
 #endif /* NCCL_OFI_TUNER_H_ */

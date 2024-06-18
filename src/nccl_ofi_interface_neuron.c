@@ -30,7 +30,7 @@ static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
 }
 
 
-const ncclNet_v4_t ncclNetPlugin_v4 = {
+NCCL_OFI_EXPORT_SYMBOL const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
