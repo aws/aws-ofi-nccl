@@ -9,9 +9,9 @@
 #include <stddef.h>
 #include <stdio.h>
 
+#include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_tuner.h"
 #include "nccl_ofi_math.h"
-#include "nccl-headers/nvidia/tuner.h"
 
 static const char *algo_names[] = { "tree", "ring", "collnet_direct", "collnet_chain", "nvls", "nvlstree" };
 static const char *proto_names[] = { "ll", "ll128", "simple" };
@@ -23,7 +23,7 @@ int main(int argc, const char **argv)
 	// clang-format off
 	for (int algo = 0; algo < 6; ++algo) {
 	for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; ++proto) {
-	for (size_t nchan = 2; nchan <= 32; nchan <<= 1) {
+	for (size_t nchan = 16; nchan <= 16; nchan <<= 1) {
 	for (size_t nodes = 1; nodes <= 512; nodes <<= 1) {
 	for (size_t ranks_per_node = 1; ranks_per_node <= 8; ranks_per_node <<= 1) {
 		struct nccl_ofi_tuner_context *context = NULL;
@@ -36,6 +36,7 @@ int main(int argc, const char **argv)
 
 		for (size_t nmibytes = 1; nmibytes <= 32 * 1024; nmibytes <<= 1) {
 			double cost = nccl_ofi_tuner_compute_cost(&context->dims,
+													  &context->model_params,
 													  ncclFuncAllReduce,
 													  algo,
 													  proto,

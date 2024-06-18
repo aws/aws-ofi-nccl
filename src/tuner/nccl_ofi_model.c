@@ -3,38 +3,28 @@
  */
 
 #include "config.h"
-#include <stdbool.h>
 
-#include "nccl-headers/nvidia/tuner.h"
-#include "nccl_ofi_tuner.h"
-#include "nccl_ofi_math.h"
-
-#include <float.h>
 #include <math.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <float.h>
 
-#define GIBI                                 (1.0 * 1024ULL * 1024ULL * 1024ULL)
-#define MICRO                                (1e-6)
+#include "internal/tuner/algo/allreduce/ring.h"
+#include "nccl-headers/nvidia/tuner.h"
+#include "nccl_ofi_math.h"
+#include "nccl_ofi_tuner.h"
 
-/* EFA unidirectional network bandwidth */
-#define NCCL_OFI_TUNER_NET_NUM_RAILS         (4.0)  /* Available to each GPU */
-#define NCCL_OFI_TUNER_INTERNODE_BW_PER_RAIL (12.5) /* per rail */
-#define NCCL_OFI_TUNER_INTERNODE_BW                                                   \
-	(NCCL_OFI_TUNER_NET_NUM_RAILS * NCCL_OFI_TUNER_INTERNODE_BW_PER_RAIL * GIBI * \
-	 MICRO) /* per accelerator */
 
+/* EFA bidirectional network bandwidth per rank */
+#define NCCL_OFI_TUNER_INTERNODE_BW (50000.0)
 
 /*
  * For Hopper GPUs on P5, all intranode communication goes over NVLink, so use
  * the bandwidth for SM90 architecture in NCCL (SM90_NVLINK_BW).
  *
- * This is unidirectional bandwidth per NVLink (900GB/s bidirectional on the
- * platform, with 18 NVLinks in total. NCCL considers a 20% protocol overhead,
- * leaving 20GB/s bandwidth per link).
- *
- * TODO: When extending to P4/other platforms, include these values in
- * platform_data and fetch from it for the tuner. Value as defined in Bytes/µsec.
+ * Value as defined in bytes/microsecond, and should be considered per-rank.
  */
-#define NCCL_OFI_TUNER_INTRANODE_BW (20.0 * GIBI * MICRO)
+#define NCCL_OFI_TUNER_INTRANODE_BW (450000.0)
 
 /*
  * NCCL's algo-specific latencies for intra-node cases with NVLink.
@@ -42,11 +32,11 @@
  */
 static const float nccl_nvlink_lat[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS] = {
 	{.6, 1.25, 28}, /* Tree (LL, LL128, Simple) */
-	{.6, 1.9, 3.4}, /* Ring (LL, LL128, Simple) */
+	{.6, 1.9, 1.4}, /* Ring (LL, LL128, Simple) */
 	{0, 0, 3.7},    /* Collnet Direct - Unused */
 	{0, 0, 2.8},    /* Collnet Chain - Unused */
 	{0, 0, 23},     /* NVLS (Simple only) */
-	{0, 0, 23}      /* NVLS Tree (Simple only)*/
+	{0, 0, 10}      /* NVLS Tree (Simple only)*/
 };
 
 /*
@@ -63,189 +53,190 @@ static const float nccl_base_lat[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS] = {
 	{0, 0, 0},        /* Collnet Direct */
 	{0, 0, 0},        /* Collnet Chain */
 	{0, 0, 0},        /* NVLS */
-	{0, 0, 0}         /* NVLS Tree */
+	{0, 0, 0.7}       /* NVLS Tree */
 };
 
 /*
- * Latency in µsecs. Note, this is currently different from the network
+ * latency in µsecs. Note, this is currently different from the network
  * plugin's param for net latency by design. When we merge with the
  * platform_data values, we will need to do some additional testing on the base
  * case where a tuner is not loaded to make sure the same defaults make sense
  * across both paths, and combine the parameters. fixme: shortcomings in the
  * model forced this param high to get the right answers.
  */
-#define NCCL_OFI_TUNER_NETWORK_LATENCY        (75)
+#define NCCL_OFI_TUNER_NETWORK_LATENCY     (22.5)
 
 /*
  * With EFA, we expect some fixed cost in the device. This parameter was chosen
  * by hackishly fitting against measurements.
  */
-#define NCCL_OFI_TUNER_COMPLETION_OVERHEAD    (7.0)
+#define NCCL_OFI_TUNER_COMPLETION_OVERHEAD (3)
 
-#define NCCL_OFI_TUNER_LL_PROTO_BW_FACTOR     (0.5)
-#define NCCL_OFI_TUNER_LL128_PROTO_BW_FACTOR  (0.9375)
-#define NCCL_OFI_TUNER_SIMPLE_PROTO_BW_FACTOR (1.0)
-
-/* XXX: This is broadly incorrect. */
-static double all_reduce_ring_cost(struct nccl_ofi_tuner_model_dims const* dims,
+static double all_reduce_ring_cost(struct nccl_ofi_tuner_model_dims const *dims,
+				   struct nccl_ofi_tuner_model_params const *params,
 				   const int proto,
-				   const size_t chan,
-				   const size_t nBytes)
+				   const uint64_t chan,
+				   const uint64_t nBytes)
 {
-	double base_latency = nccl_base_lat[NCCL_ALGO_RING][proto];
+	if (nBytes < 1 * 1024 * 1024 * 1024) {
+		return INFINITY;
+	}
+
+	const double base_latency = nccl_base_lat[NCCL_ALGO_RING][proto];
 	const double p2p_latency = nccl_nvlink_lat[NCCL_ALGO_RING][proto];
+	const double internodeSteps = chan * 2.0 * (dims->num_nodes - 1);
+	const double intranodeSteps = chan * 2.0 * (dims->num_ranks - 1) - internodeSteps;
 
-	const double logranks = log(dims->num_ranks) / log(2);
-	const double logbytes = log(nBytes) / log(2);
-	const double lograt = (logbytes - logranks);
-	if (floor(lograt) < 23) {
-		/* Hack until we understand this better. */
-		return INFINITY;
+	const double internodeLatency = (NCCL_OFI_TUNER_NETWORK_LATENCY + ((proto == NCCL_PROTO_SIMPLE) ? NCCL_OFI_TUNER_COMPLETION_OVERHEAD : 0));
+	const double intranodeLatency = (p2p_latency);
+
+
+	const double internodeBw = 2.0 * NCCL_OFI_TUNER_INTERNODE_BW * dims->num_ranks;
+	const double intranodeBw = 2.0 * NCCL_OFI_TUNER_INTRANODE_BW * dims->num_ranks;
+
+	double effective_message_size = nBytes;
+	if (proto == NCCL_PROTO_LL) {
+		effective_message_size *= 2;
+	} else if (proto == NCCL_PROTO_LL128) {
+		effective_message_size += (nBytes / 15);
 	}
 
-	const double steps_per_rotation = dims->num_ranks;
-	const double num_rotations = 2;
-	const double num_steps = (num_rotations * steps_per_rotation) - 1;
-	const double num_steps_internode = (num_rotations * dims->num_nodes);
-	const double num_steps_intranode = num_steps - num_steps_internode;
+	const double transfer_size = effective_message_size / dims->num_ranks;
+	const double internode_transfer_bytes = 2 * transfer_size * internodeSteps * chan / 2;
+	const double intranode_transfer_bytes = 2 * transfer_size * intranodeSteps * chan / 2;
 
-	double per_proto_bandwidth_overhead;
-	double net_latency = NCCL_OFI_TUNER_NETWORK_LATENCY;
-	switch (proto) {
-	case NCCL_PROTO_LL: {
-		per_proto_bandwidth_overhead = NCCL_OFI_TUNER_LL_PROTO_BW_FACTOR;
-		break;
-	}
-	case NCCL_PROTO_LL128: {
-		per_proto_bandwidth_overhead = NCCL_OFI_TUNER_LL128_PROTO_BW_FACTOR;
-		break;
-	}
-	case NCCL_PROTO_SIMPLE: {
-		per_proto_bandwidth_overhead = NCCL_OFI_TUNER_SIMPLE_PROTO_BW_FACTOR;
-		net_latency += NCCL_OFI_TUNER_COMPLETION_OVERHEAD;
-		break;
-	}
-	default: {
-		return INFINITY;
-	}
-	}
+	const double latency = get_ring_num_windows(nBytes, chan, dims->num_ranks, proto, params) * internodeLatency * internodeSteps;
+	const double latencyCost = (intranodeLatency * intranodeSteps) + latency;
 
-
-	const double intranode_latency = p2p_latency * num_steps_intranode;
-	const double intranode_bw = (NCCL_OFI_TUNER_INTRANODE_BW);
-	const double intranode_bytes = nBytes * (num_steps_intranode / num_steps);
-	const double intranode_cost = intranode_latency + (intranode_bytes / intranode_bw);
-
-	const double internode_latency = net_latency * num_steps_internode;
-	const double internode_bw = (NCCL_OFI_TUNER_INTERNODE_BW)*per_proto_bandwidth_overhead;
-	const double internode_bytes = nBytes * (num_steps_internode / num_steps);
-	const double internode_cost = internode_latency + (internode_bytes / internode_bw);
-
-	/* XXX: Should be scaled further here, not done for the sake of ensuring
-	 * this is cheaper than NVLSTree at dims where we did not explicitly opt
-	 * out of choosing ring above */
-	return ((base_latency * num_steps) + intranode_cost + internode_cost);
+	const double totalCost = base_latency + (internode_transfer_bytes / internodeBw) + (intranode_transfer_bytes / (intranodeBw)) + latencyCost;
+	return totalCost;
 }
 
-double all_reduce_tree_cost(struct nccl_ofi_tuner_model_dims const* dims,
+double all_reduce_tree_cost(struct nccl_ofi_tuner_model_dims const *dims,
+			    struct nccl_ofi_tuner_model_params const *params,
 			    const int proto,
 			    int pipe_ops,
 			    const size_t chan,
 			    const size_t nBytes)
 {
-	const double p2p_latency = nccl_nvlink_lat[NCCL_ALGO_TREE][proto];
-	const double base_latency = nccl_base_lat[NCCL_ALGO_TREE][proto];
-	const double num_steps_internode = log(dims->num_nodes) / log(2) - 1;
-	const double num_steps_intranode = log(dims->num_ranks) / log(dims->num_nodes) / log(2) - 1;
-	const double per_tree_msg_size = 2 * nBytes;
-	const double num_trees_per_rank = 2;
-	const double intranode_latency = p2p_latency * num_steps_intranode;
-	const double internode_latency =
-		(NCCL_OFI_TUNER_NETWORK_LATENCY + base_latency) * num_steps_internode;
-	double latency = (intranode_latency + internode_latency);
+	// return INFINITY;
 
-	switch (proto) {
-	case NCCL_PROTO_LL: {
-		const double per_proto_bandwidth_overhead = NCCL_OFI_TUNER_LL_PROTO_BW_FACTOR;
-		const double bandwidth = NCCL_OFI_TUNER_INTERNODE_BW * per_proto_bandwidth_overhead;
-
-		return latency + (num_trees_per_rank * per_tree_msg_size) / bandwidth;
-	}
-	case NCCL_PROTO_LL128: {
-		const double per_proto_bandwidth_overhead = NCCL_OFI_TUNER_LL128_PROTO_BW_FACTOR;
-		const double bandwidth = NCCL_OFI_TUNER_INTERNODE_BW * per_proto_bandwidth_overhead;
-
-		return latency + (num_trees_per_rank * per_tree_msg_size) / bandwidth;
-	}
-	case NCCL_PROTO_SIMPLE: {
-		const double per_proto_bandwidth_overhead = NCCL_OFI_TUNER_SIMPLE_PROTO_BW_FACTOR;
-		const double bandwidth = NCCL_OFI_TUNER_INTERNODE_BW * per_proto_bandwidth_overhead;
-		const double net_latency =
-			NCCL_OFI_TUNER_COMPLETION_OVERHEAD + NCCL_OFI_TUNER_NETWORK_LATENCY;
-		latency = (p2p_latency * num_steps_intranode +
-			   num_steps_internode * (net_latency + base_latency));
-		return latency + (num_trees_per_rank * per_tree_msg_size) / bandwidth;
-	}
-	default: {
+	const double ranks_per_node = ceil(dims->num_ranks * 1.0 / dims->num_nodes);
+	if (chan < ranks_per_node) {
 		return INFINITY;
 	}
-	}
+
+	const double chain_len = (ranks_per_node - 1);
+
+	const double p2p_latency = nccl_nvlink_lat[NCCL_ALGO_TREE][proto];
+	const double base_latency = nccl_base_lat[NCCL_ALGO_TREE][proto];
+
+	const double num_trees_per_rank = 2;
+	const double num_trees_per_host = num_trees_per_rank * ranks_per_node;
+	const double num_trees_in_total = num_trees_per_host * dims->num_nodes;
+
+	const double tree_height = floor(log(NCCL_OFI_IS_POWER_OF_TWO(dims->num_nodes) ? dims->num_nodes + 1 : dims->num_nodes - 1) / log(2)) + 1;
+
+	const double num_total_steps_internode = num_trees_in_total * ((2 * tree_height) - 1);
+	const double num_total_steps_intranode = 2 * chain_len * (1 + (num_total_steps_internode));
+	const double num_critical_steps_intranode = 4 * chain_len;
+	const double num_critical_steps_internode = num_total_steps_internode / num_trees_in_total;
+
+	const double internode_bandwidth = (NCCL_OFI_TUNER_INTERNODE_BW)*dims->num_ranks;
+	const double intranode_bandwidth = (NCCL_OFI_TUNER_INTRANODE_BW)*dims->num_ranks * dims->num_nodes;
+
+	const double internode_latency_per_step = NCCL_OFI_TUNER_NETWORK_LATENCY + (proto == NCCL_PROTO_SIMPLE ? NCCL_OFI_TUNER_COMPLETION_OVERHEAD : 0);
+	const double intranode_latency_per_step = p2p_latency + base_latency;
+
+	const double intranode_latency_cost = (intranode_latency_per_step * num_critical_steps_intranode);
+	const double internode_latency_cost = internode_latency_per_step * num_critical_steps_internode;
+
+	const double messageSize = (proto == NCCL_PROTO_LL128 ? (nBytes + (nBytes / 15)) : nBytes) / num_trees_per_rank;
+
+	const double internode_transfer_size = messageSize / num_trees_per_host;
+	const double internode_bandwidth_cost = num_total_steps_internode * internode_transfer_size / internode_bandwidth;
+
+	const double intranode_transfer_size = messageSize / ranks_per_node;
+	const double intranode_bandwidth_cost = num_total_steps_intranode * intranode_transfer_size / intranode_bandwidth;
+
+	return (internode_latency_cost + intranode_latency_cost) + intranode_bandwidth_cost + internode_bandwidth_cost;
 }
 
-double all_reduce_nvlstree_cost(struct nccl_ofi_tuner_model_dims const* dims,
+double all_reduce_nvlstree_cost(struct nccl_ofi_tuner_model_dims const *dims,
+				struct nccl_ofi_tuner_model_params const *params,
 				int proto,
 				int pipe_ops,
 				const size_t chan,
 				const size_t nBytes)
 {
-	const double bandwidth = (NCCL_OFI_TUNER_INTERNODE_BW + NCCL_OFI_TUNER_INTRANODE_BW);
+	if (proto != NCCL_PROTO_SIMPLE) {
+		return INFINITY;
+	}
+
+	const double ranks_per_node = ceil(dims->num_ranks * 1.0 / dims->num_nodes);
+	if (chan < ranks_per_node) {
+		return INFINITY;
+	}
+
 	const double p2p_latency = nccl_nvlink_lat[NCCL_ALGO_NVLS_TREE][proto];
 	const double base_latency = nccl_base_lat[NCCL_ALGO_NVLS_TREE][proto];
-	const double num_steps_internode = 2 * log(dims->num_nodes) / log(2) - 1;
-	const double num_steps_intranode = 2 * log(dims->num_nodes) / log(2) - 1;
-	const double intranode_latency = p2p_latency * num_steps_intranode;
-	double per_tree_msg_size = 2 * nBytes;
 
-	switch (proto) {
-	case NCCL_PROTO_LL: {
-		return INFINITY;
-	}
-	case NCCL_PROTO_LL128: {
-		return INFINITY;
-	}
-	case NCCL_PROTO_SIMPLE: {
-		const double net_latency =
-			NCCL_OFI_TUNER_COMPLETION_OVERHEAD + NCCL_OFI_TUNER_NETWORK_LATENCY;
-		const double internode_latency = (net_latency + base_latency) * num_steps_internode;
-		double latency = (intranode_latency + internode_latency);
-		return latency + (2 * per_tree_msg_size) / bandwidth;
-	}
-	default: {
-		return INFINITY;
-	}
-	}
+	const double num_trees_per_rank = 2;
+	const double num_trees_per_host = num_trees_per_rank * ranks_per_node;
+	const double num_trees_in_total = num_trees_per_host * dims->num_nodes;
+
+	const double tree_height = floor(log(NCCL_OFI_IS_POWER_OF_TWO(dims->num_nodes) ? dims->num_nodes + 1 : dims->num_nodes - 1) / log(2)) + 1;
+
+	const double num_total_steps_internode = num_trees_in_total * ((2 * tree_height) - 1);
+	const double num_total_steps_intranode = 2 + (num_total_steps_internode);
+	const double num_critical_steps_intranode = 2;
+	const double num_critical_steps_internode = num_total_steps_internode / num_trees_in_total;
+
+	const double internode_bandwidth = (NCCL_OFI_TUNER_INTERNODE_BW)*dims->num_ranks;
+	const double intranode_bandwidth = (NCCL_OFI_TUNER_INTRANODE_BW)*dims->num_ranks * dims->num_nodes;
+
+	const double internode_latency_per_step = NCCL_OFI_TUNER_NETWORK_LATENCY + NCCL_OFI_TUNER_COMPLETION_OVERHEAD;
+	const double intranode_latency_per_step = p2p_latency;
+
+	const double intranode_latency_cost = (intranode_latency_per_step * num_critical_steps_intranode) + (num_total_steps_intranode * base_latency);
+	const double internode_latency_cost = internode_latency_per_step * num_critical_steps_internode;
+
+	const double messageSize = nBytes / num_trees_per_rank;
+
+	const double internode_transfer_size = messageSize / num_trees_per_host;
+	const double internode_bandwidth_cost = num_total_steps_internode * internode_transfer_size / internode_bandwidth;
+
+	const double intranode_transfer_size = messageSize / num_trees_per_host;
+	const double intranode_bandwidth_cost = num_total_steps_intranode * intranode_transfer_size / intranode_bandwidth;
+
+	return (internode_latency_cost + intranode_latency_cost) + intranode_bandwidth_cost + internode_bandwidth_cost;
 }
 
-static double all_reduce_cost(struct nccl_ofi_tuner_model_dims const* dims,
+static double all_reduce_cost(struct nccl_ofi_tuner_model_dims const *dims,
+			      struct nccl_ofi_tuner_model_params const *params,
 			      const int algo,
 			      int proto,
 			      int pipe_ops,
 			      size_t chan,
 			      size_t size)
 {
+	if (proto == NCCL_PROTO_LL) {
+		return INFINITY;
+	}
 	if (algo == NCCL_ALGO_RING) {
-		return all_reduce_ring_cost(dims, proto, chan, size);
+		return all_reduce_ring_cost(dims, params, proto, chan, size);
 	}
 	if (algo == NCCL_ALGO_NVLS_TREE) {
-		return all_reduce_nvlstree_cost(dims, proto, pipe_ops, chan, size);
+		return all_reduce_nvlstree_cost(dims, params, proto, pipe_ops, chan, size);
 	}
 	if (algo == NCCL_ALGO_TREE) {
-		return all_reduce_tree_cost(dims, proto, pipe_ops, chan, size);
+		return all_reduce_tree_cost(dims, params, proto, pipe_ops, chan, size);
 	}
 	return INFINITY;
 }
 
-double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const* dims,
+double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const *dims,
+				   struct nccl_ofi_tuner_model_params const *params,
 				   const ncclFunc_t func,
 				   const int algo,
 				   const int proto,
@@ -254,7 +245,7 @@ double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const* dims,
 				   const size_t nBytes)
 {
 	if (func == ncclFuncAllReduce) {
-		return NCCL_OFI_MAX(0, all_reduce_cost(dims, algo, proto, pipe_ops, nChan, nBytes));
+		return NCCL_OFI_MAX(0, all_reduce_cost(dims, params, algo, proto, pipe_ops, nChan, nBytes));
 	}
 	return INFINITY;
 }

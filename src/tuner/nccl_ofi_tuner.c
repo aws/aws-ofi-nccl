@@ -1,20 +1,24 @@
 /*
  * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
+
+#include "config.h"
+
+#include <errno.h>
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-
-#include "config.h"
+#include <string.h>
+#include <float.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_tuner.h"
 
+#include "internal/tuner/nccl_defaults.h"
 #include "nccl-headers/nvidia/tuner.h"
-#include <float.h>
-#include <math.h>
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
@@ -26,14 +30,24 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	/*
 	 * The tuner API is missing a mechanism to pass around context after
 	 * initialization. For now, init a plugin-lobal context once.
-	 */ 
+	 */
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx =
-		calloc(1, sizeof(struct nccl_ofi_tuner_context));
+	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
 	if (nccl_ofi_tuner_ctx == NULL) {
 		NCCL_OFI_WARN("Context allocation failed.");
 		return ncclInternalError;
 	}
+
+	const char *bs_str;
+	long long value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
+	if ((bs_str = getenv("NCCL_BUFFSIZE")) != NULL && strlen(bs_str) > 0) {
+		char *endptr = NULL;
+		value = strtoll(bs_str, &endptr, 0);
+		if (errno || bs_str == endptr || *endptr != '\0') {
+			value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
+		}
+	}
+	nccl_ofi_tuner_ctx->model_params.nccl_buffsize = value;
 
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
@@ -44,20 +58,19 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, size_t nBytes,
-				  int collNetSupport, int nvlsSupport, int numPipeOps,
-				  int *algorithm, int *protocol, int* nChannels)
+ncclResult_t nccl_ofi_tuner_get_coll_info(
+	void *context, ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
 	double lowest = DBL_MAX;
 	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = (struct nccl_ofi_tuner_context *)context;
 
 	/* Skip runs smaller than 2 nodes and fallback to NCCL's internal tunings */
-	if (nccl_ofi_tuner_ctx->dims.num_nodes <= 2)
+	if (nccl_ofi_tuner_ctx->dims.num_nodes <= 2) {
 		return ncclSuccess;
+	}
 
-	if (collType == ncclFuncAllReduce && nccl_ofi_tuner_ctx->dims.num_nodes == 16 &&
-	    nccl_ofi_tuner_ctx->dims.num_ranks == 128 && nvlsSupport && nBytes > 3ULL * 1024ULL * 1024ULL * 1024ULL &&
-	    nBytes <= 5ULL * 1024ULL * 1024ULL * 1024ULL) {
+	if (collType == ncclFuncAllReduce && nccl_ofi_tuner_ctx->dims.num_nodes == 16 && nccl_ofi_tuner_ctx->dims.num_ranks == 128 && nvlsSupport &&
+	    nBytes > 3ULL * 1024ULL * 1024ULL * 1024ULL && nBytes <= 5ULL * 1024ULL * 1024ULL * 1024ULL) {
 		lowest = 0;
 		*algorithm = NCCL_ALGO_NVLS_TREE;
 		*protocol = NCCL_PROTO_SIMPLE;
@@ -67,9 +80,9 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	/*
 	 * Ideally, this should just be a lookup and not be in-flight math
 	 * We do not want divs in the hot path, but working with the API we've
-	 * got now. 
+	 * got now.
 	 */
-	for (size_t nChan = 2; nChan <= 16; nChan += 2) {
+	for (size_t nChan = 16; nChan <= 16; nChan += 2) {
 		for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 			/* No CollNet on AWS today */
 			if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN) {
@@ -78,6 +91,21 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 
 			/* Skip NCCL_ALGO_NVLS used only for single-node jobs */
 			if (algo == NCCL_ALGO_NVLS) {
+				continue;
+			}
+
+			if (protocol == NCCL_PROTO_LL) {
+				/* Measured costs show that is' difficult for LL to win against
+				 * LL128 -- avoid considering it. */
+				continue;
+			}
+
+			if (nccl_ofi_tuner_ctx->dims.num_nodes > 128 && (algo != NCCL_ALGO_NVLS_TREE)) {
+				/* Refuse to make tuner decisions other than NVLSTree on large
+				 * clusters. -- our model is not precise enough to get this
+				 * right, and while it's possible that we can expect ring to win
+				 * at some point, we have no data where this isn't the right
+				 * thing to do. */
 				continue;
 			}
 
@@ -91,18 +119,18 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 					continue;
 				}
 
-				const double cost =
-					nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
-								    collType,
-								    algo,
-								    proto,
-								    numPipeOps,
-								    nChan,
-								    nBytes);
+				const double cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
+										&nccl_ofi_tuner_ctx->model_params,
+										collType,
+										algo,
+										proto,
+										numPipeOps,
+										nChan,
+										nBytes);
 
 				NCCL_OFI_TRACE(NCCL_TUNING,
-					       "Computed cost for algo %d proto %d pipe %d: cost "
-					       "%.8f µsecs.",
+					       "Computed cost for algo %d proto %d pipe "
+					       "%d: cost %.8f µsecs.",
 					       algo,
 					       proto,
 					       numPipeOps,
@@ -118,8 +146,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	}
 
 exit:
-	NCCL_OFI_INFO(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
-				    *algorithm, *protocol, lowest, collType, nBytes);
+	NCCL_OFI_INFO(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.", *algorithm, *protocol, lowest, collType, nBytes);
 	return ncclSuccess;
 }
 
@@ -135,11 +162,7 @@ ncclResult_t nccl_ofi_tuner_destroy(void *context)
 }
 
 const ncclTuner_v2_t ncclTunerPlugin_v2 = {
-	.name = "nccl_ofi_tuner",
-	.init = nccl_ofi_tuner_init,
-	.getCollInfo = nccl_ofi_tuner_get_coll_info,
-	.destroy = nccl_ofi_tuner_destroy
-};
+	.name = "nccl_ofi_tuner", .init = nccl_ofi_tuner_init, .getCollInfo = nccl_ofi_tuner_get_coll_info, .destroy = nccl_ofi_tuner_destroy};
 
 #if !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
 static struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx_internal;
@@ -151,7 +174,7 @@ static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 	if (nccl_ofi_tuner_ctx_internal != NULL) {
 		/* Prevent other threads from freeing a dangling global ctx */
-		context = (void*)nccl_ofi_tuner_ctx_internal;
+		context = (void *)nccl_ofi_tuner_ctx_internal;
 		nccl_ofi_tuner_ctx_internal = NULL;
 	}
 	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
@@ -177,22 +200,23 @@ static ncclResult_t nccl_ofi_tuner_init_v1(size_t nRanks, size_t nNodes, ncclDeb
 		// we're returning ncclInvalidArgument instead.
 		return ncclInvalidArgument;
 	}
-	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, (void**)&nccl_ofi_tuner_ctx_internal);
+	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, (void **)&nccl_ofi_tuner_ctx_internal);
 }
 
-static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(ncclFunc_t collType, size_t nBytes, int collNetSupport,
-						    int nvlsSupport, int numPipeOps, int *algorithm, int *protocol,
-						    int *nChannels)
+static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(
+	ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
-	return nccl_ofi_tuner_get_coll_info(nccl_ofi_tuner_ctx_internal, collType, nBytes,
-					    collNetSupport, nvlsSupport, numPipeOps, algorithm,
-					    protocol, nChannels);
+	return nccl_ofi_tuner_get_coll_info(nccl_ofi_tuner_ctx_internal,
+					    collType,
+					    nBytes,
+					    collNetSupport,
+					    nvlsSupport,
+					    numPipeOps,
+					    algorithm,
+					    protocol,
+					    nChannels);
 }
 
 const ncclTuner_v1_t ncclTunerPlugin_v1 = {
-  .name = "nccl_ofi_tuner",
-  .init = nccl_ofi_tuner_init_v1,
-  .getCollInfo = nccl_ofi_tuner_get_coll_info_v1,
-  .destroy = nccl_ofi_tuner_destroy_v1
-};
+	.name = "nccl_ofi_tuner", .init = nccl_ofi_tuner_init_v1, .getCollInfo = nccl_ofi_tuner_get_coll_info_v1, .destroy = nccl_ofi_tuner_destroy_v1};
 #endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */

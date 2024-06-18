@@ -19,7 +19,7 @@ int main(int argc, const char **argv)
 {
 	printf("nodes,ranks,size,channels,algorithm,protocol\n");
 	for (size_t nodes = 1; nodes <= 1024; nodes <<= 1) {
-		for (size_t ranks_per_node = 1; ranks_per_node <= 8; ranks_per_node <<= 1) {
+		for (size_t ranks_per_node = 8; ranks_per_node <= 8; ranks_per_node <<= 1) {
 			void *context = NULL;
 			if (ncclTunerPlugin_v2.init(ranks_per_node * nodes,
 						    nodes,
