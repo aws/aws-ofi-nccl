@@ -6,16 +6,18 @@
 #define NCCL_OFI_TUNER_H_
 
 #include "config.h"
-#include "nccl_ofi_param.h"
+
+#include <linux/limits.h>
 
 #include "nccl-headers/nvidia/tuner.h"
-#include <linux/limits.h>
+#include "nccl_ofi_param.h"
 
 struct nccl_ofi_tuner_model_params {
 	float net_lat;
 	float internode_bw;
 	float intranode_bw;
 	int num_rails;
+	uint64_t nccl_buffsize;
 };
 
 struct nccl_ofi_tuner_model_dims {
@@ -30,14 +32,14 @@ struct nccl_ofi_tuner_context {
 };
 
 /* Modeling functions */
-double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const* dims,
+double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const *dims,
+				   struct nccl_ofi_tuner_model_params const *params,
 				   ncclFunc_t func,
 				   int algo,
 				   int proto,
 				   int pipe_ops,
 				   size_t nChan,
 				   size_t size);
-
 
 /* In the original introduction of the external tuner v2 struct, NCCL did not
  * enumerate downwards through versions and attempt to load the first valid
