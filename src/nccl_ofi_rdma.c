@@ -31,7 +31,7 @@ static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
 /* Stores path to NCCL topology file written by ofi plugin for later unlinking */
 static char *topo_file_unlink = NULL;
 /* Locks functions which access `topo_file_unlink` */
-static pthread_mutex_t topo_file_lock;
+static pthread_spinlock_t topo_file_lock;
 
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
@@ -320,7 +320,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	char *filename;
 	int fd;
 
-	nccl_net_ofi_lock_init(&topo_file_lock, NULL);
+	nccl_net_ofi_lock_init(&topo_file_lock, PTHREAD_PROCESS_PRIVATE);
 
 	/* This function is a no-op in case writing topology file is not enabled explicitly */
 	if (!ofi_nccl_topo_file_write_enable()) {
@@ -2321,7 +2321,7 @@ static int prepare_recv_conn_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	req->comm = &l_comm->base.base;
 	req->dev_id = l_comm->base.base.dev_id;
 	/* Initialize mutex for request access */
-	ret = nccl_net_ofi_lock_init(&req->req_lock, NULL);
+	ret = nccl_net_ofi_lock_init(&req->req_lock, PTHREAD_PROCESS_PRIVATE);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;
@@ -2647,7 +2647,7 @@ static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 	req->ncompls = 0;
 
 	/* Initialize mutex for request access */
-	if (nccl_net_ofi_lock_init(&req->req_lock, NULL)) {
+	if (nccl_net_ofi_lock_init(&req->req_lock, PTHREAD_PROCESS_PRIVATE)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		goto cleanup;
 	}
@@ -4779,7 +4779,7 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		rail->max_bounce_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
 		);
-		nccl_net_ofi_lock_init(&rail->bounce_mutex, NULL);
+		nccl_net_ofi_lock_init(&rail->bounce_mutex, PTHREAD_PROCESS_PRIVATE);
 	}
 
 	return ret;
@@ -5627,7 +5627,7 @@ static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
 	}
 
 	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_lock_init(&devices->ep_lock, NULL);
+	ret = nccl_net_ofi_lock_init(&devices->ep_lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;

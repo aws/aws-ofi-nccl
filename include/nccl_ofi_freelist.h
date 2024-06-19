@@ -123,7 +123,7 @@ struct nccl_ofi_freelist_t {
 
 	size_t memcheck_redzone_size;
 
-	pthread_mutex_t lock;
+	pthread_spinlock_t lock;
 };
 typedef struct nccl_ofi_freelist_t nccl_ofi_freelist_t;
 

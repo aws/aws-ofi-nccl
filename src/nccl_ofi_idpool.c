@@ -56,7 +56,7 @@ int nccl_ofi_idpool_init(nccl_ofi_idpool_t *idpool, size_t size)
 	}
 
 	/* Initialize mutex */
-	ret = nccl_net_ofi_lock_init(&idpool->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&idpool->lock, PTHREAD_PROCESS_PRIVATE);
 	if (OFI_UNLIKELY(ret)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		free(idpool->ids);

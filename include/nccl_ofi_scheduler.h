@@ -92,7 +92,7 @@ typedef struct nccl_net_ofi_threshold_scheduler {
 	/* Round robin counter */
 	unsigned int rr_counter;
 	/* Lock for round robin counter */
-	pthread_mutex_t rr_lock;
+	pthread_spinlock_t rr_lock;
 	/* Maximum size of a message in bytes before message is
 	 * multiplexed */
 	size_t rr_threshold;

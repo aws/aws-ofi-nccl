@@ -261,7 +261,7 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails,
 	scheduler->rr_counter = 0;
 	scheduler->rr_threshold = rr_threshold;
 
-	ret = nccl_net_ofi_lock_init(&scheduler->rr_lock, NULL);
+	ret = nccl_net_ofi_lock_init(&scheduler->rr_lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret) {
 		NCCL_OFI_WARN("Could not initialize mutex for round robin counter");
 		scheduler_fini(&scheduler->base);

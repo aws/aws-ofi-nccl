@@ -2247,7 +2247,7 @@ static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
 	}
 
 	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_lock_init(&devices->ep_lock, NULL);
+	ret = nccl_net_ofi_lock_init(&devices->ep_lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret != 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Unable to initialize mutex");

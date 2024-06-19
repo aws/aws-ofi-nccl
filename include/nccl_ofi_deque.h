@@ -47,7 +47,7 @@ struct nccl_ofi_deque_t {
 	 */
 	nccl_ofi_deque_elem_t head;
 	/* Lock for deque operations */
-	pthread_mutex_t lock;
+	pthread_spinlock_t lock;
 };
 typedef struct nccl_ofi_deque_t nccl_ofi_deque_t;
 

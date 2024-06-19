@@ -96,7 +96,7 @@ static int freelist_init_internal(size_t entry_size,
 	freelist->regmr_opaque = regmr_opaque;
 	freelist->reginfo_offset = reginfo_offset;
 
-	ret = nccl_net_ofi_lock_init(&freelist->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&freelist->lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		free(freelist);

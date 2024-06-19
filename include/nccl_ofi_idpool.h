@@ -25,7 +25,7 @@ typedef struct nccl_ofi_idpool {
 	uint64_t *ids;
 
 	/* Lock for concurrency */
-	pthread_mutex_t lock;
+	pthread_spinlock_t lock;
 } nccl_ofi_idpool_t;
 
 /*

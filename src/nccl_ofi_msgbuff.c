@@ -42,7 +42,7 @@ nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_
 	msgbuff->field_mask = (uint16_t)(1 << bit_width) - 1;
 	msgbuff->max_inprogress = max_inprogress;
 
-	ret = nccl_net_ofi_lock_init(&msgbuff->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&msgbuff->lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		goto error;

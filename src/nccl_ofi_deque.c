@@ -24,7 +24,7 @@ int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p)
 	deque->head.prev = &deque->head;
 	deque->head.next = &deque->head;
 
-	ret = nccl_net_ofi_lock_init(&deque->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&deque->lock, PTHREAD_PROCESS_PRIVATE);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to initialize deque mutex.");
 		free(deque);
