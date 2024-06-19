@@ -107,13 +107,6 @@ jobs:
             cc: gcc
             cc-version: 13
 
-        exclude:
-          # fails with
-          # > checking if __builtin_expect is available... no
-          # > configure: error: __builtin_expect not available
-          # clang-19 definitely supports this, so it's something in our m4.
-          - cc: clang
-            cc-variant: latest
     name: u2204/${{ matrix.sdk }}/libfabric@git/${{matrix.cc}}(${{matrix.cc-variant}})/distcheck/
     steps:
       - uses: actions/checkout@v4

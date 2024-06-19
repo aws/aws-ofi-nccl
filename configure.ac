@@ -78,10 +78,6 @@ AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlope
 AC_SEARCH_LIBS([pthread_getspecific], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads.])])
 AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2 library function.])])
 
-# Check for GCC builtin functions
-CHECK_GCC_BUILTIN([__builtin_expect])
-CHECK_GCC_BUILTIN([__builtin_ffsll])
-
 # Checks for external packages
 CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])
 
