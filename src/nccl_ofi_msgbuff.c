@@ -42,7 +42,7 @@ nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_
 	msgbuff->field_mask = (uint16_t)(1 << bit_width) - 1;
 	msgbuff->max_inprogress = max_inprogress;
 
-	ret = nccl_net_ofi_mutex_init(&msgbuff->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&msgbuff->lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		goto error;
@@ -76,7 +76,7 @@ bool nccl_ofi_msgbuff_destroy(nccl_ofi_msgbuff_t *msgbuff)
 		return false;
 	}
 	free(msgbuff->buff);
-	nccl_net_ofi_mutex_destroy(&msgbuff->lock);
+	nccl_net_ofi_lock_destroy(&msgbuff->lock);
 	free(msgbuff);
 	return true;
 }
@@ -136,7 +136,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
 {
 	assert(msgbuff);
 
-	nccl_net_ofi_mutex_lock(&msgbuff->lock);
+	nccl_net_ofi_lock(&msgbuff->lock);
 
 	*msg_idx_status = nccl_ofi_msgbuff_get_idx_status(msgbuff, msg_index);
 	nccl_ofi_msgbuff_result_t ret = NCCL_OFI_MSGBUFF_ERROR;
@@ -158,7 +158,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
 		ret = NCCL_OFI_MSGBUFF_INVALID_IDX;
 	}
 
-	nccl_net_ofi_mutex_unlock(&msgbuff->lock);
+	nccl_net_ofi_unlock(&msgbuff->lock);
 	return ret;
 }
 
@@ -168,7 +168,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
 {
 	assert(msgbuff);
 
-	nccl_net_ofi_mutex_lock(&msgbuff->lock);
+	nccl_net_ofi_lock(&msgbuff->lock);
 
 	*msg_idx_status = nccl_ofi_msgbuff_get_idx_status(msgbuff, msg_index);
 	nccl_ofi_msgbuff_result_t ret = NCCL_OFI_MSGBUFF_ERROR;
@@ -181,7 +181,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
 		ret = NCCL_OFI_MSGBUFF_INVALID_IDX;
 	}
 
-	nccl_net_ofi_mutex_unlock(&msgbuff->lock);
+	nccl_net_ofi_unlock(&msgbuff->lock);
 	return ret;
 }
 
@@ -195,7 +195,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
 		NCCL_OFI_WARN("elem is NULL");
 		return NCCL_OFI_MSGBUFF_ERROR;
 	}
-	nccl_net_ofi_mutex_lock(&msgbuff->lock);
+	nccl_net_ofi_lock(&msgbuff->lock);
 
 	*msg_idx_status = nccl_ofi_msgbuff_get_idx_status(msgbuff, msg_index);
 	nccl_ofi_msgbuff_result_t ret = NCCL_OFI_MSGBUFF_ERROR;
@@ -212,7 +212,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
 		ret = NCCL_OFI_MSGBUFF_INVALID_IDX;
 	}
 
-	nccl_net_ofi_mutex_unlock(&msgbuff->lock);
+	nccl_net_ofi_unlock(&msgbuff->lock);
 	return ret;
 }
 
@@ -221,7 +221,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
 {
 	assert(msgbuff);
 
-	nccl_net_ofi_mutex_lock(&msgbuff->lock);
+	nccl_net_ofi_lock(&msgbuff->lock);
 
 	*msg_idx_status = nccl_ofi_msgbuff_get_idx_status(msgbuff, msg_index);
 	nccl_ofi_msgbuff_result_t ret = NCCL_OFI_MSGBUFF_ERROR;
@@ -243,6 +243,6 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
 		}
 		ret = NCCL_OFI_MSGBUFF_INVALID_IDX;
 	}
-	nccl_net_ofi_mutex_unlock(&msgbuff->lock);
+	nccl_net_ofi_unlock(&msgbuff->lock);
 	return ret;
 }

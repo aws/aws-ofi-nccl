@@ -78,7 +78,7 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
 	assert(deque);
 	assert(deque_elem);
 
-	nccl_net_ofi_mutex_lock(&deque->lock);
+	nccl_net_ofi_lock(&deque->lock);
 
 	deque_elem->next = &deque->head;
 	deque_elem->prev = deque->head.prev;
@@ -87,7 +87,7 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
 	deque->head.prev->next = deque_elem;
 	deque->head.prev = deque_elem;
 
-	nccl_net_ofi_mutex_unlock(&deque->lock);
+	nccl_net_ofi_unlock(&deque->lock);
 
 	return 0;
 }
@@ -103,7 +103,7 @@ static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_
 	assert(deque);
 	assert(deque_elem);
 
-	nccl_net_ofi_mutex_lock(&deque->lock);
+	nccl_net_ofi_lock(&deque->lock);
 
 	deque_elem->next = deque->head.next;
 	deque_elem->prev = &deque->head;
@@ -112,7 +112,7 @@ static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_
 	deque->head.next->prev = deque_elem;
 	deque->head.next = deque_elem;
 
-	nccl_net_ofi_mutex_unlock(&deque->lock);
+	nccl_net_ofi_unlock(&deque->lock);
 
 	return 0;
 }
@@ -143,7 +143,7 @@ static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_
 		return 0;
 	}
 
-	nccl_net_ofi_mutex_lock(&deque->lock);
+	nccl_net_ofi_lock(&deque->lock);
 
 	/* Check for empty deque. We need to do this again because the check above
 	   was before we acquired the lock. */
@@ -157,7 +157,7 @@ static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_
 	(*deque_elem)->next->prev = &deque->head;
 
 unlock:
-	nccl_net_ofi_mutex_unlock(&deque->lock);
+	nccl_net_ofi_unlock(&deque->lock);
 
 	return 0;
 }

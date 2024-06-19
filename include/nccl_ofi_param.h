@@ -26,7 +26,7 @@ static inline int64_t ofi_nccl_##name() { \
     if (initialized) { \
 	return value; \
     } \
-    nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name); \
+    nccl_net_ofi_lock(&ofi_nccl_param_lock_##name); \
     int64_t v; \
     char *str, *endptr; \
     if (!initialized) { \
@@ -46,7 +46,7 @@ static inline int64_t ofi_nccl_##name() { \
         } \
 	initialized = true; \
     } \
-    nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
+    nccl_net_ofi_unlock(&ofi_nccl_param_lock_##name); \
     return value; \
 }
 
@@ -58,7 +58,7 @@ static inline const char *ofi_nccl_##name() { \
     if (initialized) { \
 	return value; \
     } \
-    nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name); \
+    nccl_net_ofi_lock(&ofi_nccl_param_lock_##name); \
     char *str; \
     if (!initialized) { \
         str = getenv("OFI_NCCL_" env); \
@@ -76,7 +76,7 @@ static inline const char *ofi_nccl_##name() { \
         } \
 	initialized = true; \
     } \
-    nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
+    nccl_net_ofi_unlock(&ofi_nccl_param_lock_##name); \
     return value; \
 }
 

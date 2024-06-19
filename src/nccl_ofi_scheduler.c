@@ -63,13 +63,13 @@ static inline int set_round_robin_schedule(nccl_net_ofi_threshold_scheduler_t *s
 {
 	int rail_id;
 
-	nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
+	nccl_net_ofi_lock(&scheduler->rr_lock);
 
 	/* Retieve and increment round-robin counter; wrap around if required */
 	rail_id = (scheduler->rr_counter)++;
 	scheduler->rr_counter = scheduler->rr_counter == num_rails ? 0 : scheduler->rr_counter;
 
-	nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
+	nccl_net_ofi_unlock(&scheduler->rr_lock);
 
 	schedule->num_xfer_infos = 1;
 	schedule->rail_xfer_infos[0].rail_id = rail_id;
@@ -194,7 +194,7 @@ static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
 	assert(scheduler_p);
 	assert(scheduler_p->schedule_fl);
 
-	ret = nccl_net_ofi_mutex_destroy(&scheduler->rr_lock);
+	ret = nccl_net_ofi_lock_destroy(&scheduler->rr_lock);
 	if (ret) {
 		NCCL_OFI_WARN("Could not destroy threshold scheduler pthread mutex");
 		return -ret;
@@ -261,7 +261,7 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails,
 	scheduler->rr_counter = 0;
 	scheduler->rr_threshold = rr_threshold;
 
-	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
+	ret = nccl_net_ofi_lock_init(&scheduler->rr_lock, NULL);
 	if (ret) {
 		NCCL_OFI_WARN("Could not initialize mutex for round robin counter");
 		scheduler_fini(&scheduler->base);

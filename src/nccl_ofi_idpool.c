@@ -56,7 +56,7 @@ int nccl_ofi_idpool_init(nccl_ofi_idpool_t *idpool, size_t size)
 	}
 
 	/* Initialize mutex */
-	ret = nccl_net_ofi_mutex_init(&idpool->lock, NULL);
+	ret = nccl_net_ofi_lock_init(&idpool->lock, NULL);
 	if (OFI_UNLIKELY(ret)) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		free(idpool->ids);
@@ -100,7 +100,7 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 	/* Scale pool size to number of 64-bit uints (rounded up) */
 	size_t num_long_elements = NCCL_OFI_ROUND_UP(idpool->size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
 
-	nccl_net_ofi_mutex_lock(&idpool->lock);
+	nccl_net_ofi_lock(&idpool->lock);
 
 	int entry_index = 0;
 	int id = -1;
@@ -118,7 +118,7 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 		}
 	}
 
-	nccl_net_ofi_mutex_unlock(&idpool->lock);
+	nccl_net_ofi_unlock(&idpool->lock);
 
 	if (-1 == id || id >= idpool->size) {
 		NCCL_OFI_WARN("No IDs available (max: %lu)", idpool->size);
@@ -162,7 +162,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_mutex_lock(&idpool->lock);
+	nccl_net_ofi_lock(&idpool->lock);
 
 	size_t i = id / (sizeof(uint64_t) * 8);
 	size_t entry_index = id % (sizeof(uint64_t) * 8);
@@ -171,14 +171,14 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 	if (idpool->ids[i] & (1ULL << entry_index)) {
 		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%lu)", id);
 
-		nccl_net_ofi_mutex_unlock(&idpool->lock);
+		nccl_net_ofi_unlock(&idpool->lock);
 		return -ENOTSUP;
 	}
 
 	/* Set bit to 1, making the ID available */
 	idpool->ids[i] |= 1ULL << (entry_index);
 
-	nccl_net_ofi_mutex_unlock(&idpool->lock);
+	nccl_net_ofi_unlock(&idpool->lock);
 
 	return 0;
 }
@@ -205,7 +205,7 @@ int nccl_ofi_idpool_fini(nccl_ofi_idpool_t *idpool)
 	}
 
 	/* Destroy mutex */
-	ret = nccl_net_ofi_mutex_destroy(&idpool->lock);
+	ret = nccl_net_ofi_lock_destroy(&idpool->lock);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to destroy mutex");
 	}

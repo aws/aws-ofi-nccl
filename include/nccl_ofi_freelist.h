@@ -257,7 +257,7 @@ static inline void *nccl_ofi_freelist_entry_alloc(nccl_ofi_freelist_t *freelist)
 
 	assert(freelist);
 
-	nccl_net_ofi_mutex_lock(&freelist->lock);
+	nccl_net_ofi_lock(&freelist->lock);
 
 	if (!freelist->entries) {
 		ret = nccl_ofi_freelist_add(freelist, freelist->increase_entry_count);
@@ -275,7 +275,7 @@ static inline void *nccl_ofi_freelist_entry_alloc(nccl_ofi_freelist_t *freelist)
 	nccl_ofi_freelist_entry_set_undefined(freelist, buf);
 
 cleanup:
-	nccl_net_ofi_mutex_unlock(&freelist->lock);
+	nccl_net_ofi_unlock(&freelist->lock);
 
 	return buf;
 }
@@ -295,7 +295,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 	assert(freelist);
 	assert(entry_p);
 
-	nccl_net_ofi_mutex_lock(&freelist->lock);
+	nccl_net_ofi_lock(&freelist->lock);
 
 	if (freelist->have_reginfo) {
 		entry = (struct nccl_ofi_freelist_elem_t *)((char*)entry_p + freelist->reginfo_offset);
@@ -310,7 +310,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 
 	nccl_net_ofi_mem_noaccess(entry_p, user_entry_size);
 
-	nccl_net_ofi_mutex_unlock(&freelist->lock);
+	nccl_net_ofi_unlock(&freelist->lock);
 }
 
 #ifdef _cplusplus
