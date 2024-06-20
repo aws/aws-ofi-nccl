@@ -72,20 +72,24 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context, ncclFunc_t collType, si
 	for (size_t nChan = 2; nChan <= 16; nChan += 2) {
 		for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
 			/* No CollNet on AWS today */
-			if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN)
+			if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN) {
 				continue;
+			}
 
 			/* Skip NCCL_ALGO_NVLS used only for single-node jobs */
-			if (algo == NCCL_ALGO_NVLS)
+			if (algo == NCCL_ALGO_NVLS) {
 				continue;
+			}
 
-			if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE))
+			if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE)) {
 				continue;
+			}
 
 			for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
 				/* This is not a supported combination in NCCL */
-				if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE)
+				if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE) {
 					continue;
+				}
 
 				const double cost =
 					nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
