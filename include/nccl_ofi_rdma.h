@@ -296,7 +296,7 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * Protect updating critical fields such as size and ncompls when
 	 * network xfer happened over multiple rails
 	 */
-	pthread_mutex_t req_lock;
+	pthread_spinlock_t req_lock;
 
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
@@ -555,7 +555,7 @@ struct nccl_net_ofi_ep_rail {
 	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
 	size_t max_bounce_posted;
 	/* Mutex for bounce buffer operations */
-	pthread_mutex_t bounce_mutex;
+	pthread_spinlock_t bounce_mutex;
 };
 
 /*
@@ -670,7 +670,7 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */
-	pthread_mutex_t ep_lock;
+	pthread_spinlock_t ep_lock;
 
 	/* Number of rails */
 	int num_rails;

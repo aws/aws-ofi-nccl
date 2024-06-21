@@ -101,7 +101,7 @@ typedef struct {
 	// Points to the message after the inserted message with highest sequence number.
 	uint16_t msg_next;
 	// Mutex for this msg buffer -- locks all non-init operations
-	pthread_mutex_t lock;
+	pthread_spinlock_t lock;
 } nccl_ofi_msgbuff_t;
 
 /**

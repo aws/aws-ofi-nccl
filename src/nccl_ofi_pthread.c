@@ -34,7 +34,7 @@ void errorcheck_init(void)
 
 
 int
-nccl_net_ofi_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
+nccl_net_ofi_mutex_init(pthread_mutex_t *lock, const pthread_mutexattr_t *attr)
 {
 	int ret;
 	const pthread_mutexattr_t *passed_attr;
@@ -54,9 +54,31 @@ nccl_net_ofi_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
 		passed_attr = &errorcheck_attr;
 	}
 
-	ret = pthread_mutex_init(mutex, passed_attr);
+
+    ret = pthread_mutex_init(lock, passed_attr);
+    if (ret != 0) {
+	    NCCL_OFI_WARN("pthread_mutex_init failed: %s", strerror(ret));
+	    return ret;
+    }
+
+	return ret;
+}
+
+
+int
+nccl_net_ofi_spin_init(pthread_spinlock_t *lock, int shared)
+{
+	int ret;
+
+	ret = pthread_once(&errorcheck_once, errorcheck_init);
 	if (ret != 0) {
-		NCCL_OFI_WARN("pthread_mutex_init failed: %s", strerror(ret));
+		NCCL_OFI_WARN("pthread_once failed: %s", strerror(ret));
+		return ret;
+	}
+
+	ret = pthread_spin_init(lock, shared);
+	if (ret != 0) {
+		NCCL_OFI_WARN("pthread_spin_init failed: %s", strerror(ret));
 		return ret;
 	}
 
@@ -65,13 +87,27 @@ nccl_net_ofi_mutex_init(pthread_mutex_t *mutex, const pthread_mutexattr_t *attr)
 
 
 int
-nccl_net_ofi_mutex_destroy(pthread_mutex_t *mutex)
+nccl_net_ofi_mutex_destroy(pthread_mutex_t *lock)
 {
 	int ret;
 
-	ret = pthread_mutex_destroy(mutex);
+	ret = pthread_mutex_destroy(lock);
 	if (ret != 0) {
 		NCCL_OFI_WARN("pthread_mutex_destroy failed: %s", strerror(ret));
+	}
+
+	return ret;
+}
+
+
+int
+nccl_net_ofi_spin_destroy(pthread_spinlock_t *lock)
+{
+	int ret;
+
+	ret = pthread_spin_destroy(lock);
+	if (ret != 0) {
+		NCCL_OFI_WARN("pthread_spin_destroy failed: %s", strerror(ret));
 	}
 
 	return ret;

@@ -25,8 +25,8 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	/*
 	 * The tuner API is missing a mechanism to pass around context after
 	 * initialization. For now, init a plugin-lobal context once.
-	 */ 
-	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	 */
+	nccl_net_ofi_lock(&nccl_ofi_tuner_ctx_lock);
 	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx =
 		calloc(1, sizeof(struct nccl_ofi_tuner_context));
 	if (nccl_ofi_tuner_ctx == NULL) {
@@ -37,7 +37,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
 	*context = (void*)nccl_ofi_tuner_ctx;
-	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+	nccl_net_ofi_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	NCCL_OFI_TRACE(NCCL_TUNING, "Tuner init: comm with %ld ranks and %ld nodes.", nRanks, nNodes);
 	return ncclSuccess;
@@ -109,11 +109,11 @@ exit:
 
 ncclResult_t nccl_ofi_tuner_destroy(void *context)
 {
-	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	nccl_net_ofi_lock(&nccl_ofi_tuner_ctx_lock);
 	if (context != NULL) {
 		free(context);
 	}
-	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+	nccl_net_ofi_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	return ncclSuccess;
 }
@@ -132,13 +132,13 @@ static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
 {
 	void *context = NULL;
 
-	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	nccl_net_ofi_lock(&nccl_ofi_tuner_ctx_lock);
 	if (nccl_ofi_tuner_ctx_internal != NULL) {
 		/* Prevent other threads from freeing a dangling global ctx */
 		context = (void*)nccl_ofi_tuner_ctx_internal;
 		nccl_ofi_tuner_ctx_internal = NULL;
 	}
-	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+	nccl_net_ofi_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	return nccl_ofi_tuner_destroy(context);
 }

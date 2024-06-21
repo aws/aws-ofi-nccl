@@ -169,7 +169,7 @@ typedef struct nccl_net_ofi_sendrecv_device {
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */
-	pthread_mutex_t ep_lock;
+	pthread_spinlock_t ep_lock;
 
 	/* Device provider */
 	struct fi_info *info;
