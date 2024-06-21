@@ -19,6 +19,8 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_math.h"
+#include "nccl_ofi_rdma.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 
@@ -306,6 +308,37 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 	*have_ordering = false;
 #endif
 	return 0;
+}
+
+/*
+ * For the RDMA protocol, try to set max msg size on the current endpoint
+ * to the size of the max message we send with fi_send. This allows the EFA
+ * provider to enable the zero-copy path.
+ *
+ * Returns 0 on success or -error code on unexpected failure.
+ */
+static int configure_ep_max_msg_size(struct fid_ep *ep)
+{
+	int ret = 0;
+
+#if HAVE_DECL_FI_OPT_MAX_MSG_SIZE
+	size_t eager_max_size = (size_t)ofi_nccl_eager_max_size();
+	size_t optval = NCCL_OFI_MAX(NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t), eager_max_size),
+				     sizeof(nccl_ofi_rdma_connection_info_t));
+
+	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_MAX_MSG_SIZE, &optval, sizeof(optval));
+
+	NCCL_OFI_TRACE(NCCL_INIT, "fi_setopt(FI_OPT_MAX_MSG_SIZE) RC: %d", ret);
+
+	if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting FI_OPT_MAX_MSG_SIZE not supported.");
+		ret = 0;
+	} else if (ret != 0) {
+		NCCL_OFI_WARN("Could not set FI_OPT_MAX_MSG_SIZE. RC: %d, ERROR: %s", ret, fi_strerror(-ret));
+	}
+#endif
+
+	return ret;
 }
 
 int configure_nvls_option(void)
@@ -687,6 +720,15 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 			}
 		}
 	}
+
+	if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) {
+		ret = configure_ep_max_msg_size(endpoint);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unexpected failure setting max_msg_size %d", ret);
+			goto unlock;
+		}
+	}
+
 unlock:
 	nccl_net_ofi_mutex_unlock(&mutex);
 #endif // HAVE_CUDA
