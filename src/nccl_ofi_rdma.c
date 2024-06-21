@@ -1959,7 +1959,7 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item =
 		nccl_ofi_freelist_entry_alloc(ep->bounce_buff_fl);
 	if (!bounce_fl_item) {
-		NCCL_OFI_WARN("Failed to allocate ctrl_fl_item");
+		NCCL_OFI_WARN("Failed to allocate bounce_fl_item");
 		req->free(req, false);
 		return NULL;
 	}
