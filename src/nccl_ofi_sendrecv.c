@@ -206,9 +206,10 @@ static int ofi_process_cq(struct fid_cq *cq, uint64_t max_tag)
 
 			req = container_of(err_buffer.op_context,
 					   nccl_net_ofi_sendrecv_req_t, ctx);
-			NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %s. Completed length: %ld, Request: %s",
+			NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
 				      req,
 				      err_buffer.err,
+				      err_buffer.prov_errno,
 				      fi_cq_strerror(cq,
 						     err_buffer.prov_errno,
 						     err_buffer.err_data, NULL, 0),

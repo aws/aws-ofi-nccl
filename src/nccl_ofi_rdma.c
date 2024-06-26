@@ -1510,8 +1510,9 @@ static inline int process_err_completion(nccl_net_ofi_rdma_ep_t *ep,
 		req = err_entry.op_context;
 	}
 
-	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %s. Completed length: %ld, Request: %s",
+	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
 		      req, err_entry.err,
+		      err_entry.prov_errno,
 		      fi_cq_strerror(rail->cq, err_entry.prov_errno, err_entry.err_data, NULL, 0),
 		      (long)err_entry.len, nccl_net_ofi_req_str(req));
 	if (req->type == NCCL_OFI_RDMA_BOUNCE) {
