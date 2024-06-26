@@ -306,6 +306,9 @@ jobs:
 
       - name: Run CodeChecker
         uses: whisperity/codechecker-analysis-action@v1
+          install-custom: true
+          version: v6.23.1
+          llvm-version: '18'
         id: codechecker
         with:
           build-command: make
