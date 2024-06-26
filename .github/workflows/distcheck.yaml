@@ -318,6 +318,9 @@ jobs:
           build-command: make
           ctu: true
           config: .github/codechecker.yaml
+          install-custom: true
+          version: v6.23.1
+          llvm-version: '18'
 
       - name: Save CodeChecker HTML output.
         uses: actions/upload-artifact@v4
