@@ -20,9 +20,9 @@ int main(int argc, char *argv[])
 	nccl_net_ofi_send_comm_t *sComm_next = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
-	char handle[NCCL_NET_HANDLE_MAXSIZE] = {0};
-	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {0};
-	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {0};
+	char handle[NCCL_NET_HANDLE_MAXSIZE] = {};
+	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {};
+	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {};
 	ncclNetDeviceHandle_v8_t *s_ignore, *r_ignore;
 	test_nccl_net_t *extNet = NULL;
 
@@ -33,8 +33,8 @@ int main(int argc, char *argv[])
 	nccl_net_ofi_req_t *recv_req[NUM_REQUESTS] = {NULL};
 	void *send_mhandle[NUM_REQUESTS];
 	void *recv_mhandle[NUM_REQUESTS];
-	int req_completed_send[NUM_REQUESTS] = {0};
-	int req_completed_recv[NUM_REQUESTS] = {0};
+	int req_completed_send[NUM_REQUESTS] = {};
+	int req_completed_recv[NUM_REQUESTS] = {};
 	int inflight_reqs = NUM_REQUESTS * 2;
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
@@ -143,7 +143,7 @@ int main(int argc, char *argv[])
 
 	/* Get Properties for the device */
 	for (int dev = 0; dev < ndev; dev++) {
-		test_nccl_properties_t props = {0};
+		test_nccl_properties_t props = {};
 		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
 

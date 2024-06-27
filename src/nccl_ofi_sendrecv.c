@@ -502,8 +502,8 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 					int type, struct fid_mr **mr_handle)
 {
 	int ret = 0;
-	struct fi_mr_attr mr_attr = {0};
-	struct iovec iov = {0};
+	struct fi_mr_attr mr_attr = {};
+	struct iovec iov = {};
 
 	/* Check if provider requires registration of local buffers */
 	if ((local_mr != true) && (type == NCCL_PTR_HOST)) {

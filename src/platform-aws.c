@@ -791,7 +791,7 @@ static int get_rail_vf_idx(struct fi_info *info)
 void platform_sort_rails(struct fi_info **info_list, int num_rails)
 {
 	struct fi_info *info_list_in = *info_list;
-	struct fi_info *sorted_info_array[num_rails];
+	struct fi_info *sorted_info_array[num_rails] = {};
 	for (int i = 0; i < num_rails; ++i) {
 		sorted_info_array[i] = NULL;
 	}
