@@ -129,7 +129,7 @@ AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output 
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
 AS_IF([test "${enable_picky_compiler}" != "no"],
-      [picky_compiler_flags="-Wall"
+      [picky_compiler_flags="-Wall -Wc++-compat -Werror=c++-compat"
        AC_MSG_NOTICE([Adding ${picky_compiler_flags} to CFLAGS.])
        CFLAGS="${CFLAGS} ${picky_compiler_flags}"
        AS_UNSET([picky_compiler_flags])])
