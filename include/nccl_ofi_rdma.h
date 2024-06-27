@@ -365,6 +365,7 @@ typedef struct nccl_net_ofi_rdma_req {
  */
 typedef struct nccl_ofi_rdma_ep_name {
 	char ep_name[MAX_EP_ADDR];
+	size_t ep_name_len;
 } nccl_ofi_rdma_ep_name_t;
 
 /*
@@ -397,7 +398,7 @@ typedef struct nccl_ofi_rdma_connection_info {
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 236,
+_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 272,
 	       "Wrong size for RDMA connect message");
 
 /*
@@ -580,6 +581,9 @@ struct nccl_net_ofi_ep_rail {
 
 	/* Name of local libfabric endpoint */
 	char local_ep_name[MAX_EP_ADDR];
+
+	/* Length of local_ep_name */
+	size_t local_ep_name_len;
 
 	/* Address vector handle */
 	struct fid_av *av;
