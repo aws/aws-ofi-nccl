@@ -65,7 +65,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = (struct random_freelisted_item *)nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
@@ -166,7 +166,7 @@ int main(int argc, char *argv[])
 				exit(1);
 			}
 		}
-		last_buff = entry;
+		last_buff = (char *)entry;
 	}
 	ret = nccl_ofi_freelist_fini(freelist);
 	if (ret != ncclSuccess) {
@@ -195,7 +195,8 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
-		struct random_freelisted_item *item = nccl_ofi_freelist_entry_alloc(freelist);
+		struct random_freelisted_item *item =
+			(struct random_freelisted_item *)nccl_ofi_freelist_entry_alloc(freelist);
 		if (!item) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);

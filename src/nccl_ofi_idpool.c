@@ -41,7 +41,7 @@ int nccl_ofi_idpool_init(nccl_ofi_idpool_t *idpool, size_t size)
 	size_t num_long_elements = NCCL_OFI_ROUND_UP(size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
 
 	/* Allocate memory for the pool */
-	idpool->ids = malloc(sizeof(uint64_t) * num_long_elements);
+	idpool->ids = (uint64_t *)malloc(sizeof(uint64_t) * num_long_elements);
 
 	/* Return in case of allocation error */
 	if (NULL == idpool->ids) {

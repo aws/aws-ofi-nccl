@@ -61,7 +61,7 @@ static int freelist_init_internal(size_t entry_size,
 	int ret;
 	nccl_ofi_freelist_t *freelist = NULL;
 
-	freelist = malloc(sizeof(nccl_ofi_freelist_t));
+	freelist = (nccl_ofi_freelist_t *)malloc(sizeof(nccl_ofi_freelist_t));
 	if (!freelist) {
 		NCCL_OFI_WARN("Allocating freelist failed");
 		return -ENOMEM;

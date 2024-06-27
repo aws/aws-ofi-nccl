@@ -140,7 +140,8 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
 
 	assert(scheduler != NULL);
 
-	schedule = nccl_ofi_freelist_entry_alloc(scheduler_p->schedule_fl);
+	schedule =
+		(nccl_net_ofi_schedule_t *)nccl_ofi_freelist_entry_alloc(scheduler_p->schedule_fl);
 	if (OFI_UNLIKELY(!schedule)) {
 		NCCL_OFI_WARN("Failed to allocate schedule");
 		return NULL;
@@ -244,7 +245,8 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails,
 	nccl_net_ofi_threshold_scheduler_t *scheduler = NULL;
 	*scheduler_p = NULL;
 
-	scheduler = malloc(sizeof(nccl_net_ofi_threshold_scheduler_t));
+	scheduler = (nccl_net_ofi_threshold_scheduler_t *)malloc(
+		sizeof(nccl_net_ofi_threshold_scheduler_t));
 	if (!scheduler) {
 		NCCL_OFI_WARN("Could not allocate threshold scheduler");
 		return -ENOMEM;

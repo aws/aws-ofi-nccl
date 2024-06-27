@@ -252,7 +252,7 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
 {
 	int ret = 0;
- 	struct fi_av_attr av_attr = {0};
+	struct fi_av_attr av_attr = {0};
 	struct fi_cq_attr cq_attr = {0};
 
 	/* Create transport level communication endpoint(s) */
