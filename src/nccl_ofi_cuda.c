@@ -25,13 +25,13 @@ void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites = NULL;
 
 #define STRINGIFY(sym) # sym
 
-#define LOAD_SYM(sym)							\
-	nccl_net_ofi_ ## sym = dlsym(cudadriver_lib, STRINGIFY(sym));	\
-	if (nccl_net_ofi_ ## sym == NULL) {				\
-		NCCL_OFI_WARN("Failed to load symbol " STRINGIFY(sym)); \
-		ret = -ENOTSUP;						\
-		goto error;						\
-	}								\
+#define LOAD_SYM(sym)                                                              \
+	nccl_net_ofi_##sym = (typeof(sym) *)dlsym(cudadriver_lib, STRINGIFY(sym)); \
+	if (nccl_net_ofi_##sym == NULL) {                                          \
+		NCCL_OFI_WARN("Failed to load symbol " STRINGIFY(sym));            \
+		ret = -ENOTSUP;                                                    \
+		goto error;                                                        \
+	}
 
 int
 nccl_net_ofi_cuda_init(void)
