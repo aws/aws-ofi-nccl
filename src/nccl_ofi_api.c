@@ -132,7 +132,7 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 
 ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	nccl_net_ofi_listen_comm_t **listen_comm =
@@ -162,9 +162,11 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 		return ncclInternalError;
 	}
 
-	ret = base_ep->listen(base_ep, (nccl_net_ofi_conn_handle_t *)handle, listen_comm);
+	ret = base_ep->listen(base_ep,
+						  (nccl_net_ofi_conn_handle_t *)handle,
+						  listen_comm);
 
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		base_ep->release_ep(base_ep);
 	}
 	return nccl_net_ofi_retval_translate(ret);
