@@ -55,6 +55,7 @@ typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_PENDING,
 	NCCL_OFI_RDMA_REQ_COMPLETED,
 	NCCL_OFI_RDMA_REQ_ERROR,
+	NCCL_OFI_RDMA_REQ_INVALID_STATE,
 } nccl_net_ofi_rdma_req_state_t;
 
 typedef enum nccl_net_ofi_rdma_req_type {
@@ -80,14 +81,22 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_RECV_CONN_RESP,
 	/* Connect response message send request */
 	NCCL_OFI_RDMA_SEND_CONN_RESP,
+	/* Invalid type */
+	NCCL_OFI_RDMA_INVALID_TYPE,
 } nccl_net_ofi_rdma_req_type_t;
 
 enum nccl_ofi_rdma_msg_type {
-	NCCL_OFI_RDMA_MSG_CONN,
+	NCCL_OFI_RDMA_MSG_CONN = 0,
 	NCCL_OFI_RDMA_MSG_CONN_RESP,
 	NCCL_OFI_RDMA_MSG_CTRL,
-	NCCL_OFI_RDMA_MSG_EAGER
+	NCCL_OFI_RDMA_MSG_EAGER,
+	NCCL_OFI_RDMA_MSG_INVALID = 15,
+	NCCL_OFI_RDMA_MSG_MAX = NCCL_OFI_RDMA_MSG_INVALID,
 };
+
+_Static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
+	       "Out of space in nccl_ofi_rdma_msg_type; must fit in a nibble");
+
 /* This goes on the wire, so we want the datatype
  * size to be fixed.
  */

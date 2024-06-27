@@ -1313,6 +1313,8 @@ static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
 		return "COMPLETED";
 	case NCCL_OFI_RDMA_REQ_ERROR:
 		return "ERROR";
+	case NCCL_OFI_RDMA_REQ_INVALID_STATE:
+		return "INVALID";
 	}
 	return "unknown";
 }
@@ -1342,6 +1344,8 @@ static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
 		return "FLUSH";
 	case NCCL_OFI_RDMA_EAGER_COPY:
 		return "EAGER_COPY";
+	case NCCL_OFI_RDMA_INVALID_TYPE:
+		return "INVALID";
 	}
 	return "unknown";
 }
@@ -1722,7 +1726,7 @@ static inline void zero_nccl_ofi_req(nccl_net_ofi_rdma_req_t *req)
 	/* Mrail zero-out */
 	req->ncompls = 0;
 
-	req->type = -1;
+	req->type = NCCL_OFI_RDMA_INVALID_TYPE;
 }
 
 /*

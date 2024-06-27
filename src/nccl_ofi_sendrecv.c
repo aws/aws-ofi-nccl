@@ -247,7 +247,7 @@ static inline void zero_nccl_ofi_req(nccl_net_ofi_sendrecv_req_t *req)
 
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
 
-	req->direction = -1;
+	req->direction = NCCL_OFI_SENDRECV_INVALID_DIRECTION;
 }
 
 /*

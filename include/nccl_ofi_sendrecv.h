@@ -23,6 +23,7 @@ typedef enum nccl_net_ofi_sendrecv_req_state {
 } nccl_net_ofi_sendrecv_req_state_t;
 
 typedef enum nccl_net_ofi_sendrecv_req_direction {
+	NCCL_OFI_SENDRECV_INVALID_DIRECTION = 0,
 	NCCL_OFI_SENDRECV_SEND = 1,
 	NCCL_OFI_SENDRECV_RECV,
 } nccl_net_ofi_sendrecv_req_direction_t;
