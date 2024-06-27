@@ -1042,7 +1042,7 @@ static int get_device_property(unsigned domain, unsigned bus,
 {
 	int ret = 0;
 	FILE *file;
-	char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
+	const char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
 	size_t path_len;
 	char *path = NULL;
 
@@ -1116,8 +1116,8 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 {
 	union hwloc_obj_attr_u attr = {};
 	/* Override the following PCI width and speed of libfabric NICs with fallback values */
-	char *override_width = "255";
-	char *override_speed = "Unknown";
+	const char *override_width = "255";
+	const char *override_speed = "Unknown";
 	size_t fallback_width = 8;
 	size_t fallback_speed_idx = 3;
 
