@@ -22,6 +22,7 @@ sources = \
 	nccl_ofi_idpool.c \
 	nccl_ofi_ofiutils.c \
 	nccl_ofi_pthread.c \
+	nccl_ofi_ep_addr_list.c \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS

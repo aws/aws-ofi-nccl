@@ -16,7 +16,8 @@ noinst_PROGRAMS = \
 	show_tuner_decisions \
 	show_tuner_costs \
 	scheduler \
-	idpool
+	idpool \
+	ep_addr_list
 
 TESTS = $(noinst_PROGRAMS)
 
@@ -30,3 +31,4 @@ deque_SOURCES = deque.c
 freelist_SOURCES = freelist.c
 msgbuff_SOURCES = msgbuff.c
 scheduler_SOURCES = scheduler.c
+ep_addr_list_SOURCES = ep_addr_list.c
