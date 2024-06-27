@@ -1210,7 +1210,9 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	}
 
 	/* Build recv_comm */
-	r_comm = calloc(1, sizeof(nccl_net_ofi_sendrecv_recv_comm_t));
+	r_comm = (nccl_net_ofi_sendrecv_recv_comm_t *)calloc(
+		1,
+		sizeof(nccl_net_ofi_sendrecv_recv_comm_t));
 	if (r_comm == NULL) {
 		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
 			      dev_id);
@@ -1339,7 +1341,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		/* Allocate memory for peer address for the first time ONLY */
 		if (conn_info == NULL) {
-			conn_info = calloc(1, sizeof(nccl_ofi_connection_info_t));
+			conn_info = (nccl_ofi_connection_info_t *)calloc(
+				1,
+				sizeof(nccl_ofi_connection_info_t));
 		}
 
 		/* Post a receive message to receive peer connections */
@@ -1525,7 +1529,9 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	}
 
 	/* Build listen_comm */
-	l_comm = calloc(1, sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
+	l_comm = (nccl_net_ofi_sendrecv_listen_comm_t *)calloc(
+		1,
+		sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
 	if (OFI_UNLIKELY(l_comm == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
 		ret = -ENOMEM;
@@ -1797,7 +1803,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->local_ep = ep->ofi_ep;
 	ret_s_comm->remote_ep = remote_addr;
 
-	ret_s_comm->conn_info = calloc(1, sizeof(nccl_ofi_connection_info_t));
+	ret_s_comm->conn_info =
+		(nccl_ofi_connection_info_t *)calloc(1, sizeof(nccl_ofi_connection_info_t));
 	if (!ret_s_comm->conn_info) {
 		ret = -ENOMEM;
 		goto out;
@@ -2108,7 +2115,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	nccl_net_ofi_sendrecv_ep_t *ep = pthread_getspecific(device->ep_key);
 	if (!ep) {
 		/* Allocate endpoint */
-		ep = calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
+		ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
 		if (!ep) {
 			ret = -ENOMEM;
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
@@ -2299,7 +2306,8 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 {
 	int ret;
 
-	nccl_net_ofi_sendrecv_device_t *device = calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
+	nccl_net_ofi_sendrecv_device_t *device =
+		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
 	if (device == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
 		return NULL;
@@ -2449,7 +2457,7 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 	int ret;
 	nccl_net_ofi_plugin_t *plugin = NULL;
 
-	plugin = malloc(sizeof(nccl_net_ofi_plugin_t));
+	plugin = (nccl_net_ofi_plugin_t *)malloc(sizeof(nccl_net_ofi_plugin_t));
 	if (plugin == NULL) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
 		return -ENOMEM;

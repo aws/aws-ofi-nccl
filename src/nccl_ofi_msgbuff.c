@@ -24,13 +24,14 @@ nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_
 		goto error;
 	}
 
-	msgbuff = malloc(sizeof(nccl_ofi_msgbuff_t));
+	msgbuff = (nccl_ofi_msgbuff_t *)malloc(sizeof(nccl_ofi_msgbuff_t));
 	if (!msgbuff) {
 		NCCL_OFI_WARN("Memory allocation (msgbuff) failed");
 		goto error;
 	}
 
-	msgbuff->buff = malloc(sizeof(nccl_ofi_msgbuff_elem_t) * max_inprogress);
+	msgbuff->buff =
+		(nccl_ofi_msgbuff_elem_t *)malloc(sizeof(nccl_ofi_msgbuff_elem_t) * max_inprogress);
 	if (!msgbuff->buff) {
 		NCCL_OFI_WARN("Memory allocation (msgbuff->buff) failed");
 		goto error;

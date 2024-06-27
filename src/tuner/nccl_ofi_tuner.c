@@ -32,7 +32,8 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	 * initialization. For now, init a plugin-lobal context once.
 	 */
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = calloc(1, sizeof(struct nccl_ofi_tuner_context));
+	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx =
+		(struct nccl_ofi_tuner_context *)calloc(1, sizeof(struct nccl_ofi_tuner_context));
 	if (nccl_ofi_tuner_ctx == NULL) {
 		NCCL_OFI_WARN("Context allocation failed.");
 		return ncclInternalError;

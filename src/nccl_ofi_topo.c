@@ -554,7 +554,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	int ret = 0;
 
 	/* Allocate NCCL OFI topology */
-	nccl_ofi_topo_t *ofi_topo = calloc(1, sizeof(nccl_ofi_topo_t));
+	nccl_ofi_topo_t *ofi_topo = (nccl_ofi_topo_t *)calloc(1, sizeof(nccl_ofi_topo_t));
 	if (!ofi_topo) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Unable to allocate nccl_ofi_topo");
@@ -1052,7 +1052,7 @@ static int get_device_property(unsigned domain, unsigned bus,
 		ret = -errno;
 		goto error;
 	}
-	path = malloc(path_len + 1);
+	path = (char *)malloc(path_len + 1);
 	if (!path) {
 		NCCL_OFI_WARN("Device property file path malloc failed: %s", strerror(errno));
 		ret = -ENOMEM;

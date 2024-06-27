@@ -593,7 +593,8 @@ static size_t nccl_net_ofi_plugin_get_num_devices(nccl_net_ofi_plugin_t *plugin)
 int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
 			     size_t num_devices)
 {
-	plugin->p_devs = calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
+	plugin->p_devs =
+		(nccl_net_ofi_device_t **)calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
 	if (plugin->p_devs == NULL) {
 		NCCL_OFI_WARN("Unable to allocate "
 			      "nccl_net_ofi_rdma_device_t pointer array");
