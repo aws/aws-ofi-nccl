@@ -20,6 +20,7 @@ extern "C" {
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_tracepoint.h"
+#include "nccl_ofi_ep_addr_list.h"
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear
@@ -667,6 +668,9 @@ struct nccl_net_ofi_rdma_ep {
 	rdma_req_bounce_data_t *posted_recv_req_list;
 	/* Lock for posted_recv_req_list */
 	pthread_mutex_t posted_recv_req_list_lock;
+
+	/* True if this ep is stored in the thread-local store */
+	bool thread_local_ep;
 };
 
 /*
@@ -684,6 +688,9 @@ typedef struct nccl_net_ofi_rdma_device_rail {
 
 	/* Access domain handles */
 	struct fid_domain *domain;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
 } nccl_net_ofi_rdma_device_rail_t;
 
 /*
@@ -750,6 +757,9 @@ typedef struct nccl_net_ofi_rdma_device {
 	nccl_ofi_idpool_t key_pool;
 
 	bool use_long_rkeys;
+
+	/* List of endpoints and set of addresses they have connections to */
+	nccl_ofi_ep_addr_list_t *ep_addr_list;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
