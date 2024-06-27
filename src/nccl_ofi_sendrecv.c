@@ -2112,7 +2112,8 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 
 	/* Obtain thread-local sendrecv endpoint. Allocate and
 	 * initialize endpoint if necessary. */
-	nccl_net_ofi_sendrecv_ep_t *ep = pthread_getspecific(device->ep_key);
+	nccl_net_ofi_sendrecv_ep_t *ep =
+		(nccl_net_ofi_sendrecv_ep_t *)pthread_getspecific(device->ep_key);
 	if (!ep) {
 		/* Allocate endpoint */
 		ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));

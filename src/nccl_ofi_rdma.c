@@ -5461,7 +5461,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 
 	/* Obtain thread-local rdma endpoint. Allocate and
 	 * initialize endpoint if necessary. */
-	nccl_net_ofi_rdma_ep_t *ep = pthread_getspecific(device->ep_key);
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)pthread_getspecific(device->ep_key);
 	if (!ep) {
 		int num_rails = device->num_rails;
 
