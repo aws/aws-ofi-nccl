@@ -52,4 +52,5 @@ noinst_HEADERS = \
 	nccl-headers/neuron/error.h \
 	nccl_ofi_platform.h \
 	contrib/uthash.h \
-	contrib/utlist.h
+	contrib/utlist.h \
+	nccl_ofi_ep_addr_list.h
