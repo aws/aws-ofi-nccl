@@ -3647,7 +3647,8 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
 		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
-		       sizeof(ep_rail->local_ep_name));
+		       ep_rail->local_ep_name_len);
+		rdma_ep_name->ep_name_len = ep_rail->local_ep_name_len;
 	}
 
 	return 0;
@@ -3974,7 +3975,12 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
 	assert(sizeof(handle->ep_name) == sizeof(first_rail->local_ep_name));
 	memcpy(handle->ep_name, first_rail->local_ep_name,
-	       sizeof(first_rail->local_ep_name));
+	       first_rail->local_ep_name_len);
+	/* We don't copy the size here since the handle doesn't have a size field.
+	   The size will be distributed later by the connect response message.
+	   Instead, zero the unused bytes here. */
+	memset(handle->ep_name + first_rail->local_ep_name_len, 0,
+		sizeof(handle->ep_name) - first_rail->local_ep_name_len);
 
 	/* Build listen_comm */
 	l_comm = (nccl_net_ofi_rdma_listen_comm_t *)calloc(1,
@@ -4801,7 +4807,10 @@ static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep, int dev_id,
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		memcpy(conn_msg->ep_names[rail_id].ep_name,
 		       ep->rails[rail_id].local_ep_name,
-		       sizeof(ep->rails[rail_id].local_ep_name));
+		       ep->rails[rail_id].local_ep_name_len);
+		conn_msg->ep_names[rail_id].ep_name_len =
+			ep->rails[rail_id].local_ep_name_len;
+
 	}
 }
 
@@ -5358,14 +5367,14 @@ static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *rail)
 {
 	int res = 0;
-	size_t namelen = sizeof(rail->local_ep_name);
+	rail->local_ep_name_len = sizeof(rail->local_ep_name);
 
 	res = fi_getname(&ep->fid,
 			 (void *)rail->local_ep_name,
-			 &namelen);
+			 &rail->local_ep_name_len);
 	if (res == -FI_ETOOSMALL) {
 		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
-			      namelen, MAX_EP_ADDR);
+			      rail->local_ep_name_len, MAX_EP_ADDR);
 		return -EINVAL;
 	} else if (res != 0) {
 		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
