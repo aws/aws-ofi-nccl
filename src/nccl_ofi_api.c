@@ -173,7 +173,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 {
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 	ncclResult_t ret;
 
 	ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
@@ -262,7 +262,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 
         memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 

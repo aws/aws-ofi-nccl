@@ -2380,8 +2380,8 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 			      size_t size, int type, nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
-	struct fi_mr_attr mr_attr = {0};
-	struct iovec iov = {0};
+	struct fi_mr_attr mr_attr = {};
+	struct iovec iov = {};
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
 	struct fid_domain *domain;
 	*mhandle = NULL;
