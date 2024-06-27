@@ -5442,8 +5442,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	return ret;
 }
 
-static int get_ep(nccl_net_ofi_device_t *base_dev,
-				    nccl_net_ofi_ep_t **base_ep)
+static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
 
@@ -5573,7 +5572,7 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
  * @brief	Allocates and initialises various libfabric resources like
  *		fabric and domain to make device rail ready for rail creation.
  */
-static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
+static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
 	int ret = 0;
 
@@ -5943,7 +5942,7 @@ static void get_hints(struct fi_info *hints)
 }
 
 
-static int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+static inline int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	int ret, last_error = 0;
 
@@ -5962,8 +5961,8 @@ static int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
-static int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
-					   nccl_net_ofi_plugin_t **plugin_p)
+static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
+						  nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret;
 	nccl_net_ofi_plugin_t *plugin = NULL;
