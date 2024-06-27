@@ -228,6 +228,13 @@ OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
 		   OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT)
 
+/*
+ * If 0, create a Libfabric endpoint per domain, shared across all
+ * communicators.  If non-0, create a Libfabric endpoint per
+ * communicator.
+ */
+OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
+
 #ifdef _cplusplus
 } // End extern "C"
 #endif
