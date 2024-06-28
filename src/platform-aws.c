@@ -6,6 +6,7 @@
 #include "config.h"
 
 #define _GNU_SOURCE
+#include <alloca.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -794,7 +795,12 @@ static int get_rail_vf_idx(struct fi_info *info)
 void platform_sort_rails(struct fi_info **info_list, int num_rails)
 {
 	struct fi_info *info_list_in = *info_list;
-	struct fi_info *sorted_info_array[num_rails] = {};
+	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
+
+	if (num_rails <= 0) {
+		return;
+	}
+
 	for (int i = 0; i < num_rails; ++i) {
 		sorted_info_array[i] = NULL;
 	}
