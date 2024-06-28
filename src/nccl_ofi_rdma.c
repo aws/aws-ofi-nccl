@@ -25,6 +25,7 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_platform.h"
+#include "contrib/utlist.h"
 
 /* Template path used to write temporary NCCL topology file */
 static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
@@ -1147,10 +1148,16 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 	}
 
 	bounce_data = get_bounce_data(bounce_req);
-	bounce_data->recv_len = cq_entry->len;
-	bounce_fl_item = bounce_data->bounce_fl_item;
 
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
+
+	/* Remove from posted buffs deque */
+	nccl_net_ofi_mutex_lock(&ep->posted_recv_req_list_lock);
+	DL_DELETE(ep->posted_recv_req_list, bounce_data);
+	nccl_net_ofi_mutex_unlock(&ep->posted_recv_req_list_lock);
+
+	bounce_data->recv_len = cq_entry->len;
+	bounce_fl_item = bounce_data->bounce_fl_item;
 
 	/* The first 4 bits are the type, but we don't have a base
 	 * header type.  So cast to a control message and lookup the
@@ -4167,12 +4174,21 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 					      bounce_fl_item);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
+
+	nccl_net_ofi_mutex_lock(&ep->posted_recv_req_list_lock);
+
 	ssize_t rc =
 		fi_recv(ep_rail->ofi_ep, &bounce_fl_item->bounce_msg, bounce_data->buff_len, desc, FI_ADDR_UNSPEC, req);
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting bounce buffer. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
 	}
+
+	if (rc == 0) {
+		DL_APPEND(ep->posted_recv_req_list, bounce_data);
+	}
+
+	nccl_net_ofi_mutex_unlock(&ep->posted_recv_req_list_lock);
 
 	return rc;
 }
@@ -4791,14 +4807,23 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
+	ep->posted_recv_req_list = NULL;
+	ret = nccl_net_ofi_mutex_init(&ep->posted_recv_req_list_lock, NULL);
+	if (ret != 0) {
+		nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl);
+		return ret;
+	}
+
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) + ep->bounce_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					ep, 0, BOUNCE_BUFFER_ALIGNMENT, &ep->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_fl");
-		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl))
+		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl)) {
 			NCCL_OFI_WARN("Also failed to freelist_fini bounce_buff_reqs_fl");
+		}
+		nccl_net_ofi_mutex_destroy(&ep->posted_recv_req_list_lock);
 		return ret;
 	}
 
@@ -4821,13 +4846,19 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
  *
  * @param	ep
  *		Endpoint with bounce buffer and bounce requests being
- *		initialized.
+ *		finalized.
  * @return	0, on success
  *		non-zero, on error
  */
 static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret = 0;
+
+	ret = nccl_net_ofi_mutex_destroy(&ep->posted_recv_req_list_lock);
+	if (ret != 0) {
+		return ret;
+	}
+
 	ret = nccl_ofi_freelist_fini(ep->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to fini bounce_buff_fl");

@@ -179,13 +179,17 @@ typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
-typedef struct {
+typedef struct rdma_req_bounce_data {
 	/* Bounce buffer freelist item */
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item;
 	/* Length of bounce buffer */
 	size_t buff_len;
 	/* Length of received data */
 	size_t recv_len;
+
+	/* For storing in posted recv requests list */
+	struct rdma_req_bounce_data *prev;
+	struct rdma_req_bounce_data *next;
 
 	/*
 	 * Keeps tracks of Rail ID which is used to post the bounce buffer.
@@ -655,6 +659,10 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_ofi_freelist_t *bounce_buff_reqs_fl;
 	/* Size of bounce buffers */
 	size_t bounce_buff_size;
+	/* List of posted buffer requests */
+	rdma_req_bounce_data_t *posted_recv_req_list;
+	/* Lock for posted_recv_req_list */
+	pthread_mutex_t posted_recv_req_list_lock;
 };
 
 /*
