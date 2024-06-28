@@ -342,6 +342,9 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 	return ret;
 }
 
+
+typedef ncclResult_t (*nccl_get_version_fn_t)(int *version);
+
 int configure_nvls_option(void)
 {
 	/* Disable NVLS topology discovery for older NCCL versions. There's a
@@ -349,13 +352,13 @@ int configure_nvls_option(void)
 	 * NVLink Switch support.  We selectively disable NVLS support
 	 * to avoid the bug, which was fixed in 2.18.5.
 	 */
-	ncclResult_t (*nccl_get_version)(int *version);
+	nccl_get_version_fn_t nccl_get_version = NULL;
 	int version = 0;
 	ncclResult_t nccl_ret;
 	int ret;
 
 	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
-		nccl_get_version = dlsym(RTLD_DEFAULT, "ncclGetVersion");
+		nccl_get_version = (nccl_get_version_fn_t)dlsym(RTLD_DEFAULT, "ncclGetVersion");
 		if (nccl_get_version == NULL) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			    "Could not find ncclGetVersion symbol; skipping NVLS NCCL version check");
