@@ -21,6 +21,8 @@ extern "C" {
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_mr.h"
+#include "nccl_ofi_pthread.h"
 
 
 /*
@@ -247,11 +249,23 @@ struct nccl_net_ofi_device {
 	/* this device's index in the plugin's devices array */
 	int dev_id;
 
-	/* name of the device - should include the provider name, but
-	   may be augmented (in the case of mrail).  Set during the
-	   transport's initialization, and should be read-only from
-	   that point. */
+	/*
+	 * name of the device - should include the provider name, but may be
+	 * augmented (in the case of mrail).  Set during the transport's
+	 * initialization, and should be read-only from that point.
+	 */
 	char *name;
+
+	/*
+	 * Protocol-agnostic MR cache for this device. Note that Registrations
+	 * are tied to domains in libfabric, but we do not have a
+	 * domain-specific object today, so stashing it in the device itself.
+	 * This should change if we were to break up nccl_net_ofi_device into
+	 * separate device and domain objects.
+	 */
+	nccl_ofi_mr_cache_t *mr_cache;
+
+	pthread_mutex_t mr_cache_lock;
 
 	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
 			      nccl_ofi_properties_t *props);
@@ -261,8 +275,8 @@ struct nccl_net_ofi_device {
 	 * 		nccl_ofi_device.  Create if it does not exist. Store
 	 * 		in pthread key. Increase reference counter. Must be
 	 * 		protected by lock stored in device.
-	 * 
-	 * 		During the plugin initialization, this function will be 
+	 *
+	 * 		During the plugin initialization, this function will be
 	 * 		called once per process using one of the instantiated device structs
 	 * 		to create and configure the endpoint of the initializing thread.
 	 */

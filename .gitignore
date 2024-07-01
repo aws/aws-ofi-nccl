@@ -25,6 +25,7 @@ tests/unit/scheduler
 tests/unit/idpool
 tests/unit/show_tuner_decisions
 tests/unit/show_tuner_costs
+tests/unit/mr
 
 # http://www.gnu.org/software/automake
 .deps/

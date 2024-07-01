@@ -32,46 +32,8 @@ static ncclResult_t getProperties_v8(int dev_id, ncclNetProperties_v8_t* props)
 	 * support this model (since NCCL maintains a per-domain registration
 	 * cache which requires (domain-)global registrations.
 	 */
-	if (ofi_properties.mr_scope == NCCL_OFI_MR_SCOPE_DOMAIN) {
-		/**
-		 * TODO:
-		 * When net-plugin returns regIsGlobal=1 to NCCL (As part of
-		 * net-plugin getProperties() API), it signals to NCCL that
-		 * registered MRs are global, in the sense that they can be
-		 * used by all communicators. In addition, it also signals to
-		 * NCCL that the net-plugin have a fast MR cache such that
-		 * calling regMr() on same buffer (address and size), will
-		 * quickly return a previously globally registered MR on same
-		 * buffer.
-		 *
-		 * When user registers a buffer with NCCL by using
-		 * ncclCommRegister() API, if net-plugin supports
-		 * regIsGlobal=1, NCCL will register the buffer globally once
-		 * (On each net device) with regMr() API. When the net
-		 * proxy-thread starts to execute a communication task on a
-		 * previously registered user buffer, it will call the
-		 * net-plugin regMr() to quickly fetch the previously globally
-		 * registered MR from the plugin managed MR cache.
-		 *
-		 * Even though when ofi_properties.mr_scope == NCCL_OFI_MR_SCOPE_DOMAIN,
-		 * aws-ofi-nccl registers MRs globally (As MRs registered are
-		 * not specific to a communicator), aws-ofi-nccl doesn't have
-		 * such a fast MR cache yet. Therefore, it should return
-		 * regIsGlobal=0 for now. We should re-enable this when we fix
-		 * the perf problem.
-		 */
-
-		/**
-		 * TODO:
-		 * In addtion to the above comment, SENDRECV protocol currently
-		 * does not correctly handle the truncated send case (send size
-		 * > recv size) which NCCL uses when regIsGlobal=1. So, before
-		 * setting this to 1, we need to either fix SENDRECV protocol,
-		 * or refactor this code to set this property in a protocol-
-		 * specific way.
-		 */
-		props->regIsGlobal = 0;
-	}
+	if (ofi_properties.mr_scope == NCCL_OFI_MR_SCOPE_DOMAIN)
+		props->regIsGlobal = 1;
 
 	props->speed = ofi_properties.port_speed;
 	props->port = ofi_properties.port_number;
