@@ -18,8 +18,7 @@ int main(int argc, char *argv[])
 	const uint16_t field_size = 1 << num_msg_seq_num_bits;
 	uint16_t *result;
 
-	uint16_t *buff_store;
-	buff_store = calloc(max_inprogress, sizeof(uint16_t));
+	uint16_t *buff_store = (uint16_t *)calloc(max_inprogress, sizeof(uint16_t));
 	if (!buff_store) {
 		NCCL_OFI_WARN("Memory allocation failed");
 		return 1;

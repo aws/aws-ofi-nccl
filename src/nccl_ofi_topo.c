@@ -554,7 +554,7 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 	int ret = 0;
 
 	/* Allocate NCCL OFI topology */
-	nccl_ofi_topo_t *ofi_topo = calloc(1, sizeof(nccl_ofi_topo_t));
+	nccl_ofi_topo_t *ofi_topo = (nccl_ofi_topo_t *)calloc(1, sizeof(nccl_ofi_topo_t));
 	if (!ofi_topo) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Unable to allocate nccl_ofi_topo");
@@ -1042,7 +1042,7 @@ static int get_device_property(unsigned domain, unsigned bus,
 {
 	int ret = 0;
 	FILE *file;
-	char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
+	const char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
 	size_t path_len;
 	char *path = NULL;
 
@@ -1052,7 +1052,7 @@ static int get_device_property(unsigned domain, unsigned bus,
 		ret = -errno;
 		goto error;
 	}
-	path = malloc(path_len + 1);
+	path = (char *)malloc(path_len + 1);
 	if (!path) {
 		NCCL_OFI_WARN("Device property file path malloc failed: %s", strerror(errno));
 		ret = -ENOMEM;
@@ -1114,17 +1114,17 @@ static int get_device_property(unsigned domain, unsigned bus,
 static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 				size_t *speed_idx, size_t *width)
 {
-	struct hwloc_pcidev_attr_s attr;
+	union hwloc_obj_attr_u attr = {};
 	/* Override the following PCI width and speed of libfabric NICs with fallback values */
-	char *override_width = "255";
-	char *override_speed = "Unknown";
+	const char *override_width = "255";
+	const char *override_speed = "Unknown";
 	size_t fallback_width = 8;
 	size_t fallback_speed_idx = 3;
 
 	if (node->type == HWLOC_OBJ_BRIDGE) {
-		attr = node->attr->bridge.upstream.pci;
+		attr.pcidev = node->attr->bridge.upstream.pci;
 	} else if (node->type == HWLOC_OBJ_PCI_DEVICE) {
-		attr = node->attr->pcidev;
+		attr.pcidev = node->attr->pcidev;
 	} else {
 		NCCL_OFI_WARN("Expected topology node to be a PCI device or bridge");
 		return -EINVAL;
@@ -1136,8 +1136,12 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 	size_t num_pcie_gens = sizeof(pcie_gen) / sizeof(pcie_gen[0]);
 
 	/* Read link speed */
-	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
-				       speed_name, prop_str))) {
+	if ((ret = get_device_property(attr.pcidev.domain,
+				       attr.pcidev.bus,
+				       attr.pcidev.dev,
+				       attr.pcidev.func,
+				       speed_name,
+				       prop_str))) {
 		return ret;
 	}
 
@@ -1150,40 +1154,70 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 	if (is_nic && strncmp(override_speed, prop_str, strlen(override_speed)) == 0) {
 		/* Override speed */
 		*speed_idx = fallback_speed_idx;
-		NCCL_OFI_INFO(NCCL_INIT,
-			      "Override link speed \"%s\" of NIC %04x:%02x:%02x.%01x with speed \"%s\"",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, pcie_gen[*speed_idx]);
+		NCCL_OFI_INFO(
+			NCCL_INIT,
+			"Override link speed \"%s\" of NIC %04x:%02x:%02x.%01x with speed \"%s\"",
+			prop_str,
+			attr.pcidev.domain,
+			attr.pcidev.bus,
+			attr.pcidev.dev,
+			attr.pcidev.func,
+			pcie_gen[*speed_idx]);
 	}
 	if (*speed_idx == num_pcie_gens) {
 		NCCL_OFI_WARN("Unknown link speed \"%s\" of device %04x:%02x:%02x.%01x",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func);
+			      prop_str,
+			      attr.pcidev.domain,
+			      attr.pcidev.bus,
+			      attr.pcidev.dev,
+			      attr.pcidev.func);
 		return -EINVAL;
 	}
 
 	/* Read link width */
-	if ((ret = get_device_property(attr.domain, attr.bus, attr.dev, attr.func,
-				       width_name, prop_str))) {
+	if ((ret = get_device_property(attr.pcidev.domain,
+				       attr.pcidev.bus,
+				       attr.pcidev.dev,
+				       attr.pcidev.func,
+				       width_name,
+				       prop_str))) {
 		return ret;
 	}
 
 	if (is_nic && strncmp(override_width, prop_str, strlen(override_width)) == 0) {
 		/* Override width */
 		*width = fallback_width;
-		NCCL_OFI_INFO(NCCL_INIT,
-			      "Override link width \"%s\" of NIC %04x:%02x:%02x.%01x with width \"%zu\"",
-			      prop_str, attr.domain, attr.bus, attr.dev, attr.func, *width);
+		NCCL_OFI_INFO(
+			NCCL_INIT,
+			"Override link width \"%s\" of NIC %04x:%02x:%02x.%01x with width \"%zu\"",
+			prop_str,
+			attr.pcidev.domain,
+			attr.pcidev.bus,
+			attr.pcidev.dev,
+			attr.pcidev.func,
+			*width);
 	} else {
 		*width = strtol(prop_str, NULL, 0);
 	}
 	if (errno == ERANGE) {
-		NCCL_OFI_WARN("Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a valid link width. Error: %s",
-			      prop_str,
-			      attr.domain, attr.bus, attr.dev, attr.func, strerror(errno));
+		NCCL_OFI_WARN(
+			"Unable to convert link width \"%s\" of device %04x:%02x:%02x.%01x to a "
+			"valid link width. "
+			"Error: %s",
+			prop_str,
+			attr.pcidev.domain,
+			attr.pcidev.bus,
+			attr.pcidev.dev,
+			attr.pcidev.func,
+			strerror(errno));
 		return -errno;
 	} else if (*width == 0) {
 		NCCL_OFI_WARN("Unknown link width \"%s\" of device %04x:%02x:%02x.%01x",
 			      prop_str,
-			      attr.domain, attr.bus, attr.dev, attr.func);
+			      attr.pcidev.domain,
+			      attr.pcidev.bus,
+			      attr.pcidev.dev,
+			      attr.pcidev.func);
 		return -EINVAL;
 	}
 
@@ -1291,7 +1325,7 @@ static int write_cpu_closing_tag(FILE *file, int indent)
  *		link width
  */
 static int write_pci_tag(FILE *file, int indent,
-			 struct hwloc_pcidev_attr_s *pcidev,
+			 union hwloc_obj_attr_u *attr,
 			 size_t speed_idx, size_t width)
 {
 	int rc = fprintf(file,
@@ -1302,10 +1336,10 @@ static int write_pci_tag(FILE *file, int indent,
 			 "link_width=\"%zu\"/>\n",
 			 indent,
 			 "",
-			 pcidev->domain,
-			 pcidev->bus,
-			 pcidev->dev,
-			 pcidev->func,
+			 attr->pcidev.domain,
+			 attr->pcidev.bus,
+			 attr->pcidev.dev,
+			 attr->pcidev.func,
 			 pcie_gen[speed_idx],
 			 width);
 
@@ -1336,7 +1370,7 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 	size_t speed_idx;
 	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
 	int group_size = userdata->info_list_len;
-	struct hwloc_pcidev_attr_s *pcidev = &node->attr->pcidev;
+	union hwloc_obj_attr_u *attr = node->attr;
 
 	/* Retrieve link speed and width of NIC */
 	if ((ret = get_pci_device_min_speed(node, true, &speed_idx, &width))) {
@@ -1375,7 +1409,7 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 		}
 	}
 
-	if ((ret = write_pci_tag(file, indent, pcidev, speed_idx, width)) != 0) {
+	if ((ret = write_pci_tag(file, indent, attr, speed_idx, width)) != 0) {
 		NCCL_OFI_WARN("Failed to write PCI NIC tag");
 	}
 
@@ -1392,14 +1426,18 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
  * @param	indent
  *		Indentation
  */
-static int write_pci_opening_tag(FILE *file, struct hwloc_pcidev_attr_s *pcidev, int indent)
+static int write_pci_opening_tag(FILE *file, hwloc_obj_t node, int indent)
 {
 	int rc = fprintf(file,
 			 "%*s"
 			 "<pci "
 			 "busid=\"%04x:%02x:%02x.%01x\">\n",
-			 indent, "",
-			 pcidev->domain, pcidev->bus, pcidev->dev, pcidev->func);
+			 indent,
+			 "",
+			 node->attr->bridge.upstream.pci.domain,
+			 node->attr->bridge.upstream.pci.bus,
+			 node->attr->bridge.upstream.pci.dev,
+			 node->attr->bridge.upstream.pci.func);
 	if (rc < 0) {
 		NCCL_OFI_WARN("Failed to print opening PCI tag. ERROR: %s",
 			      strerror(errno));
@@ -1421,9 +1459,7 @@ static int write_pci_opening_tag(FILE *file, struct hwloc_pcidev_attr_s *pcidev,
  */
 static int write_bridge_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 {
-	struct hwloc_pcidev_attr_s *pcidev = &node->attr->bridge.upstream.pci;
-
-	if (write_pci_opening_tag(file, pcidev, indent) < 0) {
+	if (write_pci_opening_tag(file, node, indent) < 0) {
 		NCCL_OFI_WARN("Failed to print opening PCI bridge tag");
 		return -errno;
 	}

@@ -23,7 +23,7 @@ int main(int argc, char *argv[]) {
 		/* Scale pool size to number of 64-bit uints (rounded up) */
 		size_t num_long_elements = NCCL_OFI_ROUND_UP(size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
 
-		nccl_ofi_idpool_t *idpool = malloc(sizeof(nccl_ofi_idpool_t));
+		nccl_ofi_idpool_t *idpool = (nccl_ofi_idpool_t *)malloc(sizeof(nccl_ofi_idpool_t));
 		assert(NULL != idpool);
 
 		/* Test nccl_ofi_idpool_init */

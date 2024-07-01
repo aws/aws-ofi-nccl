@@ -13,7 +13,7 @@
 
 int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p)
 {
-	nccl_ofi_deque_t *deque = malloc(sizeof(nccl_ofi_deque_t));
+	nccl_ofi_deque_t *deque = (nccl_ofi_deque_t *)malloc(sizeof(nccl_ofi_deque_t));
 
 	if (deque == NULL) {
 		NCCL_OFI_WARN("Failed to allocate deque");

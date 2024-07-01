@@ -132,7 +132,7 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 
 ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 {
-	ncclResult_t ret = ncclSuccess;
+	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	nccl_net_ofi_listen_comm_t **listen_comm =
@@ -162,9 +162,11 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 		return ncclInternalError;
 	}
 
-	ret = base_ep->listen(base_ep, handle, listen_comm);
+	ret = base_ep->listen(base_ep,
+						  (nccl_net_ofi_conn_handle_t *)handle,
+						  listen_comm);
 
-	if (ret != ncclSuccess) {
+	if (ret != 0) {
 		base_ep->release_ep(base_ep);
 	}
 	return nccl_net_ofi_retval_translate(ret);
@@ -173,7 +175,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
 {
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 	ncclResult_t ret;
 
 	ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
@@ -249,7 +251,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	/* Connect */
 	nccl_net_ofi_send_comm_t **send_comm =
 		(nccl_net_ofi_send_comm_t **)sComm;
-	int ret = base_ep->connect(base_ep, handle, send_comm);
+	int ret = base_ep->connect(base_ep, (nccl_net_ofi_conn_handle_t *)handle, send_comm);
 
 	if (ret != 0) {
 		base_ep->release_ep(base_ep);
@@ -262,7 +264,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {0};
+        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 
         memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 
@@ -345,12 +347,12 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	case NCCL_NET_OFI_SEND_COMM:;
 		nccl_net_ofi_send_comm_t *send_comm =
 			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->deregMr(send_comm, mhandle);
+		ret = send_comm->deregMr(send_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
 		nccl_net_ofi_recv_comm_t *recv_comm =
 			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->deregMr(recv_comm, mhandle);
+		ret = recv_comm->deregMr(recv_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",

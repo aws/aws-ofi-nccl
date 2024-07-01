@@ -6,6 +6,7 @@
 #include "config.h"
 
 #define _GNU_SOURCE
+#include <alloca.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -145,7 +146,7 @@ static const char* get_platform_type(void)
 	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
 		platform_type[len++] = ch;
 		if (len >= platform_type_len) {
-			platform_type = realloc(platform_type, len + platform_type_len);
+			platform_type = (char*)realloc(platform_type, len + platform_type_len);
 		}
 	}
 
@@ -342,6 +343,9 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 	return ret;
 }
 
+
+typedef ncclResult_t (*nccl_get_version_fn_t)(int *version);
+
 int configure_nvls_option(void)
 {
 	/* Disable NVLS topology discovery for older NCCL versions. There's a
@@ -349,13 +353,13 @@ int configure_nvls_option(void)
 	 * NVLink Switch support.  We selectively disable NVLS support
 	 * to avoid the bug, which was fixed in 2.18.5.
 	 */
-	ncclResult_t (*nccl_get_version)(int *version);
+	nccl_get_version_fn_t nccl_get_version = NULL;
 	int version = 0;
 	ncclResult_t nccl_ret;
 	int ret;
 
 	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
-		nccl_get_version = dlsym(RTLD_DEFAULT, "ncclGetVersion");
+		nccl_get_version = (nccl_get_version_fn_t)dlsym(RTLD_DEFAULT, "ncclGetVersion");
 		if (nccl_get_version == NULL) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			    "Could not find ncclGetVersion symbol; skipping NVLS NCCL version check");
@@ -791,7 +795,12 @@ static int get_rail_vf_idx(struct fi_info *info)
 void platform_sort_rails(struct fi_info **info_list, int num_rails)
 {
 	struct fi_info *info_list_in = *info_list;
-	struct fi_info *sorted_info_array[num_rails];
+	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
+
+	if (num_rails <= 0) {
+		return;
+	}
+
 	for (int i = 0; i < num_rails; ++i) {
 		sorted_info_array[i] = NULL;
 	}

@@ -19,7 +19,8 @@ int create_multiplexed(size_t size,
 		       size_t align,
 		       nccl_net_ofi_schedule_t **schedule_p)
 {
-	nccl_net_ofi_schedule_t *schedule = malloc(sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
+	nccl_net_ofi_schedule_t *schedule = (nccl_net_ofi_schedule_t *)malloc(
+		sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
 	if (!schedule) {
 		NCCL_OFI_WARN("Could not allocate schedule");
 		return -ENOMEM;
@@ -74,8 +75,8 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 int test_multiplexing_schedule()
 {
 	nccl_net_ofi_schedule_t *schedule = NULL;
-	nccl_net_ofi_schedule_t *ref_schedule = malloc(sizeof(nccl_net_ofi_schedule_t)
-						       + 3 * sizeof(nccl_net_ofi_xfer_info_t));
+	nccl_net_ofi_schedule_t *ref_schedule = (nccl_net_ofi_schedule_t *)malloc(
+		sizeof(nccl_net_ofi_schedule_t) + 3 * sizeof(nccl_net_ofi_xfer_info_t));
 	if (!ref_schedule) {
 		NCCL_OFI_WARN("Could not allocate schedule");
 		return -ENOMEM;
@@ -304,8 +305,8 @@ int test_threshold_scheduler()
 	int num_rails = 2;
 	int ret = 0;
 	size_t rr_threshold = 8192;
-	nccl_net_ofi_schedule_t *ref_schedule = malloc(sizeof(nccl_net_ofi_schedule_t)
-						      + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
+	nccl_net_ofi_schedule_t *ref_schedule = (nccl_net_ofi_schedule_t *)malloc(
+		sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
 	nccl_net_ofi_scheduler_t *scheduler;
 	if (nccl_net_ofi_threshold_scheduler_init(num_rails, rr_threshold, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
