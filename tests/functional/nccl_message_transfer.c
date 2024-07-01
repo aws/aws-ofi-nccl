@@ -279,7 +279,7 @@ int main(int argc, char* argv[])
 					NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
 					while (req[idx] == NULL) {
 						OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv,
-										(void *)&recv_buf[idx], sizes, tags,
+										(void **)&recv_buf[idx], sizes, tags,
 										&mhandle[idx], (void **)&req[idx]),
 								res, exit);
 					}
