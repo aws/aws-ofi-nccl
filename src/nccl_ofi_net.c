@@ -20,6 +20,8 @@
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
@@ -153,14 +155,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	assert(system_page_size > 0);
 
 #if HAVE_CUDA
-	ret = nccl_net_ofi_cuda_init();
+	ret = nccl_net_ofi_gpu_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("CUDA initialization failed.");
 		goto exit;
 	}
 
 	int cuda_version;
-	if (nccl_net_ofi_cuDriverGetVersion(&cuda_version) != CUDA_SUCCESS) {
+	if (nccl_net_ofi_gpuDriverGetVersion(&cuda_version) != GPU_SUCCESS) {
 		NCCL_OFI_WARN("cuDriverGetVersion failed");
 		ret = -ENOTSUP;
 		goto exit;
@@ -168,7 +170,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA driver version %d", cuda_version);
 	if (ofi_nccl_cuda_flush_enable()) {
-		if (nccl_net_ofi_cuFlushGPUDirectRDMAWrites == NULL) {
+		if (nccl_net_ofi_gpuFlushGPUDirectRDMAWrites == NULL) {
 			NCCL_OFI_WARN("CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
 			cuda_flush = false;
 		} else {
@@ -411,13 +413,13 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 		int num_gpus_visible, active_cuda_device, gpus_per_conn;
 		size_t c;
 
-		if (nccl_net_ofi_cuDeviceGetCount(&num_gpus_visible) != CUDA_SUCCESS) {
+		if (nccl_net_ofi_gpuDeviceGetCount(&num_gpus_visible) != GPU_SUCCESS) {
 			NCCL_OFI_WARN("Error getting CUDA device count");
 			ret = -ENOTSUP;
 			goto error;
 		}
 
-		if (nccl_net_ofi_cuCtxGetDevice(&active_cuda_device) != CUDA_SUCCESS) {
+		if (nccl_net_ofi_gpuCtxGetDevice(&active_cuda_device) != GPU_SUCCESS) {
 			NCCL_OFI_WARN("Error getting current CUDA device");
 			ret = -ENOTSUP;
 			goto error;
