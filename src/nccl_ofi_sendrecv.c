@@ -1402,9 +1402,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(device->device_lock));
-		ep->ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(device->device_lock));
+		nccl_net_ofi_mutex_lock(&(device->base.device_lock));
+		ep->base.ref_cnt++;
+		nccl_net_ofi_mutex_unlock(&(device->base.device_lock));
 
 		/* Prepare receive request to accept connections */
 		req = prepare_recv_req(l_comm);
@@ -2111,7 +2111,8 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 	return ret;
 }
 
-static int release_ep(nccl_net_ofi_ep_t *base_ep)
+
+static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_device_t *device = NULL;
@@ -2133,129 +2134,79 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		goto exit;
 	}
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, ep->cq,
+				     device->base.dev_id);
+	ep->ofi_ep = NULL;
+	ep->av = NULL;
+	ep->cq = NULL;
 
-	/* Decrease reference counter of endpoint. */
-	ep->ref_cnt--;
-
-	/* If reference counter is equals zero, release endpoint and
-	 * set thread-local endpoint key to NULL.
-	 *
-	 * Ideally we would also free up the endpoint here but there
-	 * is no straightforward way to do that in this case. The
-	 * caller of get_ep maintains the endpoint and its
-	 * memory in its thread-local device storage. The endpoint
-	 * structures can be used by different threads which means
-	 * that the caller of release_ep can be different
-	 * from the caller of get_ep and that caller has no
-	 * way of changing the endpoint pointer in the thread-local
-	 * device storage to NULL.  We keep the endpoint struct around
-	 * so that when other threads find the reference counter to be
-	 * 0, they know that the libfabric resources need to be
-	 * reallocated. In a separate CR we may provide endpoint
-	 * deallocation.
-	 */
-	if (ep->ref_cnt == 0) {
-		nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, ep->cq,
-					     device->base.dev_id);
-		ep->ofi_ep = NULL;
-		ep->av = NULL;
-		ep->cq = NULL;
-
-		HASH_DEL(device->endpoint_table, ep);
-
-		free(ep);
-	}
-
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+	free(ep);
 
  exit:
 	return ret;
 }
 
-static int get_ep(nccl_net_ofi_device_t *base_dev,
-				    nccl_net_ofi_ep_t **base_ep)
+
+static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *base_dev,
+							nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
-	long thread_id;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t*)base_dev;
 	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+		return -EINVAL;
 	}
 
-	/* Obtain lock */
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	/* Allocate endpoint */
+	ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
+	if (!ep) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Unable to allocate sendrecv endpoint");
+		return -ENOMEM;
+	}
 
-	thread_id = nccl_net_ofi_gettid();
-	HASH_FIND(hh, device->endpoint_table, &thread_id,
-		  sizeof(ep->creating_thread_id), ep);
+	ret = nccl_net_ofi_endpoint_init(&device->base, &ep->base);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing endpoint base failed");
+		return ret;
+	}
 
-	if (ep == NULL) {
-		/* Allocate endpoint */
-		ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
-		if (!ep) {
-			ret = -ENOMEM;
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Unable to allocate sendrecv endpoint");
-			goto unlock;
-		}
-		if (domain_per_thread == 1) {
-			ret = fi_domain(device->fabric, device->info,
+	if (domain_per_thread == 1) {
+		ret = fi_domain(device->fabric, device->info,
 				&ep->domain, NULL);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-					ret, fi_strerror(-ret));
-				free(ep);
-				goto unlock;
-			}
-		} else {
-			ep->domain = device->domain;
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			free(ep);
+			return ret;
 		}
-
-		/* Initialize base endpoint */
-		ep->base.device = &device->base;
-		ep->base.listen = listen;
-		ep->base.connect = connect;
-		ep->base.release_ep = release_ep;
-
-		/* Initialize endpoint tag */
-		ep->tag = 0;
-
-		/* Initialize reference count */
-		ep->ref_cnt = 0;
-		ep->creating_thread_id = thread_id;
-
-		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
-			 sizeof(ep->creating_thread_id), ep);
-
-		NCCL_OFI_TRACE(NCCL_NET, "Sendrecv endpoint %p for dev #%d is created",
-			       ep,
-			       device->base.dev_id);
-
-		struct fid_domain *domain;
-		domain = get_domain_from_endpoint(ep);
-		ret = nccl_ofi_ofiutils_init_connection(device->info,
-							domain,
-							&ep->ofi_ep,
-							&ep->av, &ep->cq);
-		if (ret != 0) {
-			goto unlock;
-		}
+	} else {
+		ep->domain = device->domain;
 	}
 
-	ep->ref_cnt++;
+	/* Initialize base endpoint */
+	ep->base.listen = listen;
+	ep->base.connect = connect;
+	ep->base.free_ep = nccl_net_ofi_sendrecv_endpoint_free;
+
+	/* Initialize endpoint tag */
+	ep->tag = 0;
+
+	struct fid_domain *domain = get_domain_from_endpoint(ep);
+	ret = nccl_ofi_ofiutils_init_connection(device->info,
+						domain,
+						&ep->ofi_ep,
+						&ep->av, &ep->cq);
+	if (ret != 0) {
+		return ret;
+	}
+
 	*base_ep = &ep->base;
 
- unlock:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
-
- exit:
 	return ret;
 }
 
@@ -2322,24 +2273,6 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 	return ret;
 }
 
-/*
- * @brief	Set device endpoint data
- */
-static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
-{
-	int ret;
-
-	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&devices->device_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to initialize mutex");
-		return -ret;
-	}
-
-	return 0;
-}
-
 
 /**
  * Destroy an rdma device object
@@ -2354,7 +2287,7 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_endpoints = HASH_COUNT(device->endpoint_table);
+	unsigned num_endpoints = HASH_COUNT(device->base.endpoint_table);
 	if (num_endpoints > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u endpoints still active at close", num_endpoints);
 	}
@@ -2403,20 +2336,12 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 
 
 	device->base.get_properties = get_properties;
-	device->base.get_ep = get_ep;
+	device->base.create_endpoint = nccl_net_ofi_sendrecv_device_create_endpoint;
 	device->base.release = nccl_net_ofi_sendrecv_device_release;
 	device->base.get_mr_key = NULL;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
-
-	/* Initialize sendrecv endpoint */
-	ret = device_init_thread_local(device);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing device %i thread support failed: %s",
-			      dev_id, strerror(-ret));
-		goto error;
-	}
 
 	/* Set device provider */
 	device->info = fi_dupinfo(info);

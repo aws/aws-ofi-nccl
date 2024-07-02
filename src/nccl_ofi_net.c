@@ -674,6 +674,48 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
+static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
+				      nccl_net_ofi_ep_t **ep_p)
+{
+	int ret = 0;
+	long thread_id;
+	nccl_net_ofi_ep_t *ep = NULL;
+
+	nccl_net_ofi_mutex_lock(&device->device_lock);
+
+	thread_id = nccl_net_ofi_gettid();
+	HASH_FIND(hh, device->endpoint_table, &thread_id,
+		  sizeof(ep->creating_thread_id), ep);
+
+	if (ep == NULL) {
+		ret = device->create_endpoint(device, &ep);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Creating new endpoint for device %s failed: %s",
+				      device->name, fi_strerror(-ret));
+			goto unlock;
+		}
+
+		ep->creating_thread_id = thread_id;
+
+		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
+			 sizeof(ep->creating_thread_id), ep);
+
+		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for device #%d (%s) is created",
+			       ep,
+			       device->dev_id,
+			       device->name);
+	}
+
+	ep->ref_cnt++;
+	*ep_p = ep;
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
+
+	return ret;
+}
+
+
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
 			     int device_index, const char *device_name)
 {
@@ -688,8 +730,6 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		goto exit;
 	}
 
-	device->release = nccl_net_ofi_device_fini;
-
 	device->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {
 		device->mr_cache =
@@ -700,6 +740,22 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 			goto exit;
 		}
 	}
+
+	device->get_properties = NULL;
+	device->get_ep = nccl_net_ofi_device_get_ep;
+	device->get_mr_key = NULL;
+	device->release = nccl_net_ofi_device_fini;
+
+	/* Intiaialize mutex for endpoint access */
+	ret = nccl_net_ofi_mutex_init(&device->device_lock, NULL);
+	if (ret != 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Unable to initialize device mutex");
+		return -ret;
+	}
+
+	device->create_endpoint = NULL;
+	device->endpoint_table = NULL;
 
 exit:
 	return ret;
@@ -722,6 +778,60 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 
 	return 0;
 }
+
+
+int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
+{
+	int ret = 0;
+	nccl_net_ofi_device_t *device;
+
+	assert(ep != NULL);
+	device = ep->device;
+
+	nccl_net_ofi_mutex_lock(&device->device_lock);
+
+	ep->ref_cnt--;
+
+	if (ep->ref_cnt == 0) {
+		HASH_DEL(device->endpoint_table, ep);
+
+		ret = ep->free_ep(ep);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
+			goto cleanup;
+		}
+	}
+
+cleanup:
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
+
+	return ret;
+
+}
+
+
+int nccl_net_ofi_endpoint_init(nccl_net_ofi_device_t *device,
+			       nccl_net_ofi_ep_t *ep)
+{
+	assert(device != NULL);
+	assert(ep != NULL);
+
+	ep->device = device;
+	ep->release_ep = nccl_net_ofi_endpoint_release;
+
+	ep->creating_thread_id = 0;
+	ep->ref_cnt = 0;
+
+	return 0;
+}
+
+
+int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep)
+{
+	/* nothing to do today */
+	return 0;
+}
+
 
 int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 			    size_t *max_write_inline_size)

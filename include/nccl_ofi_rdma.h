@@ -9,7 +9,6 @@
 extern "C" {
 #endif
 
-#include <uthash/uthash.h>
 #include <rdma/fabric.h>
 
 #include "nccl_ofi.h"
@@ -721,16 +720,6 @@ struct nccl_net_ofi_rdma_ep {
 	/* Array of `num_rails` endpoint rails */
 	nccl_net_ofi_ep_rail_t *rails;
 
-	/* Endpoint reference counter for resource management.
-	 * rdma_get_ep()/rdma_release_ep() must be called in
-	 * pair when an object is acquired to use and
-	 * released. rdma_get_ep() allocates a new object when it
-	 * is called for the first time. rdma_get_ep() creates the
-	 * endpoint libfabric resources if the reference counter was
-	 * zero. rdma_release_ep() releases the resources if the
-	 * reference counter is decreased down to zero. */
-	int ref_cnt;
-
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
 
@@ -748,9 +737,6 @@ struct nccl_net_ofi_rdma_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
-
-	/* hash table handle */
-	UT_hash_handle hh;
 };
 
 /*
@@ -802,11 +788,6 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Message scheduler */
 	nccl_net_ofi_scheduler_t *scheduler;
-
-	/* hash table of active endpoints.  We reuse endpoints based
-	 * on the thread that calls get_ep().
-	 */
-	nccl_net_ofi_rdma_ep_t *endpoint_table;
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */

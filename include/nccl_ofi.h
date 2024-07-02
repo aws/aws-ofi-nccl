@@ -20,6 +20,7 @@ extern "C" {
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
+#include <uthash/uthash.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
@@ -279,7 +280,7 @@ struct nccl_net_ofi_device {
 	 * 		to create and configure the endpoint of the initializing thread.
 	 */
 	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
-			       nccl_net_ofi_ep_t **ep);
+		      nccl_net_ofi_ep_t **ep);
 
 	int (*get_mr_key)(nccl_net_ofi_device_t *base_dev, void* mhandle,
 			  uint64_t* mr_key);
@@ -288,6 +289,24 @@ struct nccl_net_ofi_device {
 	 * destructor - releases resources associated with device
 	 */
 	int (*release)(nccl_net_ofi_device_t *device);
+
+	/* Lock for concurrency since endpoints can be shared by
+	 * multiple entities. */
+	pthread_mutex_t device_lock;
+
+/* private */
+	/**
+	 * Create a new endpoint
+	 *
+	 * Pure virtual function to allocate a new endpoint structure
+	 */
+	int (*create_endpoint)(nccl_net_ofi_device_t *device,
+			       nccl_net_ofi_ep_t **ep);
+
+	/* hash table of active endpoints.  We reuse endpoints based
+	 * on the thread that calls get_ep().
+	 */
+	nccl_net_ofi_ep_t *endpoint_table;
 };
 
 /**
@@ -350,6 +369,30 @@ struct nccl_net_ofi_ep {
 	 * protected by lock stored in base_dev.
 	 */
 	int (*release_ep)(nccl_net_ofi_ep_t *ep);
+
+/* private */
+	/* pure virtual function called when resources associated with
+	 * the ep should be destroyed.  Device lock will be held when
+	 * this function is called.
+	 */
+	int (*free_ep)(nccl_net_ofi_ep_t *ep);
+
+	/* thread id of the thread that called get_ep().  Used as the
+	   hash key for the endpoint hash */
+	long creating_thread_id;
+
+	/* hash table handle */
+	UT_hash_handle hh;
+
+	/* Endpoint reference counter for resource management.
+	 * sendrecv_get_ep()/sendrecv_release_ep() must be called in
+	 * pair when an object is acquired to use and
+	 * released. sendrecv_get_ep() allocates a new object when it
+	 * is called for the first time. sendrecv_get_ep() creates the
+	 * endpoint libfabric resources if the reference counter was
+	 * zero. sendrecv_release_ep() releases the resources if the
+	 * reference counter is decreased down to zero. */
+	int ref_cnt;
 };
 
 enum nccl_net_ofi_comm_type_t {
@@ -503,6 +546,12 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
+
+int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep);
+
+int nccl_net_ofi_endpoint_init(nccl_net_ofi_device_t *device, nccl_net_ofi_ep_t *ep);
+
+int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep);
 
 /**
  * Constructor for a device object

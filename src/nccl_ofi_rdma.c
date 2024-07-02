@@ -159,9 +159,6 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 
-static int create_ep(nccl_net_ofi_rdma_device_t *device,
-		     nccl_net_ofi_rdma_ep_t *ep);
-
 static inline nccl_net_ofi_rdma_device_t *get_device_from_ep(nccl_net_ofi_rdma_ep_t *ep)
 {
 	return (nccl_net_ofi_rdma_device_t*)ep->base.device;
@@ -4294,19 +4291,14 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 		}
 
 		if (ep_for_addr == NULL) {
-			nccl_net_ofi_rdma_ep_t *new_ep = (nccl_net_ofi_rdma_ep_t *)
-				calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
-			if (!new_ep) {
-				NCCL_OFI_WARN("Failed to calloc new ep");
-				ret = -ENOMEM;
-				goto error;
-			}
-
-			ret = create_ep(device, new_ep);
+			nccl_net_ofi_ep_t *new_base_ep;
+			ret = device->base.create_endpoint(&device->base, &new_base_ep);
 			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to allocate new ep: %s", strerror(-ret));
 				goto error;
 			}
 
+			nccl_net_ofi_rdma_ep_t *new_ep = (nccl_net_ofi_rdma_ep_t *)new_base_ep;
 			new_ep->is_endpoint_per_communicator_ep = true;
 
 			ep_for_addr = &new_ep->base;
@@ -4685,7 +4677,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * called.
 		 */
 		nccl_net_ofi_mutex_lock(&(device->device_lock));
-		ep->ref_cnt++;
+		ep->base.ref_cnt++;
 		nccl_net_ofi_mutex_unlock(&(device->device_lock));
 
 		/* Reset request state for connect response message */
@@ -6552,7 +6544,61 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	return ret;
 }
 
-static int release_ep(nccl_net_ofi_ep_t *base_ep)
+
+static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_ep_t *ep = NULL;
+
+	/* Validate device */
+	ep = (nccl_net_ofi_rdma_ep_t *)base_ep;
+	if (OFI_UNLIKELY(ep == NULL)) {
+		NCCL_OFI_WARN("Invalid endpoint provided");
+		return -EINVAL;
+	}
+
+	/* this is a little messy, but because we kind of hacked in
+	 * the endpoint per communicator code, we need ot use a
+	 * different release mechanism depending on the endpoint
+	 * type.  Otherwise, we use the base code release function.
+	 */
+	if (ep->is_endpoint_per_communicator_ep) {
+		nccl_net_ofi_rdma_device_t *device = NULL;
+
+		/* Validate device */
+		device = get_device_from_ep(ep);
+		if (OFI_UNLIKELY(device == NULL)) {
+			NCCL_OFI_WARN("Invalid device provided");
+			return -EINVAL;
+		}
+
+		nccl_net_ofi_mutex_lock(&device->base.device_lock);
+
+		if ((--ep->base.ref_cnt) == 0) {
+			ret = nccl_ofi_ep_addr_list_delete(device->ep_addr_list, &ep->base);
+			if (ret != 0) {
+				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
+				goto unlock;
+			}
+
+			ret = ep->base.free_ep(&ep->base);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Freeing ep failed");
+				goto unlock;
+			}
+		}
+
+ unlock:
+		nccl_net_ofi_mutex_unlock(&device->base.device_lock);
+	} else {
+		ret = nccl_net_ofi_endpoint_release(&ep->base);
+	}
+
+	return ret;
+}
+
+
+static int nccl_net_ofi_rdma_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
@@ -6561,164 +6607,33 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	/* Validate device */
 	ep = (nccl_net_ofi_rdma_ep_t *)base_ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
+		return -EINVAL;
 	}
 
-	/* Validate device */
-	device = get_device_from_ep(ep);
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+	device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+
+	/* Ideally we would "un-post" the bounce buffers, but this
+	   should be accomplished by closing the endpoint. */
+	release_rdma_ep_resources(ep, device->base.dev_id);
+
+	ret = fini_bounce_buffers(ep);
+	if (ret != 0) {
+		return ret;
 	}
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
-
-	/* Decrease reference counter of endpoint. */
-	ep->ref_cnt--;
-
-	/* If reference counter is equals zero, release endpoint. Free endpoint
-	 * unless it is a thread-local ep.
-	 *
-	 * Ideally we would also free up thread-local endpoints here but there
-	 * is no straightforward way to do that in this case. The
-	 * caller of get_ep maintains the endpoint and its
-	 * memory in its thread-local device storage. The endpoint
-	 * structures can be used by different threads which means
-	 * that the caller of release_ep can be different
-	 * from the caller of get_ep and that caller has no
-	 * way of changing the endpoint pointer in the thread-local
-	 * device storage to NULL.  We keep the endpoint struct around
-	 * so that when other threads find the reference counter to be
-	 * 0, they know that the libfabric resources need to be
-	 * reallocated. In a separate CR we may provide endpoint
-	 * deallocation.
-	 */
-	if (ep->ref_cnt == 0) {
-
-		/**
-		 * Remove ep from the ep address list. Currently, we don't store the
-		 * thread-local ep(s) in the address list, so condition on that here.
-		 */
-		if (ep->is_endpoint_per_communicator_ep) {
-			ret = nccl_ofi_ep_addr_list_delete(device->ep_addr_list, &ep->base);
-			if (ret != 0) {
-				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
-				goto unlock;
-			}
-		} else {
-			HASH_DEL(device->endpoint_table, ep);
-		}
-
-		/* Ideally we would "un-post" the bounce buffers, but this
-		   should be accomplished by closing the endpoint. */
-		release_rdma_ep_resources(ep, device->base.dev_id);
-
-		ret = fini_bounce_buffers(ep);
-		if (ret != 0) {
-			goto unlock;
-		}
-
-		ret = nccl_ofi_deque_finalize(ep->pending_reqs_queue);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to finalize pending_reqs_queue: %d", ret);
-			goto unlock;
-		}
-		free(ep->rails);
-		ep->rails = NULL;
-
-		free(ep);
+	ret = nccl_ofi_deque_finalize(ep->pending_reqs_queue);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to finalize pending_reqs_queue: %d", ret);
+		return ret;
 	}
 
- unlock:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+	free(ep->rails);
+	free(ep);
 
- exit:
-	return ret;
+	return 0;
 }
 
-static int create_ep(nccl_net_ofi_rdma_device_t *device,
-		     nccl_net_ofi_rdma_ep_t *ep)
-{
-	int ret = 0;
-
-	int num_rails = device->num_rails;
-
-	/* Initialize base endpoint */
-	ep->base.device = &device->base;
-	ep->base.listen = listen;
-	ep->base.connect = connect;
-	ep->base.release_ep = release_ep;
-
-	/* Initialize number of rail */
-	ep->num_rails = num_rails;
-
-	ep->bounce_buff_size = NCCL_OFI_MAX(NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t), eager_max_size),
-						sizeof(nccl_ofi_rdma_connection_info_t));
-
-	ep->rails = (nccl_net_ofi_ep_rail_t *)calloc(ep->num_rails,
-		sizeof(nccl_net_ofi_ep_rail_t));
-	if (!ep->rails) {
-		NCCL_OFI_WARN("Unable to allocate rdma rails");
-		ret = -ENOMEM;
-	}
-
-	ret = nccl_ofi_deque_init(&ep->pending_reqs_queue);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to init pending_reqs_queue: %d", ret);
-		goto error;
-	}
-
-	ep->use_long_rkeys = device->use_long_rkeys;
-
-	/* we pass 0 as the railid for the control rail, so
-	 * that any lookups based on railid in the domain find
-	 * the right domain */
-	memset(&ep->control_rail, 0, sizeof(ep->control_rail));
-	ret = ep_rail_init(ep, device->base.dev_id, 0, &device->device_rails[0], &ep->control_rail);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing control rail failed");
-		goto error;
-	}
-
-	ret = init_rail_ofi_resources(device, ep);
-	if (ret != 0) {
-		goto error;
-	}
-
-	ret = init_bounce_buffers(ep);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Preparation of bounce buffers failed");
-		goto error;
-	}
-
-	/* Post all bounce buffers */
-	ret = post_bounce_buffs(ep);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Posting of bounce buffers failed!");
-		goto error;
-	}
-
-	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created",
-			ep,
-			device->base.dev_id);
-
-	return ret;
-
-error:
-	if (ep->pending_reqs_queue) {
-		nccl_ofi_deque_finalize(ep->pending_reqs_queue);
-		ep->pending_reqs_queue = NULL;
-	}
-	if (ep->rails) {
-		free(ep->rails);
-		ep->rails = NULL;
-	}
-
-	return ret;
-}
 
 static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
 								nccl_net_ofi_rdma_ep_t *ep)
@@ -6742,58 +6657,95 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 	return ret;
 }
 
-static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **base_ep)
+
+/* Caller must hold the device lock */
+static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_dev,
+						    nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
-	long thread_id;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
 
 	/* Retrieve and validate device */
 	device = (nccl_net_ofi_rdma_device_t *)base_dev;
 	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+		return -EINVAL;
 	}
 
-	/* Obtain lock */
-	nccl_net_ofi_mutex_lock(&device->device_lock);
-
-	thread_id = nccl_net_ofi_gettid();
-	HASH_FIND(hh, device->endpoint_table, &thread_id,
-		  sizeof(ep->creating_thread_id), ep);
-
-	if (ep == NULL) {
-
-		/* Allocate endpoint */
-		ep = (nccl_net_ofi_rdma_ep_t *)calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
-		if (!ep) {
-			ret = -ENOMEM;
-			NCCL_OFI_WARN("Unable to allocate rdma endpoint");
-			goto unlock;
-		}
-
-		/* Initialize reference count */
-		ep->ref_cnt = 0;
-		ep->creating_thread_id = thread_id;
-
-		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
-			 sizeof(ep->creating_thread_id), ep);
-
-		ep->is_endpoint_per_communicator_ep = false;
-
-		ret = create_ep(device, ep);
-		if (ret != 0) {
-			goto unlock;
-		}
+	/* Allocate endpoint */
+	ep = (nccl_net_ofi_rdma_ep_t *)calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
+	if (!ep) {
+		NCCL_OFI_WARN("Unable to allocate rdma endpoint");
+		return -ENOMEM;
 	}
 
-	ep->ref_cnt++;
+	ret = nccl_net_ofi_endpoint_init(&device->base, &ep->base);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing endpoint base failed");
+		goto error;
+	}
+
+	ep->base.listen = listen;
+	ep->base.connect = connect;
+	ep->base.release_ep = nccl_net_ofi_rdma_endpoint_release;
+	ep->base.free_ep = nccl_net_ofi_rdma_endpoint_free;
+
+	/* we pass 0 as the railid for the control rail, so
+	 * that any lookups based on railid in the domain find
+	 * the right domain */
+	memset(&ep->control_rail, 0, sizeof(ep->control_rail));
+	ret = ep_rail_init(ep, device->base.dev_id, 0, &device->device_rails[0], &ep->control_rail);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing control rail failed");
+		goto error;
+	}
+
+	ep->num_rails = device->num_rails;
+	ep->use_long_rkeys = device->use_long_rkeys;
+
+	ep->rails = (nccl_net_ofi_ep_rail_t *)calloc(ep->num_rails,
+		sizeof(nccl_net_ofi_ep_rail_t));
+	if (!ep->rails) {
+		NCCL_OFI_WARN("Unable to allocate rdma rails");
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	ret = nccl_ofi_deque_init(&ep->pending_reqs_queue);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to init pending_reqs_queue: %d", ret);
+		goto error;
+	}
+
+	ep->bounce_buff_size = NCCL_OFI_MAX(NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t), eager_max_size),
+						sizeof(nccl_ofi_rdma_connection_info_t));
+
+	ep->is_endpoint_per_communicator_ep = false;
+
+	ret = init_rail_ofi_resources(device, ep);
+	if (ret != 0) {
+		goto error;
+	}
+
+	ret = init_bounce_buffers(ep);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Preparation of bounce buffers failed");
+		goto error;
+	}
+
+	/* Post all bounce buffers */
+	ret = post_bounce_buffs(ep);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Posting of bounce buffers failed!");
+		goto error;
+	}
+
+	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created",
+			ep,
+			device->base.dev_id);
+
 	*base_ep = &ep->base;
-
- unlock:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 	/* During plugin initialization, this function is invoked the
 	 * first time. Consequently, initialization function of
@@ -6805,7 +6757,11 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 		ret = init_max_write_inline_size_if_not_initialized(device, ep);
 	}
 
- exit:
+error:
+	if (ret != 0) {
+		ep->base.release_ep(&(ep->base));
+	}
+
 	return ret;
 }
 
@@ -6892,22 +6848,6 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 	return ret;
 }
 
-/*
- * @brief	Set device endpoint data
- */
-static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
-{
-	int ret;
-
-	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&devices->device_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to initialize mutex");
-		return -ret;
-	}
-
-	return 0;
-}
 
 /*
  * @brief	Release libfabric resources of device
@@ -7007,7 +6947,7 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_endpoints = HASH_COUNT(device->endpoint_table);
+	unsigned num_endpoints = HASH_COUNT(device->base.endpoint_table);
 	if (num_endpoints > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u endpoints still active at close", num_endpoints);
 	}
@@ -7087,19 +7027,12 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	device->base.get_properties = get_properties;
-	device->base.get_ep = get_ep;
+	device->base.create_endpoint = nccl_net_ofi_rdma_device_create_endpoint;
 	device->base.release = nccl_net_ofi_rdma_device_release;
 	device->base.get_mr_key = get_mr_key;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
-
-	ret = device_init_thread_local(device);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing device %i thread support failed: %s",
-			      dev_id, strerror(-ret));
-		goto error;
-	}
 
 	/* Ensure that number of rails are the same across devices */
 	length = ofi_info_list_length(info_list);
