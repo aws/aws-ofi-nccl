@@ -20,6 +20,7 @@ extern "C" {
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_tracepoint.h"
+#include "nccl_ofi_ep_addr_list.h"
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear
@@ -170,13 +171,17 @@ typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
-typedef struct {
+typedef struct rdma_req_bounce_data {
 	/* Bounce buffer freelist item */
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item;
 	/* Length of bounce buffer */
 	size_t buff_len;
 	/* Length of received data */
 	size_t recv_len;
+
+	/* For storing in posted recv requests list */
+	struct rdma_req_bounce_data *prev;
+	struct rdma_req_bounce_data *next;
 
 	/*
 	 * Keeps tracks of Rail ID which is used to post the bounce buffer.
@@ -361,6 +366,7 @@ typedef struct nccl_net_ofi_rdma_req {
  */
 typedef struct nccl_ofi_rdma_ep_name {
 	char ep_name[MAX_EP_ADDR];
+	size_t ep_name_len;
 } nccl_ofi_rdma_ep_name_t;
 
 /*
@@ -393,7 +399,7 @@ typedef struct nccl_ofi_rdma_connection_info {
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 236,
+_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 272,
 	       "Wrong size for RDMA connect message");
 
 /*
@@ -577,6 +583,9 @@ struct nccl_net_ofi_ep_rail {
 	/* Name of local libfabric endpoint */
 	char local_ep_name[MAX_EP_ADDR];
 
+	/* Length of local_ep_name */
+	size_t local_ep_name_len;
+
 	/* Address vector handle */
 	struct fid_av *av;
 
@@ -619,9 +628,6 @@ struct nccl_net_ofi_rdma_ep {
 	 * and its base struct. */
 	nccl_net_ofi_ep_t base;
 
-	/* ID pool */
-	nccl_ofi_idpool_t *comm_idpool;
-
 	/* Number of rails */
 	int num_rails;
 
@@ -640,10 +646,6 @@ struct nccl_net_ofi_rdma_ep {
 	 * reference counter is decreased down to zero. */
 	int ref_cnt;
 
-	/* Array of open comms associated with this endpoint. This is needed for fast
-	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms;
-
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
 
@@ -653,6 +655,13 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_ofi_freelist_t *bounce_buff_reqs_fl;
 	/* Size of bounce buffers */
 	size_t bounce_buff_size;
+	/* List of posted buffer requests */
+	rdma_req_bounce_data_t *posted_recv_req_list;
+	/* Lock for posted_recv_req_list */
+	pthread_mutex_t posted_recv_req_list_lock;
+
+	/* True if this ep is stored in the thread-local store */
+	bool thread_local_ep;
 };
 
 /*
@@ -670,6 +679,9 @@ typedef struct nccl_net_ofi_rdma_device_rail {
 
 	/* Access domain handles */
 	struct fid_domain *domain;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
 } nccl_net_ofi_rdma_device_rail_t;
 
 /*
@@ -725,10 +737,20 @@ typedef struct nccl_net_ofi_rdma_device {
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 
+	/* ID pool */
+	nccl_ofi_idpool_t *comm_idpool;
+
+	/* Array of open comms associated with this endpoint. This is needed for fast
+	   lookup of comms in the RDMA protocol. */
+	nccl_net_ofi_comm_t **comms;
+
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t key_pool;
 
 	bool use_long_rkeys;
+
+	/* List of endpoints and set of addresses they have connections to */
+	nccl_ofi_ep_addr_list_t *ep_addr_list;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
