@@ -127,6 +127,18 @@ OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
 OFI_NCCL_PARAM_INT(mr_key_size, "MR_KEY_SIZE", 2);
 
 /*
+ * Disable the MR cache. The MR cache is used to keep track of registered
+ * memory regions, so that calling regMr() on the same buffer (address and
+ * size), will quickly return a previously globally registered MR on that
+ * buffer, avoiding redundant (and expensive) registrations with the
+ * underlying device.
+ * Disabling the MR cache will make all calls to regMR() result in a
+ * registration with the device, so it may cause a significant performance
+ * degradation.
+ */
+OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE", 0);
+
+/*
  * Maximum number of cq entries to read in a single call to
  * fi_cq_read.
  */

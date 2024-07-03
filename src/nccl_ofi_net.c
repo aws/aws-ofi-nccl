@@ -630,17 +630,32 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
 			     int device_index, const char *device_name)
 {
+	int ret = 0;
+
 	device->plugin = plugin;
 	device->dev_id = device_index;
 	device->name = strdup(device_name);
 	if (device->name == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device name");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto exit;
 	}
 
 	device->release = nccl_net_ofi_device_fini;
 
-	return 0;
+	device->mr_cache = NULL;
+	if (!ofi_nccl_mr_cache_disable()) {
+		device->mr_cache =
+			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
+					       system_page_size);
+		if (!device->mr_cache) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+exit:
+	return ret;
 }
 
 
@@ -648,6 +663,10 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 {
 	if (device == NULL) {
 		return 0;
+	}
+
+	if (device->mr_cache != NULL) {
+		nccl_ofi_mr_cache_finalize(device->mr_cache);
 	}
 
 	if (device->name != NULL) {

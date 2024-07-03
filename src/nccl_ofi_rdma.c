@@ -27,6 +27,7 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_platform.h"
 #include "contrib/utlist.h"
+#include "nccl_ofi_mr.h"
 
 /* Template path used to write temporary NCCL topology file */
 static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
@@ -2430,33 +2431,88 @@ static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails
 }
 
 /*
- * @brief	Register memory region on RDMA endpoint
+ * @brief	Deregister memory region
  *
- * @param	ep
- *		RDMA endpoint on which memory region is registered
- * @param	data
- *		Pointer to MR
- * @param	size
- *		Size of MR
- * @param	type
- *		Type of MR
+ * @param	mr_handle
+ *		Memory registration handle
+ * @param	key_pool
+ *		Idpool for MR keys
+ * @param	cache
+ *		Optional MR cache, can be NULL
  *
- * @return	Memory registration handle
+ * @return	0 on success
+ *		non-zero on error
 */
-static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
-			      size_t size, int type, nccl_net_ofi_rdma_mr_handle_t **mhandle)
+static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
+		       nccl_ofi_idpool_t *key_pool,
+		       nccl_ofi_mr_cache_t *mr_cache)
 {
 	int ret = 0;
-	struct fi_mr_attr mr_attr = {};
-	struct iovec iov = {};
+
+	if (OFI_UNLIKELY(mr_handle == NULL)) {
+		NCCL_OFI_WARN("Null MR handle provided. This is an error.");
+		return -EINVAL;
+	}
+
+	if (OFI_UNLIKELY(mr_handle->num_rails < 1)) {
+		NCCL_OFI_WARN("Unexpected number of rails in rdma memory registration handle");
+		return -EINVAL;
+	}
+
+
+	if (mr_cache) {
+		/*
+		* Depending on the number of references on this handle and the cache
+		* itself, this call would either just decrement the refcnt, or delete
+		* the entry for this handle.
+		*/
+		nccl_net_ofi_mutex_lock(&mr_cache->lock);
+		ret = nccl_ofi_mr_cache_del_entry(mr_cache, mr_handle);
+		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+		if (OFI_UNLIKELY(ret < 0)) {
+			NCCL_OFI_WARN("Failed to delete MR cache entry");
+		} else if (ret == 0) {
+			/* Entry must not be deregistered */
+			return ret;
+		}
+	}
+
+	if (key_pool->ids) {
+		uint64_t key = fi_mr_key(mr_handle->mr[0]);
+		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
+			ret = -ENOENT;
+			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
+		} else {
+			ret = nccl_ofi_idpool_free_id(key_pool, key);
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
+			}
+		}
+	}
+
+	ret = dereg_rails(mr_handle);
+
+	free(mr_handle);
+	return ret;
+}
+
+static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
+				   void *data,
+				   size_t size,
+				   int type,
+				   nccl_net_ofi_rdma_mr_handle_t **mhandle)
+{
+	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
-	struct fid_domain *domain;
 	*mhandle = NULL;
 
-	assert(ep);
+	struct iovec iov = {};
+	struct fid_domain *domain;
+	struct fi_mr_attr mr_attr = {};
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	nccl_net_ofi_rdma_device_t *device =
+		(nccl_net_ofi_rdma_device_t *)ep->base.device;
 	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
@@ -2491,14 +2547,94 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 					      dev_id, type, &mr_attr,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
-			dereg_rails(ret_handle);
-			free(ret_handle);
+			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
+				NCCL_OFI_WARN("Error de-registering MR");
+			}
 			ret_handle = NULL;
-			break;
+			goto exit;
 		}
 	}
 
- exit:
+exit:
+	*mhandle = ret_handle;
+	return ret;
+}
+/*
+ * @brief	Register memory region on RDMA endpoint
+ *
+ * @param	ep
+ *		RDMA endpoint on which memory region is registered
+ * @param	data
+ *		Pointer to MR
+ * @param	size
+ *		Size of MR
+ * @param	type
+ *		Type of MR
+ * @param	cache
+ *		Optional MR cache, can be NULL
+ *
+ * @return	Memory registration handle
+*/
+static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
+		     void *data,
+		     size_t size,
+		     int type,
+		     nccl_ofi_mr_cache_t *mr_cache,
+		     nccl_net_ofi_rdma_mr_handle_t **mhandle)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
+	*mhandle = NULL;
+
+	assert(ep);
+
+	/* Retrieve and validate device */
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
+	nccl_ofi_idpool_t *key_pool = &device->key_pool;
+
+	if (mr_cache) {
+		/*
+		 * MR cache is locked between lookup and insert, to be sure we
+		 * insert a missing entry
+		 */
+		nccl_net_ofi_mutex_lock(&mr_cache->lock);
+		ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)
+			nccl_ofi_mr_cache_lookup_entry(mr_cache, data, size);
+
+		if (ret_handle) {
+			/* Cache hit */
+			goto exit;
+		}
+		/* Cache miss */
+	}
+
+	ret = reg_mr_on_device(ep, data, size, type, &ret_handle);
+	if (OFI_UNLIKELY(ret != 0)) {
+		goto exit;
+	}
+
+	if (mr_cache) {
+		ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
+						     data,
+						     size,
+						     ret_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
+				NCCL_OFI_WARN("Error de-registering MR");
+			}
+
+			ret_handle = NULL;
+			goto exit;
+		}
+	}
+
+exit:
+	if (mr_cache) {
+		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+	}
+
 	*mhandle = ret_handle;
 	return ret;
 }
@@ -2564,55 +2700,37 @@ static int reg_internal_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	return reg_mr_ep(ep, data, size, type, mhandle);
+	return reg_mr_ep(ep, data, size, type, NULL, mhandle);
 }
 
 static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) send_comm->base.ep;
-	return reg_mr_ep(ep, data, size, type, (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
+
+	return reg_mr_ep(ep,
+			 data,
+			 size,
+			 type,
+			 device->base.mr_cache,
+			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) recv_comm->base.ep;
-	return reg_mr_ep(ep, data, size, type, (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
-}
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
+	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
+	assert(device != NULL);
 
-static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
-				       nccl_ofi_idpool_t *key_pool)
-{
-	int ret = 0;
-
-	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		NCCL_OFI_WARN("Null MR handle provided. This is an error.");
-		return -EINVAL;
-	}
-
-	if (OFI_UNLIKELY(mr_handle->num_rails < 1)) {
-		NCCL_OFI_WARN("Unexpected number of rails in rdma memory registration handle");
-		return -EINVAL;
-	}
-
-	if (key_pool->ids) {
-		uint64_t key = fi_mr_key(mr_handle->mr[0]);
-		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
-			ret = -ENOENT;
-			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
-		} else {
-			ret = nccl_ofi_idpool_free_id(key_pool, key);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
-			}
-		}
-	}
-
-	ret = dereg_rails(mr_handle);
-
-	free(mr_handle);
-	return ret;
+	return reg_mr_ep(ep,
+			 data,
+			 size,
+			 type,
+			 device->base.mr_cache,
+			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 typedef struct {
@@ -2664,7 +2782,7 @@ static int freelist_deregmr_host_fn(void *handle)
 {
 	freelist_regmr_fn_handle_t *freelist_handle = (freelist_regmr_fn_handle_t *)handle;
 	assert(freelist_handle);
-	int ret = dereg_mr_ep(freelist_handle->mr_handle, freelist_handle->key_pool);
+	int ret = dereg_mr_ep(freelist_handle->mr_handle, freelist_handle->key_pool, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Failed call to dereg_mr_ep");
 		return -EIO;
@@ -2685,7 +2803,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(device != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->key_pool);
+	return dereg_mr_ep(mr_handle, &device->key_pool, device->base.mr_cache);
 }
 
 /*
@@ -3145,7 +3263,7 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = r_comm->flush_buff.mr_handle;
 
 	if (mr_handle) {
-		ret = dereg_mr_ep(mr_handle, &device->key_pool);
+		ret = dereg_mr_ep(mr_handle, &device->key_pool, NULL);
 	}
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
@@ -4113,7 +4231,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->key_pool);
+	return dereg_mr_ep(mr_handle, &device->key_pool, device->base.mr_cache);
 }
 
 static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
