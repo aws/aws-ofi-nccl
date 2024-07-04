@@ -129,10 +129,20 @@ AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output 
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
 AS_IF([test "${enable_picky_compiler}" != "no"],
-      [picky_compiler_flags="-Wall -Wc++-compat -Werror=c++-compat"
+      [picky_compiler_flags="-Wall -Wc++-compat"
        AC_MSG_NOTICE([Adding ${picky_compiler_flags} to CFLAGS.])
        CFLAGS="${CFLAGS} ${picky_compiler_flags}"
        AS_UNSET([picky_compiler_flags])])
+
+AC_ARG_ENABLE([werror],
+   [AS_HELP_STRING([--enable-werror], [Enable setting -Werror.  Off by default, unless building from Git tree.])])
+werror_flags="-Werror"
+AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
+      [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CFLAGS.])
+       CFLAGS="${CFLAGS} ${werror_flags}"],
+      [test "${enable_werror}" = "yes"],
+      [AC_MSG_NOTICE([Adding ${werror_flags} to CFLAGS.])
+       CFLAGS="${CFLAGS} ${werror_flags}"])
 
 NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
