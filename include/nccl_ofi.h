@@ -179,12 +179,6 @@ typedef enum nccl_ofi_comm_stage {
 	COMM_CONNECTED,
 } nccl_ofi_comm_stage_t;
 
-/* Determines which object a provider associates MRs with */
-typedef enum nccl_ofi_mr_scope {
-	NCCL_OFI_MR_SCOPE_DOMAIN = 0,
-	NCCL_OFI_MR_SCOPE_ENDPOINT
-} nccl_ofi_mr_scope_t;
-
 typedef struct save_comm_state {
 	nccl_net_ofi_comm_t *comm;
 	nccl_net_ofi_req_t *req;
@@ -231,8 +225,8 @@ typedef struct nccl_ofi_properties {
 	unsigned int max_communicators;
 	/** Maximum number of grouped receives */
 	unsigned int max_group_receives;
-	/** Scope of a memory region registered with a provider **/
-	nccl_ofi_mr_scope_t mr_scope;
+	/** regMr is global if is not tied to a particular comm **/
+	int regIsGlobal;
 } nccl_ofi_properties_t;
 
 /**

@@ -386,15 +386,21 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	}
 
 	/*
-	 * Determine the scope of MRs for providers to report global
-	 * registration support to NCCL
+	 * Determine the scope of MRs for providers to report global registration
+	 * support to NCCL.
+	 * NCCL uses regIsGlobal to determine support for User Registrations via
+	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
+	 * support this model (since NCCL maintains a per-domain registration
+	 * cache which requires (domain-)global registrations.
+	 * Also, if we have different domains for different threads, registrations
+	 * are not reported as global even if they are tied to the domain.
 	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT) {
-		props->mr_scope = NCCL_OFI_MR_SCOPE_ENDPOINT;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with endpoints");
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || domain_per_thread == 1) {
+		props->regIsGlobal = 0;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {
-		props->mr_scope = NCCL_OFI_MR_SCOPE_DOMAIN;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Libfabric provider associates MRs with domains");
+		props->regIsGlobal = 1;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Global registrations supported");
 	}
 
 	/* Speed reported in Mbps */
