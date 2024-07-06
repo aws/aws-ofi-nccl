@@ -53,6 +53,14 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		props->max_communicators = NCCL_OFI_MIN(device->max_tag, INT_MAX);
 	}
 
+	/**
+	 * TODO:
+	 * The SENDRECV protocol currently does not correctly handle the truncated
+	 * send case (send size > recv size) which NCCL may use when regIsGlobal=1.
+	 * Remove this line once that is fixed.
+	 */
+	props->regIsGlobal = 0;
+
 	return ret;
 }
 
