@@ -1,6 +1,5 @@
 general:
   timeout: 180
-  enable_live_log: true
 cluster:
   cluster_type: manual_cluster
 testing:
