@@ -7,10 +7,14 @@ env:
     libhwloc-dev
     make
 
+  # note, related to issue around actions/checkout@v4, linked below. This
+  # environment variable is also now needed, as of july 2024.
+  # ref: https://github.com/actions/runner/issues/2906#issuecomment-2208546951
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
+
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
-
 jobs:
   amazonlinux:
     strategy:
