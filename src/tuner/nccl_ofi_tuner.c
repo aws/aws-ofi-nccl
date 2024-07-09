@@ -43,8 +43,12 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	long long value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
 	if ((bs_str = getenv("NCCL_BUFFSIZE")) != NULL && strlen(bs_str) > 0) {
 		char *endptr = NULL;
+		errno = 0;
 		value = strtoll(bs_str, &endptr, 0);
 		if (errno || bs_str == endptr || *endptr != '\0') {
+			NCCL_OFI_WARN(
+				"Tuner: failed to read NCCL_BUFFSIZE, setting it to %d",
+				NCCL_OFI_TUNER_NCCL_BUFFSIZE);
 			value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
 		}
 	}
