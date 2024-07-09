@@ -83,8 +83,6 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	ofi_log_function = logFunction;
 
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
-
 	ret = nccl_net_ofi_create_plugin(&plugin);
 
 	return nccl_net_ofi_retval_translate(ret);
