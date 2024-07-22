@@ -497,6 +497,16 @@ static inline struct fid_domain* get_domain_from_endpoint(nccl_net_ofi_sendrecv_
 	return ep->domain;
 }
 
+/*
+ * @brief	Returns whether the registration of local buffers is not required by
+ *		the provider.
+ *
+ * @return	true if registration is not required; otherwise, false
+ */
+
+static bool skip_local_mr_buffer_registration(int type) {
+	return (local_mr != true) && (type == NCCL_PTR_HOST);
+}
 
 /*
  * @brief	Registers memory region (both HOST and CUDA)
@@ -515,7 +525,7 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 	struct iovec iov = {};
 
 	/* Check if provider requires registration of local buffers */
-	if ((local_mr != true) && (type == NCCL_PTR_HOST)) {
+	if (skip_local_mr_buffer_registration(type)) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Skip registering host buffer. local_mr: %d", local_mr);
 		/* the mr handle will still be threaded through NCCL,
@@ -769,6 +779,11 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	nccl_ofi_mr_cache_t *mr_cache = device->base.mr_cache;
 	void *ret_handle = NULL;
 
+	if (skip_local_mr_buffer_registration(type)) {
+		/* Registraton and caching are unnecessary */
+		goto exit;
+	}
+
 	/*
 	 * MR cache is locked between lookup and insert, to be sure we
 	 * insert a missing entry
@@ -777,7 +792,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, data, size);
 	if (ret_handle) {
 		/* Cache hit */
-		goto exit;
+		goto unlock;
 	}
 	/* Cache miss */
 
@@ -786,9 +801,9 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	domain = get_domain_from_endpoint(ep);
 	ret = reg_mr_base(domain, ep->ofi_ep, key_pool,
 			   dev_id, data, size, type, &ret_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
+	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 		ret_handle = NULL;
-		goto exit;
+		goto unlock;
 	}
 
 	ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
@@ -803,11 +818,12 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 			NCCL_OFI_WARN("Error deregistering memory region for addr %p", data);
 		}
 		ret_handle = NULL;
-		goto exit;
+		goto unlock;
 	}
 
-exit:
+unlock:
 	nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+exit:
 	*mhandle = ret_handle;
 	return ret;
 }
