@@ -5,12 +5,10 @@
 #include "config.h"
 
 #include <errno.h>
-#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <float.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
@@ -25,140 +23,325 @@ ncclDebugLogger_t ofi_log_function = NULL;
 
 ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
+	ncclResult_t ret = ncclSuccess;
+	*context = NULL;
+
 	ofi_log_function = logFunction;
 
-	/*
-	 * The tuner API is missing a mechanism to pass around context after
-	 * initialization. For now, init a plugin-lobal context once.
-	 */
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx =
-		(struct nccl_ofi_tuner_context *)calloc(1, sizeof(struct nccl_ofi_tuner_context));
+	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx =
+		(nccl_ofi_tuner_context_t *)calloc(1, sizeof(nccl_ofi_tuner_context_t));
 	if (nccl_ofi_tuner_ctx == NULL) {
 		NCCL_OFI_WARN("Context allocation failed.");
-		return ncclInternalError;
+		ret = ncclInternalError;
+		goto exit;
 	}
-
-	const char *bs_str;
-	long long value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
-	if ((bs_str = getenv("NCCL_BUFFSIZE")) != NULL && strlen(bs_str) > 0) {
-		char *endptr = NULL;
-		errno = 0;
-		value = strtoll(bs_str, &endptr, 0);
-		if (errno || bs_str == endptr || *endptr != '\0') {
-			NCCL_OFI_WARN(
-				"Tuner: failed to read NCCL_BUFFSIZE, setting it to %d",
-				NCCL_OFI_TUNER_NCCL_BUFFSIZE);
-			value = NCCL_OFI_TUNER_NCCL_BUFFSIZE;
-		}
-	}
-	nccl_ofi_tuner_ctx->model_params.nccl_buffsize = value;
 
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
+
+	/* Define regions where a certain combination of algorithm and protocol
+	 * should be used. Any point not covered by any region would fall back
+	 * to NCCL's default tuner. The order of the regions is important in case
+	 * of overlapping regions, since this will return the first region which
+	 * includes that point. */
+	if (nRanks == 8 * nNodes) {
+		nccl_ofi_tuner_point_t extended_tree_ll128 =
+			extend_region((nccl_ofi_tuner_point_t){335544320, 512},
+				      (nccl_ofi_tuner_point_t){536870912, 1024},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_nvlstree_simple_1 =
+			extend_region((nccl_ofi_tuner_point_t){8053063680, 160},
+				      (nccl_ofi_tuner_point_t){8589934592, 192},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_nvlstree_simple_2 =
+			extend_region((nccl_ofi_tuner_point_t){335544320, 512},
+				      (nccl_ofi_tuner_point_t){536870912, 1024},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_ring_simple =
+			extend_region((nccl_ofi_tuner_point_t){8053063680, 160},
+				      (nccl_ofi_tuner_point_t){8589934592, 192},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		const nccl_ofi_tuner_region_t regions[] = {
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 10,
+			 .vertices = {{0, 16},
+				      {31457280, 16},
+				      {37748736, 32},
+				      {117440512, 64},
+				      {301989888, 128},
+				      {301989888, 256},
+				      {335544320, 512},
+				      {536870912, 1024},
+				      extended_tree_ll128,
+				      {0, extended_tree_ll128.y}}},
+			{.algorithm = NCCL_ALGO_NVLS_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 3,
+			 .vertices = {{31457281, 16}, {TUNER_MAX_SIZE, 16}, {31457281, 16}}},
+			{.algorithm = NCCL_ALGO_RING,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 11,
+			 .vertices = {{31457280, 17},
+				      {1073741824, 17},
+				      {2147483648, 64},
+				      {2147483648, 128},
+				      {1342177280, 160},
+				      {2147483648, 256},
+				      {1074790400, 256},
+				      {444596224, 160},
+				      {301989888, 128},
+				      {117440512, 64},
+				      {37748736, 32}}},
+			{.algorithm = NCCL_ALGO_NVLS_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 15,
+			 .vertices = {{2147483648, 128},
+				      {6442450944, 128},
+				      {8053063680, 160},
+				      {8589934592, 192},
+				      extended_nvlstree_simple_1,
+				      extended_nvlstree_simple_2,
+				      {536870912, 1024},
+				      {335544320, 512},
+				      {301989888, 256},
+				      {310378496, 160},
+				      {444596224, 160},
+				      {1074790400, 256},
+				      {2684354560, 256},
+				      {2147483648, 224},
+				      {1342177280, 160}}},
+			{.algorithm = NCCL_ALGO_RING,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 7,
+			 .vertices = {{1073741824, 17},
+				      {extended_ring_simple.x, 17},
+				      extended_ring_simple,
+				      {8589934592, 192},
+				      {8053063680, 160},
+				      {2684354560, 64},
+				      {1610612736, 32}}}};
+
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		if (ret != ncclSuccess) {
+			goto exit;
+		}
+	} else if (nRanks == 2 * nNodes) {
+		nccl_ofi_tuner_point_t extended_tree_ll128 =
+			extend_region((nccl_ofi_tuner_point_t){88160256, 128},
+				      (nccl_ofi_tuner_point_t){178163712, 256},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_tree_simple_1 =
+			extend_region((nccl_ofi_tuner_point_t){787480576, 128},
+				      (nccl_ofi_tuner_point_t){1073741824, 256},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_tree_simple_2 =
+			extend_region((nccl_ofi_tuner_point_t){257114112, 128},
+				      (nccl_ofi_tuner_point_t){269484032, 256},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		nccl_ofi_tuner_point_t extended_nvlstree_simple =
+			extend_region((nccl_ofi_tuner_point_t){787480576, 128},
+				      (nccl_ofi_tuner_point_t){1073741824, 256},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		const nccl_ofi_tuner_region_t regions[] = {
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 11,
+			 .vertices = {{0, 4},
+				      {1314816, 4},
+				      {1051648, 8},
+				      {1051648, 12},
+				      {2367488, 16},
+				      {5525504, 32},
+				      {9473024, 64},
+				      {88160256, 128},
+				      {178163712, 256},
+				      extended_tree_ll128,
+				      {0, extended_tree_ll128.y}}},
+			{.algorithm = NCCL_ALGO_RING,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 14,
+			 .vertices = {{1314816, 4},
+				      {19736576, 4},
+				      {41842688, 8},
+				      {296747008, 64},
+				      {257114112, 128},
+				      {269484032, 256},
+				      {178163712, 256},
+				      {88160256, 128},
+				      {9473024, 64},
+				      {5525504, 32},
+				      {2367488, 16},
+				      {1051648, 12},
+				      {1051648, 8},
+				      {1314816, 4}}},
+			{.algorithm = NCCL_ALGO_NVLS_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 6,
+			 .vertices = {{19736576, 4},
+				      {81844224, 4},
+				      {275775488, 8},
+				      {275775488, 48},
+				      {296747008, 64},
+				      {41842688, 8}}},
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 3,
+			 .vertices = {{81844224, 4}, {269484032, 4}, {81844224, 4}}},
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 3,
+			 .vertices = {{269484032, 4}, {TUNER_MAX_SIZE, 4}, {269484032, 4}}},
+			{.algorithm = NCCL_ALGO_RING,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 10,
+			 .vertices = {{81844224, 5},
+				      {TUNER_MAX_SIZE, 5},
+				      {TUNER_MAX_SIZE, 32},
+				      {1073741824, 40},
+				      {1073741824, 128},
+				      {787480576, 128},
+				      {296747008, 64},
+				      {275775488, 48},
+				      {275775488, 8},
+				      {81844224, 5}}},
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 7,
+			 .vertices = {{296747008, 64},
+				      {787480576, 128},
+				      {1073741824, 256},
+				      extended_tree_simple_1,
+				      extended_tree_simple_2,
+				      {269484032, 256},
+				      {257114112, 128}}},
+			{.algorithm = NCCL_ALGO_NVLS_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 6,
+			 .vertices = {extended_nvlstree_simple,
+				      {1073741824, 256},
+				      {787480576, 128},
+				      {1073741824, 128},
+				      {1073741824, 40},
+				      {TUNER_MAX_SIZE, 32}}}};
+
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		if (ret != ncclSuccess) {
+			goto exit;
+		}
+	} else if (nRanks == nNodes) {
+		nccl_ofi_tuner_point_t extended_tree_ll128 =
+			extend_region((nccl_ofi_tuner_point_t){9999360, 64},
+				      (nccl_ofi_tuner_point_t){119477248, 128},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+		nccl_ofi_tuner_point_t extended_ring_ll128 =
+			extend_region((nccl_ofi_tuner_point_t){4736000, 2},
+				      (nccl_ofi_tuner_point_t){269484032, 128},
+				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+
+		const nccl_ofi_tuner_region_t regions[] = {
+			{.algorithm = NCCL_ALGO_TREE,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 5,
+			 .vertices = {{0, 16}, {2367488, 16}, {9999360, 64}, {119477248, 128}, extended_tree_ll128}},
+			{.algorithm = NCCL_ALGO_RING,
+			 .protocol = NCCL_PROTO_LL128,
+			 .num_vertices = 9,
+			 .vertices = {{0, 2},
+				      {4736000, 2},
+				      {269484032, 128},
+				      extended_ring_ll128,
+				      extended_tree_ll128,
+				      {119477248, 128},
+				      {9999360, 64},
+				      {2367488, 16},
+				      {0, 16}}},
+			{.algorithm = NCCL_ALGO_NVLS_TREE,
+			 .protocol = NCCL_PROTO_SIMPLE,
+			 .num_vertices = 4,
+			 .vertices = {{4736000, 2}, {TUNER_MAX_SIZE, 2}, extended_ring_ll128, {269484032, 128}}}};
+
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		if (ret != ncclSuccess) {
+			goto exit;
+		}
+	} else {
+		/* Fall back to NCCL's tuner, so no regions */
+	}
+
+exit:
+	if (ret != ncclSuccess && nccl_ofi_tuner_ctx != NULL) {
+		free(nccl_ofi_tuner_ctx);
+		nccl_ofi_tuner_ctx = NULL;
+	}
+
 	*context = (void *)nccl_ofi_tuner_ctx;
 	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
 
 	NCCL_OFI_TRACE(NCCL_TUNING, "Tuner init: comm with %ld ranks and %ld nodes.", nRanks, nNodes);
-	return ncclSuccess;
+	return ret;
 }
 
 ncclResult_t nccl_ofi_tuner_get_coll_info(
 	void *context, ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
-	double lowest = DBL_MAX;
-	struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx = (struct nccl_ofi_tuner_context *)context;
+	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
 
-	/* Skip runs smaller than 2 nodes and fallback to NCCL's internal tunings */
-	if (nccl_ofi_tuner_ctx->dims.num_nodes <= 2) {
-		return ncclSuccess;
-	}
-
-	if (collType == ncclFuncAllReduce && nccl_ofi_tuner_ctx->dims.num_nodes == 16 && nccl_ofi_tuner_ctx->dims.num_ranks == 128 && nvlsSupport &&
-	    nBytes > 3ULL * 1024ULL * 1024ULL * 1024ULL && nBytes <= 5ULL * 1024ULL * 1024ULL * 1024ULL) {
-		lowest = 0;
-		*algorithm = NCCL_ALGO_NVLS_TREE;
-		*protocol = NCCL_PROTO_SIMPLE;
+	if (nccl_ofi_tuner_ctx == NULL || nccl_ofi_tuner_ctx->regions == NULL || collType != ncclFuncAllReduce) {
+		/* Fall back to NCCL's tuner */
 		goto exit;
 	}
 
-	/*
-	 * Ideally, this should just be a lookup and not be in-flight math
-	 * We do not want divs in the hot path, but working with the API we've
-	 * got now.
-	 */
-	for (size_t nChan = 16; nChan <= 16; nChan += 2) {
-		for (int algo = 0; algo < NCCL_NUM_ALGORITHMS; algo++) {
-			/* No CollNet on AWS today */
-			if (algo == NCCL_ALGO_COLLNET_DIRECT || algo == NCCL_ALGO_COLLNET_CHAIN) {
-				continue;
-			}
+	int in_out = -1;
+	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
 
-			/* Skip NCCL_ALGO_NVLS used only for single-node jobs */
-			if (algo == NCCL_ALGO_NVLS) {
-				continue;
-			}
+	/* Check all regions */
+	for (int i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
+		if (nccl_ofi_tuner_ctx->regions[i].algorithm == NCCL_ALGO_NVLS_TREE && nvlsSupport == 0) {
+			continue;
+		}
 
-			if (protocol == NCCL_PROTO_LL) {
-				/* Measured costs show that is' difficult for LL to win against
-				 * LL128 -- avoid considering it. */
-				continue;
-			}
+		in_out = is_inside_region(p, &nccl_ofi_tuner_ctx->regions[i]);
+		if (in_out >= 0) {
+			*algorithm = nccl_ofi_tuner_ctx->regions[i].algorithm;
+			*protocol = nccl_ofi_tuner_ctx->regions[i].protocol;
 
-			if (nccl_ofi_tuner_ctx->dims.num_nodes > 128 && (algo != NCCL_ALGO_NVLS_TREE)) {
-				/* Refuse to make tuner decisions other than NVLSTree on large
-				 * clusters. -- our model is not precise enough to get this
-				 * right, and while it's possible that we can expect ring to win
-				 * at some point, we have no data where this isn't the right
-				 * thing to do. */
-				continue;
-			}
-
-			if (!nvlsSupport && (algo == NCCL_ALGO_NVLS_TREE)) {
-				continue;
-			}
-
-			for (int proto = 0; proto < NCCL_NUM_PROTOCOLS; proto++) {
-				/* This is not a supported combination in NCCL */
-				if (algo == NCCL_ALGO_NVLS_TREE && proto != NCCL_PROTO_SIMPLE) {
-					continue;
-				}
-
-				const double cost = nccl_ofi_tuner_compute_cost(&nccl_ofi_tuner_ctx->dims,
-										&nccl_ofi_tuner_ctx->model_params,
-										collType,
-										algo,
-										proto,
-										numPipeOps,
-										nChan,
-										nBytes);
-
-				NCCL_OFI_TRACE(NCCL_TUNING,
-					       "Computed cost for algo %d proto %d pipe "
-					       "%d: cost %.8f µsecs.",
-					       algo,
-					       proto,
-					       numPipeOps,
-					       cost);
-				if (cost < lowest && cost > 0 && cost < INFINITY) {
-					*algorithm = algo;
-					*protocol = proto;
-					*nChannels = nChan;
-					lowest = cost;
-				}
-			}
+			NCCL_OFI_INFO(NCCL_TUNING,
+				      "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
+				      *algorithm,
+				      *protocol,
+				      0,
+				      collType,
+				      nBytes);
 		}
 	}
 
+	if (in_out < 0) {
+		NCCL_OFI_INFO(NCCL_TUNING, "Falling back to NCCL's tuner for coll %d size %ld.", collType, nBytes);
+	}
+
 exit:
-	NCCL_OFI_INFO(NCCL_TUNING, "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.", *algorithm, *protocol, lowest, collType, nBytes);
 	return ncclSuccess;
 }
 
 ncclResult_t nccl_ofi_tuner_destroy(void *context)
 {
+	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
+
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	if (context != NULL) {
+	if (nccl_ofi_tuner_ctx != NULL) {
+		if (nccl_ofi_tuner_ctx->regions != NULL) {
+			free(nccl_ofi_tuner_ctx->regions);
+		}
 		free(context);
 	}
 	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
@@ -170,7 +353,12 @@ const ncclTuner_v2_t ncclTunerPlugin_v2 = {
 	.name = "nccl_ofi_tuner", .init = nccl_ofi_tuner_init, .getCollInfo = nccl_ofi_tuner_get_coll_info, .destroy = nccl_ofi_tuner_destroy};
 
 #if !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
-static struct nccl_ofi_tuner_context *nccl_ofi_tuner_ctx_internal;
+
+/*
+* The tuner v1 API is missing a mechanism to pass around context after
+* initialization. For now, init a plugin-global context once.
+*/
+static nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx_internal;
 
 static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
 {
@@ -189,6 +377,17 @@ static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
 
 static ncclResult_t nccl_ofi_tuner_init_v1(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction)
 {
+	if (nccl_ofi_tuner_ctx_internal != NULL) {
+		/* Repeated init call, the tuner is already initialized.
+		 * Destroy it, as it may have been initialized with different
+		 * parameters.
+		 */
+		if (nccl_ofi_tuner_destroy_v1() != ncclSuccess) {
+			NCCL_OFI_WARN(
+				"Failed to destroy an existing tuner context.");
+		}
+	}
+
 	/*
 	 * NCCL parses these variables and applies user filters inside its
 	 * current tuner logic. Ideally, this should be done regardless of the

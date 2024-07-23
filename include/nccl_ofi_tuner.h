@@ -12,34 +12,52 @@
 #include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_param.h"
 
-struct nccl_ofi_tuner_model_params {
-	float net_lat;
-	float internode_bw;
-	float intranode_bw;
-	int num_rails;
-	uint64_t nccl_buffsize;
-};
+/* Maximum number of vertices per region */
+#define TUNER_MAX_NUM_VERTICES 20
 
-struct nccl_ofi_tuner_model_dims {
+/* Maximum number of ranks with which the tuner can deal.
+ * Above this value, it will fall back to NCCL's tuner.
+ */
+#define TUNER_MAX_RANKS        1024.0 * 1024
+
+/* Maximum message size with which the tuner can deal.
+ * Above this value, it will fall back to NCCL's tuner.
+ */
+#define TUNER_MAX_SIZE         100.0 * 1024 * 1024 * 1024
+
+typedef struct nccl_ofi_tuner_model_dims {
 	/* communicator size */
-	int num_ranks;
-	int num_nodes;
-};
+	size_t num_ranks;
+	size_t num_nodes;
+} nccl_ofi_tuner_model_dims_t;
 
-struct nccl_ofi_tuner_context {
-	struct nccl_ofi_tuner_model_dims dims;
-	struct nccl_ofi_tuner_model_params model_params;
-};
+typedef struct nccl_ofi_tuner_point {
+	double x;
+	double y;
+} nccl_ofi_tuner_point_t;
 
-/* Modeling functions */
-double nccl_ofi_tuner_compute_cost(struct nccl_ofi_tuner_model_dims const *dims,
-				   struct nccl_ofi_tuner_model_params const *params,
-				   ncclFunc_t func,
-				   int algo,
-				   int proto,
-				   int pipe_ops,
-				   size_t nChan,
-				   size_t size);
+typedef struct nccl_ofi_tuner_region {
+	int algorithm;
+	int protocol;
+	size_t num_vertices;
+	nccl_ofi_tuner_point_t vertices[TUNER_MAX_NUM_VERTICES];
+} nccl_ofi_tuner_region_t;
+
+typedef struct nccl_ofi_tuner_context {
+	nccl_ofi_tuner_model_dims_t dims;
+	size_t num_regions;
+	nccl_ofi_tuner_region_t *regions;
+} nccl_ofi_tuner_context_t;
+
+/* Functions to set and test regions */
+int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *region);
+
+ncclResult_t set_regions(nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx,
+			 size_t num_regions,
+			 const nccl_ofi_tuner_region_t regions[],
+			 size_t regions_size);
+
+nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b, nccl_ofi_tuner_point_t z);
 
 /* In the original introduction of the external tuner v2 struct, NCCL did not
  * enumerate downwards through versions and attempt to load the first valid

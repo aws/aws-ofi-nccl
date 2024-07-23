@@ -62,7 +62,7 @@ endif
 #
 noinst_LTLIBRARIES += libinternal_tuner_plugin.la
 tuner_sources = \
-	tuner/nccl_ofi_model.c \
+	tuner/nccl_ofi_regions.c \
 	tuner/nccl_ofi_tuner.c
 libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
 libinternal_tuner_plugin_la_LDFLAGS = -avoid-version
