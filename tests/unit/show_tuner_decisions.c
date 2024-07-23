@@ -28,10 +28,16 @@ int main(int argc, const char **argv)
 				return 1;
 			}
 
-			int algorithm = -1;
-			int protocol = -1;
-			int nChannels = -1;
 			for (size_t nmibytes = 1; nmibytes <= 32 * 1024; nmibytes <<= 1) {
+				/*NCCL_ALGO_UNDEF is -1 */
+				int algorithm = -1;
+				/* NCCL_PROTO_UNDEF is -1 */
+				int protocol = -1;
+				/* NCCL calls getCollInfo() with nChannels=0 and ignores this
+				 * variable if it is unchanged.
+				 */
+				int nChannels = 0;
+
 				if (ncclTunerPlugin_v2.getCollInfo(context,
 								   ncclFuncAllReduce,
 								   nmibytes * 1024 * 1024,
@@ -49,10 +55,8 @@ int main(int argc, const char **argv)
 				       nodes * ranks_per_node,
 				       nmibytes,
 				       nChannels,
-				       algorithm >= 0 && algorithm <= 5 ? algo_names[algorithm]
-									: "none",
-				       protocol >= 0 && protocol <= 2 ? proto_names[protocol]
-								      : "none");
+				       algorithm >= 0 && algorithm <= 5 ? algo_names[algorithm] : "none",
+				       protocol >= 0 && protocol <= 2 ? proto_names[protocol] : "none");
 			}
 			ncclTunerPlugin_v2.destroy(context);
 		}
