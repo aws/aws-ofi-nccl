@@ -5607,7 +5607,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	}
 #endif
 
-	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, dev_rail->domain, &ep_rail->ofi_ep,
+	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, ep_rail->domain, &ep_rail->ofi_ep,
 						&ep_rail->av, &ep_rail->cq);
 	if (ret != 0) {
 		return ret;
