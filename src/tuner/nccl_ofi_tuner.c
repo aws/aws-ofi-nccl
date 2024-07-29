@@ -47,29 +47,29 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 	 * includes that point. */
 	if (nRanks == 8 * nNodes) {
 		nccl_ofi_tuner_point_t extended_tree_ll128 =
-			extend_region((nccl_ofi_tuner_point_t){335544320, 512},
-				      (nccl_ofi_tuner_point_t){536870912, 1024},
+			extend_region((nccl_ofi_tuner_point_t){402653184, 2048},
+				      (nccl_ofi_tuner_point_t){402653184, 4096},
 				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 		nccl_ofi_tuner_point_t extended_nvlstree_simple_1 =
 			extend_region((nccl_ofi_tuner_point_t){8053063680, 160},
-				      (nccl_ofi_tuner_point_t){8589934592, 192},
+				      (nccl_ofi_tuner_point_t){9663676416, 192},
 				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 		nccl_ofi_tuner_point_t extended_nvlstree_simple_2 =
-			extend_region((nccl_ofi_tuner_point_t){335544320, 512},
-				      (nccl_ofi_tuner_point_t){536870912, 1024},
+			extend_region((nccl_ofi_tuner_point_t){402653184, 2048},
+				      (nccl_ofi_tuner_point_t){402653184, 4096},
 				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 		nccl_ofi_tuner_point_t extended_ring_simple =
 			extend_region((nccl_ofi_tuner_point_t){8053063680, 160},
-				      (nccl_ofi_tuner_point_t){8589934592, 192},
+				      (nccl_ofi_tuner_point_t){9663676416, 192},
 				      (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 		const nccl_ofi_tuner_region_t regions[] = {
 			{.algorithm = NCCL_ALGO_TREE,
 			 .protocol = NCCL_PROTO_LL128,
-			 .num_vertices = 10,
+			 .num_vertices = 12,
 			 .vertices = {{0, 16},
 				      {31457280, 16},
 				      {37748736, 32},
@@ -78,6 +78,8 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 				      {301989888, 256},
 				      {335544320, 512},
 				      {536870912, 1024},
+				      {402653184, 2048},
+				      {402653184, 4096},
 				      extended_tree_ll128,
 				      {0, extended_tree_ll128.y}}},
 			{.algorithm = NCCL_ALGO_NVLS_TREE,
@@ -100,13 +102,15 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 				      {37748736, 32}}},
 			{.algorithm = NCCL_ALGO_NVLS_TREE,
 			 .protocol = NCCL_PROTO_SIMPLE,
-			 .num_vertices = 15,
+			 .num_vertices = 17,
 			 .vertices = {{2147483648, 128},
 				      {6442450944, 128},
 				      {8053063680, 160},
-				      {8589934592, 192},
+				      {9663676416, 192},
 				      extended_nvlstree_simple_1,
 				      extended_nvlstree_simple_2,
+				      {402653184, 4096},
+				      {402653184, 2048},
 				      {536870912, 1024},
 				      {335544320, 512},
 				      {301989888, 256},
@@ -122,12 +126,12 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 			 .vertices = {{1073741824, 17},
 				      {extended_ring_simple.x, 17},
 				      extended_ring_simple,
-				      {8589934592, 192},
+				      {9663676416, 192},
 				      {8053063680, 160},
 				      {2684354560, 64},
 				      {1610612736, 32}}}};
 
-		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions);
 		if (ret != ncclSuccess) {
 			goto exit;
 		}
@@ -234,7 +238,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 				      {1073741824, 40},
 				      {TUNER_MAX_SIZE, 32}}}};
 
-		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions);
 		if (ret != ncclSuccess) {
 			goto exit;
 		}
@@ -270,7 +274,7 @@ ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t
 			 .num_vertices = 4,
 			 .vertices = {{4736000, 2}, {TUNER_MAX_SIZE, 2}, extended_ring_ll128, {269484032, 128}}}};
 
-		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions, sizeof(regions));
+		ret = set_regions(nccl_ofi_tuner_ctx, sizeof(regions) / sizeof(regions[0]), regions);
 		if (ret != ncclSuccess) {
 			goto exit;
 		}

@@ -54,8 +54,7 @@ int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *regi
 
 ncclResult_t set_regions(nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx,
 			 size_t num_regions,
-			 const nccl_ofi_tuner_region_t regions[],
-			 size_t regions_size);
+			 const nccl_ofi_tuner_region_t regions[]);
 
 nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b, nccl_ofi_tuner_point_t z);
 
