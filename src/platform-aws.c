@@ -35,6 +35,7 @@ struct ec2_platform_data {
 	bool net_flush_required;
 	const char *default_protocol;
 	int domain_per_thread;
+	size_t cq_read_count;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
@@ -45,6 +46,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.cq_read_count = 4,
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -55,6 +57,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.cq_read_count = 4,
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -65,6 +68,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.cq_read_count = 4,
 	},
 	{
 		.name = "p5.48xlarge",
@@ -75,6 +79,7 @@ struct ec2_platform_data {
 		.net_flush_required = false,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
+		.cq_read_count = 4,
 	},
 	{
 		.name = "g5.48xlarge",
@@ -83,6 +88,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.cq_read_count = 4,
 	},
 	{
 		.name = "trn1.32xlarge",
@@ -90,6 +96,7 @@ struct ec2_platform_data {
 		.gdr_required = true,
 		.net_flush_required = true,
 		.domain_per_thread = 1,
+		.cq_read_count = 16,
 	},
 	{
 		.name = "trn1n.32xlarge",
@@ -97,6 +104,7 @@ struct ec2_platform_data {
 		.gdr_required = true,
 		.net_flush_required = true,
 		.domain_per_thread = 1,
+		.cq_read_count = 16,
 	}
 };
 
@@ -574,8 +582,11 @@ int platform_init(const char **provider_filter)
 				net_latency);
 	}
 
-	if (select_efa && ofi_nccl_protocol() == NULL && platform_data) {
-		nccl_ofi_selected_protocol = platform_data->default_protocol;
+	if (platform_data) {
+		if (select_efa && ofi_nccl_protocol() == NULL)  {
+			nccl_ofi_selected_protocol = platform_data->default_protocol;
+		}
+		cq_read_count = platform_data->cq_read_count;
 	}
 
 	domain_per_thread = ofi_nccl_domain_per_thread();

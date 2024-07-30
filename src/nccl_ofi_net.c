@@ -46,7 +46,7 @@ int nic_dup_conns = 0;
    This variable will be updated during init (hence, can not be
    const), but will not change during execution.  Therefore, it may be
    read in the polling loop without protection of a lock. */
-size_t cq_read_count = 1;
+size_t cq_read_count = 4;
 
 const char *provider_filter = NULL;
 
@@ -181,13 +181,17 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	net_latency = (float)ofi_nccl_net_latency();
-	cq_read_count = ofi_nccl_cq_read_count();
 
 	if (platform_init) {
 		ret = platform_init(&provider_filter);
 		if (ret != 0)
 			goto exit;
 	}
+
+	if (ofi_nccl_cq_read_count() != -1) {
+		cq_read_count = ofi_nccl_cq_read_count();
+	}
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "CQ read count %ds", cq_read_count);
 
 	/* Select and initialize protocol data structure.
 	 * platform_init() may change the default, so this must occur
