@@ -1215,11 +1215,6 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 			goto exit;
 		}
 
-		ret = finish_connect(s_comm);
-		if (OFI_UNLIKELY(ret != 0)) {
-			goto exit;
-		}
-
 		/* Attempt to re-post bounce buffer */
 		ret = repost_bounce_buff(ep, bounce_req);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2247,13 +2242,6 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 	s_comm->conn_resp_req->free(s_comm->conn_resp_req, false);
 	s_comm->conn_resp_req = NULL;
-
-	/* Since communicator can be used by a different thread,
-	 * established connection should be signalized last and there
-	 * should be a barrier after the communicator initialization
-	 * is finalized */
-	__sync_synchronize();
-	s_comm->connected = true;
 
 	return ret;
 }
@@ -4703,28 +4691,6 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 	assert(ep != NULL);
 
-	/*
-	 * Try finalize connection if not established yet; Return NULL
-	 * request if not able to finalize connection.
-	 */
-	if (OFI_UNLIKELY(!s_comm->connected)) {
-		__compiler_barrier();
-
-		/* Progress our engine to get completions. If the
-		 * connect response message has arrived, the
-		 * connection establishment will be finalized. */
-		ret = ofi_process_cq(ep);
-		if (ret != 0) {
-			goto error;
-		}
-
-		if (!s_comm->connected) {
-			/* Return NULL request */
-			*base_req = NULL;
-			goto exit;
-		}
-	}
-
 	ret = process_cq_if_pending(ep);
 	if (ret == -EAGAIN) {
 		/* Network is still busy. Return NULL to NCCL. */
@@ -4864,9 +4830,12 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	return ret;
 }
 
-static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
+static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 {
 	int ret = 0;
+
+	nccl_net_ofi_rdma_send_comm_t *s_comm =
+		(nccl_net_ofi_rdma_send_comm_t *)send_comm;
 
 	/* Make sure all requests are finished */
 	if (s_comm->num_inflight_reqs > 0) {
@@ -4914,46 +4883,6 @@ static int send_close(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	free(s_comm);
 
  exit:
-	return ret;
-}
-
-static int blocked_send_close(nccl_net_ofi_send_comm_t *send_comm)
-{
-	nccl_net_ofi_rdma_send_comm_t *s_comm = NULL;
-	nccl_net_ofi_rdma_ep_t *ep = NULL;
-	nccl_net_ofi_rdma_device_t *device = NULL;
-
-	s_comm = (nccl_net_ofi_rdma_send_comm_t *)send_comm;
-
-	/* Validate endpoint */
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return -EINVAL;
-	}
-
-	/* Retrieve and validate device */
-	device = (nccl_net_ofi_rdma_device_t*)ep->base.device;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		return -EINVAL;
-	}
-
-	// TODO: We might want to use READ_ONCE to read variable `connected'
-	int ret = 0;
-	while (!s_comm->connected) {
-		__compiler_barrier();
-		/* Progress our engine to get completions. If the
-		 * connect response message has arrived, the
-		 * connection establishment will be finalized. */
-		ret = ofi_process_cq(ep);
-		if (OFI_UNLIKELY(ret != 0)) {
-			return ret;
-		}
-	}
-
-	ret = send_close(s_comm);
-
 	return ret;
 }
 
@@ -5168,7 +5097,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.regMrDmaBuf = nccl_net_ofi_reg_mr_dma_buf_send_comm;
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
-	ret_s_comm->base.close = blocked_send_close;
+	ret_s_comm->base.close = send_close;
 	ret_s_comm->next_msg_seq_num = 0;
 
 	/* Store communicator ID from handle in communicator */
@@ -5356,23 +5285,17 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 }
 
 /*
- * @brief	Execute first part of the connect functionality from listen/connect/accept
+ * @brief	Execute the connect functionality from listen/connect/accept
  *		connection establishment
  *
- * The connect functionality is split into two steps. This function
- * implements the first step in a nonblocking manner. The first step
- * performs (a) create send communicator with only the first
- * communicator rail being initalized, (b) post send operation to send
- * connect message to remote, containing local endpoint addresses, (c)
- * wait until message is delivered, (d) post receive operation to
- * receive connect response message, containing remote endpoint
- * addresses..
+ * The connect functionality does the following: (a) create send communicator
+ * with only the first communicator rail being initalized, (b) post send
+ * operation to send connect message to remote, containing local endpoint
+ * addresses, (c) wait until message is delivered, (d) waits for the connect
+ * response message, and (e) calls finish_connect.
  *
- * The `finish_connect' method implements the second step of the
- * connect functionality, i.e., the initialization of the remaining
- * communicator rails using the received connect responce message. As
- * a consequence, `finish_connect' is to be invoked only after the
- * connect response is received.
+ * The `finish_connect' method completes the initialization of the remaining
+ * communicator rails using the received connect responce message.
  */
 static int connect(nccl_net_ofi_ep_t *base_ep,
 			    nccl_net_ofi_conn_handle_t *handle,
@@ -5428,7 +5351,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		/* Prepare connect request to be sent to peer */
 		req = prepare_send_conn_req(s_comm);
 		if (OFI_UNLIKELY(req == NULL)) {
-			send_close(s_comm);
+			send_close(&s_comm->base);
 			return -ENOMEM;
 		}
 		comm_state->req = &req->base;
@@ -5436,7 +5359,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		/* Prepare request to receive connect response message */
 		s_comm->conn_resp_req = prepare_recv_conn_resp_req(s_comm);
 		if (OFI_UNLIKELY(s_comm->conn_resp_req == NULL)) {
-			send_close(s_comm);
+			send_close(&s_comm->base);
 			return -EINVAL;
 		}
 
@@ -5451,7 +5374,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 		else if (ret != 0) {
 			req->free(req, false);
-			send_close(s_comm);
+			send_close(&s_comm->base);
 			return ret;
 		}
 
@@ -5493,6 +5416,10 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 		assert(s_comm && s_comm->num_rails > 0);
 
+		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
+
+	case COMM_CONN_RESP_REQ_PENDING:
+
 		/* Progress our engine to get completions. If the
 		 * connect response message has arrived, the
 		 * connection establishment will be finalized. */
@@ -5501,11 +5428,24 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 			return ret;
 		}
 
-		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
+		nccl_net_ofi_mutex_lock(&s_comm->conn_resp_req->req_lock);
+		nccl_net_ofi_rdma_req_state_t conn_resp_req_state = s_comm->conn_resp_req->state;
+		nccl_net_ofi_mutex_unlock(&s_comm->conn_resp_req->req_lock);
+
+		/* Wait until conn resp message is received */
+		if (conn_resp_req_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
+			return 0;
+		}
+
+		ret = finish_connect(s_comm);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+
+		comm_state->stage = COMM_CONNECTED;
 
 		break;
 
-	case COMM_CONN_RESP_REQ_PENDING:
 	case COMM_CONNECTED:
 	default:
 		NCCL_OFI_WARN("Invalid state of send communicator object: %d", stage);
