@@ -192,6 +192,9 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		cq_read_count = ofi_nccl_cq_read_count();
 	}
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "CQ read count %ds", cq_read_count);
+	if (ofi_nccl_eager_max_size() != -1) {
+		eager_max_size = ofi_nccl_eager_max_size();
+	}
 
 	/* Select and initialize protocol data structure.
 	 * platform_init() may change the default, so this must occur

@@ -36,6 +36,7 @@ struct ec2_platform_data {
 	const char *default_protocol;
 	int domain_per_thread;
 	size_t cq_read_count;
+	size_t eager_max_size;
 } platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
@@ -47,6 +48,7 @@ struct ec2_platform_data {
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
 		.cq_read_count = 4,
+		.eager_max_size = 8192,
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -58,6 +60,7 @@ struct ec2_platform_data {
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
 		.cq_read_count = 4,
+		.eager_max_size = 8192,
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -69,6 +72,7 @@ struct ec2_platform_data {
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
 		.cq_read_count = 4,
+		.eager_max_size = 8192,
 	},
 	{
 		.name = "p5.48xlarge",
@@ -80,6 +84,7 @@ struct ec2_platform_data {
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
 		.cq_read_count = 4,
+		.eager_max_size = 8192,
 	},
 	{
 		.name = "g5.48xlarge",
@@ -89,6 +94,7 @@ struct ec2_platform_data {
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
 		.cq_read_count = 4,
+		.eager_max_size = 8192,
 	},
 	{
 		.name = "trn1.32xlarge",
@@ -97,6 +103,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.domain_per_thread = 1,
 		.cq_read_count = 16,
+		.eager_max_size = 0,
 	},
 	{
 		.name = "trn1n.32xlarge",
@@ -105,6 +112,7 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.domain_per_thread = 1,
 		.cq_read_count = 16,
+		.eager_max_size = 0,
 	}
 };
 
@@ -332,7 +340,6 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 	int ret = 0;
 
 #if HAVE_DECL_FI_OPT_MAX_MSG_SIZE
-	size_t eager_max_size = (size_t)ofi_nccl_eager_max_size();
 	size_t optval = NCCL_OFI_MAX(NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t), eager_max_size),
 				     sizeof(nccl_ofi_rdma_connection_info_t));
 
@@ -587,6 +594,7 @@ int platform_init(const char **provider_filter)
 			nccl_ofi_selected_protocol = platform_data->default_protocol;
 		}
 		cq_read_count = platform_data->cq_read_count;
+		eager_max_size = platform_data->eager_max_size;
 	}
 
 	domain_per_thread = ofi_nccl_domain_per_thread();

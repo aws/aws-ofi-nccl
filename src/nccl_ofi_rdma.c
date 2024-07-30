@@ -96,7 +96,7 @@ static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
 /** Global variables **/
 
 /* Maximum size of an eager message (see OFI_NCCL_EAGER_MAX_SIZE) */
-static size_t eager_max_size = 0;
+size_t eager_max_size = 8192;
 
 /* Function prototypes */
 static int send_progress(nccl_net_ofi_rdma_req_t *req);
@@ -6473,13 +6473,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (ofi_nccl_eager_max_size() < 0 ||
-	    ofi_nccl_eager_max_size() > rr_threshold) {
+	if (eager_max_size < 0 ||
+	    eager_max_size > rr_threshold) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
 		goto error;
 	}
-	eager_max_size = (size_t) ofi_nccl_eager_max_size();
 
 	if (domain_per_thread == 1 && ofi_nccl_endpoint_per_communicator() != 0) {
 		/* TODO support this configuration */

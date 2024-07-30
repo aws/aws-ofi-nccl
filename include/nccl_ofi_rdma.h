@@ -51,6 +51,9 @@ extern "C" {
  */
 #define NCCL_OFI_RDMA_SEQ_BITS     (10)
 
+/* Maximum size of eager message */
+extern size_t eager_max_size;
+
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
