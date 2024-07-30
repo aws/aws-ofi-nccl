@@ -219,6 +219,14 @@ pipeline {
                     def g4dn_region = "us-west-2"
                     def g4dn_odcr = "cr-0e2f9cac30bb5ad5f"
                     def g4dn_addl_args = "${base_args} --odcr-placement-group-name g4dn-placement-group"
+                    def trn1_lock_label = "trn1-1-4node"
+                    def trn1_region = "us-east-2"
+                    def trn1_odcr = "cr-0e9366fb7fa2772f1"
+                    def trn1_addl_args = "${base_args} --odcr-placement-group-name trn1-placement-group --test-list test_nccom_test"
+                    def trn1n_lock_label = "trn1n-1-4node"
+                    def trn1n_region = "us-east-1"
+                    def trn1n_odcr = "cr-07342cf6439332dce"
+                    def trn1n_addl_args = "${base_args} --odcr-placement-group-name trn1n-placement-group --test-list test_nccom_test"
 
                     // p3dn tests
                     stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
@@ -237,6 +245,12 @@ pipeline {
 
                     // g4dn tests
                     stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_region, g4dn_lock_label, num_instances, g4dn_odcr, g4dn_addl_args)
+
+                    // trn1 tests
+                    stages["4_trn1_ubuntu2004"] = get_test_stage_with_lock("4_trn1_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "trn1.32xlarge", trn1_region, trn1_lock_label, num_instances, trn1_odcr, trn1_addl_args)
+
+                    // trn1n tests
+                    stages["4_trn1n_ubuntu2004"] = get_test_stage_with_lock("4_trn1n_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "trn1n.32xlarge", trn1n_region, trn1n_lock_label, num_instances, trn1n_odcr, trn1n_addl_args)
 
                     parallel stages
                 }
