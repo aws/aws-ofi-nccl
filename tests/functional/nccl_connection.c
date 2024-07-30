@@ -106,17 +106,21 @@ int main(int argc, char* argv[])
 			/* MPI recv */
 			MPI_Recv((void *)src_handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-			/* Connect API */
 			NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", peer_rank);
-			while (sComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
+
+			while (sComm == NULL || rComm == NULL) {
+				/* Connect API */
+				if (sComm == NULL) {
+					OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+				}
+
+				/* Accept API */
+				if (rComm == NULL) {
+					OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
+				}
 			}
 
-			/* Accept API */
-			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
-			while (rComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
-			}
 			NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 					peer_rank);
 		}
@@ -129,17 +133,21 @@ int main(int argc, char* argv[])
 			/* MPI send */
 			MPI_Send((void *)handle, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR, peer_rank, 0, MPI_COMM_WORLD);
 
-			/* Connect API */
 			NCCL_OFI_INFO(NCCL_INIT, "Send connection request to rank %d", peer_rank);
-			while (sComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
+
+			while (sComm == NULL || rComm == NULL) {
+				/* Connect API */
+				if (sComm == NULL) {
+					OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle, (void **)&sComm, &s_ignore), res, exit);
+				}
+
+				/* Accept API */
+				if (rComm == NULL) {
+					OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
+				}
 			}
 
-			/* Accept API */
-			NCCL_OFI_INFO(NCCL_INIT, "Server: Start accepting requests");
-			while (rComm == NULL) {
-				OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
-			}
 			NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 					peer_rank);
 		}
