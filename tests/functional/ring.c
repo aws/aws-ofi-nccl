@@ -180,18 +180,26 @@ int main(int argc, char *argv[])
 		MPI_Recv((void *)src_handle_next, NCCL_NET_HANDLE_MAXSIZE, MPI_CHAR,
 			next, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
 
-		/* Connect to next rank */
 		NCCL_OFI_INFO(NCCL_NET, "Send connection request to rank %d", next);
-		while (sComm_next == NULL)
-			OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle_next, (void **)&sComm_next, &s_ignore), res, exit);
-
-		/*
-		* Accept API: accept connection from prev rank as the data flow is
-		* clockwise
-		*/
 		NCCL_OFI_INFO(NCCL_NET, "Server: Start accepting requests");
-		while (rComm == NULL)
-			OFINCCLCHECKGOTO(extNet->accept((void *)lComm, (void **)&rComm, &r_ignore), res, exit);
+
+		while (sComm_next == NULL || rComm == NULL) {
+			/* Connect to next rank */
+			if (sComm_next == NULL) {
+				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle_next,
+					(void **)&sComm_next, &s_ignore), res, exit);
+			}
+
+			/*
+			* Accept API: accept connection from prev rank as the data flow is
+			* clockwise
+			*/
+			if (rComm == NULL) {
+				OFINCCLCHECKGOTO(extNet->accept((void *)lComm,
+					(void **)&rComm, &r_ignore), res, exit);
+			}
+		}
+
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
 
 		/* Send NUM_REQUESTS to next rank */
