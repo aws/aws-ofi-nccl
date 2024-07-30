@@ -142,7 +142,7 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE", 0);
  * Maximum number of cq entries to read in a single call to
  * fi_cq_read.
  */
-OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
+OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 16);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
