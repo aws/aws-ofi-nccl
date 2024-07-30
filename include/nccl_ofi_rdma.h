@@ -452,9 +452,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	 * connection establishment */
 	nccl_net_ofi_rdma_req_t *conn_resp_req;
 
-	/* Indicates if connection establishment is completed */
-	bool connected;
-
 	/* Message struct send connect message and receive connect
 	 * response message */
 	nccl_ofi_rdma_connection_info_t conn_msg;
