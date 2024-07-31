@@ -23,7 +23,6 @@ jobs:
           - cuda
         amazonlinux:
           - al2023
-          - al2
         efainstaller:
           - latest
           - 1.32.0
@@ -34,12 +33,6 @@ jobs:
             efainstallerdir: ALINUX2023
             nvidiadistro: fedora37
             configmanager: dnf config-manager
-            cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
-
-          - amazonlinux: al2
-            efainstallerdir: ALINUX2
-            nvidiadistro: rhel7
-            configmanager: yum-config-manager
             cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
 
     runs-on: codebuild-ghactions-${{ matrix.amazonlinux }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -56,11 +49,6 @@ jobs:
       - name: Install hwloc, utilities.
         run: |
           sudo yum -y install hwloc-devel yum-utils
-      - name: Add EPEL
-        if: matrix.amazonlinux == 'al2'
-        run: |
-          sudo yum -y install \
-             https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
       - name: Install CUDA
         run: |
           sudo ${{ matrix.configmanager }} --add-repo \
