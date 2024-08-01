@@ -54,7 +54,8 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
                   FI_OPT_EFA_USE_DEVICE_RDMA,
                   FI_OPT_EFA_EMULATED_WRITE,
                   FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES,
-                  FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES],
+                  FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES,
+                  FI_OPT_SHARED_MEMORY_PERMITTED],
                   [], [], [AC_INCLUDES_DEFAULT
 [#include <rdma/fi_endpoint.h>
 #ifdef HAVE_RDMA_FI_EXT_H
