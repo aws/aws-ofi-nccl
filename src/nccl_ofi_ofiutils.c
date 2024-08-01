@@ -302,6 +302,42 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 		goto error;
 	}
 
+	/*
+	 * Disable shared memory.  There's really only three cases
+	 * we're going to be using network operations inside a shared
+	 * memory domain:
+	 *
+	 * 1. disabling NCCL P2P (NVLink / PCIe) operations to test
+	 *    networking without lots of nodes.
+	 * 2. flush operations
+	 * 3. cleanup copies for the rdma protocol's eager messages
+	 *
+	 * In none of these do you want to use Libfabric's shared
+	 * memory as opposed to a real network device.  (2) is
+	 * actually a correctness issue to use shared memory.  So we
+	 * disable shared memory transport when available.
+	 */
+#if HAVE_DECL_FI_OPT_SHARED_MEMORY_PERMITTED
+	{
+		bool optval = false;
+		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
+				FI_OPT_SHARED_MEMORY_PERMITTED, &optval,
+				sizeof(optval));
+		if (ret == -FI_EOPNOTSUPP) {
+			/* One way we get here is running against
+			 * older libfabric builds that don't have
+			 * FI_OPT_SHARED_MEMORY_PERMITTED.  This isn't
+			 * awesome, but there isn't really a better
+			 * choice.
+			 */
+			NCCL_OFI_TRACE(NCCL_INIT, "Disabling shared memory not supported");
+		} else if (ret != 0) {
+			NCCL_OFI_WARN("Disabling shared memory failed: %s",
+				      fi_strerror(-ret));
+			goto error;
+		}
+	}
+#endif
 
 	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
 	 * using the Libfabric 1.18 API with HMEM support.
