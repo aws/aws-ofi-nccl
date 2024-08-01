@@ -56,11 +56,6 @@ jobs:
       - name: Install hwloc, utilities.
         run: |
           sudo yum -y install hwloc-devel yum-utils
-      - name: Add EPEL
-        if: matrix.amazonlinux == 'al2'
-        run: |
-          sudo yum -y install \
-             https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm
       - name: Install CUDA
         run: |
           sudo ${{ matrix.configmanager }} --add-repo \
