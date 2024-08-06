@@ -59,7 +59,7 @@ def wait_for_odcr_capacity(region, instance_count, odcr) {
     sh ". venv/bin/activate; ./PortaFiducia/scripts/wait_for_odcr_capacity.py --region ${region} --odcr-id ${odcr} --required-capacity ${instance_count}"
 }
 
-def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, config, odcr, addl_args) {
+def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_count, region, odcr, addl_args) {
     /*
      * Run PortaFiducia/tests/test_orchestrator.py with given command line arguments
      */
@@ -83,7 +83,7 @@ def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_
     }
 
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
-    def args = "--config ${config} --os ${os} --odcr ${odcr} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
+    def args = "--os ${os} --odcr ${odcr} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
     def ret = sh (
                     script: ". venv/bin/activate; ./PortaFiducia/tests/test_orchestrator.py ${args}",
                     returnStatus: true
@@ -126,7 +126,7 @@ def get_cluster_name(build_tag, os, instance_type) {
 }
 
 
-def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, lock_label, lock_count, config, odcr, addl_args) {
+def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, lock_label, lock_count, odcr, addl_args) {
     /*
      * Generate a single test stage that run test_orchestrator.py with the given parameters.
      * The job will queue until it acquires the given number of locks. The locks will be released
@@ -138,7 +138,6 @@ def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, l
      * param@ region: the (default) aws region where the tests are run.
      * param@ lock_label: str, the label of the lockable resources.
      * param@ lock_count: int, the quantity of the lockable resources.
-     * param@ config: the name of the PortaFiducia config file
      * param@ odcr: The on demand capacity reservation ID to create instances in
      * param@ addl_args: additional arguments passed to test_orchestrator.py
      * return@: the test stage.
@@ -146,7 +145,7 @@ def get_test_stage_with_lock(stage_name, build_tag, os, instance_type, region, l
     return {
         stage("${stage_name}") {
             lock(label: lock_label, quantity: lock_count) {
-                this.run_test_orchestrator_once(stage_name, build_tag, os, instance_type, lock_count, region, config, odcr, addl_args)
+                this.run_test_orchestrator_once(stage_name, build_tag, os, instance_type, lock_count, region, odcr, addl_args)
             }
         }
     }
@@ -199,14 +198,22 @@ pipeline {
             steps {
                 script {
                     def stages = [:]
-                    def nccl_version = "v2.20.5-1"
-                    def addl_args_pr = "--test-aws-ofi-nccl-pr $env.CHANGE_ID --test-nccl-version ${nccl_version}"
-                    def config = ".ci/aws/aws_ofi_nccl_pr_ci.yaml"
+
+                    def nccl_version = "--test-nccl-version v2.20.5-1"
+                    def timeout = "--timeout 120"
+                    def cluster_type = "--cluster-type manual_cluster"
+                    def test_target = "--test-target aws-ofi-nccl"
+                    def test_type = "--test-type pr"
+                    def build_type = "--aws-ofi-nccl-build-type debug"
+                    def pr_num = "--test-aws-ofi-nccl-pr $env.CHANGE_ID"
+                    def test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
+                    def base_args = "${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${test_list}"
+
                     def num_instances = 4
                     def p3dn_lock_label = "p3dn-1-4node"
                     def p3dn_region = "ap-northeast-1"
                     def p3dn_odcr = "cr-08ecd03c0644442e4"
-                    def p3dn_addl_args = "${addl_args_pr} --odcr-placement-group-name p3dn-placement-group"
+                    def p3dn_addl_args = "${base_args} --odcr-placement-group-name p3dn-placement-group"
                     def p3dn_al2_addl_args = "${p3dn_addl_args} --ami-id ami-0b9081c7bc36c4eba"
                     def p4d_lock_label = "p4d-1-4node"
                     def p4d_region = "us-east-2"
@@ -214,22 +221,22 @@ pipeline {
                     def p5_lock_label = "p5-1-4node"
                     def p5_region = "af-south-1"
                     def p5_odcr = "cr-02eb632dcd8175139"
-                    def p4_p5_addl_args = "${addl_args_pr} --use-prebuilt-ami-with-efa-installer true"
+                    def p4_p5_addl_args = "${base_args} --use-prebuilt-ami-with-efa-installer true"
 
                     // p3dn tests
-                    stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, config, p3dn_odcr, p3dn_al2_addl_args)
-                    stages["4_p3dn_ubuntu2004"] = get_test_stage_with_lock("4_p3dn_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, config, p3dn_odcr, p3dn_addl_args)
-                    stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock("4_p3dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, config, p3dn_odcr, p3dn_addl_args)
+                    stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_al2_addl_args)
+                    stages["4_p3dn_ubuntu2004"] = get_test_stage_with_lock("4_p3dn_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
+                    stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock("4_p3dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
 
                     // p4d tests
-                    stages["4_p4d_alinux2"] = get_test_stage_with_lock("4_p4d_alinux2", env.BUILD_TAG, "alinux2", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_odcr, p4_p5_addl_args)
-                    stages["4_p4d_ubuntu2004"] = get_test_stage_with_lock("4_p4d_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_odcr, p4_p5_addl_args)
-                    stages["4_p4d_ubuntu2204"] = get_test_stage_with_lock("4_p4d_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, config, p4d_odcr, p4_p5_addl_args)
+                    stages["4_p4d_alinux2"] = get_test_stage_with_lock("4_p4d_alinux2", env.BUILD_TAG, "alinux2", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
+                    stages["4_p4d_ubuntu2004"] = get_test_stage_with_lock("4_p4d_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
+                    stages["4_p4d_ubuntu2204"] = get_test_stage_with_lock("4_p4d_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
 
                     // p5 tests
-                    stages["4_p5_alinux2"] = get_test_stage_with_lock("4_p5_alinux2", env.BUILD_TAG, "alinux2", "p5.48xlarge", p5_region, p5_lock_label, num_instances, config, p5_odcr, p4_p5_addl_args)
-                    stages["4_p5_ubuntu2004"] = get_test_stage_with_lock("4_p5_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p5.48xlarge", p5_region, p5_lock_label, num_instances, config, p5_odcr, p4_p5_addl_args)
-                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock("4_p5_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p5.48xlarge", p5_region, p5_lock_label, num_instances, config, p5_odcr, p4_p5_addl_args)
+                    stages["4_p5_alinux2"] = get_test_stage_with_lock("4_p5_alinux2", env.BUILD_TAG, "alinux2", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
+                    stages["4_p5_ubuntu2004"] = get_test_stage_with_lock("4_p5_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
+                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock("4_p5_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
 
                     parallel stages
                 }
