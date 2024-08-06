@@ -580,7 +580,11 @@ int platform_init(const char **provider_filter)
 
 	domain_per_thread = ofi_nccl_domain_per_thread();
 	if (domain_per_thread == -1) {
-		domain_per_thread = platform_data->domain_per_thread;
+		if (platform_data != NULL) {
+			domain_per_thread = platform_data->domain_per_thread;
+		} else {
+			domain_per_thread = 0;
+		}
 	}
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s", domain_per_thread ? "thread" : "process");
 
