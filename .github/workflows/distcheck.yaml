@@ -212,6 +212,127 @@ jobs:
           path: config.log
           if-no-files-found: ignore
 
+  unit-tests:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        cc-variant:
+          - latest
+          - legacy
+        cc:
+          - gcc
+          - clang
+        sdk:
+          - cuda
+          - neuron
+        include:
+          - cc-variant: latest
+            cc: clang
+            cc-version: 19
+          - cc-variant: latest
+            cc: gcc
+            cc-version: 13
+
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}(${{matrix.cc-variant}})/unit-tests/
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Neuron SDK Repository
+        if: matrix.sdk == 'neuron'
+        run: |
+          # Configure Linux for Neuron repository updates
+          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
+          deb https://apt.repos.neuron.amazonaws.com jammy main
+          EOF
+          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
+          sudo apt update -y
+
+      - name: Add compiler repositories
+        if: matrix.cc-variant == 'latest'
+        run: |
+          if [ "${{ matrix.cc }}" == "clang" ]; then
+            wget https://apt.llvm.org/llvm.sh
+            chmod +x llvm.sh
+            # Delete the last line, allowing us to use the cache below for
+            # actually installing the package; this just adds the
+            # repository.
+            sed -i '$ d' llvm.sh
+            sudo ./llvm.sh ${{ matrix.cc-version }}
+          fi
+
+          if [ "${{ matrix.cc }}" == "gcc" ]; then
+            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          fi
+
+      - name: Install Latest Compiler
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        if: matrix.cc-variant == 'latest'
+        with:
+          packages: ${{ matrix.cc }}-${{matrix.cc-version}}
+          version: compiler-${{ matrix.cc }}-${{matrix.cc-version}}
+
+      - name: Install Base Dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: ${{ env.APT_PACKAGES }}
+          version: base-packages
+
+      - name: Install CUDA SDK
+        if: matrix.sdk == 'cuda'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: nvidia-cuda-toolkit
+          version: cuda-packages
+
+      - name: Install Neuron SDK
+        if: matrix.sdk == 'neuron'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: aws-neuronx-runtime-lib
+          version: neuron-packages
+
+      - name: Fetch and Install EFA Installer Dependencies
+        run: |
+          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
+          tar -xf aws-efa-installer-*.tar.gz
+          pushd aws-efa-installer/
+              sudo ./efa_installer.sh -y --skip-kmod
+          popd
+
+      - name: Build Plugin
+        run: |
+          set -x
+
+          export CC="${{ matrix.realcc || matrix.cc }}"
+
+          # actions/checkout@v4 would drop the plugin source in $PWD,
+          # so go ahead and build it.
+          ./autogen.sh
+          if [ "${{ matrix.sdk }}" == "cuda" ]
+          then
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --with-cuda=/usr/local/cuda/ \
+                        --enable-tests \
+                        --enable-debug \
+                        --enable-platform-aws
+          else
+            ./configure --with-libfabric=/opt/amazon/efa \
+                        --enable-neuron \
+                        --enable-debug \
+                        --enable-platform-aws
+          fi
+          make -j "$(nproc)"
+
+      - name: Run unit tests
+        run: make check
+
+      - name: Upload build logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.sdk }}-config.log
+          path: config.log
+          if-no-files-found: ignore
 
   codechecker:
     runs-on: ubuntu-22.04
