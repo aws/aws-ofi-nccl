@@ -20,4 +20,14 @@
 #define PATH_MAX	4096
 #endif
 
+/* Workaround for platforms without memfd_create */
+#ifndef HAVE_MEMFD_CREATE
+#include <sys/syscall.h>
+#include <unistd.h>
+static inline int memfd_create(const char *name, unsigned int flags)
+{
+    return syscall(SYS_memfd_create, name, flags);
+}
+#endif /* ifndef HAVE_MEMFD_CREATE */
+
 #endif

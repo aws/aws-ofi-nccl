@@ -164,21 +164,10 @@ OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
 
 /*
  * When enabled and RDMA communication protocol is used, write NCCL
- * topology file and set environment variable `NCCL_TOPO_FILE`. By
- * default, OFI plugin writes the NCCL topology file to a unique
- * temporary file using file path template
- * `/tmp/aws-ofi-nccl-topo-XXXXXX` and the file is deleted at normal
- * process termination. See environment variable
- * `OFI_NCCL_TOPO_FILE_TEMPLATE` to control the file destination.
+ * topology file and set environment variable `NCCL_TOPO_FILE`. OFI plugin
+ * writes the NCCL topology file to a memfd file.
  */
 OFI_NCCL_PARAM_INT(topo_file_write_enable, "TOPO_FILE_WRITE_ENABLE", 0);
-
-/*
- * User defined file path template that is used in case NCCL topology
- * file is written. The last six characters of the template must be
- * XXXXXX and will be replaced to make the filename unique.
- */
-OFI_NCCL_PARAM_STR(topo_file_template, "TOPO_FILE_TEMPLATE", NULL);
 
 /*
  * Disable the native RDMA write support check when using the "RDMA" protocol

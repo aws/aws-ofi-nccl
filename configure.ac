@@ -156,6 +156,8 @@ AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
       [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
 
+CHECK_ENABLE_MEMFD_CREATE()
+
 AC_CONFIG_FILES([Makefile
                  include/Makefile
                  src/Makefile
