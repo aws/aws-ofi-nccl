@@ -200,8 +200,19 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
 /*
  * Eager message size limit when using RDMA protocol. Message sizes greater than
  * this limit will always be sent using RDMA write instead of eagerly.
+ *
+ * Neuron perf is better without the eager protocol, so we set the
+ * default to 0 on Neuron platforms.  We really need to have a way to
+ * tweak defaults from the platform file, but this fits our needs for
+ * now.
  */
-OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
+OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE",
+#if HAVE_NEURON
+		   0
+#else
+		   8192
+#endif
+);
 
 #ifdef _cplusplus
 } // End extern "C"
