@@ -163,13 +163,6 @@ OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
 OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
 
 /*
- * When enabled and RDMA communication protocol is used, write NCCL
- * topology file and set environment variable `NCCL_TOPO_FILE`. OFI plugin
- * writes the NCCL topology file to a memfd file.
- */
-OFI_NCCL_PARAM_INT(topo_file_write_enable, "TOPO_FILE_WRITE_ENABLE", 0);
-
-/*
  * Disable the native RDMA write support check when using the "RDMA" protocol
  * for send/recv operations on AWS platforms. When the check is disabled, the
  * "RDMA" protocol can be used even on platforms where native RDMA write is not

@@ -67,7 +67,7 @@ struct ec2_platform_data {
 	},
 	{
 		.name = "p5.48xlarge",
-		.topology = "p5.48xl-topo.xml",
+		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,

@@ -247,10 +247,8 @@ static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t
 /*
  * @brief	Write topology to NCCL topology file
  *
- * If environment variable `OFI_NCCL_TOPO_FILE_WRITE_ENABLE` is set,
- * this function writes a NCCL topology file to a memfd file.
- *
- * It also sets environment variable `NCCL_TOPO_FILE` to the
+ * This function writes a NCCL topology file to a memfd file, and
+ * sets environment variable `NCCL_TOPO_FILE` to the
  * filename path of topology file.
  *
  * @param	topo
@@ -263,13 +261,6 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	int ret = 0;
 	int topo_fd = -1;
 	FILE *file = NULL;
-
-	/* This function is a no-op in case writing topology file is not enabled explicitly */
-	if (!ofi_nccl_topo_file_write_enable()) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Topology write not enabled; skipping");
-		goto exit;
-	}
 
 	/**
 	 * If `NCCL_TOPO_FILE` is already set, don't set it again.
