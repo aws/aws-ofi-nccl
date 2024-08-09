@@ -1,0 +1,1 @@
+For security reasons, the Jenkinsfile is not allowed to depend on / use any files in this repository.
