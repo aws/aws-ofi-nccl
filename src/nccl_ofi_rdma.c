@@ -28,13 +28,6 @@
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_mr.h"
 
-/* Template path used to write temporary NCCL topology file */
-static const char *topo_file_template = "/tmp/aws-ofi-nccl-topo-XXXXXX";
-/* Stores path to NCCL topology file written by ofi plugin for later unlinking */
-static char *topo_file_unlink = NULL;
-/* Locks functions which access `topo_file_unlink` */
-static pthread_mutex_t topo_file_lock = PTHREAD_MUTEX_INITIALIZER;
-
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
@@ -252,51 +245,13 @@ static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t
 }
 
 /*
- * @brief	Unlink temporary NCCL topology file written by `write_topo_file()`
- *
- * This function is guarded by `topo_file_lock`.
- */
-static void unlink_topo_file()
-{
-	nccl_net_ofi_mutex_lock(&topo_file_lock);
-
-	/* No filename stored to be unlinked */
-	if (topo_file_unlink == NULL) {
-		goto unlock;
-	}
-
-	if (unlink(topo_file_unlink) == -1) {
-		NCCL_OFI_WARN("Failed to unlink NCCL topology file %s: %s", topo_file_unlink, strerror(errno));
-		goto unlock;
-	}
-
-	/* Clean up `topo_file_unlink` */
-	free(topo_file_unlink);
-	topo_file_unlink = NULL;
-
- unlock:
-	nccl_net_ofi_mutex_unlock(&topo_file_lock);
-}
-
-/*
  * @brief	Write topology to NCCL topology file
  *
  * If environment variable `OFI_NCCL_TOPO_FILE_WRITE_ENABLE` is set,
- * this function writes a NCCL topology file and registers function
- * `unlink_topo_file()` to be called at process termination to unlink
- * the written topology file.
+ * this function writes a NCCL topology file to a memfd file.
  *
- * In case environment variable `OFI_NCCL_TOPO_FILE_TEMPLATE` is set,
- * this function writes to a unique file using file template provided
- * by `OFI_NCCL_TOPO_FILE_TEMPLATE`. Note that
- * `OFI_NCCL_TOPO_FILE_TEMPLATE` needs to end with suffix `XXXXXX`. In
- * case `OFI_NCCL_TOPO_FILE_TEMPLATE` is not set, file template
- * `/tmp/aws-ofi-nccl-topo-XXXXXX` is used to write a temporary file
- * and an invokation of `unlink_topo_file()` will unlink the temporary
- * file. In both cases, set environment variable `NCCL_TOPO_FILE` to
+ * It also sets environment variable `NCCL_TOPO_FILE` to the
  * filename path of topology file.
- *
- * This function is guarded by `topo_file_lock`.
  *
  * @param	topo
  *		hwloc topology. May be NULL
@@ -306,65 +261,72 @@ static void unlink_topo_file()
 static int write_topo_file(nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
-	int rc = 0;
-	FILE *file;
-	char *filename;
-	int fd;
+	int topo_fd = -1;
+	FILE *file = NULL;
 
 	/* This function is a no-op in case writing topology file is not enabled explicitly */
 	if (!ofi_nccl_topo_file_write_enable()) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Topology write not enabled; skipping");
 		goto exit;
 	}
 
-	nccl_net_ofi_mutex_lock(&topo_file_lock);
-
-	if (topo_file_unlink) {
-		/* A topology file has already been written and stored
-		 * such that it can be unlinked later. Do not write
-		 * another topology file since it would end up
-		 * overriding the stored filename. */
-		goto unlock;
-	}
-
-	if (ofi_nccl_topo_file_template()) {
-		filename = strdup(ofi_nccl_topo_file_template());
-	} else {
-		filename = strdup(topo_file_template);
-		/* Store filename to be unlinked later */
-		topo_file_unlink = filename;
+	/**
+	 * If `NCCL_TOPO_FILE` is already set, don't set it again.
+	 *
+	 * Note about forking behavior: in some Python applications, after calling
+	 * plugin init, the process will fork(). This `NCCL_TOPO_FILE` environment
+	 * variable, as well as the file descriptor it refers to, will be copied
+	 * to the child process, and will continue to point to a valid topology
+	 * file until the child process exits.
+	 */
+	if (getenv("NCCL_TOPO_FILE")) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "NCCL_TOPO_FILE environment variable is already set to %s",
+			       getenv("NCCL_TOPO_FILE"));
+		goto exit;
 	}
 
 	/* Create file descriptor */
-	fd = mkstemp(filename);
-	if (fd == -1) {
-		NCCL_OFI_WARN("Failed to create NCCL topology file from template %s. ERROR: %s",
-			      filename, strerror(errno));
+	topo_fd = memfd_create("ofi_nccl_topo", 0);
+	if (topo_fd == -1) {
+		NCCL_OFI_WARN("Failed to create anonymous topology file. ERROR: %s",
+			      strerror(errno));
 		ret = -errno;
-		goto unlock;
+		goto exit;
 	}
 
 	/* Open file from file descriptor */
-	file = fdopen(fd, "w");
+	file = fdopen(topo_fd, "w");
 	if (file == NULL) {
-		NCCL_OFI_WARN("Failed to open NCCL topology file using file descriptor. File name: %s. ERROR %s",
-			      filename, strerror(errno));
+		NCCL_OFI_WARN("Failed to open NCCL topology file using file descriptor. ERROR %s",
+			      strerror(errno));
 		ret = -errno;
-		goto unlock;
+		close(topo_fd);
+		goto exit;
 	}
 
 	ret = nccl_ofi_topo_write(topo, file);
 	if (ret) {
-		NCCL_OFI_WARN("Failed to write NCCL topology using file descriptor. File name: %s",
-			      filename);
-		goto unlock;
+		NCCL_OFI_WARN("Failed to write NCCL topology using file descriptor. RC: %d", ret);
+		goto error;
 	}
 
-	/* Close file. The file remains accessible as long as file is not unlinked. */
-	if (fclose(file) == EOF) {
-		NCCL_OFI_WARN("Unable to close NCCL topology file. File name: %s. ERROR: %s",
-			      filename, strerror(errno));
+	/* Flush buffered writes to file. We don't close the file here so that
+	   the underlying descriptor remains open, which we will reference
+	   in `NCCL_TOPO_FILE`. */
+	if (fflush(file) == EOF) {
+		NCCL_OFI_WARN("Unable to flush NCCL topology file. ERROR: %s",
+			      strerror(errno));
 		ret = -errno;
-		goto unlock;
+		goto error;
+	}
+
+	char filename[32];
+	if (snprintf(filename, sizeof(filename), "/proc/self/fd/%d", topo_fd) < 0) {
+		NCCL_OFI_WARN("Errror preparing topo file name");
+		ret = -EIO;
+		goto error;
 	}
 
 	/* Set topology file path environment variable `NCCL_TOPO_FILE` */
@@ -372,24 +334,20 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 		      "Setting NCCL_TOPO_FILE environment variable to %s",
 		      filename);
 	if (setenv("NCCL_TOPO_FILE", filename, 1) != 0) {
-		NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE.ERROR: %s",
+		NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE. ERROR: %s",
 			      strerror(errno));
 		ret = -errno;
-		goto unlock;
+		goto error;
 	}
 
-	rc = atexit(unlink_topo_file);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Failed to set exit function");
-		ret = -1;
-		goto exit;
+	goto exit;
 
+error:
+	if (file) {
+		fclose(file);
 	}
 
- unlock:
-	nccl_net_ofi_mutex_unlock(&topo_file_lock);
-
- exit:
+exit:
 	return ret;
 }
 
