@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_PTHREAD_H
 #define NCCL_OFI_PTHREAD_H
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -104,7 +104,7 @@ nccl_net_ofi_mutex_unlock_impl(pthread_mutex_t *mutex, const char *file, size_t 
 #define nccl_net_ofi_mutex_unlock(mutex) nccl_net_ofi_mutex_unlock_impl(mutex, __FILE__, __LINE__);
 
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

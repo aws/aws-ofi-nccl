@@ -5,12 +5,11 @@
 #ifndef NCCL_OFI_MSGBUFF_H_
 #define NCCL_OFI_MSGBUFF_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <pthread.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -183,7 +182,7 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
 		uint16_t msg_index, nccl_ofi_msgbuff_status_t *msg_idx_status);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 
