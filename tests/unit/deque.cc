@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_deque.h"
 
 #define test_get_front(deque, expected) \
@@ -32,14 +32,13 @@
 
 int main(int argc, char *argv[])
 {
-	const size_t num_elem = 11;
+	constexpr size_t num_elem = 11;
 	struct elem_t {
 		nccl_ofi_deque_elem_t de;
 		int v;
 	} elems[num_elem];
 
 	nccl_ofi_deque_elem_t *deque_elem;
-	int ret;
 	size_t i;
 	for (i = 0; i < num_elem; ++i) {
 		elems[i].v = i;
@@ -48,7 +47,7 @@ int main(int argc, char *argv[])
 	ofi_log_function = logger;
 
 	nccl_ofi_deque_t *deque;
-	ret = nccl_ofi_deque_init(&deque);
+	int ret = nccl_ofi_deque_init(&deque);
 	if (ret) {
 		NCCL_OFI_WARN("deque_init failed: %d", ret);
 		exit(1);
@@ -72,7 +71,7 @@ int main(int argc, char *argv[])
 	for (i = 0; i < num_elem; ++i) {
 		int expected = (i == 0 ? elems[num_elem-1].v : elems[i-1].v);
 		ret = nccl_ofi_deque_remove_front(deque, &deque_elem);
-		if (ret || deque_elem == NULL) {
+		if (ret || deque_elem == nullptr) {
 			NCCL_OFI_WARN("remove_front unexpectedly failed: %d", ret);
 			exit(1);
 		}
@@ -83,7 +82,7 @@ int main(int argc, char *argv[])
 		}
 	}
 	ret = nccl_ofi_deque_remove_front(deque, &deque_elem);
-	if (ret != 0 || deque_elem != NULL) {
+	if (ret != 0 || deque_elem != nullptr) {
 		NCCL_OFI_WARN("remove_front from empty deque unexpectedly succeeded");
 		exit(1);
 	}

@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_ep_addr_list.h"
 
 static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_addr, int ep_num)

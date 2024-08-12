@@ -11,7 +11,7 @@
 
 #include "nccl-headers/net.h"
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_scheduler.h"
 
 int create_multiplexed(size_t size,
