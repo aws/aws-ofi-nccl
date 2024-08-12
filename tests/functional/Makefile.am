@@ -11,18 +11,18 @@ LDADD = $(top_builddir)/src/libinternal_net_plugin.la $(MPI_LIBS) $(CUDA_LIBS)
 CC = $(MPICC)
 CXX = $(MPICXX)
 
-noinst_HEADERS = test-common.h
+noinst_HEADERS = test-common.hpp
 
 if ENABLE_TESTS
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
 noinst_PROGRAMS = cuda_check
 endif
 
-nccl_connection_SOURCES = nccl_connection.c
-nccl_message_transfer_SOURCES = nccl_message_transfer.c
-ring_SOURCES = ring.c
+nccl_connection_SOURCES = nccl_connection.cc
+nccl_message_transfer_SOURCES = nccl_message_transfer.cc
+ring_SOURCES = ring.cc
 
-cuda_check_SOURCES = cuda_check.c
+cuda_check_SOURCES = cuda_check.cc
 # Override the LDADD for this check to avoid the -lcudart used by the
 # other tests, since the purpose of this test is to make sure we
 # didn't leak direct cuda dependencies into the plugin.

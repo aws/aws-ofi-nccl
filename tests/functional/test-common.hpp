@@ -20,6 +20,10 @@
 #include <stdarg.h>
 #include <cuda.h>
 
+
+template <typename T>
+constexpr T PROC_NAME_IDX(T i) { return i * MPI_MAX_PROCESSOR_NAME; };
+
 #define STR2(v)		#v
 #define STR(v)		STR2(v)
 
