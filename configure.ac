@@ -46,6 +46,7 @@ NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 AC_PROG_CC
 AM_PROG_CC_C_O
 m4_version_prereq([2.70], [], [AC_PROG_CC_STDC])
+AC_PROG_CXX
 AC_C_INLINE
 
 dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
