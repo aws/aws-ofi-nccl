@@ -134,6 +134,7 @@ int nccl_ofi_ep_addr_list_insert(nccl_ofi_ep_addr_list_t *ep_list,
 				 size_t addr_size)
 {
 	int ret = 0;
+	ep_pair_list_elem_t *new_pair = NULL;
 
 	if (addr_size > ep_list->max_addr_size) {
 		NCCL_OFI_WARN("Address size %zu > max size (%zu)", addr_size,
@@ -155,8 +156,7 @@ int nccl_ofi_ep_addr_list_insert(nccl_ofi_ep_addr_list_t *ep_list,
 	memcpy(new_addr->addr, addr_in, addr_size);
 	zero_pad_address(new_addr->addr, addr_size, ep_list->max_addr_size);
 
-	ep_pair_list_elem_t *new_pair = (ep_pair_list_elem_t *)
-		malloc(sizeof(*new_pair));
+	new_pair = (ep_pair_list_elem_t *)malloc(sizeof(*new_pair));
 	if (!new_pair) {
 		NCCL_OFI_WARN("Failed to allocate new ep list element");
 		free(new_addr);
