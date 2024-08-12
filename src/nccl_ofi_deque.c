@@ -11,7 +11,7 @@
 #include "nccl_ofi_deque.h"
 #include "nccl_ofi_log.h"
 
-int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p)
+int nccl_ofi_deque_init(struct nccl_ofi_deque **deque_p)
 {
 	nccl_ofi_deque_t *deque = (nccl_ofi_deque_t *)malloc(sizeof(nccl_ofi_deque_t));
 
@@ -36,7 +36,7 @@ int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p)
 	return 0;
 }
 
-int nccl_ofi_deque_finalize(nccl_ofi_deque_t *deque)
+int nccl_ofi_deque_finalize(struct nccl_ofi_deque *deque)
 {
 	assert(deque);
 

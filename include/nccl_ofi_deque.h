@@ -23,13 +23,12 @@ extern "C" {
  * this structure as a black box. Critically, the caller must ensure the
  * contents of this structure are not modified while it is in the deque.
  */
-struct nccl_ofi_deque_elem_t {
+struct nccl_ofi_deque_elem {
 	/* Pointer to previous element */
-	struct nccl_ofi_deque_elem_t *prev;
+	struct nccl_ofi_deque_elem *prev;
 	/* Pointer to next element */
-	struct nccl_ofi_deque_elem_t *next;
+	struct nccl_ofi_deque_elem *next;
 };
-typedef struct nccl_ofi_deque_elem_t nccl_ofi_deque_elem_t;
 
 /*
  * Deque (doubly-ended queue) structure
@@ -37,7 +36,7 @@ typedef struct nccl_ofi_deque_elem_t nccl_ofi_deque_elem_t;
  * Core deque structure.  This should be considered opaque to users
  * of the deque interface
  */
-struct nccl_ofi_deque_t {
+struct nccl_ofi_deque {
 	/* "Head" of queue.
 	 * The queue is circular. An empty queue has only this element. In an empty
 	 * queue, head.prev and head.next point to head.
@@ -46,18 +45,17 @@ struct nccl_ofi_deque_t {
 	 * front. insert_back and insert_front add elements to these respective
 	 * locations.
 	 */
-	nccl_ofi_deque_elem_t head;
+	struct nccl_ofi_deque_elem head;
 	/* Lock for deque operations */
 	pthread_mutex_t lock;
 };
-typedef struct nccl_ofi_deque_t nccl_ofi_deque_t;
 
 /*
  * Initialize deque structure.
  *
  * @return zero on success, non-zero on non-success.
  */
-int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p);
+extern int nccl_ofi_deque_init(struct nccl_ofi_deque **deque_p);
 
 /*
  * Finalize a deque
@@ -66,7 +64,7 @@ int nccl_ofi_deque_init(nccl_ofi_deque_t **deque_p);
  *
  * @return zero on success, non-zero on non-success.
  */
-int nccl_ofi_deque_finalize(nccl_ofi_deque_t *deque);
+extern int nccl_ofi_deque_finalize(struct nccl_ofi_deque *deque);
 
 /*
  * Insert an element to the back of the deque
@@ -74,7 +72,7 @@ int nccl_ofi_deque_finalize(nccl_ofi_deque_t *deque);
  * @param deque_elem	user-allocated storage space for list entry
  * @return zero on success, non-zero on error
  */
-static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+static inline int nccl_ofi_deque_insert_back(struct nccl_ofi_deque *deque, struct nccl_ofi_deque_elem *deque_elem)
 {
 	assert(deque);
 	assert(deque_elem);
@@ -99,7 +97,7 @@ static inline int nccl_ofi_deque_insert_back(nccl_ofi_deque_t *deque, nccl_ofi_d
  * @param deque_elem	user-allocated storage space for list entry
  * @return zero on success, non-zero on error
  */
-static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+static inline int nccl_ofi_deque_insert_front(struct nccl_ofi_deque *deque, struct nccl_ofi_deque_elem *deque_elem)
 {
 	assert(deque);
 	assert(deque_elem);
@@ -123,7 +121,7 @@ static inline int nccl_ofi_deque_insert_front(nccl_ofi_deque_t *deque, nccl_ofi_
  *
  * @return true if empty, false if not
  */
-static inline bool nccl_ofi_deque_isempty(nccl_ofi_deque_t *deque)
+static inline bool nccl_ofi_deque_isempty(struct nccl_ofi_deque *deque)
 {
 	return deque->head.next == &deque->head;
 }
@@ -133,7 +131,7 @@ static inline bool nccl_ofi_deque_isempty(nccl_ofi_deque_t *deque)
  * @param deque_elem  returned element; NULL if deque is empty or an error occurred
  * @return zero on success, non-zero on non-success
  */
-static inline int nccl_ofi_deque_remove_front(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t **deque_elem)
+static inline int nccl_ofi_deque_remove_front(struct nccl_ofi_deque *deque, struct nccl_ofi_deque_elem **deque_elem)
 {
 	assert(deque);
 	assert(deque_elem);
@@ -162,6 +160,9 @@ unlock:
 
 	return 0;
 }
+
+typedef struct nccl_ofi_deque_elem nccl_ofi_deque_elem_t;
+typedef struct nccl_ofi_deque nccl_ofi_deque_t;
 
 #ifdef __cplusplus
 } // End extern "C"
