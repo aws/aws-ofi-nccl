@@ -4259,7 +4259,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 
 	ssize_t rc;
 	/* Post RDMA write */
-	rc = fi_writedata(comm_rail->local_ep, send_data->buff + xfer_info->offset,
+	rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
 				xfer_info->msg_size, desc, send_data->wdata,
 				comm_rail->remote_addr,
 				send_data->remote_buff + xfer_info->offset,
@@ -4287,7 +4287,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 
 	ssize_t rc;
 	/* Post eager send */
-	rc = fi_senddata(comm_rail->local_ep, send_data->buff + xfer_info->offset, xfer_info->msg_size, desc,
+	rc = fi_senddata(comm_rail->local_ep, (void*)(((uintptr_t)send_data->buff) + xfer_info->offset), xfer_info->msg_size, desc,
 			 send_data->wdata, comm_rail->remote_addr, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
