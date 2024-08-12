@@ -39,7 +39,11 @@ extern "C" {
  * @param	a
  *		Must be a power of two
  */
+#ifndef __cplusplus
 #define NCCL_OFI_IS_ALIGNED(x, a) (((x) & ((typeof(x))(a) - 1)) == 0)
+#else
+#define NCCL_OFI_IS_ALIGNED(x, a) (((x) & ((decltype(x))(a) - 1)) == 0)
+#endif
 
 /*
  * @brief	Return true if and only if pointer `p` is `a`-byte aligned
