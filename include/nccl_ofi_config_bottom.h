@@ -9,7 +9,11 @@
 #define OFI_LIKELY(x)   __builtin_expect((x), 1)
 #define OFI_UNLIKELY(x) __builtin_expect((x), 0)
 
+#ifdef __cplusplus
+#define NCCL_OFI_EXPORT_SYMBOL __attribute__((visibility("default"))) [[maybe_unused]]
+#else
 #define NCCL_OFI_EXPORT_SYMBOL __attribute__((visibility("default")))
+#endif
 
 #ifndef __cplusplus
 #define static_assert _Static_assert
