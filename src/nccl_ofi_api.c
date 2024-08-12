@@ -309,15 +309,11 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
 	}
 
 	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->regMr(send_comm, data, size, type, mhandle);
+	case NCCL_NET_OFI_SEND_COMM:
+		ret = ((nccl_net_ofi_send_comm_t *)base_comm)->regMr((nccl_net_ofi_send_comm_t *)base_comm, data, size, type, mhandle);
 		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMr(recv_comm, data, size, type, mhandle);
+	case NCCL_NET_OFI_RECV_COMM:
+		ret = ((nccl_net_ofi_recv_comm_t *)base_comm)->regMr((nccl_net_ofi_recv_comm_t *)base_comm, data, size, type, mhandle);
 		break;
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
@@ -342,15 +338,11 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	int ret = 0;
 
 	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->deregMr(send_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
+	case NCCL_NET_OFI_SEND_COMM:
+		ret = ((nccl_net_ofi_send_comm_t *)base_comm)->deregMr((nccl_net_ofi_send_comm_t *)base_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->deregMr(recv_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
+	case NCCL_NET_OFI_RECV_COMM:
+		ret = ((nccl_net_ofi_recv_comm_t *)base_comm)->deregMr(((nccl_net_ofi_recv_comm_t *)base_comm), (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
@@ -380,14 +372,10 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->regMrDmaBuf(send_comm, data, size, type, offset, fd, handle);
+		ret = ((nccl_net_ofi_send_comm_t *)base_comm)->regMrDmaBuf((nccl_net_ofi_send_comm_t *)base_comm, data, size, type, offset, fd, handle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMrDmaBuf(recv_comm, data, size, type, offset, fd, handle);
+		ret = ((nccl_net_ofi_recv_comm_t *)base_comm)->regMrDmaBuf((nccl_net_ofi_recv_comm_t *)base_comm, data, size, type, offset, fd, handle);
 		break;
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
