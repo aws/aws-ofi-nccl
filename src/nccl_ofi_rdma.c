@@ -479,8 +479,8 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	 * reails have the same speed. */
 	if (ret == 0) {
 		props->port_speed *= device->num_rails;
-		_Static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
-			       "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
+		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
+					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
 	}
 	return ret;
