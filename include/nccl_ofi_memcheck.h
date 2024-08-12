@@ -86,8 +86,8 @@ static inline void nccl_net_ofi_mem_noaccess(void *data, size_t size);
 static inline void nccl_net_ofi_mem_defined_unaligned(void *data, size_t size)
 {
 	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
-	nccl_net_ofi_mem_defined(data - offset, size + offset);
+	size_t offset = (uintptr_t)data - (uintptr_t)aligned;
+	nccl_net_ofi_mem_defined((void*)((uintptr_t)data - offset), size + offset);
 }
 
 /**
@@ -97,8 +97,8 @@ static inline void nccl_net_ofi_mem_defined_unaligned(void *data, size_t size)
 static inline void nccl_net_ofi_mem_undefined_unaligned(void *data, size_t size)
 {
 	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
-	nccl_net_ofi_mem_undefined(data - offset, size + offset);
+	size_t offset = (uintptr_t)data - (uintptr_t)aligned;
+	nccl_net_ofi_mem_undefined((void*)((uintptr_t)data - offset), size + offset);
 }
 
 /**
@@ -108,8 +108,8 @@ static inline void nccl_net_ofi_mem_undefined_unaligned(void *data, size_t size)
 static inline void nccl_net_ofi_mem_noaccess_unaligned(void *data, size_t size)
 {
 	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
-	nccl_net_ofi_mem_noaccess(data - offset, size + offset);
+	size_t offset = (uintptr_t)data - (uintptr_t)aligned;
+	nccl_net_ofi_mem_noaccess((void*)((uintptr_t)data - offset), size + offset);
 }
 
 /**
