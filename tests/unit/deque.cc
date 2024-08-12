@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_deque.h"
 
 #define test_get_front(deque, expected) \

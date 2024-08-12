@@ -15,11 +15,11 @@ CC = $(MPICC)
 CXX = $(MPICXX)
 
 if ENABLE_FUNC_TESTS
-noinst_HEADERS = test-common.h
+noinst_HEADERS = test-common.hpp
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
 
-nccl_connection_SOURCES = nccl_connection.c
-nccl_message_transfer_SOURCES = nccl_message_transfer.c
-ring_SOURCES = ring.c
+nccl_connection_SOURCES = nccl_connection.cc
+nccl_message_transfer_SOURCES = nccl_message_transfer.cc
+ring_SOURCES = ring.cc
 endif
