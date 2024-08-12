@@ -2398,7 +2398,7 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		} else {
 			ret = nccl_ofi_idpool_free_id(key_pool, key);
 			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Error freeing MR key %"PRIu64", leaking key", key);
+				NCCL_OFI_WARN("Error freeing MR key %" PRIu64 ", leaking key", key);
 			}
 		}
 	}
@@ -3312,7 +3312,7 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	/* Release communicator ID */
 	ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 	}
 
 	free(r_comm);
@@ -3690,7 +3690,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 		if (~0 != r_comm->local_comm_id) {
 			ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
 			if (ret != 0) {
-				NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", r_comm->local_comm_id);
+				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 			}
 		}
 		free(r_comm);
@@ -4047,7 +4047,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	ret = nccl_ofi_idpool_free_id(get_device_from_ep((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool,
 				      l_comm->comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", l_comm->comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
 	}
 
 	free(l_comm);
@@ -4125,7 +4125,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
  error:
 	if (l_comm && ~0 != l_comm->comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, l_comm->comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu64"", l_comm->comm_id);
+			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu64 "", l_comm->comm_id);
 		}
 	}
 	free(l_comm);
@@ -4788,7 +4788,7 @@ static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 	/* Release communicator ID */
 	ret = nccl_ofi_idpool_free_id(device->comm_idpool, s_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", s_comm->local_comm_id);
+		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, s_comm->local_comm_id);
 	}
 
 	/* Destroy domain */
@@ -5076,7 +5076,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
  error:
 	if (ret_s_comm && ~0 != ret_s_comm->local_comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, ret_s_comm->local_comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %"PRIu32"", ret_s_comm->local_comm_id);
+			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, ret_s_comm->local_comm_id);
 		}
 	}
 	free(ret_s_comm);
