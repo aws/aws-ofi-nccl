@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_MATH_H_
 #define NCCL_OFI_MATH_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -65,7 +65,7 @@ extern "C" {
  */
 #define NCCL_OFI_ROUND_UP(x, y) NCCL_OFI_ROUND_DOWN((x) + ((y) - 1), (y))
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 
