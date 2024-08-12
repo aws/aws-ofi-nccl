@@ -9,9 +9,7 @@
 
 #include "config.h"
 
-#include "test-common.h"
-
-#define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
+#include "test-common.hpp"
 
 int main(int argc, char* argv[])
 {
@@ -57,6 +55,7 @@ int main(int argc, char* argv[])
 	int recv_sizes[] = {4 * 1024, 16 * 1024, 1024 * 1024,
 	                    4 * 1024, 16 * 1024, 1024 * 1024,
 	                    5 * 1024, 17 * 1024, 2 * 1024 * 1024};
+	test_nccl_properties_t props = {};
 
 	/* For grouped recvs */
 	int tag = 1;
@@ -133,7 +132,6 @@ int main(int argc, char* argv[])
 		goto exit;
 	}
 
-	test_nccl_properties_t props = {};
 
 	/* Get Properties for the device */
 	for (int dev = 0; dev < ndev; dev++) {
@@ -398,7 +396,7 @@ int main(int argc, char* argv[])
 	MPI_Finalize();
 	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
-exit:;
+exit:
 
 	ncclResult_t close_res = ncclSuccess;
 
