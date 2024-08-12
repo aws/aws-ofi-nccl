@@ -207,20 +207,20 @@ static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *fr
 		size_t redzone_offset = offsetof(struct nccl_ofi_freelist_reginfo_t, redzone);
 
 		/* Entry after reginfo structure is accessible but undefined */
-		nccl_net_ofi_mem_undefined_unaligned(entry_p + reginfo_offset + reginfo_size,
+		nccl_net_ofi_mem_undefined_unaligned((void*)((uintptr_t)entry_p + reginfo_offset + reginfo_size),
 						     user_entry_size - reginfo_offset - reginfo_size);
 		/* Redzone at the end of the reginfo structure is
 		 * marked as not accessible */
-		nccl_net_ofi_mem_noaccess_unaligned(entry_p + reginfo_offset + redzone_offset,
+		nccl_net_ofi_mem_noaccess_unaligned((void*)((uintptr_t)entry_p + reginfo_offset + redzone_offset),
 						    MEMCHECK_REDZONE_SIZE);
 		/* Members of reginfo structure except first and last
 		 * member are accessible and defined */
-		nccl_net_ofi_mem_defined_unaligned(entry_p + reginfo_offset + elem_size,
+		nccl_net_ofi_mem_defined_unaligned((void*)((uintptr_t)entry_p + reginfo_offset + elem_size),
 						   redzone_offset - elem_size);
 		/* First member of reginfo structure, i.e.,
 		 * nccl_ofi_freelist_elem_t structure, is marked as
 		 * not accessible */
-		nccl_net_ofi_mem_noaccess_unaligned(entry_p + reginfo_offset, elem_size);
+		nccl_net_ofi_mem_noaccess_unaligned((void*)((uintptr_t)entry_p + reginfo_offset), elem_size);
 		/* First part of entry until reginfo structure is
 		 * accessible but undefined */
 		nccl_net_ofi_mem_undefined(entry_p, reginfo_offset);
