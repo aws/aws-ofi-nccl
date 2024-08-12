@@ -11,6 +11,10 @@
 
 #define NCCL_OFI_EXPORT_SYMBOL __attribute__((visibility("default")))
 
+#ifndef __cplusplus
+#define static_assert _Static_assert
+#endif
+
 /* Maximum length of directory path */
 #ifdef HAVE_LINUX_LIMITS_H
 #include <linux/limits.h>
