@@ -360,6 +360,8 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)base_req;
+	nccl_net_ofi_sendrecv_device_t *device = NULL;
+	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm = req->comm;
@@ -370,8 +372,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
+	ep = (nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -379,8 +380,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -760,6 +760,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
+	nccl_ofi_idpool_t *key_pool = NULL;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -795,7 +796,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 	}
 	/* Cache miss */
 
-	nccl_ofi_idpool_t *key_pool = &device->key_pool;
+	key_pool = &device->key_pool;
 	struct fid_domain *domain;
 	domain = get_domain_from_endpoint(ep);
 	ret = reg_mr_base(domain, ep->ofi_ep, key_pool,
@@ -889,14 +890,15 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	int ret = 0;
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
+	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
+	nccl_net_ofi_sendrecv_device_t *device = NULL;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
 		(nccl_net_ofi_sendrecv_recv_comm_t *)recv_comm;
 	int dev_id = r_comm->base.base.dev_id;
 	struct fid_mr **mr_handles = (struct fid_mr **)mhandles;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t * ep =
-		(nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
+	ep = (nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -904,8 +906,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -1051,6 +1052,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	void *data = NULL;
 	void *flush_mr_desc = NULL;
 	int dev_id = recv_comm->base.dev_id;
+	int flush_n = -1;
 	struct fid_mr **mr_handles = (struct fid_mr **)mhandles;
 
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
@@ -1073,7 +1075,6 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	 * Find the non-zero request for which we will issue flush.
 	 * A single operation can flush all request at once.
 	 */
-	int flush_n = -1;
 	for (int recv_n = 0; recv_n < n; recv_n++) {
 		if (sizes[recv_n] != 0) {
 			flush_n = recv_n;
@@ -1552,6 +1553,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	fi_addr_t local_ep_addr;
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = NULL;
 	uint64_t tag;
+	int dev_id = 0;
 	int num_addrs;
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
@@ -1565,7 +1567,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		goto exit;
 	}
 
-	int dev_id = device->base.dev_id;
+	dev_id = device->base.dev_id;
 
 	/* Zero-out the handle */
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
@@ -1666,6 +1668,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 	void *desc = NULL;
+	nccl_net_ofi_sendrecv_device_t *device = NULL;
 	int dev_id = s_comm->base.base.dev_id;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 
@@ -1679,8 +1682,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -2114,6 +2116,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 static int release_ep(nccl_net_ofi_ep_t *base_ep)
 {
 	int ret = 0;
+	nccl_net_ofi_sendrecv_device_t *device = NULL;
 
 	/* Validate device */
 	nccl_net_ofi_sendrecv_ep_t *ep =
@@ -2125,8 +2128,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	}
 
 	/* Validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -2385,6 +2387,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 				int dev_id, struct fi_info *info)
 {
 	int ret;
+	bool provide_own_mr_key = true;
 
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
@@ -2433,7 +2436,6 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	}
 
 	/* Indicates if the provider selects MR keys */
-	bool provide_own_mr_key = true;
 	ret = nccl_ofi_mr_keys_need_own_key(info, &provide_own_mr_key);
 	if (ret != 0) {
 		NCCL_OFI_WARN("MR key config parsing failed: %s",
