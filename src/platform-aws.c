@@ -5,7 +5,6 @@
 
 #include "config.h"
 
-#define _GNU_SOURCE
 #include <alloca.h>
 #include <limits.h>
 #include <stdio.h>
