@@ -32,6 +32,10 @@ AH_BOTTOM([
 dnl AX_CHECK_ENABLE_DEBUG must be called before AC_PROG_CC or
 dnl AM_PROG_AR
 AX_CHECK_ENABLE_DEBUG([no])
+dnl Enable _GNU_SOURCE and other system extensions. The plugin uses several
+dnl nonstandard system functions, and the plugin only supports Linux OSes, so
+dnl the risk of silently enabling system extensions is minimal.
+AC_USE_SYSTEM_EXTENSIONS
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
 LT_INIT([shared disable-static pic-only])
