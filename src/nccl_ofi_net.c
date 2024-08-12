@@ -136,6 +136,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	int ret = 0;
 	const char *provider_filter = NULL;
 	nccl_net_ofi_plugin_t *plugin;
+	nccl_net_ofi_ep_t *base_ep = NULL;
+	nccl_net_ofi_device_t *device = NULL;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -275,8 +277,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * resources. This initialization happens once per process, and thus it
 	 * does not matter which device is used to create the endpoint.
 	 */
-	nccl_net_ofi_device_t *device = plugin->get_device(plugin, 0);
-	nccl_net_ofi_ep_t *base_ep = NULL;
+	device = plugin->get_device(*plugin_p, 0);
 
 	ret = device->get_ep(device, &base_ep);
 	if (ret != 0) {

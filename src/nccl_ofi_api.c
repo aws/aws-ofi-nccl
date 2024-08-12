@@ -365,15 +365,16 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 #endif
 
+	nccl_net_ofi_send_comm_t *send_comm = NULL;
+	nccl_net_ofi_recv_comm_t *recv_comm = NULL;
+
 	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+	case NCCL_NET_OFI_SEND_COMM:
+		send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->regMr(send_comm, &cache_key, type, mhandle);
 		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+	case NCCL_NET_OFI_RECV_COMM:
+		recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->regMr(recv_comm, &cache_key, type, mhandle);
 		break;
 	default:
@@ -397,16 +398,16 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	}
 
 	int ret = 0;
+	nccl_net_ofi_send_comm_t *send_comm = NULL;
+	nccl_net_ofi_recv_comm_t *recv_comm = NULL;
 
 	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
+	case NCCL_NET_OFI_SEND_COMM:
+		send_comm = (nccl_net_ofi_send_comm_t *)base_comm;
 		ret = send_comm->deregMr(send_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
+	case NCCL_NET_OFI_RECV_COMM:
+		recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
 		ret = recv_comm->deregMr(recv_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
 		break;
 	default:
