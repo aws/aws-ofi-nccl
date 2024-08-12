@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_OFIUTILS_H
 #define NCCL_OFI_OFIUTILS_H
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -43,7 +43,7 @@ void nccl_ofi_ofiutils_free_info_list(struct fi_info *info_list);
 
 int nccl_ofi_mr_keys_need_own_key(struct fi_info* provider, bool *provide_own_mr_key);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

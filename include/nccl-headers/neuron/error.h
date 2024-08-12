@@ -6,7 +6,7 @@
 #ifndef NCCL_HEADERS_NEURON_ERROR_H_
 #define NCCL_HEADERS_NEURON_ERROR_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -21,7 +21,7 @@ typedef enum {
 	ncclRemoteError = 6
 } ncclResult_t;
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 }
 #endif
 

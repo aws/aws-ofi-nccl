@@ -6,7 +6,7 @@
 #ifndef NCCL_HEADERS_NEURON_NET_H_
 #define NCCL_HEADERS_NEURON_NET_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -100,7 +100,7 @@ typedef struct {
 	ncclResult_t (*closeListen)(void* listenComm);
 } ncclNet_v4_t;
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

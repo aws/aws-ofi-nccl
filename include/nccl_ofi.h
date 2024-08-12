@@ -5,7 +5,8 @@
 #ifndef NCCL_OFI_H_
 #define NCCL_OFI_H_
 
-#ifdef _cplusplus
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -22,7 +23,6 @@ extern "C" {
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
-
 
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
@@ -590,7 +590,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

@@ -5,12 +5,11 @@
 #ifndef NCCL_OFI_MSGBUFF_H_
 #define NCCL_OFI_MSGBUFF_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <pthread.h>
-
 #include <stdbool.h>
 #include <stdint.h>
 

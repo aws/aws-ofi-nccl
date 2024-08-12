@@ -5,12 +5,12 @@
 #ifndef NCCL_OFI_IDPOOL_H_
 #define NCCL_OFI_IDPOOL_H_
 
-#ifdef _cplusplus
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
 #include <pthread.h>
-
 #include <stdint.h>
 
 /*
@@ -87,7 +87,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id);
  */
 int nccl_ofi_idpool_fini(nccl_ofi_idpool_t *idpool);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

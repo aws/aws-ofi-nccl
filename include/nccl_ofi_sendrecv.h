@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_SENDRECV_H_
 #define NCCL_OFI_SENDRECV_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -226,7 +226,7 @@ typedef struct nccl_net_ofi_sendrecv_req {
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 
