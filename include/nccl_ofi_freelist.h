@@ -195,7 +195,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 /*
  * Set memcheck guards of freelist entry's user data to accessible but undefined
  */
-static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *freelist, void *entry_p)
+static inline void nccl_ofi_freelist_entry_set_undefined(nccl_ofi_freelist_t *freelist, uintptr_t entry_p)
 {
 	size_t user_entry_size = freelist->entry_size - MEMCHECK_REDZONE_SIZE;
 
@@ -268,11 +268,11 @@ static inline void *nccl_ofi_freelist_entry_alloc(nccl_ofi_freelist_t *freelist)
 	}
 
 	entry = freelist->entries;
-	nccl_net_ofi_mem_defined_unaligned(entry, sizeof(*entry));
+	nccl_net_ofi_mem_defined_unaligned((uintptr_t)entry, sizeof(*entry));
 
 	freelist->entries = entry->next;
 	buf = entry->ptr;
-	nccl_ofi_freelist_entry_set_undefined(freelist, buf);
+	nccl_ofi_freelist_entry_set_undefined(freelist, (uintptr_t)buf);
 
 cleanup:
 	nccl_net_ofi_mutex_unlock(&freelist->lock);
@@ -299,7 +299,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 
 	if (freelist->have_reginfo) {
 		entry = (struct nccl_ofi_freelist_elem_t *)((char*)entry_p + freelist->reginfo_offset);
-		nccl_net_ofi_mem_defined_unaligned(entry, sizeof(*entry));
+		nccl_net_ofi_mem_defined_unaligned((uintptr_t)entry, sizeof(*entry));
 	} else {
 		entry = (struct nccl_ofi_freelist_elem_t *)entry_p;
 		entry->ptr = (void *)entry;
@@ -308,7 +308,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 	entry->next = freelist->entries;
 	freelist->entries = entry;
 
-	nccl_net_ofi_mem_noaccess(entry_p, user_entry_size);
+	nccl_net_ofi_mem_noaccess((uintptr_t)entry_p, user_entry_size);
 
 	nccl_net_ofi_mutex_unlock(&freelist->lock);
 }

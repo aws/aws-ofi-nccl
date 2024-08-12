@@ -36,7 +36,7 @@ static inline void nccl_net_ofi_mem_noaccess(void *data, size_t size)
 	__asan_poison_memory_region(data, size);
 }
 
-static inline void nccl_net_ofi_mem_create_mempool(void *handle, void *data, size_t size)
+static inline void nccl_net_ofi_mem_create_mempool(void *handle, uintptr_t data, size_t size)
 {
 	nccl_net_ofi_mem_noaccess(data, size);
 }
@@ -46,12 +46,12 @@ static inline void nccl_net_ofi_mem_destroy_mempool(void *handle)
 	/* Cannot posion without knowing mempool data and size */
 }
 
-static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size_t size)
+static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, uintptr_t data, size_t size)
 {
 	nccl_net_ofi_mem_undefined(data, size);
 }
 
-static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_t size)
+static inline void nccl_net_ofi_mem_mempool_free(void *handle, uintptr_t data, size_t size)
 {
 	nccl_net_ofi_mem_noaccess(data, size);
 }

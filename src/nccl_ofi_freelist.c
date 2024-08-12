@@ -167,7 +167,7 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 
 	while (freelist->blocks) {
 		struct nccl_ofi_freelist_block_t *block = freelist->blocks;
-		nccl_net_ofi_mem_defined(block, sizeof(struct nccl_ofi_freelist_block_t));
+		nccl_net_ofi_mem_defined((uintptr_t)block, sizeof(struct nccl_ofi_freelist_block_t));
 		void *memory = block->memory;
 		size_t size = block->memory_size;
 		freelist->blocks = block->next;
@@ -188,7 +188,7 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 		 * needs to be performed manually since reallocation
 		 * of the same memory via mmap() is invisible to
 		 * ASAN. */
-		nccl_net_ofi_mem_undefined(memory, size);
+		nccl_net_ofi_mem_undefined((uintptr_t)memory, size);
 		ret = nccl_net_ofi_dealloc_mr_buffer(memory, size);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to deallocate MR buffer(%d)", ret);
@@ -248,9 +248,9 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	char *b_end = (char *)(block + 1);
 	char *b_end_aligned = (char *)NCCL_OFI_ROUND_DOWN((uintptr_t)b_end,
 							  (uintptr_t)MEMCHECK_GRANULARITY);
-	nccl_net_ofi_mem_noaccess(b_end_aligned,
+	nccl_net_ofi_mem_noaccess((uintptr_t)b_end_aligned,
 				  block_mem_size - (b_end_aligned - buffer));
-	nccl_net_ofi_mem_undefined(b_end_aligned, b_end - b_end_aligned);
+	nccl_net_ofi_mem_undefined((uintptr_t)b_end_aligned, b_end - b_end_aligned);
 
 	if (freelist->regmr_fn) {
 		/*
@@ -270,7 +270,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 			 * needs to be performed manually since reallocation
 			 * of the same memory via mmap() is invisible to
 			 * ASAN. */
-			nccl_net_ofi_mem_undefined(block->memory, block_mem_size);
+			nccl_net_ofi_mem_undefined((uintptr_t)block->memory, block_mem_size);
 			int dret = nccl_net_ofi_dealloc_mr_buffer(block->memory, block_mem_size);
 			if (dret != 0) {
 				NCCL_OFI_WARN("Unable to deallocate MR buffer(%d)", ret);
@@ -288,7 +288,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		size_t user_entry_size = freelist->entry_size - freelist->memcheck_redzone_size;
 
 		/* Add redzone before entry */
-		nccl_net_ofi_mem_noaccess(buffer, freelist->memcheck_redzone_size);
+		nccl_net_ofi_mem_noaccess((uintptr_t)buffer, freelist->memcheck_redzone_size);
 		buffer += freelist->memcheck_redzone_size;
 
 		if (freelist->have_reginfo) {
@@ -306,13 +306,13 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		freelist->entries = entry;
 		freelist->num_allocated_entries++;
 
-		nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
+		nccl_net_ofi_mem_noaccess((uintptr_t)entry->ptr, user_entry_size);
 
 		buffer += user_entry_size;
 	}
 
 	/* Block structure will not be accessed until freelist is destroyed */
-	nccl_net_ofi_mem_noaccess(block, sizeof(struct nccl_ofi_freelist_block_t));
+	nccl_net_ofi_mem_noaccess((uintptr_t)block, sizeof(struct nccl_ofi_freelist_block_t));
 
 	return 0;
 }

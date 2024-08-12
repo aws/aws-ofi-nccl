@@ -4311,7 +4311,7 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	 * gets re-posted */
  	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 	nccl_ofi_freelist_entry_set_undefined(ep->bounce_buff_fl,
-					      bounce_fl_item);
+					      (uintptr_t)bounce_fl_item);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 	ssize_t rc =

@@ -52,7 +52,7 @@ _Static_assert(MEMCHECK_REDZONE_SIZE % MEMCHECK_GRANULARITY == 0,
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_defined(void *data, size_t size);
+static inline void nccl_net_ofi_mem_defined(uintptr_t data, size_t size);
 
 /**
  * Mark a memory area as having an undefined content.  This can result
@@ -65,7 +65,7 @@ static inline void nccl_net_ofi_mem_defined(void *data, size_t size);
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_undefined(void *data, size_t size);
+static inline void nccl_net_ofi_mem_undefined(uintptr_t data, size_t size);
 
 /**
  * Mark a memory area as being invalid for read or write accesss.  Any
@@ -77,16 +77,16 @@ static inline void nccl_net_ofi_mem_undefined(void *data, size_t size);
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_noaccess(void *data, size_t size);
+static inline void nccl_net_ofi_mem_noaccess(uintptr_t data, size_t size);
 
 /**
  * Same as nccl_net_ofi_mem_defined() except that guard is applied to
  * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
-static inline void nccl_net_ofi_mem_defined_unaligned(void *data, size_t size)
+static inline void nccl_net_ofi_mem_defined_unaligned(uintptr_t data, size_t size)
 {
-	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
+	uintptr_t aligned = NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY);
+	ptrdiff_t offset = data - aligned;
 	nccl_net_ofi_mem_defined(data - offset, size + offset);
 }
 
@@ -94,10 +94,10 @@ static inline void nccl_net_ofi_mem_defined_unaligned(void *data, size_t size)
  * Same as nccl_net_ofi_mem_undefined() except that guard is applied to
  * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
-static inline void nccl_net_ofi_mem_undefined_unaligned(void *data, size_t size)
+static inline void nccl_net_ofi_mem_undefined_unaligned(uintptr_t data, size_t size)
 {
-	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
+	uintptr_t aligned = NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY);
+	ptrdiff_t offset = data - aligned;
 	nccl_net_ofi_mem_undefined(data - offset, size + offset);
 }
 
@@ -105,10 +105,10 @@ static inline void nccl_net_ofi_mem_undefined_unaligned(void *data, size_t size)
  * Same as nccl_net_ofi_mem_noaccess() except that guard is applied to
  * memory region [NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY), data + size).
  */
-static inline void nccl_net_ofi_mem_noaccess_unaligned(void *data, size_t size)
+static inline void nccl_net_ofi_mem_noaccess_unaligned(uintptr_t data, size_t size)
 {
-	void *aligned = (void *)NCCL_OFI_ROUND_DOWN((uintptr_t)data, MEMCHECK_GRANULARITY);
-	size_t offset = data - aligned;
+	uintptr_t aligned = NCCL_OFI_ROUND_DOWN(data, MEMCHECK_GRANULARITY);
+	ptrdiff_t offset = data - aligned;
 	nccl_net_ofi_mem_noaccess(data - offset, size + offset);
 }
 
@@ -127,7 +127,7 @@ static inline void nccl_net_ofi_mem_noaccess_unaligned(void *data, size_t size)
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_create_mempool(void *handle, void *data, size_t size);
+static inline void nccl_net_ofi_mem_create_mempool(void *handle, uintptr_t data, size_t size);
 
 /**
  * Destroy a memory allocator.
@@ -150,7 +150,7 @@ static inline void nccl_net_ofi_mem_destroy_mempool(void *handle);
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size_t size);
+static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, uintptr_t data, size_t size);
 
 /**
  * Indicate that a deallocate has occured to a memory allocator.  The
@@ -167,7 +167,7 @@ static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size
  * @param size
  *   The size of the memory area.
  */
-static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_t size);
+static inline void nccl_net_ofi_mem_mempool_free(void *handle, uintptr_t data, size_t size);
 
 #ifdef _cplusplus
 } // End extern "C"
