@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_PLATFORM_H_
 #define NCCL_OFI_PLATFORM_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -34,5 +34,9 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribut
  * @param num_rails: number of rails
  */
 void platform_sort_rails(struct fi_info **info_list, int num_rails) __attribute__((weak));
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif // End NCCL_OFI_PLATFORM_H_

@@ -5,7 +5,7 @@
 #ifndef NCCL_NET_OFI_TOPO_H_
 #define NCCL_NET_OFI_TOPO_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -315,7 +315,7 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
  */
 int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 }
 #endif
 

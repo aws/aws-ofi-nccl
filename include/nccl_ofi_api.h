@@ -6,12 +6,13 @@
 #ifndef NET_OFI_API_H_
 #define NET_OFI_API_H_
 
-#include "nccl-headers/net.h"
-#include "nccl-headers/error.h"
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
+
+#include "nccl-headers/net.h"
+#include "nccl-headers/error.h"
 
 struct nccl_ofi_properties;
 
@@ -42,7 +43,7 @@ ncclResult_t nccl_net_ofi_closeSend(void *sendComm);
 ncclResult_t nccl_net_ofi_closeRecv(void *recvComm);
 ncclResult_t nccl_net_ofi_closeListen(void *listenComm);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 }
 #endif // End extern "C"
 

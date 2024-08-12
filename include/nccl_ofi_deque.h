@@ -5,7 +5,8 @@
 #ifndef NCCL_OFI_DEQUE_H
 #define NCCL_OFI_DEQUE_H
 
-#ifdef _cplusplus
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -162,7 +163,7 @@ unlock:
 	return 0;
 }
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

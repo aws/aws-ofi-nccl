@@ -6,7 +6,8 @@
 #ifndef NCCL_OFI_CUDA_H_
 #define NCCL_OFI_CUDA_H_
 
-#ifdef _cplusplus
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -41,7 +42,7 @@ extern CUresult (*nccl_net_ofi_cuFlushGPUDirectRDMAWrites)(CUflushGPUDirectRDMAW
 extern void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites;
 #endif
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 
