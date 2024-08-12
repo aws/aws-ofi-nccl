@@ -5,7 +5,8 @@
 #ifndef NCCL_OFI_FREELIST_H
 #define NCCL_OFI_FREELIST_H
 
-#ifdef _cplusplus
+
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -313,7 +314,7 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 	nccl_net_ofi_mutex_unlock(&freelist->lock);
 }
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

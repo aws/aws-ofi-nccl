@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_MR_H_
 #define NCCL_OFI_MR_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -80,7 +80,7 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
  */
 int nccl_ofi_mr_cache_del_entry(nccl_ofi_mr_cache_t *cache, void *handle);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 }  // End extern "C"
 #endif
 

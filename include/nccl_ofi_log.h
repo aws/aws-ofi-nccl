@@ -6,7 +6,7 @@
 #ifndef NCCL_OFI_LOG_H_
 #define NCCL_OFI_LOG_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -33,7 +33,7 @@ extern ncclDebugLogger_t ofi_log_function;
 #define NCCL_OFI_TRACE(flags, fmt, ...)
 #endif
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

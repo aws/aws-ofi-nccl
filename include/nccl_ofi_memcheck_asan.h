@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_MEMCHECK_ASAN_H
 #define NCCL_OFI_MEMCHECK_ASAN_H
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -56,7 +56,7 @@ static inline void nccl_net_ofi_mem_mempool_free(void *handle, uintptr_t data, s
 	nccl_net_ofi_mem_noaccess(data, size);
 }
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

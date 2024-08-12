@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_SCHEDULER_H_
 #define NCCL_OFI_SCHEDULER_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
@@ -134,7 +134,7 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size,
 					    size_t align,
 					    nccl_net_ofi_schedule_t *schedule);
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 } // End extern "C"
 #endif
 

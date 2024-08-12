@@ -5,7 +5,7 @@
 #ifndef NCCL_OFI_PLATFORM_H_
 #define NCCL_OFI_PLATFORM_H_
 
-#ifdef _cplusplus
+#ifdef __cplusplus
 extern "C" {
 #endif
 
