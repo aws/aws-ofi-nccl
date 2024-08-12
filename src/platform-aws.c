@@ -604,6 +604,10 @@ exit:
 
 int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	int ret = 0;
+#if HAVE_CUDA
+	const char *optname_name = "none";
+	int optname = -1;
+#endif
 
 	if (endpoint == NULL) {
 		NCCL_OFI_WARN("Unable to configure invalid endpoint");
@@ -645,8 +649,6 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	static bool nccl_proto_configured = false;
 	static bool need_ordering = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-	int optname = -1;
-	const char *optname_name = "none";
 
 	/* During initialization, try to set
 	 * FI_OPT_EFA_{SENDRECV,WRTIE}_IN_ORDER_ALIGNED_128_BYTES to
@@ -785,6 +787,7 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails)
 {
 	struct fi_info *info_list_in = *info_list;
 	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
+	struct fi_info *info_ptr = NULL;
 
 	if (num_rails <= 0) {
 		return;
@@ -824,7 +827,7 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails)
 
 	/* Update info_list references to match sorted order */
 	*info_list = sorted_info_array[0];
-	struct fi_info *info_ptr = *info_list;
+	info_ptr = *info_list;
 	for (int i = 0; i < num_rails; ++i) {
 		assert(info_ptr);
 		assert(sorted_info_array[i]);
