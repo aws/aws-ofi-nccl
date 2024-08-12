@@ -11,6 +11,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
+namespace {
 static inline void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 			  int line, const char *fmt, ...)
 {
@@ -38,6 +39,7 @@ static inline void logger(ncclDebugLogLevel level, unsigned long flags, const ch
 	vprintf(fmt, vargs);
 	printf("\n");
 	va_end(vargs);
+}
 }
 
 #endif // End TEST_COMMON_H_

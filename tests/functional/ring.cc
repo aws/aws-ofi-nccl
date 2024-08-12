@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-#include "test-common.h"
+#include "test-common.hpp"
 
 #define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
 

@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_math.h"
 

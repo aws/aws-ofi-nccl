@@ -6,7 +6,7 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "test-common.hpp"
 #include "nccl_ofi_freelist.h"
 
 void *simple_base;
