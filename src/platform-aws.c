@@ -95,16 +95,16 @@ struct ec2_platform_data {
 	},
 	{
 		.name = "trn1.32xlarge",
-		.default_protocol = "RDMA",
 		.gdr_required = true,
 		.net_flush_required = true,
+		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
 	},
 	{
 		.name = "trn1n.32xlarge",
-		.default_protocol = "RDMA",
 		.gdr_required = true,
 		.net_flush_required = true,
+		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
 	}
 };
