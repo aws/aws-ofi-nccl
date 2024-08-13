@@ -58,16 +58,35 @@ ncclResult_t set_regions(nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx,
 
 nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b, nccl_ofi_tuner_point_t z);
 
-/* In the original introduction of the external tuner v2 struct, NCCL did not
- * enumerate downwards through versions and attempt to load the first valid
- * symbol it could dlsym, it only accepted v2. This meant that plugin builds
- * against tuner-v1 would not work with newer nccl releases. This is not exposed
- * in our configure script, but by definining this manually in cflags, you can
- * choose at plugin build-time which interface to implement. */
-#if defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
+/*
+ * @brief	Disable a certain protocol, or algorithm or a combination of both.
+ *       	This function sets to a high cost all the entries in the cost table corresponding to
+ *       	a certain algorithm, or all the entries corresponding to a certain protocol, or just one entry
+ *       	corresponding to a certain algorithm and protocol combination.
+ *       	This function is used to make NCCL choose the best combination, according to the costs in the table,
+ *       	excluding a certain algo/proto or combination.
+ *       	Note that if both algorithm and protocol are undefined, the function will not disable the entire table,
+ *       	in that case the table will not be changed.
+ * @param	collCostTable
+ *		NCCL cost table
+ * @param	algorithm
+ *		algorithm to disable, set it to NCCL_ALGO_UNDEF if all algorithms should be disabled.
+ * @param	protocol
+ *		protocol to disable, set it to NCCL_PROTO_UNDEF if all protocols should be disabled.
+ * @param	numAlgo
+ *		number of algorithms in the cost table
+ * @param	numProto
+ *		number of protocols in the cost table
+ */
+void nccl_ofi_tuner_disable(float **collCostTable, int algorithm, int protocol, int numAlgo, int numProto);
+
+/*
+ * NCCL 2.19.1 supports ncclTunerPlugin_v1
+ * NCCL 2.21.5 supports ncclTunerPlugin_v2 only
+ * NCCL 2.22.3 supports ncclTunerPlugin_v3 with fallback to ncclTunerPlugin_v2
+ */
+NCCL_OFI_EXPORT_SYMBOL extern const ncclTuner_v3_t ncclTunerPlugin_v3;
 NCCL_OFI_EXPORT_SYMBOL extern const ncclTuner_v2_t ncclTunerPlugin_v2;
-#else
 NCCL_OFI_EXPORT_SYMBOL extern const ncclTuner_v1_t ncclTunerPlugin_v1;
-#endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */
 
 #endif /* NCCL_OFI_TUNER_H_ */

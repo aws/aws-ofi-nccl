@@ -295,7 +295,111 @@ exit:
 	return ret;
 }
 
-ncclResult_t nccl_ofi_tuner_get_coll_info(
+void nccl_ofi_tuner_disable(float **collCostTable, int algorithm, int protocol, int numAlgo, int numProto)
+{
+	float(*table)[NCCL_NUM_PROTOCOLS] = (float(*)[NCCL_NUM_PROTOCOLS])collCostTable;
+
+	float long_time = 3600000000.0;  // 1 hour
+	int a = 0, p = 0;
+	if (algorithm != NCCL_ALGO_UNDEF && protocol == NCCL_PROTO_UNDEF) {
+		a = algorithm;
+		for (p = 0; p < numProto; p++) {
+			if (table[a][p] != NCCL_ALGO_PROTO_IGNORE) {
+				table[a][p] = long_time;
+			}
+		}
+	} else if (algorithm == NCCL_ALGO_UNDEF && protocol != NCCL_PROTO_UNDEF) {
+		p = protocol;
+		for (a = 0; a < numAlgo; a++) {
+			if (table[a][p] != NCCL_ALGO_PROTO_IGNORE) {
+				table[a][p] = long_time;
+			}
+		}
+	} else if (algorithm != NCCL_ALGO_UNDEF && protocol != NCCL_PROTO_UNDEF) {
+		a = algorithm;
+		p = protocol;
+		if (table[a][p] != NCCL_ALGO_PROTO_IGNORE) {
+			table[a][p] = long_time;
+		}
+	}
+}
+
+ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
+					  ncclFunc_t collType,
+					  size_t nBytes,
+					  int numPipeOps,
+					  float **collCostTable,
+					  int numAlgo,
+					  int numProto,
+					  int *nChannels)
+{
+	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
+
+	if (nccl_ofi_tuner_ctx == NULL || nccl_ofi_tuner_ctx->regions == NULL || collType != ncclFuncAllReduce) {
+		/* Fall back to NCCL's tuner */
+		goto exit;
+	}
+
+	float(*table)[NCCL_NUM_PROTOCOLS] = (float(*)[NCCL_NUM_PROTOCOLS])collCostTable;
+	int in_out = -1;
+	int algorithm = NCCL_ALGO_UNDEF;
+	int protocol = NCCL_PROTO_UNDEF;
+	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
+
+	/* Check all regions */
+	for (int i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
+		algorithm = nccl_ofi_tuner_ctx->regions[i].algorithm;
+		protocol = nccl_ofi_tuner_ctx->regions[i].protocol;
+		if (table[algorithm][protocol] == NCCL_ALGO_PROTO_IGNORE || algorithm >= numAlgo ||
+		    protocol >= numProto) {
+			continue;
+		}
+
+		in_out = is_inside_region(p, &nccl_ofi_tuner_ctx->regions[i]);
+		if (in_out >= 0) {
+			table[algorithm][protocol] = 0.0;
+
+			NCCL_OFI_INFO(NCCL_TUNING,
+				      "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
+				      algorithm,
+				      protocol,
+				      table[algorithm][protocol],
+				      collType,
+				      nBytes);
+		}
+	}
+
+	if (in_out < 0) {
+		NCCL_OFI_INFO(NCCL_TUNING, "Falling back to NCCL's tuner for coll %d size %ld.", collType, nBytes);
+	}
+
+exit:
+	return ncclSuccess;
+}
+
+ncclResult_t nccl_ofi_tuner_destroy(void *context)
+{
+	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
+
+	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
+	if (nccl_ofi_tuner_ctx != NULL) {
+		if (nccl_ofi_tuner_ctx->regions != NULL) {
+			free(nccl_ofi_tuner_ctx->regions);
+		}
+		free(context);
+	}
+	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+
+	return ncclSuccess;
+}
+
+const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
+					   .init = nccl_ofi_tuner_init,
+					   .getCollInfo = nccl_ofi_tuner_get_coll_info,
+					   .destroy = nccl_ofi_tuner_destroy};
+
+/* **** V2 **** */
+ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	void *context, ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
 	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
@@ -337,31 +441,15 @@ exit:
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_ofi_tuner_destroy(void *context)
-{
-	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
+const ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
+					   .init = nccl_ofi_tuner_init,
+					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v2,
+					   .destroy = nccl_ofi_tuner_destroy};
 
-	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
-	if (nccl_ofi_tuner_ctx != NULL) {
-		if (nccl_ofi_tuner_ctx->regions != NULL) {
-			free(nccl_ofi_tuner_ctx->regions);
-		}
-		free(context);
-	}
-	nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
-
-	return ncclSuccess;
-}
-
-const ncclTuner_v2_t ncclTunerPlugin_v2 = {
-	.name = "nccl_ofi_tuner", .init = nccl_ofi_tuner_init, .getCollInfo = nccl_ofi_tuner_get_coll_info, .destroy = nccl_ofi_tuner_destroy};
-
-#if !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1)
-
-/*
-* The tuner v1 API is missing a mechanism to pass around context after
-* initialization. For now, init a plugin-global context once.
-*/
+/* **** V1 ****
+ * The tuner v1 API is missing a mechanism to pass around context after
+ * initialization. For now, init a plugin-global context once.
+ */
 static nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx_internal;
 
 static ncclResult_t nccl_ofi_tuner_destroy_v1(void)
@@ -414,7 +502,7 @@ static ncclResult_t nccl_ofi_tuner_init_v1(size_t nRanks, size_t nNodes, ncclDeb
 static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(
 	ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
-	return nccl_ofi_tuner_get_coll_info(nccl_ofi_tuner_ctx_internal,
+	return nccl_ofi_tuner_get_coll_info_v2(nccl_ofi_tuner_ctx_internal,
 					    collType,
 					    nBytes,
 					    collNetSupport,
@@ -425,6 +513,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(
 					    nChannels);
 }
 
-const ncclTuner_v1_t ncclTunerPlugin_v1 = {
-	.name = "nccl_ofi_tuner", .init = nccl_ofi_tuner_init_v1, .getCollInfo = nccl_ofi_tuner_get_coll_info_v1, .destroy = nccl_ofi_tuner_destroy_v1};
-#endif /* !defined(AWS_OFI_NCCL_MIN_TUNER_COMPAT) || (AWS_OFI_NCCL_MIN_TUNER_COMPAT <= 1) */
+const ncclTuner_v1_t ncclTunerPlugin_v1 = {.name = "nccl_ofi_tuner",
+					   .init = nccl_ofi_tuner_init_v1,
+					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v1,
+					   .destroy = nccl_ofi_tuner_destroy_v1};
