@@ -26,9 +26,7 @@ jobs:
           - al2
         efainstaller:
           - latest
-          - 1.32.0
-          - 1.31.0
-          - 1.30.0
+          - 1.25.0
         include:
           - amazonlinux: al2023
             efainstallerdir: ALINUX2023
