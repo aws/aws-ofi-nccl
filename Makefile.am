@@ -17,3 +17,8 @@ EXTRA_DIST = \
 	RELEASENOTES.md
 
 AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
+
+# Reset ownership to 0 (root) in distribution tarball
+# Ref: https://www.gnu.org/software/automake/manual/html_node/Basics-of-Distribution.html
+TAR_OPTIONS = --owner=0 --group=0
+export TAR_OPTIONS
