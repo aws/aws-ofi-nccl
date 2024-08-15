@@ -75,3 +75,4 @@ m4/lt~obsolete.m4
 .idea/
 .devenv/
 .direnv
+*.src.rpm

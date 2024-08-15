@@ -1,0 +1,19 @@
+name: generate SRPM
+on: [push, pull_request]
+jobs:
+  srpm:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:rawhide
+      options: --privileged
+    steps:
+      - run: dnf install -y packit git nodejs
+      - uses: actions/checkout@v4
+      - run: git config --global --add safe.directory /__w/aws-ofi-nccl/aws-ofi-nccl
+      - run: packit srpm
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "libnccl-net-ofi.src.rpm"
+          path: "*.src.rpm"
+          if-no-files-found: 'error'
+          compression-level: '0'
