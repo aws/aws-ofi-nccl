@@ -176,6 +176,11 @@ ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 	ncclResult_t ret;
 
+	if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
+		NCCL_OFI_WARN("RDMA protocol does not support listen_v4 interface");
+		return ncclInternalError;
+	}
+
 	ret = nccl_net_ofi_listen(dev, &nccl_net_ofi_handle, listenComm);
 	if (ret == ncclSuccess) {
 		memcpy(handle, &nccl_net_ofi_handle, NCCL_NET_HANDLE_MAXSIZE_V4);
@@ -263,6 +268,11 @@ ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
+
+	if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
+		NCCL_OFI_WARN("RDMA protocol does not support blocking connect_v4 interface");
+		return ncclInternalError;
+	}
 
         memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
 
@@ -451,6 +461,11 @@ error:
 ncclResult_t nccl_net_ofi_accept_v4(void* listenComm, void** recvComm)
 {
 	ncclResult_t ret = ncclInvalidArgument;
+
+	if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
+		NCCL_OFI_WARN("RDMA protocol does not support blocking accept_v4 interface.");
+		return ncclInternalError;
+	}
 
 	while (*recvComm == NULL) {
 		ret = nccl_net_ofi_accept(listenComm, recvComm);
