@@ -178,8 +178,8 @@ static ncclResult_t accept_v7(void* listenComm, void** recvComm,
 }
 
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v2_t ncclNetPlugin_v2 = {
-	.name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v2_t ncclNetPlugin_v2 = {
+	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.pciPath = pciPath_v2,
@@ -198,8 +198,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v2_t ncclNetPlugin_v2 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v3_t ncclNetPlugin_v3 = {
-	.name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v3_t ncclNetPlugin_v3 = {
+	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = getProperties_v4,
@@ -217,8 +217,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v3_t ncclNetPlugin_v3 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v4_t ncclNetPlugin_v4 = {
-	.name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
+	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = getProperties_v4,
@@ -236,8 +236,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v4_t ncclNetPlugin_v4 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v5_t ncclNetPlugin_v5 = {
-	.name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
+	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
 	.getProperties = getProperties_v6,
@@ -255,8 +255,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v5_t ncclNetPlugin_v5 = {
 	.closeListen = nccl_net_ofi_closeListen,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v6_t ncclNetPlugin_v6 = {
-        .name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
+        .name = "Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v6,
@@ -275,8 +275,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v6_t ncclNetPlugin_v6 = {
         .closeListen = nccl_net_ofi_closeListen,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v7_t ncclNetPlugin_v7 = {
-        .name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
+        .name = "Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v7,
@@ -297,8 +297,8 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v7_t ncclNetPlugin_v7 = {
 	.irecvConsumed = NULL,
 };
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v8_t ncclNetPlugin_v8 = {
-        .name = "AWS Libfabric",
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
+        .name = "Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v8,
@@ -318,3 +318,34 @@ NCCL_OFI_EXPORT_SYMBOL const ncclNet_v8_t ncclNetPlugin_v8 = {
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
 };
+
+
+/*
+ * Versions 1.11.0 and prior of the plugin set the name to
+ * "AWS Libfabric", requiring NCCL_NET be set to "AWS Libfabric",
+ * opening the door to shell escape failures.  Customers do have
+ * NCCL_NET="AWS Libfabric" in their various scripts, so still support
+ * that.  And, since we're here, also deal with the constant
+ * "Libfabric" vs. "OFI" confusion.
+ */
+__attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
+{
+	char *net_env = getenv("NCCL_NET");
+	if (net_env != NULL && 0 == strcasecmp(net_env, "AWS Libfabric")) {
+		ncclNetPlugin_v2.name = "AWS Libfabric";
+		ncclNetPlugin_v3.name = "AWS Libfabric";
+		ncclNetPlugin_v4.name = "AWS Libfabric";
+		ncclNetPlugin_v5.name = "AWS Libfabric";
+		ncclNetPlugin_v6.name = "AWS Libfabric";
+		ncclNetPlugin_v7.name = "AWS Libfabric";
+		ncclNetPlugin_v8.name = "AWS Libfabric";
+	} else if (net_env != NULL && 0 == strcasecmp(net_env, "OFI")) {
+		ncclNetPlugin_v2.name = "OFI";
+		ncclNetPlugin_v3.name = "OFI";
+		ncclNetPlugin_v4.name = "OFI";
+		ncclNetPlugin_v5.name = "OFI";
+		ncclNetPlugin_v6.name = "OFI";
+		ncclNetPlugin_v7.name = "OFI";
+		ncclNetPlugin_v8.name = "OFI";
+	}
+}
