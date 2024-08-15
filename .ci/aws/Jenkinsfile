@@ -6,9 +6,6 @@ if (buildNumber > 1) milestone(buildNumber - 1)
 milestone(buildNumber)
 
 
-import groovy.transform.Field
-@Field boolean build_ok = true
-
 def get_portafiducia_download_path() {
     /* Stable Portafiducia tarball */
     def AWS_ACCOUNT_ID = sh (
@@ -84,16 +81,12 @@ def run_test_orchestrator_once(run_name, build_tag, os, instance_type, instance_
 
     def cluster_name = get_cluster_name(build_tag, os, instance_type)
     def args = "--os ${os} --odcr ${odcr} --instance-type ${instance_type} --instance-count ${instance_count} --region ${region} --cluster-name ${cluster_name} ${addl_args} --junit-xml outputs/${cluster_name}.xml"
-    def ret = sh (
-                    script: ". venv/bin/activate; ./PortaFiducia/tests/test_orchestrator.py ${args}",
-                    returnStatus: true
-                  )
-    if (ret == 65)
-        unstable('Scripts exited with status 65')
-    else if (ret != 0)
-        build_ok = false
-    catchError(buildResult: 'SUCCESS', stageResult: 'FAILURE') {
-        sh "exit ${ret}"
+
+    try {
+        sh ". venv/bin/activate; ./PortaFiducia/tests/test_orchestrator.py ${args}"
+    } catch (Exception e) {
+        currentBuild.result = "FAILURE"
+        throw e
     }
 }
 
@@ -246,18 +239,6 @@ pipeline {
                     stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_region, g4dn_lock_label, num_instances, g4dn_odcr, g4dn_addl_args)
 
                     parallel stages
-                }
-            }
-        }
-        stage('check build_ok') {
-            steps {
-                script {
-                    if (build_ok) {
-                        currentBuild.result = "SUCCESS"
-                    }
-                    else {
-                        currentBuild.result = "FAILURE"
-                    }
                 }
             }
         }
