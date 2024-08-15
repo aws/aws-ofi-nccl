@@ -1,0 +1,20 @@
+---
+# vi:ts=2 sw=2 et:
+#
+# Docs: https://packit.dev/docs/
+
+
+srpm_build_deps:
+  - git
+
+actions:
+  get-current-version:
+    - bash -c "cat .version"
+  create-archive:
+    - bash -c "echo ./aws-ofi-nccl-${PACKIT_PROJECT_VERSION}.tar.gz"
+
+specfile_path: .packit/libnccl-net-ofi.spec
+upstream_package_name: libnccl-net-ofi
+downstream_package_name: libnccl-net-ofi
+release_suffix: "{PACKIT_PROJECT_BRANCH}"
+update_release: false

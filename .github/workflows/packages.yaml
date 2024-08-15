@@ -1,0 +1,86 @@
+name: Package Generation
+on: [push, pull_request]
+jobs:
+  dist:
+    name: Call make dist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: docker buildx bake makedist
+        uses: docker/bake-action@v5
+        with:
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+          push: true
+          targets: makedist
+  srpm:
+    name: Generate a universal SRPM
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: docker buildx bake srpm
+        uses: docker/bake-action@v5
+        with:
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+          push: true
+          targets: srpm
+  debs:
+    name: Generate Debian-like Packages
+    needs: [ dist ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: docker buildx bake debs
+        uses: docker/bake-action@v5
+        with:
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+          push: ${{ github.event_name != 'pull_request' }}
+          targets: debs
+  rpms:
+    name: Generate RPM-like Packages
+    needs: [ srpm ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: linux/amd64,linux/arm64
+      - name: docker buildx bake rpms
+        uses: docker/bake-action@v5
+        with:
+          set: |
+            *.cache-from=type=gha
+            *.cache-to=type=gha,mode=max
+          push: ${{ github.event_name != 'pull_request' }}
+          targets: rpms

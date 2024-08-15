@@ -1,0 +1,15 @@
+#
+# Copyright (c) 2024, Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+FROM alpine:latest AS efa_installer_extracted
+ARG EFA_INSTALLER_VERSION=latest
+ENV EFA_INSTALLER_VERSION=${EFA_INSTALLER_VERSION}
+RUN apk add tar curl
+RUN mkdir /libfabric
+RUN curl -s -L https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz | tar -xvzf - -C /
+
+FROM scratch
+COPY --from=efa_installer_extracted /aws-efa-installer /aws-efa-installer

@@ -1,0 +1,26 @@
+#
+# Copyright (c) 2024, Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+ARG ACCELERATOR
+ARG BASE_IMAGE=ubuntu:22.04
+FROM ${BASE_IMAGE} AS distbuilder
+ARG ACCELERATOR
+ENV ACCELERATOR=${ACCELERATOR}
+RUN mkdir /aws-efa-installer
+COPY --from=efainstaller /aws-efa-installer /aws-efa-installer
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    bash -c "apt-get update -y && cd /aws-efa-installer && ./efa_installer.sh /efa_installer.sh -n -l -k -d -y && apt-get install -y autoconf automake libtool gcc git libhwloc-dev make && rm -rf /aws-efa-installer"
+COPY ../ /proj
+WORKDIR /proj
+RUN autoreconf -ivf
+RUN ./configure --with-libfabric=/opt/amazon/efa --$(test "$ACCELERATOR" = "cuda" && echo "with-cuda=/usr/local/cuda" || echo "enable-neuron=yes") --with-libfabric=/opt/amazon/efa
+RUN make dist
+RUN ls -lart
+RUN pwd
+
+FROM scratch
+COPY --from=distbuilder /proj/aws-ofi-nccl*.tar.gz /

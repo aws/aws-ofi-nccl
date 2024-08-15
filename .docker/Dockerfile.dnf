@@ -1,0 +1,44 @@
+#
+# Copyright (c) 2024, Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+ARG FAMILY=fedora
+ARG VERSION=rawhide
+ARG VARIANT=cuda
+ARG CUDA_DISTRO
+ARG AWS_BUILD
+ARG ENABLE_POWERTOOLS
+
+# Install EFA-installer deps.
+FROM ${FAMILY}:${VERSION} AS builder
+ARG CUDA_DISTRO
+ARG ENABLE_POWERTOOLS
+ENV CUDA_DISTRO=${CUDA_DISTRO}
+ENV ENABLE_POWERTOOLS=${ENABLE_POWERTOOLS}
+# Add NVIDIA repo for CUDA builds.
+COPY --from=efainstaller / /
+RUN --mount=type=cache,target=/var/cache/yum,sharing=locked \
+    --mount=type=cache,target=/var/cache/dnf,sharing=locked \
+    bash -c "cd /aws-efa-installer && dnf install -y gcc rpmdevtools rpmlint dnf-plugins-core util-linux && ./efa_installer.sh -n -l -k -d -y && rm -rf /aws-efa-installer" && \
+    dnf config-manager --add-repo https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/$(uname -m)/cuda-${CUDA_DISTRO}.repo && \
+    ( test "${ENABLE_POWERTOOLS}" = "1" && sed -i 's/enabled=0/enabled=1/' /etc/yum.repos.d/Rocky-PowerTools.repo || /bin/true ) && \
+    dnf -y update && dnf -y upgrade
+RUN rpmdev-setuptree
+
+FROM builder AS environment
+ARG VARIANT
+ARG AWS_BUILD
+ENV VARIANT=${VARIANT}
+ENV AWS_BUILD=${AWS_BUILD}
+COPY --from=srpm . .
+RUN yum search hwloc
+RUN echo "%with_${VARIANT} 1" >> ~/.rpmmacros
+RUN echo "%with_platform_aws ${AWS_BUILD}" >> ~/.rpmmacros
+RUN --mount=type=cache,target=/var/cache/yum,sharing=locked \
+    --mount=type=cache,target=/var/cache/dnf,sharing=locked \
+    dnf -y install cuda-cudart-devel-12-6 && dnf -y builddep *.src.rpm && rpmbuild --rebuild *.src.rpm
+
+FROM scratch
+COPY --from=environment /root/rpmbuild/RPMS/**/* /
