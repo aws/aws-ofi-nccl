@@ -1,0 +1,65 @@
+#
+# Copyright (c) 2024, Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+ARG FAMILY=ubuntu
+ARG VERSION=latest
+ARG CUDA_DISTRO
+ARG DEBIAN_FRONTEND=noninteractive
+ARG AWS_BUILD
+
+FROM ${FAMILY}:${VERSION} AS build
+ARG CUDA_DISTRO
+ENV CUDA_DISTRO=${CUDA_DISTRO}
+ARG AWS_BUILD=0
+ENV AWS_BUILD=${AWS_BUILD}
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && apt-get install wget -y
+
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/${CUDA_DISTRO}/$(uname -m)/cuda-keyring_1.1-1_all.deb
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    dpkg -i cuda-keyring_1.1-1_all.deb
+
+COPY --from=efainstaller / .
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    bash -c "apt-get update -y && cd /aws-efa-installer && ./efa_installer.sh /efa_installer.sh -n -l -k -d -y && apt-get install -y autoconf automake libtool gcc g++ git libhwloc-dev make && rm -rf /aws-efa-installer"
+
+COPY --from=makedist / .
+RUN tar xvf ./aws-ofi-nccl*.tar.gz -C .
+RUN cd aws-ofi-nccl* && \
+	./configure --$(test "$ACCELERATOR" = "cuda" && echo "with-cuda=/usr/local/cuda" || echo "enable-neuron=yes") \
+	--prefix=/opt/amazon/libnccl-net-ofi$(test "$AWS_BUILD" -eq 0 || echo -n "-aws") \
+	--with-libfabric=/opt/amazon/efa \
+	--disable-tests \
+        --$(test "$AWS_BUILD" -eq 0 && echo -n "disable" || echo -n "enable")-platform-aws \
+	--with-mpi=no && make -j && make install
+
+FROM ubuntu:latest AS packager
+ARG FAMILY
+ARG VERSION
+ARG AWS_BUILD=0
+ENV AWS_BUILD=${AWS_BUILD}
+ENV FAMILY=${FAMILY}
+ENV VERSION=${VERSION}
+COPY --from=build /opt/amazon/ /opt/amazon/
+RUN find /opt/amazon/ | grep -E \.la$ | xargs rm
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    apt-get update -y && apt-get install -y ruby tar squashfs-tools binutils && gem install fpm
+RUN fpm \
+	-s dir -t deb \
+	--license Apache2.0 \
+	-p /libnccl-net-ofi$(test "$AWS_BUILD" -eq 0 || echo -n "-aws")-${FAMILY}-${VERSION}.deb \
+	--name nccl-net-ofi$(test "$AWS_BUILD" -eq 0 || echo -n "-aws") \
+	/opt/amazon/libnccl-net-ofi$(test "$AWS_BUILD" -eq 0 || echo -n "-aws")/=/opt/amazon/libnccl-net-ofi$(test "$AWS_BUILD" -eq 0 || echo -n "-aws")
+
+FROM scratch
+COPY --from=packager /libnccl-net-ofi* /
+
