@@ -73,6 +73,18 @@ struct ec2_platform_data {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 	},
+	{
+		.name = "trn1.32xlarge",
+		.gdr_required = true,
+		.net_flush_required = true,
+		.default_protocol = "RDMA",
+	},
+	{
+		.name = "trn1n.32xlarge",
+		.gdr_required = true,
+		.net_flush_required = true,
+		.default_protocol = "RDMA",
+	}
 };
 
 /*
