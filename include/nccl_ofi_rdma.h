@@ -111,6 +111,8 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  * allocate a rdma memory registration handle with `num_rails' rails.
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
+	struct fid_mr *control_mr;
+
 	int num_rails;
 
 	/* Array of size `num_rails' */
@@ -394,13 +396,15 @@ typedef struct nccl_ofi_rdma_connection_info {
 	 * on the receiver side */
 	uint32_t remote_comm_id;
 
+	nccl_ofi_rdma_ep_name_t control_ep_name;
+
 	/* Array of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
 	 * structs. The member `num_rails` indicates the number of
 	 * entries that are in use. */
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 272,
+_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 336,
 	       "Wrong size for RDMA connect message");
 
 /*
@@ -451,6 +455,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff_t *msgbuff;
+
+	nccl_net_ofi_rdma_send_comm_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
@@ -534,6 +540,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
+	nccl_net_ofi_rdma_recv_comm_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
@@ -625,6 +632,8 @@ struct nccl_net_ofi_rdma_ep {
 	 * struct. This allows casting between pointers of this struct
 	 * and its base struct. */
 	nccl_net_ofi_ep_t base;
+
+	nccl_net_ofi_ep_rail_t control_rail;
 
 	/* Number of rails */
 	int num_rails;
