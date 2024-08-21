@@ -602,7 +602,7 @@ int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
 		(nccl_net_ofi_device_t **)calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
 	if (plugin->p_devs == NULL) {
 		NCCL_OFI_WARN("Unable to allocate "
-			      "nccl_net_ofi_rdma_device_t pointer array");
+			      "nccl_net_ofi_device_t pointer array");
 		return -ENOMEM;
 	}
 
