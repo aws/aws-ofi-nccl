@@ -1312,6 +1312,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close;
+	r_comm->base.read = NULL;
 	r_comm->tag = l_comm->tag;
 	r_comm->local_ep = l_comm->local_ep;
 	r_comm->local_ep_addr = l_comm->local_ep_addr;
@@ -1885,6 +1886,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
 	ret_s_comm->base.close = send_close;
+	ret_s_comm->base.write = NULL;
+	ret_s_comm->base.write_inline = NULL;
 	ret_s_comm->tag = tag;
 	ret_s_comm->local_ep = ep->ofi_ep;
 	ret_s_comm->remote_ep = remote_addr;
@@ -2411,6 +2414,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	device->base.get_properties = get_properties;
 	device->base.get_ep = get_ep;
 	device->base.release = nccl_net_ofi_sendrecv_device_release;
+	device->base.get_mr_key = NULL;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */

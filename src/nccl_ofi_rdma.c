@@ -3931,6 +3931,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close_deferred;
+	r_comm->base.read = NULL;
+
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
 	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
@@ -5487,6 +5489,9 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
 	ret_s_comm->base.close = send_close_deferred;
+	ret_s_comm->base.write = NULL;
+	ret_s_comm->base.write_inline = NULL;
+
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = 0;
 	memset(&ret_s_comm->cleanup_list_elem, 0, sizeof(ret_s_comm->cleanup_list_elem));
@@ -6503,6 +6508,7 @@ nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
 	device->base.get_properties = get_properties;
 	device->base.get_ep = get_ep;
 	device->base.release = nccl_net_ofi_rdma_device_release;
+	device->base.get_mr_key = NULL;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
