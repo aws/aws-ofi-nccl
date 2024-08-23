@@ -476,6 +476,8 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 #endif
 	}
 
+	props->rma_supported = 0;
+
 	goto exit;
 error:
 	if (props->pci_path) {

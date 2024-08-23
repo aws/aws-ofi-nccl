@@ -54,5 +54,6 @@ typedef void (*ncclDebugLogger_t)(ncclDebugLogLevel level, unsigned long flags, 
 #endif
 
 #include "net_v4.h"
+#include "net_v5.h"
 
 #endif // End NCCL_HEADERS_NEURON_NET_H

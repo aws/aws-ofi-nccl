@@ -508,6 +508,116 @@ ncclResult_t nccl_net_ofi_isend(void *sComm, void* data, int size,
 	return nccl_net_ofi_retval_translate(ret);
 }
 
+ncclResult_t nccl_net_ofi_iwrite(void* sComm, void* src, size_t size, void* mhandle,
+				 uint64_t dest, uint64_t mr_key, void** req)
+{
+	nccl_net_ofi_send_comm_t *send_comm =
+		(nccl_net_ofi_send_comm_t *)sComm;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
+	/* Validate send_comm */
+	if (OFI_UNLIKELY(send_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(send_comm->write == NULL)) {
+		NCCL_OFI_WARN("Protocol does not support iwrite API function");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
+
+	int ret = send_comm->write(send_comm, src, size, mhandle, dest, mr_key, base_req);
+	return nccl_net_ofi_retval_translate(ret);
+}
+
+ncclResult_t nccl_net_ofi_iwrite_inline(void* sComm, void* src, size_t size,
+				      uint64_t dest, uint64_t mr_key, void** req)
+{
+	nccl_net_ofi_send_comm_t *send_comm =
+		(nccl_net_ofi_send_comm_t *)sComm;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
+	/* Validate send_comm */
+	if (OFI_UNLIKELY(send_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(send_comm->write_inline == NULL)) {
+		NCCL_OFI_WARN("Protocol does not support iwriteInline API function");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
+
+	int ret = send_comm->write_inline(send_comm, src, size, dest, mr_key, base_req);
+	return nccl_net_ofi_retval_translate(ret);
+}
+
+ncclResult_t nccl_net_ofi_get_mr_key(void* mhandle, uint64_t* mr_key)
+{
+	int ret = 0;
+	nccl_net_ofi_device_t *device = NULL;
+
+	/* Validate plugin */
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
+		return ncclInvalidArgument;
+	}
+
+	if (OFI_UNLIKELY(plugin->p_num_devs == 0)) {
+		return ncclInvalidArgument;
+	}
+
+	device = plugin->get_device(plugin, 0);
+	if (OFI_UNLIKELY(device == NULL)) {
+		NCCL_OFI_WARN("Error accessing device %i.", 0);
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(device->get_mr_key == NULL)) {
+		NCCL_OFI_WARN("Protocol does not support getMrKey API function");
+		return ncclInternalError;
+	}
+
+	ret = device->get_mr_key(device, mhandle, mr_key);
+	return nccl_net_ofi_retval_translate(ret);
+}
+
+ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhandle,
+				uint64_t src, uint64_t mr_key, void** req)
+{
+	nccl_net_ofi_recv_comm_t *recv_comm =
+		(nccl_net_ofi_recv_comm_t *)rComm;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+
+	/* Validate recv_comm */
+	if (OFI_UNLIKELY(recv_comm == NULL)) {
+		NCCL_OFI_WARN("Invalid communicator object provided");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(recv_comm->read == NULL)) {
+		NCCL_OFI_WARN("Protocol does not support iread API function");
+		return ncclInternalError;
+	}
+
+	if (OFI_UNLIKELY(base_req == NULL)) {
+		NCCL_OFI_WARN("Invalid request provided");
+		return ncclInternalError;
+	}
+
+	int ret = recv_comm->read(recv_comm, dest, size, mhandle, src, mr_key, base_req);
+	return nccl_net_ofi_retval_translate(ret);
+}
 
 ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
 			  void* mhandle, void** request)
