@@ -5,7 +5,7 @@
 #ifndef NCCL_HEADERS_NET_H
 #define NCCL_HEADERS_NET_H
 
-#if HAVE_CUDA
+#if HAVE_CUDA || HAVE_ROCM
 #include "nccl-headers/nvidia/net.h"
 #elif HAVE_NEURON
 #include "nccl-headers/neuron/net.h"

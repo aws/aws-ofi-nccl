@@ -49,9 +49,6 @@ AC_DEFUN([CHECK_PKG_CUDA], [
          CPPFLAGS="${check_pkg_CPPFLAGS_save}"
          $2])
 
-  AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
-  AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
-
   AC_SUBST([CUDA_LDFLAGS])
   AC_SUBST([CUDA_LIBS])
 
