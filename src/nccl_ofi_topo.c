@@ -17,13 +17,8 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 
-#if HAVE_CUDA
 static const uint8_t target_class_id = 0x03;		/* Display controller class */
 static const unsigned short target_vendor_id = 0x10de;	/* NVIDIA */
-#else
-static const uint8_t target_class_id = 0x08;		/* System peripheral */
-static const unsigned short target_vendor_id = 0x1d0f;	/* Amazon */
-#endif
 
 /* Maximum length of the device property read from file by function
  * get_device_property() */
@@ -160,19 +155,8 @@ static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
 	   the class code. */
 	class_code = obj->attr->pcidev.class_id >> 8;
 
-	/*
-	 * TODO: This is still a broad match that assumes any Amazon device
-	 * registered with class "System Peripheral" is a Neuron device.  While
-	 * this is true today, it might not be in the future.  Filtering on this
-	 * is better than statically matching against the supported device IDs,
-	 * which we would have to manually update as newer generations get released.
-	 * In the future, we should update this to dynamically query Neuron
-	 * devices on the instance and match the hwloc node against the
-	 * discovered Neuron device BDFs.
-	 */
 	class_match = target_class_id == class_code;
 	vendor_match = obj->attr->pcidev.vendor_id == target_vendor_id;
-
         *res = class_match && vendor_match;
         return 0;
 }
@@ -685,8 +669,9 @@ static int propoagate_accel_group_counts(hwloc_topology_t topo)
 	hwloc_obj_t obj = NULL;
 
 	/* Iterate over all PCI topology nodes and find nodes
-	 * corresponding to NICs and Nvidia GPUs or Amazon Neuron devices. From
-	 * those nodes, walk up towards the root and set user data. */
+	 * corresponding to Nvidia GPUs. From those nodes, walk up
+	 * towards the root and increase group count on closest
+	 * ancestor that has NICs attached. */
 	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
 		bool is_accel = false;
 
