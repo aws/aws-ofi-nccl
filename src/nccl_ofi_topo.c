@@ -763,8 +763,21 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 			}
 			target_obj = target_obj->parent;
 			if (!target_obj) {
-				NCCL_OFI_WARN("Unable to attach NIC to accelerator.");
-				return -EINVAL;
+				/* No accelerator found to which the
+				 * info list can be assigned to, i.e.,
+				 * neither the source node, not any
+				 * ancestor has a group count larger
+				 * than `0`. This can have two
+				 * reasons; either the topology does
+				 * not contain a known accelerator at
+				 * all, or each accelerator has a NIC
+				 * that is closer to the accelerator
+				 * than NICs of the source node. We
+				 * still want to expose those NICs,
+				 * and thus, expose each NIC as one
+				 * group. */
+				source_data->num_groups = source_data->info_list_len;
+				break;
 			}
 		}
 	}
