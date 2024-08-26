@@ -133,6 +133,8 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * 3. For each topology node with a libfabric NIC info list in its
  * user data, search towards the root for a node with 'num_groups' > 0.
  * If such a node has been found, move the list to that node.
+ * If no said node is found, keep list stored in original node and set
+ * `num_groups` to one.
  * 4. For each topology node with a libfabric NIC info list and 'num_groups > 0',
  * split the list into 'num_groups' sub-lists (groups) and add the
  * groups to the topology nodes corresponding to their leaders (first
