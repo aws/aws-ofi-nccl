@@ -3260,10 +3260,8 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 	return ret;
 }
 
-static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
+static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
@@ -3271,42 +3269,35 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	if (OFI_UNLIKELY(base_ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
+		return ret;
 	}
 
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t*)base_ep->device;
-
-	/* Make sure all requests are finished */
-	if (r_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Attempt to call recv_close with outstanding requests!");
-		ret = -EINVAL;
-		goto exit;
-	}
 
 	if (is_flush_buff_enabled()) {
 		ret = dealloc_and_dereg_flush_buff(r_comm, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
-			goto exit;
+			return ret;
 		}
 	}
 
 	ret = nccl_ofi_freelist_fini(r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
-		goto exit;
+		return ret;
 	}
 
 	ret = nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
-		goto exit;
+		return ret;
 	}
 
 	if (!nccl_ofi_msgbuff_destroy(r_comm->msgbuff)) {
 		NCCL_OFI_WARN("Failed to destroy msgbuff (r_comm)");
 		ret = -EINVAL;
-		goto exit;
+		return ret;
 	}
 
 	/* Destroy domain */
@@ -3326,6 +3317,71 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	}
 
 	free(r_comm);
+
+	return ret;
+}
+
+static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
+{
+	int ret = 0;
+
+	/* Release connect response request if available */
+	if (s_comm->conn_resp_req) {
+		nccl_net_ofi_rdma_req_t *req = s_comm->conn_resp_req;
+		req->free(req, false);
+	}
+
+	/* Release request freelist */
+	ret = nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
+		return ret;
+	}
+
+	if (!nccl_ofi_msgbuff_destroy(s_comm->msgbuff)) {
+		NCCL_OFI_WARN("Failed to destroy msgbuff (s_comm)");
+		ret = -EINVAL;
+		return ret;
+	}
+
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
+	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	set_comm(device, s_comm->local_comm_id, NULL);
+
+	/* Release communicator ID */
+	ret = nccl_ofi_idpool_free_id(device->comm_idpool, s_comm->local_comm_id);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, s_comm->local_comm_id);
+		return ret;
+	}
+
+	/* Destroy domain */
+#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
+	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
+		nvtxDomainDestroy(s_comm->nvtx_domain[i]);
+	}
+#endif
+
+	free(s_comm);
+
+	return ret;
+}
+
+static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
+{
+	nccl_net_ofi_rdma_recv_comm_t *r_comm =
+		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
+	int ret = 0;
+
+	/* Make sure all requests are finished */
+	if (r_comm->num_inflight_reqs > 0) {
+		NCCL_OFI_WARN("Attempt to call recv_close with outstanding requests!");
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	ret = recv_comm_destroy(r_comm);
+
  exit:
 	return ret;
 }
@@ -4794,43 +4850,10 @@ static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 		goto exit;
 	}
 
-	/* Release connect response request if available */
-	if (s_comm->conn_resp_req) {
-		nccl_net_ofi_rdma_req_t *req = s_comm->conn_resp_req;
-		req->free(req, false);
-	}
-
-	/* Release request freelist */
-	ret = nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
+	ret = send_comm_destroy(s_comm);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
 		goto exit;
 	}
-
-	if (!nccl_ofi_msgbuff_destroy(s_comm->msgbuff)) {
-		NCCL_OFI_WARN("Failed to destroy msgbuff (s_comm)");
-		ret = -EINVAL;
-		goto exit;
-	}
-
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
-	set_comm(device, s_comm->local_comm_id, NULL);
-
-	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(device->comm_idpool, s_comm->local_comm_id);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, s_comm->local_comm_id);
-	}
-
-	/* Destroy domain */
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
-	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
-		nvtxDomainDestroy(s_comm->nvtx_domain[i]);
-	}
-#endif
-
-	free(s_comm);
 
  exit:
 	return ret;
