@@ -1,0 +1,22 @@
+name: Cache EFA Installer
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "20 4 * * *"
+
+jobs:
+  cache_efa_installer:
+    strategy:
+      matrix:
+        # fetch just the latest, and the oldest version that is known to work
+        # with current actions without requiring workarounds
+        version:
+          - latest
+          - 1.25.0
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -s -L https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.version }}.tar.gz | tar xvz -
+      - uses: actions/cache@v3
+        with:
+          key: aws-efa-installer-${{ matrix.version }}
+          path: aws-efa-installer
