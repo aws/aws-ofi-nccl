@@ -3578,6 +3578,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device
 
 			new_ep->thread_local_ep = false;
 
+			ep_for_addr = &new_ep->base;
+
 			ret = nccl_ofi_ep_addr_list_insert(device->ep_addr_list, ep_for_addr,
 				remote_rail0_ep_name->ep_name, remote_rail0_ep_name->ep_name_len);
 			if (ret != 0) {
