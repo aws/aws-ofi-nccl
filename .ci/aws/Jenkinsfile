@@ -200,7 +200,8 @@ pipeline {
                     def build_type = "--aws-ofi-nccl-build-type debug"
                     def pr_num = "--test-aws-ofi-nccl-pr $env.CHANGE_ID"
                     def test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
-                    def base_args = "${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${test_list}"
+                    def nccl_test_iter = "--test-aws-ofi-nccl-nccltest-iterations 5"
+                    def base_args = "${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${test_list} ${nccl_test_iter}"
 
                     def num_instances = 4
                     def p3dn_lock_label = "p3dn-1-4node"
