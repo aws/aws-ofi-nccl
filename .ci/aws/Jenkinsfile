@@ -215,7 +215,6 @@ pipeline {
                     def p3dn_region = "ap-northeast-1"
                     def p3dn_odcr = "cr-08ecd03c0644442e4"
                     def p3dn_addl_args = "${base_args} --odcr-placement-group-name p3dn-placement-group"
-                    def p3dn_al2_addl_args = "${p3dn_addl_args} --ami-id ami-0b9081c7bc36c4eba"
                     def p4d_lock_label = "p4d-1-4node"
                     def p4d_region = "us-east-2"
                     def p4d_odcr = "cr-0e5eebb3c896f6af0"
@@ -237,7 +236,7 @@ pipeline {
                     def g4dn_addl_args = "${base_args} --odcr-placement-group-name g4dn-placement-group"
 
                     // p3dn tests
-                    stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_al2_addl_args)
+                    stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
                     stages["4_p3dn_ubuntu2004"] = get_test_stage_with_lock("4_p3dn_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
                     stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock("4_p3dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
 
