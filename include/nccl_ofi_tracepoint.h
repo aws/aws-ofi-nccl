@@ -103,6 +103,16 @@
 	NCCL_OFI_TRACE_FLUSH_NVTX(request, nccl_req); \
 } while(0)
 
+#define NCCL_OFI_TRACE_READ(request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Read, request, nccl_req); \
+	NCCL_OFI_TRACE_READ_NVTX(request, nccl_req); \
+} while(0)
+
+#define NCCL_OFI_TRACE_WRITE(request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Write, request, nccl_req); \
+	NCCL_OFI_TRACE_WRITE_NVTX(request, nccl_req); \
+} while(0)
+
 #define NCCL_OFI_TRACE_PENDING_INSERT(request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_insert, request); \
 	NCCL_OFI_TRACE_PENDING_INSERT_NVTX(request); \

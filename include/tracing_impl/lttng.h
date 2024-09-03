@@ -234,6 +234,32 @@ LTTNG_UST_TRACEPOINT_EVENT(
     )
 )
 
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Read,
+    LTTNG_UST_TP_ARGS(
+            void *, request,
+            void *, nccl_req
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+            lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
+    )
+)
+
+LTTNG_UST_TRACEPOINT_EVENT(
+    nccl_ofi_plugin,
+    Write,
+    LTTNG_UST_TP_ARGS(
+            void *, request,
+            void *, nccl_req
+    ),
+    LTTNG_UST_TP_FIELDS(
+            lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+            lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
+    )
+)
+
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
