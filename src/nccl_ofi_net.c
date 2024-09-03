@@ -476,7 +476,7 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 #endif
 	}
 
-	props->rma_supported = 0;
+	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
 
 	goto exit;
 error:
@@ -681,4 +681,22 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 	}
 
 	return 0;
+}
+
+int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
+			    size_t *max_write_inline_size)
+{
+#if HAVE_DECL_FI_OPT_INJECT_RMA_SIZE
+	int ret;
+	size_t optlen = sizeof(size_t);
+	ret = fi_getopt(&ofi_ep->fid, FI_OPT_ENDPOINT, FI_OPT_INJECT_RMA_SIZE,
+			max_write_inline_size, &optlen);
+	if (ret != 0 && ret != -FI_ENOPROTOOPT) {
+		NCCL_OFI_WARN("Retrieving option endpoint FI_OPT_INJECT_RMA_SIZE failed. RC: %d. Error: %s",
+			      ret, fi_strerror(-ret));
+	}
+	return ret;
+#else
+	return -FI_ENOPROTOOPT;
+#endif
 }

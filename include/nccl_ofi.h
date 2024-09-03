@@ -607,6 +607,16 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
 
+/*
+ * @brief       Retrieve maximum size of inject RMA operations of ofi endpoint
+ *
+ * @return      0, on success
+ *              -FI_ENOPROTOOPT, in case option to retrieve size is not available
+ *              error, on others
+ */
+int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
+			    size_t *max_write_inline_size);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
