@@ -90,6 +90,13 @@
 /* Maximum size of an eager message (see OFI_NCCL_EAGER_MAX_SIZE) */
 static size_t eager_max_size = 0;
 
+/* List of comms undergoing deferred cleanup */
+static nccl_ofi_deque_t *s_comm_cleanup_list = NULL;
+static nccl_ofi_deque_t *r_comm_cleanup_list = NULL;
+static pthread_mutex_t comm_cleanup_list_lock = PTHREAD_MUTEX_INITIALIZER;
+/* Number of open (not finalizing) send and recv comms */
+static int num_open_comms = 0;
+
 /* Function prototypes */
 static int send_progress(nccl_net_ofi_rdma_req_t *req);
 
@@ -3329,6 +3336,46 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	return ret;
 }
 
+/**
+ * Iterate the list of r_comm's that are pending cleanup, make progress
+ * on each one, and destroy resources if the close message and required
+ * control messages have been delivered.
+ *
+ * This function is non-blocking.
+ *
+ * Note: caller must own the comm_cleanup_list_lock when calling
+ * this function
+ */
+static int recv_comm_process_all_finalizing(void)
+{
+	int ret = 0;
+
+	NCCL_OFI_DEQUE_FOREACH(r_comm_cleanup_list) {
+
+		nccl_net_ofi_rdma_recv_comm_t *r_comm =
+			container_of(elem, nccl_net_ofi_rdma_recv_comm_t, cleanup_list_elem);
+
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
+			r_comm->base.base.ep;
+		ret = ofi_process_cq(ep);
+		if (ret != 0) {
+			goto exit;
+		}
+
+		/* A future commit will test for completion of closing
+		   operations here */
+
+		nccl_ofi_deque_remove(r_comm_cleanup_list, elem);
+		ret = recv_comm_destroy(r_comm);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+
+exit:
+	return ret;
+}
+
 static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
 	int ret = 0;
@@ -3377,7 +3424,92 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	return ret;
 }
 
-static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
+/**
+ * Iterate the list of s_comm's that are pending cleanup, make progress
+ * on each one, and destroy resources if the close message and required
+ * control messages have been received.
+ *
+ * This function is non-blocking.
+ *
+ * Note: caller must own the comm_cleanup_list_lock when calling
+ * this function
+ */
+static int send_comm_process_all_finalizing(void)
+{
+	int ret = 0;
+
+	NCCL_OFI_DEQUE_FOREACH(s_comm_cleanup_list) {
+
+		nccl_net_ofi_rdma_send_comm_t *s_comm =
+			container_of(elem, nccl_net_ofi_rdma_send_comm_t, cleanup_list_elem);
+
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
+			s_comm->base.base.ep;
+		ret = ofi_process_cq(ep);
+		if (ret != 0) {
+			goto exit;
+		}
+
+		/* A future commit will test for completion of closing
+		   operations here */
+
+		nccl_ofi_deque_remove(s_comm_cleanup_list, elem);
+
+		ret = send_comm_destroy(s_comm);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
+
+exit:
+	return ret;
+}
+
+/**
+ * To be called on every send or recv comm close. Processes all pending
+ * comms, and blocks for completion on the last comm close
+ *
+ * Note: caller must own the comm_cleanup_list_lock when calling
+ * this function
+ */
+static int comm_close_handler(void)
+{
+	int ret = 0;
+
+	while (!(nccl_ofi_deque_isempty(s_comm_cleanup_list)) ||
+	       !(nccl_ofi_deque_isempty(r_comm_cleanup_list))) {
+
+		ret = recv_comm_process_all_finalizing();
+		if (ret != 0) {
+			return ret;
+		}
+
+		ret = send_comm_process_all_finalizing();
+		if (ret != 0) {
+			return ret;
+		}
+
+		/* This function is only blocking on last comm close */
+		if (num_open_comms > 0) {
+			break;
+		}
+	}
+
+	return ret;
+}
+
+/**
+ * Close recv communicator. This function will add the given communicator
+ * to the deferred close list. When pending close actions (send_close message
+ * and all outstanding control messages) complete, the communicator and
+ * underlying resources will be destroyed.
+ *
+ * This function is blocking when the last open send/recv communicator in the
+ * process is closed. Otherwise, it is non-blocking.
+ *
+ * To directly free the communicator resources, use recv_comm_destroy.
+ */
+static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
@@ -3385,14 +3517,25 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 
 	/* Make sure all requests are finished */
 	if (r_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Attempt to call recv_close with outstanding requests!");
+		NCCL_OFI_WARN("Attempt to call recv_close_deferred with outstanding requests!");
 		ret = -EINVAL;
 		goto exit;
 	}
 
 	r_comm->comm_active = false;
 
-	ret = recv_comm_destroy(r_comm);
+	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
+
+	/* Defer cleanup until we deliver all outstanding control messages
+	   and deliver the close message */
+	nccl_ofi_deque_insert_back(r_comm_cleanup_list,
+				   &r_comm->cleanup_list_elem);
+
+	assert(num_open_comms > 0);
+	num_open_comms--;
+	ret = comm_close_handler();
+
+	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
 
  exit:
 	return ret;
@@ -3610,8 +3753,9 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->base.deregMr = dereg_mr_recv_comm;
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
-	r_comm->base.close = recv_close;
+	r_comm->base.close = recv_close_deferred;
 	r_comm->comm_active = true;
+	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
 
 	/* Allocate recv communicator ID */
 	int comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
@@ -3908,7 +4052,7 @@ static int close_listen_recv_comm(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 		return -EINVAL;
 	}
 
-	if (l_comm->r_comm && recv_close(&l_comm->r_comm->base)) {
+	if (l_comm->r_comm && recv_comm_destroy(l_comm->r_comm)) {
 		return -EINVAL;
 	}
 	l_comm->r_comm = NULL;
@@ -4103,6 +4247,10 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		ret = -EINVAL;
 	}
 
+	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
+	++num_open_comms;
+	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
+
  exit:;
 	/* Close receive communicator in case listen operation failed */
 	int close_ret = close_listen_recv_comm(l_comm);
@@ -4129,7 +4277,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	if (l_comm->r_comm) {
-		ret = recv_close(&l_comm->r_comm->base);
+		ret = recv_comm_destroy(l_comm->r_comm);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to close receive communicator stored in listen communicator. Leaking memory.");
 			return ret;
@@ -4855,7 +5003,18 @@ retry:
 	return ret;
 }
 
-static int send_close(nccl_net_ofi_send_comm_t *send_comm)
+/**
+ * Close send communicator. This function will add the given communicator
+ * to the deferred close list. When pending close actions (send_close message
+ * and all outstanding control messages) complete, the communicator and
+ * underlying resources will be destroyed.
+ *
+ * This function is blocking when the last open send/recv communicator in the
+ * process is closed. Otherwise, it is non-blocking.
+ *
+ * To directly free the communicator resources, use send_comm_destroy.
+ */
+static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
 {
 	int ret = 0;
 
@@ -4864,17 +5023,23 @@ static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 
 	/* Make sure all requests are finished */
 	if (s_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Attempt to call send_close with outstanding requests!");
+		NCCL_OFI_WARN("Attempt to call send_close_deferred with outstanding requests!");
 		ret = -EINVAL;
 		goto exit;
 	}
 
 	s_comm->comm_active = false;
 
-	ret = send_comm_destroy(s_comm);
-	if (ret != 0) {
-		goto exit;
-	}
+	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
+
+	/* Deferred cleanup */
+	nccl_ofi_deque_insert_back(s_comm_cleanup_list,
+				   &s_comm->cleanup_list_elem);
+
+	assert(num_open_comms > 0);
+	num_open_comms--;
+	ret = comm_close_handler();
+	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
 
  exit:
 	return ret;
@@ -5095,9 +5260,10 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.regMrDmaBuf = nccl_net_ofi_reg_mr_dma_buf_send_comm;
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
-	ret_s_comm->base.close = send_close;
+	ret_s_comm->base.close = send_close_deferred;
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = 0;
+	memset(&ret_s_comm->cleanup_list_elem, 0, sizeof(ret_s_comm->cleanup_list_elem));
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
@@ -5350,7 +5516,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		/* Prepare connect request to be sent to peer */
 		req = prepare_send_conn_req(s_comm);
 		if (OFI_UNLIKELY(req == NULL)) {
-			send_close(&s_comm->base);
+			send_comm_destroy(s_comm);
 			return -ENOMEM;
 		}
 		comm_state->req = &req->base;
@@ -5358,7 +5524,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		/* Prepare request to receive connect response message */
 		s_comm->conn_resp_req = prepare_recv_conn_resp_req(s_comm);
 		if (OFI_UNLIKELY(s_comm->conn_resp_req == NULL)) {
-			send_close(&s_comm->base);
+			send_comm_destroy(s_comm);
 			return -EINVAL;
 		}
 
@@ -5373,7 +5539,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 		else if (ret != 0) {
 			req->free(req, false);
-			send_close(&s_comm->base);
+			send_comm_destroy(s_comm);
 			return ret;
 		}
 
@@ -5450,6 +5616,10 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		NCCL_OFI_WARN("Invalid state of send communicator object: %d", stage);
 		return -EINVAL;
 	};
+
+	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
+	++num_open_comms;
+	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
 
 	*send_comm = &s_comm->base;
 
@@ -6272,6 +6442,18 @@ static inline int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	int ret, last_error = 0;
 
+	ret = nccl_ofi_deque_finalize(r_comm_cleanup_list);
+	if (ret != 0) {
+		last_error = ret;
+	}
+	r_comm_cleanup_list = NULL;
+
+	ret = nccl_ofi_deque_finalize(s_comm_cleanup_list);
+	if (ret != 0) {
+		last_error = ret;
+	}
+	s_comm_cleanup_list = NULL;
+
 	ret = nccl_net_ofi_plugin_fini(plugin);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Destructing base plugin failed: %s",
@@ -6283,7 +6465,7 @@ static inline int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 
 	free(plugin);
 
-	return 0;
+	return last_error;
 }
 
 
@@ -6303,7 +6485,20 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing base plugin failed: %s",
 			      strerror(-ret));
+		free(plugin);
 		return ret;
+	}
+
+	/* TODO: we should probably have an rdma_plugin object and put globals
+	   such as these there. */
+	ret = nccl_ofi_deque_init(&s_comm_cleanup_list);
+	if (ret != 0) {
+		goto error;
+	}
+
+	ret = nccl_ofi_deque_init(&r_comm_cleanup_list);
+	if (ret != 0) {
+		goto error;
 	}
 
 	plugin->release_plugin = nccl_net_ofi_rdma_plugin_fini;
@@ -6311,6 +6506,22 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 	*plugin_p = plugin;
 
 	return 0;
+
+error:
+	if (plugin) {
+		if (s_comm_cleanup_list) {
+			nccl_ofi_deque_finalize(s_comm_cleanup_list);
+			s_comm_cleanup_list = NULL;
+		}
+		if (r_comm_cleanup_list) {
+			nccl_ofi_deque_finalize(r_comm_cleanup_list);
+			r_comm_cleanup_list = NULL;
+		}
+		plugin->release_plugin(plugin);
+		free(plugin);
+		plugin = NULL;
+	}
+	return ret;
 }
 
 
