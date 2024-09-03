@@ -186,6 +186,14 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtx_mark_domain(NULL, "Flush", 0xA52A2A); \
 } while(0)
 
+#define NCCL_OFI_TRACE_READ_NVTX(request, nccl_req) do { \
+	nvtx_mark_domain(NULL, "Read", 0xff00ff); \
+} while(0)
+
+#define NCCL_OFI_TRACE_WRITE_NVTX(request, nccl_req) do { \
+	nvtx_mark_domain(NULL, "Write", 0xff00ff); \
+} while(0)
+
 #define NCCL_OFI_TRACE_PENDING_INSERT_NVTX(request) do { \
 	nvtx_mark_domain(NULL, "Pending_insert", 0xFF8C00); \
 } while(0)
@@ -210,6 +218,8 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 #define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(...)
 #define NCCL_OFI_TRACE_EAGER_RECV_NVTX(...)
 #define NCCL_OFI_TRACE_FLUSH_NVTX(...)
+#define NCCL_OFI_TRACE_READ_NVTX(...)
+#define NCCL_OFI_TRACE_WRITE_NVTX(...)
 #define NCCL_OFI_TRACE_PENDING_INSERT_NVTX(...)
 #define NCCL_OFI_TRACE_PENDING_REMOVE_NVTX(...)
 

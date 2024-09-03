@@ -4082,6 +4082,8 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
 	 */
 	(r_comm->num_inflight_reqs)++;
 
+	NCCL_OFI_TRACE_READ(req, base_req);
+
 	/* Try posting RMA read */
 
 	ret = receive_progress(req, true);
@@ -5790,6 +5792,8 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
 	 */
 	(s_comm->num_inflight_reqs)++;
 
+	NCCL_OFI_TRACE_WRITE(req, base_req);
+
 	/* Try posting RMA write with write_inline interface */
 
 	ret = send_progress(req);
@@ -5800,6 +5804,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
 			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
 			goto error;
 		}
+		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	} else if (OFI_UNLIKELY(ret != 0)) {
 		ret = -ENOTSUP;
 		goto error;
