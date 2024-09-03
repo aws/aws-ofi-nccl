@@ -707,6 +707,10 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_req_t *recv_req = send_ctrl_data->recv_req;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
+	assert(req->comm->type == NCCL_NET_OFI_RECV_COMM);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm =
+		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Set send ctrl request completed */
@@ -716,6 +720,10 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 	NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(recv_req);
 
 	nccl_net_ofi_mutex_unlock(&req->req_lock);
+
+	nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
+	r_comm->n_ctrl_delivered += 1;
+	nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
 
 	/* Add completion to parent request */
 	return inc_req_completion(recv_req, 0, recv_data->total_num_compls);
@@ -1119,6 +1127,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *bounce_req)
 
 	assert(s_comm->received_close_message == false);
 	s_comm->received_close_message = true;
+	s_comm->n_ctrl_expected = close_msg->ctrl_counter;
 
 	nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
 
@@ -1133,7 +1142,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *bounce_req)
 static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rail_id, struct fi_cq_data_entry *cq_entry,
 				     nccl_net_ofi_rdma_req_t *bounce_req, bool eager)
 {
-	int ret;
+	int ret = 0;
 	rdma_req_bounce_data_t *bounce_data = NULL;
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = NULL;
 	nccl_ofi_rdma_connection_info_t *conn_msg = NULL;
@@ -1229,6 +1238,11 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
+
+		nccl_net_ofi_mutex_lock(&s_comm->receive_close_lock);
+		s_comm->n_ctrl_received += 1;
+		nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
+
 		break;
 	case NCCL_OFI_RDMA_MSG_CLOSE:
 		assert(cq_entry->len == sizeof(nccl_net_ofi_rdma_close_msg_t));
@@ -3223,6 +3237,10 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	NCCL_OFI_TRACE_RECV(dev_id, r_comm->local_comm_id, sizes[0], req, base_req);
 
+	/* Send ctrl msg */
+	nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
+	r_comm->n_ctrl_sent += 1;
+	nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
 	ret = receive_progress(recv_data->send_ctrl_req, true);
 	if (OFI_UNLIKELY(ret != 0)) {
 		/* TODO: Remove req from message buffer */
@@ -3423,6 +3441,11 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 	}
 
+	ret = nccl_net_ofi_mutex_destroy(&r_comm->ctrl_counter_lock);
+	if (ret != 0) {
+		return ret;
+	}
+
 	free(r_comm);
 
 	ret = base_ep->release_ep(base_ep);
@@ -3479,6 +3502,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 		return -ENOMEM;
 	}
 	ctrl_fl_item->close_msg.type = NCCL_OFI_RDMA_MSG_CLOSE;
+	ctrl_fl_item->close_msg.ctrl_counter = r_comm->n_ctrl_delivered;
 	ctrl_fl_item->close_msg.send_comm_id = r_comm->remote_comm_id;
 	send_close_data->ctrl_fl_item = ctrl_fl_item;
 
@@ -3513,15 +3537,24 @@ static int recv_comm_process_all_finalizing(void)
 		}
 
 		if (r_comm->send_close_req == NULL) {
-			/* TODO (upcoming commit): wait for all ctrls to complete */
-			ret = recv_comm_insert_send_close_req(r_comm);
-			if (ret != 0) {
-				goto exit;
-			}
+			/* Waiting for all ctrls to complete */
+			nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
+			bool all_ctrl_msgs_delivered =
+				(r_comm->n_ctrl_delivered == r_comm->n_ctrl_sent);
+			nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
 
-			ret = receive_progress(r_comm->send_close_req, true);
-			if (ret != 0) {
-				goto exit;
+			if (all_ctrl_msgs_delivered) {
+				/* Send close message */
+
+				ret = recv_comm_insert_send_close_req(r_comm);
+				if (ret != 0) {
+					goto exit;
+				}
+
+				ret = receive_progress(r_comm->send_close_req, true);
+				if (ret != 0) {
+					goto exit;
+				}
 			}
 		} else /* (r_comm->send_close_req != NULL) */ {
 
@@ -3629,7 +3662,8 @@ static int send_comm_process_all_finalizing(void)
 
 		nccl_net_ofi_mutex_lock(&s_comm->receive_close_lock);
 
-		bool ready_to_destroy = (s_comm->received_close_message);
+		bool ready_to_destroy = (s_comm->received_close_message) &&
+			(s_comm->n_ctrl_received == s_comm->n_ctrl_expected);
 
 		nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
 
@@ -3929,6 +3963,12 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 		goto error;
 	}
 
+	ret = nccl_net_ofi_mutex_init(&r_comm->ctrl_counter_lock, NULL);
+	if (ret != 0) {
+		free(r_comm);
+		return NULL;
+	}
+
 	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
 	r_comm->base.base.dev_id = dev_id;
 	r_comm->base.regMr = reg_mr_recv_comm;
@@ -3940,6 +3980,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
 	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
+	r_comm->n_ctrl_sent = 0;
+	r_comm->n_ctrl_delivered = 0;
 
 	/* Allocate recv communicator ID */
 	int comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
@@ -4120,6 +4162,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 			}
 		}
+		nccl_net_ofi_mutex_destroy(&r_comm->ctrl_counter_lock);
 		free(r_comm);
 	}
 
@@ -5496,6 +5539,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	memset(&ret_s_comm->cleanup_list_elem, 0, sizeof(ret_s_comm->cleanup_list_elem));
 
 	ret_s_comm->received_close_message = false;
+	ret_s_comm->n_ctrl_received = 0;
+	ret_s_comm->n_ctrl_expected = 0;
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
