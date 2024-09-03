@@ -165,6 +165,9 @@ typedef struct nccl_net_ofi_rdma_close_msg {
 	/* Message type, must be NCCL_OFI_RDMA_MSG_CLOSE */
 	uint16_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
 
+	/* Count of number of ctrl messages sent by the r_comm */
+	uint64_t ctrl_counter;
+
 	/* Comm ID provided by the sender */
 	uint32_t send_comm_id;
 } nccl_net_ofi_rdma_close_msg_t;
@@ -505,6 +508,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	pthread_mutex_t receive_close_lock;
 	bool received_close_message;
+	/* Counters for total sent and received control messages */
+	uint64_t n_ctrl_received;
+	uint64_t n_ctrl_expected;
 
 	bool comm_active;
 
@@ -579,6 +585,11 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_req_t *send_close_req;
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
+
+	/* Counters for total sent and received control messages */
+	pthread_mutex_t ctrl_counter_lock;
+	uint64_t n_ctrl_sent;
+	uint64_t n_ctrl_delivered;
 
 	/* Number of rails */
 	int num_rails;
