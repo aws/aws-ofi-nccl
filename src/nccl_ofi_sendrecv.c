@@ -53,6 +53,9 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		props->max_communicators = NCCL_OFI_MIN(device->max_tag, INT_MAX);
 	}
 
+	props->rma_supported = 0;
+	props->max_write_inline_size = info->tx_attr->inject_size;
+
 	/**
 	 * TODO:
 	 * The SENDRECV protocol currently does not correctly handle the truncated

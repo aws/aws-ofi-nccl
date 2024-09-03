@@ -97,6 +97,10 @@ static pthread_mutex_t comm_cleanup_list_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Number of open (not finalizing) send and recv comms */
 static int num_open_comms = 0;
 
+/* Maximum size of inline RMA write operations */
+static size_t max_write_inline_size = 0;
+static bool is_max_write_inline_size_initialized = false;
+
 /* Function prototypes */
 static int send_progress(nccl_net_ofi_rdma_req_t *req);
 
@@ -501,7 +505,14 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
+	} else {
+		return ret;
 	}
+
+	props->rma_supported = 1;
+	assert(is_max_write_inline_size_initialized);
+	props->max_write_inline_size = max_write_inline_size;
+
 	return ret;
 }
 
@@ -511,6 +522,15 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 static inline rdma_req_bounce_data_t *get_bounce_data(nccl_net_ofi_rdma_req_t *req) {
 	assert(req->type == NCCL_OFI_RDMA_BOUNCE);
 	return &req->bounce_data;
+}
+
+/*
+ * @brief	Return write inline struct of write request
+ */
+static inline rdma_req_rma_op_data_t *req_get_rma_op_data(nccl_net_ofi_rdma_req_t *req,
+	nccl_net_ofi_rdma_req_type_t type) {
+	assert(req->type == type);
+	return &req->rma_op_data;
 }
 
 /*
@@ -1311,6 +1331,10 @@ static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
 		return "RECV_CONN";
 	case NCCL_OFI_RDMA_RECV_CONN_RESP:
 		return "RECV_CONN_RESP";
+	case NCCL_OFI_RDMA_WRITE:
+		return "WRITE";
+	case NCCL_OFI_RDMA_READ:
+		return "READ";
 	case NCCL_OFI_RDMA_SEND:
 		return "SEND";
 	case NCCL_OFI_RDMA_RECV:
@@ -1370,6 +1394,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 	uint64_t comp_idx = 0, comp_flags = 0;
 
 	rdma_req_send_data_t *send_data = NULL;
+	rdma_req_rma_op_data_t *rma_op_data = NULL;
 
 	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
 		/* The context for these operations is req.
@@ -1384,8 +1409,8 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 		 * 2. RECV w/o immediate data: connect, connect response, or control message
 		 * 3. RECV w/ immediate data: eager message
 		 * 4. Remote-initiated write
-		 * 5. Local-initiated write
-		 * 6. READ: flush or eager copy
+		 * 5. Local-initiated write: send operation, RMA write, or RMA write inline
+		 * 6. READ: flush, eager copy, or RMA read
 		 */
 		if (comp_flags & FI_SEND) {
 			/* Send completions */
@@ -1435,13 +1460,27 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
 
 		} else if (comp_flags & FI_WRITE) {
-			/* Local-initiated write is complete */
-			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
-							       req);
+			switch (req->type) {
+			case NCCL_OFI_RDMA_SEND: {
+				/* Local-initiated write of send operation is complete */
+				NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
+								       req);
 
-			send_data = get_send_data(req);
-			ret = inc_req_completion(req, 0, send_data->total_num_compls);
+				send_data = get_send_data(req);
+				ret = inc_req_completion(req, 0, send_data->total_num_compls);
+				break;
+			}
+			case NCCL_OFI_RDMA_WRITE: {
+				/* Local-initiated RMA write is complete */
 
+				rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
+				break;
+			}
+			default:
+				NCCL_OFI_WARN("Write complete from unexpected request type!");
+				ret = -EINVAL;
+			}
 		} else if (comp_flags & FI_READ) {
 			switch (req->type) {
 			case NCCL_OFI_RDMA_FLUSH: {
@@ -1453,6 +1492,13 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 			}
 			case NCCL_OFI_RDMA_EAGER_COPY: {
 				ret = set_eager_copy_completed(req);
+				break;
+			}
+			case NCCL_OFI_RDMA_READ: {
+				/* Local-initiated RMA read is complete */
+
+				rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
 				break;
 			}
 			default:
@@ -1552,6 +1598,28 @@ exit:
 	return ret;
 }
 
+static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
+{
+	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = get_recv_comm_rail(r_comm, 0);
+
+	ssize_t rc;
+	/* Post RMA read */
+	rc = fi_read(comm_rail->local_ep, rma_op_data->buff,
+		      rma_op_data->buff_len, rma_op_data->desc,
+		      comm_rail->remote_addr,
+		      rma_op_data->remote_buff,
+		      rma_op_data->remote_mr_key, req);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("fi_read failed; RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
 /*
  * Progress a request associated with recv
  *
@@ -1578,6 +1646,9 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 			break;
 		case NCCL_OFI_RDMA_FLUSH:
 			rc = post_flush_req(req);
+			break;
+		case NCCL_OFI_RDMA_READ: // Post RMA read
+			rc = post_rma_read(req);
 			break;
 		default:
 			NCCL_OFI_WARN("Unexpected type: %d", req->type);
@@ -1631,10 +1702,12 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 
 		nccl_net_ofi_rdma_req_t *req = container_of(deque_elem, nccl_net_ofi_rdma_req_t, pending_reqs_elem);
 		switch (req->type) {
+			case NCCL_OFI_RDMA_WRITE:
 			case NCCL_OFI_RDMA_SEND:
 			case NCCL_OFI_RDMA_BOUNCE:
 				rc = send_progress(req);
 				break;
+			case NCCL_OFI_RDMA_READ:
 			case NCCL_OFI_RDMA_EAGER_COPY:
 			case NCCL_OFI_RDMA_SEND_CTRL:
 			case NCCL_OFI_RDMA_FLUSH:
@@ -1792,6 +1865,33 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
  exit:
 	return ret;
+}
+
+/*
+ * @brief	Free write request
+ */
+static inline int free_write_req(nccl_net_ofi_rdma_req_t *req,
+				 bool dec_inflight_reqs)
+{
+	assert(req->type == NCCL_OFI_RDMA_WRITE);
+	nccl_net_ofi_rdma_send_comm_t *s_comm =
+		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
+	return free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
+			req, dec_inflight_reqs);
+}
+
+/*
+ * @brief	Free read request
+ */
+static inline int free_read_req(nccl_net_ofi_rdma_req_t *req,
+				bool dec_inflight_reqs)
+{
+	assert(req->type == NCCL_OFI_RDMA_READ);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm =
+		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+
+	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
+			req, dec_inflight_reqs);
 }
 
 /*
@@ -2247,7 +2347,9 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	int ret = 0;
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t *)base_req;
 	*done = 0;
-	assert(req->type == NCCL_OFI_RDMA_SEND ||
+	assert(req->type == NCCL_OFI_RDMA_WRITE ||
+	       req->type == NCCL_OFI_RDMA_READ ||
+	       req->type == NCCL_OFI_RDMA_SEND ||
 	       req->type == NCCL_OFI_RDMA_RECV ||
 	       req->type == NCCL_OFI_RDMA_FLUSH);
 
@@ -2283,7 +2385,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		/* Mark as done */
 		*done = 1;
 
-		if (req->type != NCCL_OFI_RDMA_FLUSH) {
+		if (req->type == NCCL_OFI_RDMA_SEND || req->type == NCCL_OFI_RDMA_RECV) {
 			/* Mark as complete in message buffer */
 			nccl_ofi_msgbuff_t *msgbuff;
 			if (req->type == NCCL_OFI_RDMA_SEND) {
@@ -3877,6 +3979,131 @@ static inline nccl_net_ofi_rdma_recv_comm_t *calloc_rdma_recv_comm(int num_rails
 			num_rails * sizeof(nccl_net_ofi_rdma_recv_comm_rail_t));
 }
 
+static void init_rma_op_req(nccl_net_ofi_rdma_req_t *req,
+			    nccl_net_ofi_comm_t *comm,
+			    void *buff, size_t size,
+			    void *desc,
+			    uint64_t remote_buff,
+			    uint64_t remote_mr_key,
+			    uint64_t flags,
+			    nccl_net_ofi_rdma_req_type_t req_type)
+{
+	req->comm = comm;
+	req->dev_id = comm->dev_id;
+	req->type = req_type;
+	req->size = size;
+
+	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, req_type);
+	rma_op_data->remote_buff = remote_buff;
+	rma_op_data->remote_mr_key = remote_mr_key;
+	rma_op_data->xferred_rail_id = 0;
+	rma_op_data->buff = buff;
+	rma_op_data->buff_len = size;
+	rma_op_data->desc = desc;
+	rma_op_data->flags = flags;
+
+	/* Set expected number of completions */
+	rma_op_data->total_num_compls = 1;
+}
+
+static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+			       nccl_net_ofi_rdma_ep_t *ep,
+			       void *buff, size_t size,
+			       nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
+			       uint64_t remote_buff,
+			       uint64_t remote_mr_key,
+			       nccl_net_ofi_rdma_req_t **ret_req)
+{
+	uint64_t flags = 0;
+	struct fid_mr *rail_mr_handle = buff_mr_handle->mr[0];
+	void *desc = fi_mr_desc(rail_mr_handle);
+	*ret_req = NULL;
+
+	/* Allocate NCCL OFI request */
+	nccl_net_ofi_rdma_req_t *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
+		return -ENOMEM;
+	}
+	req->free = free_read_req;
+
+	init_rma_op_req(req, &r_comm->base.base, buff, size, desc, remote_buff,
+			remote_mr_key, flags, NCCL_OFI_RDMA_READ);
+
+	*ret_req = req;
+
+	return 0;
+}
+
+/**
+ * @brief	Read data using RMA. This "interface function" is called, indirectly, from
+ *       	the application
+ */
+
+static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size, void* mhandle,
+		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
+	nccl_net_ofi_rdma_req_t *req = NULL;
+
+	assert(r_comm != NULL);
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			      NCCL_OFI_MAX_REQUESTS);
+		goto error;
+	}
+
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	assert(ep != NULL);
+
+	ret = process_cq_if_pending(ep);
+	if (ret == -EAGAIN) {
+		/* Network is still busy. Return NULL to NCCL. */
+		*base_req = NULL;
+		ret = 0;
+		goto error;
+	} else if (ret != 0) {
+		goto error;
+	}
+
+	ret = alloc_rdma_read_req(r_comm, ep, dest,
+				  size, mr_handle, src, mr_key, &req);
+	if (OFI_UNLIKELY(ret != 0)) {
+		goto error;
+	}
+
+	/*
+	 * At this point, we've successfully inserted a new request,
+	 * so update the num inflight
+	 */
+	(r_comm->num_inflight_reqs)++;
+
+	/* Try posting RMA read */
+
+	ret = receive_progress(req, true);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to issue eager read");
+		/* TODO: Remove req from message buffer */
+		goto error;
+	}
+
+	/* Return request to NCCL */
+	*base_req = &req->base;
+
+	goto exit;
+
+ error:
+	if (req)
+		req->free(req, false);
+	*base_req = NULL;
+ exit:
+	return ret;
+}
+
 /*
  * @brief	Allocate and setup receive communicator object for a peer. This
  * 		prepares plugin to receive messages from the given peer.
@@ -3931,7 +4158,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close_deferred;
-	r_comm->base.read = NULL;
+	r_comm->base.read = rma_read;
 
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
@@ -4578,6 +4805,32 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 	return dereg_mr_ep(mr_handle, &device->key_pool, device->base.mr_cache);
 }
 
+static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
+				nccl_net_ofi_rdma_ep_t *ep,
+				void *buff, size_t size,
+				void *desc,
+				uint64_t remote_buff,
+				uint64_t remote_mr_key,
+				uint64_t flags,
+				nccl_net_ofi_rdma_req_t **ret_req)
+{
+	*ret_req = NULL;
+
+	/* Allocate NCCL OFI request */
+	nccl_net_ofi_rdma_req_t *req = allocate_req(s_comm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
+		return -ENOMEM;
+	}
+	req->free = free_write_req;
+	init_rma_op_req(req, &s_comm->base.base, buff, size, desc, remote_buff,
+			remote_mr_key, flags, NCCL_OFI_RDMA_WRITE);
+
+	*ret_req = req;
+
+	return 0;
+}
+
 static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 					uint16_t msg_seq_num,
 					void *buff, size_t size,
@@ -4673,6 +4926,47 @@ static int insert_rdma_send_req_into_msgbuff(nccl_net_ofi_rdma_send_comm_t *s_co
 		}
 	}
 	return 0;
+}
+
+static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
+{
+	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = get_send_comm_rail(s_comm, 0);
+	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+	ssize_t rc;
+
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	/* Set up the iovec */
+	iov.iov_base = rma_op_data->buff;
+	iov.iov_len = rma_op_data->buff_len;
+
+	/* Set up the rma_iov */
+	rma_iov.addr = rma_op_data->remote_buff;
+	rma_iov.len = rma_op_data->buff_len;
+	rma_iov.key = rma_op_data->remote_mr_key;
+
+	/* Initialize the message */
+	msg.msg_iov = &iov;
+	msg.desc = &rma_op_data->desc;
+	msg.iov_count = 1;
+	msg.addr = comm_rail->remote_addr;
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = req;
+	msg.data = 0;
+
+	/* Post the message using fi_writemsg with FI_INJECT */
+	rc = fi_writemsg(comm_rail->local_ep, &msg, rma_op_data->flags);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("fi_write_inline failed; RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
 }
 
 static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
@@ -4810,6 +5104,13 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				else
 					break;
 			}
+		}
+	} else if (req->type == NCCL_OFI_RDMA_WRITE) { // Post RMA write
+		ret = post_rma_write(req);
+		if (ret == 0) {
+			rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+			// Successfully sent the xfer with this rail
+			rma_op_data->xferred_rail_id++;
 		}
 	} else if (req->type == NCCL_OFI_RDMA_BOUNCE) { // Post Bounce Buffer
 		rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
@@ -5428,6 +5729,123 @@ static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	return ret;
 }
 
+static int get_mr_key(nccl_net_ofi_device_t *base_dev, void *mhandle,
+		      uint64_t *mr_key)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
+
+	uint64_t key = fi_mr_key(mr_handle->mr[0]);
+	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
+		ret = -ENOENT;
+		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
+	} else {
+		*mr_key = key;
+	}
+
+	return ret;
+}
+
+/**
+ * @brief	Write using DMA writemsg
+ */
+static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* desc,
+			  uint64_t dest, uint64_t mr_key, uint64_t flags, nccl_net_ofi_req_t ** base_req)
+{
+	int ret = 0;
+	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)send_comm;
+	nccl_net_ofi_rdma_req_t *req = NULL;
+
+	assert(s_comm != NULL);
+
+	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
+	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Can not support more than %d inflight requests",
+			      NCCL_OFI_MAX_SEND_REQUESTS);
+		goto error;
+	}
+
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	assert(ep != NULL);
+
+	ret = process_cq_if_pending(ep);
+	if (ret == -EAGAIN) {
+		/* Network is still busy. Return NULL to NCCL. */
+		*base_req = NULL;
+		ret = 0;
+		goto error;
+	} else if (ret != 0) {
+		goto error;
+	}
+
+	ret = alloc_rdma_write_req(s_comm, ep, src, size, desc, dest, mr_key, flags, &req);
+	if (OFI_UNLIKELY(ret != 0)) {
+		goto error;
+	}
+
+	/*
+	 * At this point, we've successfully inserted a new request,
+	 * so update the num inflight
+	 */
+	(s_comm->num_inflight_reqs)++;
+
+	/* Try posting RMA write with write_inline interface */
+
+	ret = send_progress(req);
+	if (ret == -FI_EAGAIN) {
+		/* Add to pending reqs queue */
+		ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
+			goto error;
+		}
+	} else if (OFI_UNLIKELY(ret != 0)) {
+		ret = -ENOTSUP;
+		goto error;
+	}
+
+	/* Return request to NCCL */
+	*base_req = &req->base;
+
+	goto exit;
+
+ error:
+	if (req)
+		req->free(req, false);
+	*base_req = NULL;
+ exit:
+	return ret;
+}
+
+/**
+ * @brief	Implementation of iwrite interface. This "interface function" is called, indirectly, from
+ *       	the application
+ */
+
+static int rma_write(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* mhandle,
+		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
+{
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
+	struct fid_mr *rail_mr_handle = mr_handle->mr[0];
+	void *desc = fi_mr_desc(rail_mr_handle);
+	uint64_t flags = 0;
+	return rma_write_impl(send_comm, src, size, desc, dest, mr_key, flags, base_req);
+}
+
+/**
+ * @brief	Implementation of iwrite_inline interface. This "interface function" is called, indirectly, from
+ *       	the application
+ */
+
+static int rma_write_inline(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size,
+			  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
+{
+	void * desc = NULL;
+	uint64_t flags = FI_INJECT;
+	return rma_write_impl(send_comm, src, size, desc, dest, mr_key, flags, base_req);
+}
+
 /*
  * @brief	Creates send communication for a peer
  *
@@ -5489,8 +5907,8 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
 	ret_s_comm->base.close = send_close_deferred;
-	ret_s_comm->base.write = NULL;
-	ret_s_comm->base.write_inline = NULL;
+	ret_s_comm->base.write = rma_write;
+	ret_s_comm->base.write_inline = rma_write_inline;
 
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = 0;
@@ -6170,6 +6588,28 @@ error:
 	return ret;
 }
 
+static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
+								nccl_net_ofi_rdma_ep_t *ep)
+{
+	int ret = 0;
+	if (is_max_write_inline_size_initialized == false) {
+		/* Overwrite default max_write_inline_size value if
+		 * FI_OPT_INJECT_RMA_SIZE option is available */
+		ret = get_inject_rma_size_opt(ep->rails[0].ofi_ep,
+					      &max_write_inline_size);
+		if (ret == 0) {
+			is_max_write_inline_size_initialized = true;
+		} else if (ret == -FI_ENOPROTOOPT) {
+			max_write_inline_size = device->device_rails[0].info->tx_attr->inject_size;
+			is_max_write_inline_size_initialized = true;
+			ret = 0;
+		} else {
+			NCCL_OFI_WARN("Failed to retrieve maximum write inline size");
+		}
+	}
+	return ret;
+}
+
 static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
@@ -6219,10 +6659,19 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
  unlock:
 	nccl_net_ofi_mutex_unlock(&device->ep_lock);
 
+	/* During plugin initialization, this function is invoked the
+	 * first time. Consequently, initialization function of
+	 * maximum write inline size is executed on initialization
+	 * path the first time, avoiding data race on
+	 * `max_write_inline_size` when `get_properties()` function
+	 * reads the maximum write inline size variable. */
+	if (ret == 0) {
+		ret = init_max_write_inline_size_if_not_initialized(device, ep);
+	}
+
  exit:
 	return ret;
 }
-
 
 /*
  * @brief	Allocates and initialises various libfabric resources like
@@ -6416,7 +6865,6 @@ error:
 	return NULL;
 }
 
-
 /**
  * Destroy an rdma device object
  */
@@ -6508,7 +6956,7 @@ nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
 	device->base.get_properties = get_properties;
 	device->base.get_ep = get_ep;
 	device->base.release = nccl_net_ofi_rdma_device_release;
-	device->base.get_mr_key = NULL;
+	device->base.get_mr_key = get_mr_key;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
