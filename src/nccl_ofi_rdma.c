@@ -198,6 +198,18 @@ static inline nccl_net_ofi_rdma_ctrl_msg_t *get_bounce_ctrl_msg
 }
 
 /*
+ * Get close message from bounce buffer
+ */
+static inline nccl_net_ofi_rdma_close_msg_t *bounce_get_close_msg
+	(nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item)
+{
+	nccl_net_ofi_rdma_close_msg_t *close_msg =
+		(nccl_net_ofi_rdma_close_msg_t *)&bounce_fl_item->bounce_msg;
+	assert(close_msg->type == NCCL_OFI_RDMA_MSG_CLOSE);
+	return close_msg;
+}
+
+/*
  * @brief Return send communicator rail with index `rail_id`
  */
 static inline nccl_net_ofi_rdma_send_comm_rail_t *get_send_comm_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
@@ -523,6 +535,14 @@ static inline rdma_req_recv_data_t *get_recv_data(nccl_net_ofi_rdma_req_t *req) 
 static inline rdma_req_send_ctrl_data_t *get_send_ctrl_data(nccl_net_ofi_rdma_req_t *req) {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
 	return &req->send_ctrl_data;
+}
+
+/*
+ * @brief	Return send close data struct of send close request
+ */
+static inline rdma_req_send_close_data_t *req_get_send_close_data(nccl_net_ofi_rdma_req_t *req) {
+	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
+	return &req->send_close_data;
 }
 
 /*
@@ -1301,6 +1321,8 @@ static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
 		return "RECV";
 	case NCCL_OFI_RDMA_SEND_CTRL:
 		return "SEND_CTRL";
+	case NCCL_OFI_RDMA_SEND_CLOSE:
+		return "SEND_CLOSE";
 	case NCCL_OFI_RDMA_RECV_SEGMS:
 		return "RECV_SEGMS";
 	case NCCL_OFI_RDMA_BOUNCE:
@@ -1331,6 +1353,8 @@ static const char *nccl_net_ofi_req_str(nccl_net_ofi_rdma_req_t *req)
 }
 
 static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req);
+
+static int post_close_msg(nccl_net_ofi_rdma_req_t *req);
 
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req);
 
@@ -1536,6 +1560,9 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 			break;
 		case NCCL_OFI_RDMA_SEND_CTRL:
 			rc = post_rdma_ctrl(req);
+			break;
+		case NCCL_OFI_RDMA_SEND_CLOSE:
+			rc = post_close_msg(req);
 			break;
 		case NCCL_OFI_RDMA_FLUSH:
 			rc = post_flush_req(req);
@@ -1850,6 +1877,33 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_item);
 		send_ctrl_data->ctrl_fl_item = NULL;
+	}
+
+	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
+			     req, dec_inflight_reqs);
+}
+
+/*
+ * @brief	Free send close request
+ */
+static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
+					      bool dec_inflight_reqs)
+{
+	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm =
+		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
+
+	if (send_close_data->ctrl_schedule) {
+		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
+		nccl_net_ofi_release_schedule(device->scheduler, send_close_data->ctrl_schedule);
+		send_close_data->ctrl_schedule = NULL;
+	}
+
+	if (send_close_data->ctrl_fl_item) {
+		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_close_data->ctrl_fl_item);
+		send_close_data->ctrl_fl_item = NULL;
 	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
@@ -3287,6 +3341,13 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t*)base_ep->device;
 
+	if (r_comm->send_close_req != NULL) {
+		ret = r_comm->send_close_req->free(r_comm->send_close_req, false);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
 	if (is_flush_buff_enabled()) {
 		ret = dealloc_and_dereg_flush_buff(r_comm, device);
 		if (ret != 0) {
@@ -3334,6 +3395,62 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	ret = base_ep->release_ep(base_ep);
 
 	return ret;
+}
+
+/**
+ * Insert req for sending send_close message into the recv comm's send_close_req
+ * member
+ */
+static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t *r_comm)
+{
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+	nccl_net_ofi_rdma_req_t *send_close_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(send_close_req == NULL)) {
+		return -ENOMEM;
+	}
+
+	send_close_req->comm = &r_comm->base.base;
+	send_close_req->dev_id = r_comm->base.base.dev_id;
+	send_close_req->type = NCCL_OFI_RDMA_SEND_CLOSE;
+	send_close_req->free = free_send_close_req;
+	send_close_req->msg_seq_num = 0; /* Unimportant */
+
+	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(send_close_req);
+
+	send_close_data->ctrl_fl_item = NULL;
+	send_close_data->ctrl_schedule = scheduler->get_schedule
+		(scheduler, sizeof(nccl_net_ofi_rdma_close_msg_t),
+		 device->num_rails);
+	if (OFI_UNLIKELY(!(send_close_data->ctrl_schedule))) {
+		send_close_req->free(send_close_req, false);
+		return -ENOMEM;
+	} else if (OFI_UNLIKELY(send_close_data->ctrl_schedule->num_xfer_infos != 1)) {
+		NCCL_OFI_WARN("Invalid schedule for outgoing close message (%zu bytes). Expected one rail, but got %zu",
+			      sizeof(nccl_net_ofi_rdma_close_msg_t),
+			      send_close_data->ctrl_schedule->num_xfer_infos);
+		send_close_req->free(send_close_req, false);
+		return -EINVAL;
+	}
+
+	/*
+	 * Set up send close message
+	 */
+	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item =
+		(nccl_net_ofi_rdma_ctrl_fl_item_t *)nccl_ofi_freelist_entry_alloc(
+			r_comm->ctrl_buff_fl);
+	if (ctrl_fl_item == NULL) {
+		NCCL_OFI_WARN("Call to nccl_ofi_freelist_entry_alloc failed");
+		send_close_req->free(send_close_req, false);
+		return -ENOMEM;
+	}
+	ctrl_fl_item->close_msg.type = NCCL_OFI_RDMA_MSG_CLOSE;
+	ctrl_fl_item->close_msg.send_comm_id = r_comm->remote_comm_id;
+	send_close_data->ctrl_fl_item = ctrl_fl_item;
+
+	r_comm->send_close_req = send_close_req;
+	return 0;
 }
 
 /**
@@ -3755,6 +3872,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close_deferred;
 	r_comm->comm_active = true;
+	r_comm->send_close_req = NULL;
 	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
 
 	/* Allocate recv communicator ID */
@@ -4673,6 +4791,46 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
+static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
+{
+	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
+	nccl_net_ofi_schedule_t *schedule = send_close_data->ctrl_schedule;
+
+	assert(schedule != NULL);
+
+	// Should be using a single rail for posting the control message
+	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
+
+	// Get communicator rail information to xfer the req
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
+	comm_rail = get_recv_comm_rail(r_comm, xfer_info->rail_id);
+
+	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item = send_close_data->ctrl_fl_item;
+
+	/* Unpack mr_handle */
+	freelist_regmr_fn_handle_t *fl_handle =
+		(freelist_regmr_fn_handle_t *)ctrl_fl_item->fl_reginfo.mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
+
+	assert(xfer_info->rail_id < mr_handle->num_rails);
+	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
+	req->state = NCCL_OFI_RDMA_REQ_PENDING;
+
+	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->close_msg,
+			     sizeof(nccl_net_ofi_rdma_close_msg_t),
+			     desc,
+			     comm_rail->remote_addr, req);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("Error posting RDMA close request. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
 	}
 

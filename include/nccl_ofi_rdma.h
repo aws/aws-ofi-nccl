@@ -66,6 +66,8 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_RECV,
 	/* Send control request. Subrequest of NCCL_OFI_RDMA_RECV */
 	NCCL_OFI_RDMA_SEND_CTRL,
+	/* Send close request. */
+	NCCL_OFI_RDMA_SEND_CLOSE,
 	/* Receive segments request. Subrequest of NCCL_OFI_RDMA_RECV */
 	NCCL_OFI_RDMA_RECV_SEGMS,
 	/* Eager local copy request. Subrequest of NCCL_OFI_RDMA_RECV */
@@ -91,6 +93,7 @@ enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CONN_RESP,
 	NCCL_OFI_RDMA_MSG_CTRL,
 	NCCL_OFI_RDMA_MSG_EAGER,
+	NCCL_OFI_RDMA_MSG_CLOSE,
 	NCCL_OFI_RDMA_MSG_INVALID = 15,
 	NCCL_OFI_RDMA_MSG_MAX = NCCL_OFI_RDMA_MSG_INVALID,
 };
@@ -157,11 +160,22 @@ static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(size_t num_rails, bool use_
 	return offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) + num_rails * rkey_len;
 }
 
+/* Message from receiver to sender indicating sender can close resources */
+typedef struct nccl_net_ofi_rdma_close_msg {
+	/* Message type, must be NCCL_OFI_RDMA_MSG_CLOSE */
+	uint16_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
+
+	/* Comm ID provided by the sender */
+	uint32_t send_comm_id;
+} nccl_net_ofi_rdma_close_msg_t;
 
 /* Structure used to store control messages in a free list */
 typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
 	nccl_ofi_freelist_reginfo_t fl_reginfo;
-	nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
+	union {
+		nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
+		nccl_net_ofi_rdma_close_msg_t close_msg;
+	};
 } nccl_net_ofi_rdma_ctrl_fl_item_t;
 
 /* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
@@ -246,6 +260,18 @@ typedef struct {
 	nvtxRangeId_t trace_id;
 #endif
 } rdma_req_send_ctrl_data_t;
+
+/*
+ * @brief	Data of request responsible for sending the close message
+ */
+typedef struct {
+	/* Pointer to the allocated control buffer from freelist */
+	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
+	/* Schedule used to transfer the close buffer. We save the
+	 * pointer to reference it when transferring the buffer over
+	 * network. */
+	nccl_net_ofi_schedule_t *ctrl_schedule;
+} rdma_req_send_close_data_t;
 
 typedef struct {
 	/* Pointer to bounce buffer containing eager data */
@@ -332,6 +358,7 @@ typedef struct nccl_net_ofi_rdma_req {
 		rdma_req_send_data_t send_data;
 		rdma_req_recv_data_t recv_data;
 		rdma_req_send_ctrl_data_t send_ctrl_data;
+		rdma_req_send_close_data_t send_close_data;
 		rdma_req_eager_copy_data_t eager_copy_data;
 		rdma_req_recv_segms_data_t recv_segms_data;
 		rdma_req_flush_data_t flush_data;
@@ -545,6 +572,8 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
 	nccl_net_ofi_rdma_recv_comm_rail_t control_rail;
+
+	nccl_net_ofi_rdma_req_t *send_close_req;
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
