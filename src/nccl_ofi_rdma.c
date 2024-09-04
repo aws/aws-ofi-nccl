@@ -47,6 +47,11 @@
 #define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
 
 /*
+ * @brief	Signifier for an invalid Communicator ID
+ */
+#define COMM_ID_INVALID            (COMM_ID_MASK)
+
+/*
  * @brief	Message sequence number bitmask for immediate data
  */
 #define MSG_SEQ_NUM_MASK (((uint64_t)1 << NCCL_OFI_RDMA_SEQ_BITS) - 1)
@@ -4172,7 +4177,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	/* Allocate recv communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
-		r_comm->local_comm_id = ~0;
+		r_comm->local_comm_id = COMM_ID_INVALID;
 		goto error;
 	}
 	r_comm->local_comm_id = (uint32_t)comm_id;
@@ -4342,7 +4347,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 			nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 		if (r_comm->msgbuff)
 			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
-		if (~0 != r_comm->local_comm_id) {
+		if (COMM_ID_INVALID != r_comm->local_comm_id) {
 			ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
@@ -4767,7 +4772,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	/* Allocate listen communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
-		l_comm->comm_id = ~0;
+		l_comm->comm_id = COMM_ID_INVALID;
 		ret = comm_id;
 		goto error;
 	}
@@ -4786,8 +4791,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	goto exit;
 
- error:
-	if (l_comm && ~0 != l_comm->comm_id) {
+error:
+	if (l_comm && COMM_ID_INVALID != l_comm->comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, l_comm->comm_id)) {
 			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
 		}
@@ -5948,7 +5953,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	/* Allocate send communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
-		ret_s_comm->local_comm_id = ~0;
+		ret_s_comm->local_comm_id = COMM_ID_INVALID;
 		ret = comm_id;
 		goto error;
 	}
@@ -6014,7 +6019,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
  error:
 	if (ret_s_comm) {
-		if (~0 != ret_s_comm->local_comm_id) {
+		if (COMM_ID_INVALID != ret_s_comm->local_comm_id) {
 			if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, ret_s_comm->local_comm_id)) {
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, ret_s_comm->local_comm_id);
 			}
