@@ -5109,7 +5109,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
-			for (int rail_it = send_data->xferred_rail_id;
+			for (size_t rail_it = send_data->xferred_rail_id;
 			     rail_it < schedule->num_xfer_infos; rail_it++) {
 				/* Get xfer information from the schedule */
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
@@ -5476,7 +5476,7 @@ retry:
 
 	/* Determine if this should be sent eagerly. */
 	eager = false;
-	if ((!have_ctrl && size <= eager_max_size) ||
+	if ((!have_ctrl && (size_t)size <= eager_max_size) ||
 		 (size == 0)) {
 		eager = true;
 	}
@@ -7299,8 +7299,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (ofi_nccl_eager_max_size() < 0 ||
-	    ofi_nccl_eager_max_size() > rr_threshold) {
+	if (ofi_nccl_eager_max_size() > rr_threshold) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
 		goto error;
