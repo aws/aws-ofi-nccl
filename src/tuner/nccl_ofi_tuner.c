@@ -337,7 +337,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 
 	if (nccl_ofi_tuner_ctx == NULL || nccl_ofi_tuner_ctx->regions == NULL || collType != ncclFuncAllReduce) {
 		/* Fall back to NCCL's tuner */
-		goto exit;
+		return ncclSuccess;
 	}
 
 	float(*table)[NCCL_NUM_PROTOCOLS] = (float(*)[NCCL_NUM_PROTOCOLS])collCostTable;
@@ -373,7 +373,6 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 		NCCL_OFI_INFO(NCCL_TUNING, "Falling back to NCCL's tuner for coll %d size %ld.", collType, nBytes);
 	}
 
-exit:
 	return ncclSuccess;
 }
 
@@ -406,7 +405,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 
 	if (nccl_ofi_tuner_ctx == NULL || nccl_ofi_tuner_ctx->regions == NULL || collType != ncclFuncAllReduce) {
 		/* Fall back to NCCL's tuner */
-		goto exit;
+		return ncclSuccess;
 	}
 
 	int in_out = -1;
@@ -437,7 +436,6 @@ ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 		NCCL_OFI_INFO(NCCL_TUNING, "Falling back to NCCL's tuner for coll %d size %ld.", collType, nBytes);
 	}
 
-exit:
 	return ncclSuccess;
 }
 
