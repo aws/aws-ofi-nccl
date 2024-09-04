@@ -68,7 +68,7 @@ int domain_per_thread = 0;
 float net_latency = .0;
 
 /* Size of a memory page */
-long system_page_size = -1;
+size_t system_page_size = 0;
 
 /*
  * @brief	Allocate memory region for memory registration
@@ -146,12 +146,13 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using Libfabric version %u.%u", FI_MAJOR(fab_version),
 			FI_MINOR(fab_version));
 
-	system_page_size = sysconf(_SC_PAGESIZE);
-	if (OFI_UNLIKELY(system_page_size == -1)) {
+	long int system_page_size_sysconf = sysconf(_SC_PAGESIZE);
+	if (OFI_UNLIKELY(system_page_size_sysconf == -1)) {
 		NCCL_OFI_WARN("Failed to get system page size (%d %s)", errno, strerror(errno));
 		ret = -ENOTSUP;
 		goto exit;
 	}
+	system_page_size = (size_t)system_page_size_sysconf;
 	assert(NCCL_OFI_IS_POWER_OF_TWO(system_page_size));
 	assert(system_page_size > 0);
 
@@ -610,7 +611,7 @@ static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
 					     size_t device_index,
 					     nccl_net_ofi_device_t *device)
 {
-	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+	if (device_index >= plugin->p_num_devs) {
 		return -ENOSPC;
 	}
 
@@ -623,7 +624,7 @@ static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
 static nccl_net_ofi_device_t * nccl_net_ofi_plugin_get_device(nccl_net_ofi_plugin_t *plugin,
 							      size_t device_index)
 {
-	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+	if (device_index >= plugin->p_num_devs) {
 		NCCL_OFI_WARN("Invalid device index %zu", device_index);
 		return NULL;
 	}

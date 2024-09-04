@@ -5093,8 +5093,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
-			for (int rail_it = send_data->xferred_rail_id;
-			     rail_it < schedule->num_xfer_infos; rail_it++) {
+			for (size_t rail_it = send_data->xferred_rail_id; rail_it < schedule->num_xfer_infos; rail_it++) {
 				/* Get xfer information from the schedule */
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
 				/* Get communicator rail information to xfer the req */
@@ -5460,8 +5459,7 @@ retry:
 
 	/* Determine if this should be sent eagerly. */
 	eager = false;
-	if ((!have_ctrl && size <= eager_max_size) ||
-		 (size == 0)) {
+	if ((!have_ctrl && (size_t)size <= eager_max_size) || (size == 0)) {
 		eager = true;
 	}
 
@@ -7196,7 +7194,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 	}
 
 	/* Allocate and initialize nccl_net devices */
-	for (int dev_id = 0 ; dev_id != rdma_plugin->base.p_num_devs ; ++dev_id) {
+	for (size_t dev_id = 0; dev_id != rdma_plugin->base.p_num_devs; ++dev_id) {
 		struct fi_info *info_list;
 
 		/* Retrieve NIC info list from topology */
@@ -7208,10 +7206,11 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 		}
 
 		/* Allocate device */
-		nccl_net_ofi_rdma_device_t *device =
-			nccl_net_ofi_rdma_device_create(&rdma_plugin->base, dev_id,
-							info_list, rdma_plugin->topo,
-							ofi_nccl_round_robin_threshold());
+		nccl_net_ofi_rdma_device_t *device = nccl_net_ofi_rdma_device_create(&rdma_plugin->base,
+		                                                                     (int)dev_id,
+		                                                                     info_list,
+		                                                                     rdma_plugin->topo,
+		                                                                     ofi_nccl_round_robin_threshold());
 		if (device == NULL) {
 			NCCL_OFI_WARN("Device creation failed");
 			return -ENOMEM;
@@ -7219,7 +7218,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 
 		ret = plugin->assign_device(plugin, dev_id, &device->base);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
+			NCCL_OFI_WARN("Assigning device %ld failed", dev_id);
 			return ret;
 		}
 	}
@@ -7338,8 +7337,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (ofi_nccl_eager_max_size() < 0 ||
-	    ofi_nccl_eager_max_size() > ofi_nccl_round_robin_threshold()) {
+	if (ofi_nccl_eager_max_size() > ofi_nccl_round_robin_threshold()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
 		goto error;
