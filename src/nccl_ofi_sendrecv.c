@@ -2392,7 +2392,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
 	if (device == NULL) {
-		NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+		NCCL_OFI_WARN("Unable to allocate device %d", dev_id);
 		return NULL;
 	}
 
@@ -2543,7 +2543,7 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 {
 	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
 	struct fi_info *info;
-	int dev_id = 0;
+	size_t dev_id = 0;
 	int ret;
 
 	/* Allocate and initialize nccl_net devices */
@@ -2554,16 +2554,15 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_sendrecv_device_t *device =
-			nccl_net_ofi_sendrecv_device_create(plugin, dev_id, info);
+		nccl_net_ofi_sendrecv_device_t *device = nccl_net_ofi_sendrecv_device_create(plugin, (int)dev_id, info);
 		if (device == NULL) {
-			NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+			NCCL_OFI_WARN("Unable to allocate device %li", dev_id);
 			return -ENOMEM;
 		}
 
 		ret = plugin->assign_device(plugin, dev_id, &device->base);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
+			NCCL_OFI_WARN("Assigning device %li failed", dev_id);
 			return ret;
 		}
 
