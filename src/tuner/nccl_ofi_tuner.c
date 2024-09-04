@@ -347,7 +347,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
 
 	/* Check all regions */
-	for (int i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
+	for (size_t i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
 		algorithm = nccl_ofi_tuner_ctx->regions[i].algorithm;
 		protocol = nccl_ofi_tuner_ctx->regions[i].protocol;
 		if (table[algorithm][protocol] == NCCL_ALGO_PROTO_IGNORE || algorithm >= numAlgo ||
@@ -413,7 +413,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
 
 	/* Check all regions */
-	for (int i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
+	for (size_t i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
 		if (nccl_ofi_tuner_ctx->regions[i].algorithm == NCCL_ALGO_NVLS_TREE && nvlsSupport == 0) {
 			continue;
 		}

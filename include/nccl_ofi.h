@@ -70,7 +70,7 @@ extern "C" {
 #define NCCL_OFI_MAX_SEND_REQUESTS (NCCL_OFI_MAX_REQUESTS * NCCL_OFI_MAX_RECVS)
 
 /* Flush read size (bytes) */
-#define NCCL_OFI_FLUSH_SIZE	4
+#define NCCL_OFI_FLUSH_SIZE             (4ULL)
 
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
@@ -135,7 +135,7 @@ extern int domain_per_thread;
 extern float net_latency;
 
 /* Size of system memory pages */
-extern long system_page_size;
+extern size_t system_page_size;
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;

@@ -73,7 +73,7 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool);
  * @return	0 on success
  *		non-zero on error
  */
-int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id);
+int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, size_t id);
 
 /*
  * @brief	Release pool of IDs and free resources

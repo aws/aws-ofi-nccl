@@ -140,7 +140,7 @@ int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *regi
 {
 	assert(region->num_vertices > 1);
 
-	int i, k;
+	size_t i, k;
 	nccl_ofi_tuner_point_t *pv;
 	double min_x, max_x, min_y, max_y;
 	const double eps = 1e-10;

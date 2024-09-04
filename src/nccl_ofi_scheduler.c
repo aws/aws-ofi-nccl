@@ -57,9 +57,9 @@ void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
  * @brief	Assign message round-robin
  */
 static inline int set_round_robin_schedule(nccl_net_ofi_threshold_scheduler_t *scheduler,
-					   size_t size,
-					   int num_rails,
-					   nccl_net_ofi_schedule_t *schedule)
+                                           size_t size,
+                                           size_t num_rails,
+                                           nccl_net_ofi_schedule_t *schedule)
 {
 	int rail_id;
 

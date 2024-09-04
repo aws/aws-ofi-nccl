@@ -1041,7 +1041,7 @@ static int get_device_property(unsigned domain, unsigned bus,
 	int ret = 0;
 	FILE *file;
 	const char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
-	size_t path_len;
+	ssize_t path_len;
 	char *path = NULL;
 
         if ((path_len = snprintf(NULL, 0, path_format, domain, bus, dev, func, prop_name)) < 0) {

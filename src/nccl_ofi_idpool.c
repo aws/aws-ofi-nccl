@@ -5,6 +5,7 @@
 #include "config.h"
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 
 #include "nccl_ofi_idpool.h"
@@ -103,7 +104,9 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 	nccl_net_ofi_mutex_lock(&idpool->lock);
 
 	int entry_index = 0;
-	int id = -1;
+
+	bool found = false;
+	size_t id = 0;
 	for (size_t i = 0; i < num_long_elements; i++) {
 		entry_index = __builtin_ffsll(idpool->ids[i]);
 		if (0 != entry_index) {
@@ -113,14 +116,15 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 			idpool->ids[i] &= ~(1ULL << (entry_index - 1));
 
 			/* Store the ID we found */
-			id = (int)((i * sizeof(uint64_t) * 8) + entry_index - 1);
+			id = (size_t)((i * sizeof(uint64_t) * 8) + entry_index - 1);
+			found = true;
 			break;
 		}
 	}
 
 	nccl_net_ofi_mutex_unlock(&idpool->lock);
 
-	if (-1 == id || id >= idpool->size) {
+	if (!found || id >= idpool->size) {
 		NCCL_OFI_WARN("No IDs available (max: %lu)", idpool->size);
 		return -ENOMEM;
 	}
@@ -142,10 +146,9 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
  * @return	0 on success
  *		non-zero on error
  */
-int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
+int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, size_t id)
 {
 	assert(NULL != idpool);
-	assert(id >= 0);
 
 	if (0 == idpool->size) {
 		NCCL_OFI_WARN("Cannot free an ID from a 0-sized pool");
@@ -158,7 +161,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 	}
 
 	if (OFI_UNLIKELY(id >= idpool->size)) {
-		NCCL_OFI_WARN("ID value %d out of range (max: %lu)", id, idpool->size);
+		NCCL_OFI_WARN("ID value %lu out of range (max: %lu)", id, idpool->size);
 		return -EINVAL;
 	}
 
@@ -169,7 +172,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 
 	/* Check if bit is 1 already */
 	if (idpool->ids[i] & (1ULL << entry_index)) {
-		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%d)", id);
+		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%lu)", id);
 
 		nccl_net_ofi_mutex_unlock(&idpool->lock);
 		return -ENOTSUP;
