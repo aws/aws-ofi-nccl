@@ -2571,7 +2571,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
-	int dev_id = 0;
+	size_t dev_id = 0;
 	struct fi_info *provider_list = NULL, *info;
 	unsigned int num_providers;
 	nccl_net_ofi_plugin_t *plugin = NULL;
