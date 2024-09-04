@@ -83,7 +83,7 @@ static ncclResult_t accept_v5(void* listenComm, void** recvComm)
 	return nccl_net_ofi_accept(listenComm, recvComm);
 }
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v5_t ncclNetPlugin_v5 = {
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
         .name = "AWS Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
@@ -129,7 +129,7 @@ static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
 	return ncclSuccess;
 }
 
-NCCL_OFI_EXPORT_SYMBOL const ncclNet_v4_t ncclNetPlugin_v4 = {
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = init_v4,
 	.devices = nccl_net_ofi_devices,
