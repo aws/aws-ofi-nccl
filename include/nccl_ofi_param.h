@@ -18,6 +18,38 @@ extern "C" {
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"
 
+#define OFI_NCCL_PARAM_UINT(name, env, default_value) \
+static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
+static inline uint64_t ofi_nccl_##name() { \
+    static bool initialized = false; \
+    static uint64_t value = default_value; \
+    if (initialized) { \
+	return value; \
+    } \
+    nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name); \
+    uint64_t v; \
+    char *str, *endptr; \
+    if (!initialized) { \
+        str = getenv("OFI_NCCL_" env); \
+        if (str && strlen(str) > 0) { \
+            errno = 0; \
+            v = strtoull(str, &endptr, 0); \
+            if (errno || str == endptr || *endptr != '\0') { \
+                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, \
+                    "Invalid value %s provided for %s environment variable, using default %lu", \
+                    str, "OFI_NCCL_" env, value); \
+            } else { \
+                value = v; \
+                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting %s environment variable to %lu", \
+                              "OFI_NCCL_" env, value); \
+            } \
+        } \
+	initialized = true; \
+    } \
+    nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
+    return value; \
+}
+
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
 static inline int64_t ofi_nccl_##name() { \
