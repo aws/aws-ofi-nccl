@@ -610,7 +610,7 @@ static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
 					     size_t device_index,
 					     nccl_net_ofi_device_t *device)
 {
-	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+	if (device_index >= plugin->p_num_devs) {
 		return -ENOSPC;
 	}
 
@@ -623,7 +623,7 @@ static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
 static nccl_net_ofi_device_t * nccl_net_ofi_plugin_get_device(nccl_net_ofi_plugin_t *plugin,
 							      size_t device_index)
 {
-	if (device_index < 0 || device_index >= plugin->p_num_devs) {
+	if (device_index >= plugin->p_num_devs) {
 		NCCL_OFI_WARN("Invalid device index %zu", device_index);
 		return NULL;
 	}

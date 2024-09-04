@@ -550,7 +550,7 @@ int platform_init(const char **provider_filter)
 
 		ret = snprintf(topology_path, sizeof(topology_path), "%s/%s",
 			       XML_DIR, platform_data->topology);
-		if (ret < 0 || ret >= sizeof(topology_path)) {
+		if (ret < 0 || (size_t)ret >= sizeof(topology_path)) {
 			NCCL_OFI_WARN("Error occurred while forming the complete topology XML file path. RC: %d, Buffer Size: %d, XML dir: %s, Topology file: %s",
 				      ret, PATH_MAX, XML_DIR, platform_data->topology);
 			ret = -ENOMEM;
