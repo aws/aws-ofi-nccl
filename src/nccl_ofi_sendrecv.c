@@ -1036,6 +1036,8 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 
 	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
+
+	ret = base_ep->release_ep(base_ep);
  exit:
 	return ret;
 }
@@ -1808,6 +1810,8 @@ static int send_close(nccl_net_ofi_send_comm_t *send_comm)
 	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
 	free(s_comm->conn_info);
 	free(send_comm);
+
+	ret = base_ep->release_ep(base_ep);
  exit:
 	return ret;
 }

@@ -648,7 +648,7 @@ ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size,
 
 
 /*
- * @brief	Destroy send communicator and invokes release_ep on its endpoint.
+ * @brief	Destroy send communicator
  */
 ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
@@ -659,23 +659,14 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 		return ncclInternalError;
 	}
 
-	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)send_comm->base.ep;
-	assert(base_ep != NULL);
-
 	int ret = send_comm->close(send_comm);
-	if (ret != 0) {
-		goto error;
-	}
 
-	ret = base_ep->release_ep(base_ep);
-
-error:
 	return nccl_net_ofi_retval_translate(ret);
 }
 
 
 /*
- * @brief	Destroy receive communicator and invokes release_ep on its endpoint.
+ * @brief	Destroy receive communicator
  */
 ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
@@ -686,17 +677,8 @@ ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 		return ncclInternalError;
 	}
 
-	nccl_net_ofi_ep_t *base_ep = (nccl_net_ofi_ep_t *)recv_comm->base.ep;
-	assert(base_ep != NULL);
-
 	int ret = recv_comm->close(recv_comm);
-	if (ret != 0) {
-		goto error;
-	}
 
-	ret = base_ep->release_ep(base_ep);
-
-error:
 	return nccl_net_ofi_retval_translate(ret);
 }
 
