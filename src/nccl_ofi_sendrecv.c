@@ -14,6 +14,7 @@
 
 #include <rdma/fabric.h>
 
+#include "nccl-headers/net.h"
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
