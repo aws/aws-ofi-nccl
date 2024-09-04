@@ -344,7 +344,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 	int in_out = -1;
 	int algorithm = NCCL_ALGO_UNDEF;
 	int protocol = NCCL_PROTO_UNDEF;
-	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
+	nccl_ofi_tuner_point_t p = {.x = (double)nBytes, .y = (double)nccl_ofi_tuner_ctx->dims.num_ranks};
 
 	/* Check all regions */
 	for (size_t i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
@@ -409,7 +409,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	}
 
 	int in_out = -1;
-	nccl_ofi_tuner_point_t p = {.x = nBytes, .y = nccl_ofi_tuner_ctx->dims.num_ranks};
+	nccl_ofi_tuner_point_t p = {.x = (double)nBytes, .y = (double)nccl_ofi_tuner_ctx->dims.num_ranks};
 
 	/* Check all regions */
 	for (size_t i = 0; i < nccl_ofi_tuner_ctx->num_regions && in_out < 0; i++) {
