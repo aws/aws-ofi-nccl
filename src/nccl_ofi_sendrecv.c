@@ -12,6 +12,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include "nccl-headers/net.h"
+
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
