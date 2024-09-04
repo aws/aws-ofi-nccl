@@ -156,7 +156,7 @@ OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
  * Specify the memory registration key size in bytes when using a libfabric
  * provider that supports application-selected memory registration keys.
  */
-OFI_NCCL_PARAM_INT(mr_key_size, "MR_KEY_SIZE", 2);
+OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2);
 
 /*
  * Disable the MR cache. The MR cache is used to keep track of registered
@@ -244,7 +244,7 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
  * tweak defaults from the platform file, but this fits our needs for
  * now.
  */
-OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE",
+OFI_NCCL_PARAM_UINT(eager_max_size, "EAGER_MAX_SIZE",
 #if HAVE_NEURON
 		   0
 #else
