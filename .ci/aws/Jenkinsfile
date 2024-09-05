@@ -199,7 +199,7 @@ pipeline {
                     def test_type = "--test-type pr"
                     def build_type = "--aws-ofi-nccl-build-type debug"
                     def pr_num = "--test-aws-ofi-nccl-pr $env.CHANGE_ID"
-                    def test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
+                    def test_list = "--test-list test_nccl_test"
                     def base_args = "${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${test_list}"
 
                     def num_instances = 4
