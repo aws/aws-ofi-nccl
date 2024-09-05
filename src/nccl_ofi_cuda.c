@@ -41,10 +41,10 @@ nccl_net_ofi_cuda_init(void)
 	char libcuda_path[1024];
 	char *nccl_cuda_path = getenv("NCCL_CUDA_PATH");
 	if (nccl_cuda_path == NULL) {
-		snprintf(libcuda_path, 1024, "%s", "libcuda.so");
+		snprintf(libcuda_path, 1024, "%s", "libcuda.so.1");
 	}
 	else {
-		snprintf(libcuda_path, 1024, "%s/%s", nccl_cuda_path, "libcuda.so");
+		snprintf(libcuda_path, 1024, "%s/%s", nccl_cuda_path, "libcuda.so.1");
 	}
 
 	(void) dlerror(); /* Clear any previous errors */
