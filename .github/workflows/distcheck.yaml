@@ -27,6 +27,9 @@ jobs:
       matrix:
         sdk:
           - cuda
+        mode:
+          - cpp
+          - c
         amazonlinux:
           - al2023
           - al2
@@ -47,7 +50,7 @@ jobs:
             cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
 
     runs-on: codebuild-ghactions-${{ matrix.amazonlinux }}-${{ github.run_id }}-${{ github.run_attempt }}
-    name: ${{matrix.amazonlinux}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
+    name: ${{matrix.amazonlinux}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall(${{ matrix.mode }})
     steps:
       # note, do not bump to v4: https://github.com/actions/checkout/issues/1590
       - uses: actions/checkout@v3
@@ -76,6 +79,7 @@ jobs:
           ./configure --prefix=/opt/aws-ofi-nccl --with-mpi=/opt/amazon/openmpi \
                --with-libfabric=/opt/amazon/efa \
                --with-cuda=/usr/local/cuda \
+               --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
                --enable-tests=no \
                --enable-platform-aws
 
@@ -95,13 +99,15 @@ jobs:
         cc:
           - gcc
           - clang
+        mode:
+          - cpp
+          - c
         tracing:
           - lttng
           - none
         sdk:
           - cuda
           - neuron
-
         include:
           - cc-variant: latest
             cc: clang
@@ -110,7 +116,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/libfabric@git/${{matrix.cc}}(${{matrix.cc-variant}})/distcheck/
+    name: u2204/${{ matrix.sdk }}/libfabric@git/${{matrix.cc}}(${{matrix.cc-variant}})/distcheck(${{ matrix.mode }})/
     steps:
       - uses: actions/checkout@v4
       - name: Configure Neuron SDK Repository
@@ -196,10 +202,12 @@ jobs:
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
                         --with-cuda=/usr/local/cuda/ \
+                        --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
                         --enable-tests \
                         --enable-platform-aws
           else
             ./configure --with-libfabric=/opt/amazon/efa \
+                        --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
                         --enable-neuron \
                         --enable-platform-aws
           fi
@@ -226,6 +234,9 @@ jobs:
         cc:
           - gcc
           - clang
+        mode:
+          - cpp
+          - c
         sdk:
           - cuda
           - neuron
@@ -237,7 +248,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}(${{matrix.cc-variant}})/unit-tests/
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}(${{matrix.cc-variant}})/unit-tests(${{ matrix.mode }})/
     steps:
       - uses: actions/checkout@v4
       - name: Configure Neuron SDK Repository
@@ -316,6 +327,7 @@ jobs:
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
                         --with-cuda=/usr/local/cuda/ \
+                        --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
                         --enable-tests \
                         --enable-debug \
                         --enable-platform-aws
@@ -323,6 +335,7 @@ jobs:
             ./configure --with-libfabric=/opt/amazon/efa \
                         --enable-neuron \
                         --enable-debug \
+                        --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
                         --enable-platform-aws
           fi
           make -j "$(nproc)"
@@ -346,7 +359,10 @@ jobs:
         sdk:
           - cuda
           - neuron
-    name: CodeChecker - ${{ matrix.sdk }}
+        mode:
+          - cpp
+          - c
+    name: CodeChecker - ${{ matrix.sdk }} ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -404,12 +420,14 @@ jobs:
             ./configure \
               --with-libfabric="/opt/amazon/efa" \
               --enable-neuron \
+              --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
               --enable-platform-aws
           else
             ./configure \
               --with-libfabric="/opt/amazon/efa" \
               --with-mpi="/opt/amazon/openmpi" \
               --with-cuda=/usr/local/cuda/ \
+              --enable-cpp=${{ matrix.mode == 'cpp' && 'yes' || 'no' }} \
               --enable-tests \
               --enable-platform-aws
           fi
@@ -428,7 +446,7 @@ jobs:
       - name: Save CodeChecker HTML output.
         uses: actions/upload-artifact@v4
         with:
-          name: CodeChecker Bug Reports for ${{ matrix.sdk }}
+          name: CodeChecker Bug Reports for ${{ matrix.sdk }} ${{ matrix.mode }}
           path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
 
       - name: CodeChecker Pass Or Fail?
