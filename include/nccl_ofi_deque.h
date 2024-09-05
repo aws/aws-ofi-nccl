@@ -163,6 +163,96 @@ unlock:
 	return 0;
 }
 
+/*
+ * Remove the given element from the deque
+ */
+static inline void nccl_ofi_deque_remove(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+{
+	assert(deque);
+	assert(deque_elem);
+
+	nccl_net_ofi_mutex_lock(&deque->lock);
+
+	assert(deque_elem->prev && deque_elem->next);
+
+	deque_elem->prev->next = deque_elem->next;
+	deque_elem->next->prev = deque_elem->prev;
+
+	assert(deque_elem != &deque->head);
+
+	/* Reset deque_elem pointers to avoid dangling pointers */
+	deque_elem->prev = NULL;
+	deque_elem->next = NULL;
+
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+}
+
+/**
+ * Return (but do not remove) the element at the front of the deque
+ */
+static inline nccl_ofi_deque_elem_t *nccl_ofi_deque_get_front(nccl_ofi_deque_t *deque)
+{
+	assert(deque);
+
+	nccl_ofi_deque_elem_t *ret_elem = NULL;
+
+	nccl_net_ofi_mutex_lock(&deque->lock);
+
+	if (nccl_ofi_deque_isempty(deque)) {
+		ret_elem = NULL;
+	} else {
+		ret_elem = deque->head.next;
+	}
+
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+	return ret_elem;
+}
+
+/**
+ * Return the element after the given element in the deque
+ */
+static inline nccl_ofi_deque_elem_t *nccl_ofi_deque_get_next(nccl_ofi_deque_t *deque, nccl_ofi_deque_elem_t *deque_elem)
+{
+	assert(deque);
+	assert(deque_elem);
+
+	nccl_ofi_deque_elem_t *ret_elem = NULL;
+
+	nccl_net_ofi_mutex_lock(&deque->lock);
+
+	ret_elem = deque_elem->next;
+	if (ret_elem == (&deque->head)) {
+		ret_elem = NULL;
+	}
+
+	nccl_net_ofi_mutex_unlock(&deque->lock);
+
+	return ret_elem;
+}
+
+/**
+ * Iterate over the deque.
+ * 
+ * Usage
+ * 
+ * nccl_ofi_deque_t *deque;
+ * ... add elements to deque
+ * 
+ * NCCL_OFI_DEQUE_FOREACH(deque) {
+ *     <set by macro: nccl_ofi_deque_elem_t *elem = THIS ELEMENT>
+ *     ... use elem ...
+ * }
+ *
+ * Note that the deque should not be modified during the iteration, except for
+ * deleting the current elem using nccl_ofi_deque_remove.
+ */
+#define NCCL_OFI_DEQUE_FOREACH(deque) \
+	for(nccl_ofi_deque_elem_t *next = NULL, \
+	    *elem = nccl_ofi_deque_get_front(deque); \
+	    ((elem) != NULL && (next = nccl_ofi_deque_get_next((deque), (elem)), 1)); \
+	    (elem) = next \
+	)
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
