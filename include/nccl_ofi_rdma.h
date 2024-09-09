@@ -95,8 +95,8 @@ enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_MAX = NCCL_OFI_RDMA_MSG_INVALID,
 };
 
-_Static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
-	       "Out of space in nccl_ofi_rdma_msg_type; must fit in a nibble");
+static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
+			  "Out of space in nccl_ofi_rdma_msg_type; must fit in a nibble");
 
 /* This goes on the wire, so we want the datatype
  * size to be fixed.
@@ -142,9 +142,9 @@ typedef struct nccl_net_ofi_rdma_ctrl_msg {
 	};
 } nccl_net_ofi_rdma_ctrl_msg_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 48,
+static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 48,
               "Wrong size for RDMA Control message");
-_Static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
+static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
 	       sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key) <= 32,
 	       "Short RDMA Control message larger than 32 bytes (EFA inline size)");
 
@@ -404,8 +404,8 @@ typedef struct nccl_ofi_rdma_connection_info {
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-_Static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 336,
-	       "Wrong size for RDMA connect message");
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 336,
+			  "Wrong size for RDMA connect message");
 
 /*
  * @brief	Send communicator rail
