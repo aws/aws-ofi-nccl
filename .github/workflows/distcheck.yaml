@@ -1,5 +1,11 @@
 name: PR CI
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - master
+      - main
+      - v*
+  pull_request:
 env:
   APT_PACKAGES: >-
     build-essential
