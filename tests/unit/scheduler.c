@@ -14,22 +14,6 @@
 #include "test-common.h"
 #include "nccl_ofi_scheduler.h"
 
-int create_multiplexed(size_t size,
-		       int num_rails,
-		       size_t align,
-		       nccl_net_ofi_schedule_t **schedule_p)
-{
-	nccl_net_ofi_schedule_t *schedule = (nccl_net_ofi_schedule_t *)malloc(
-		sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
-	if (!schedule) {
-		NCCL_OFI_WARN("Could not allocate schedule");
-		return -ENOMEM;
-	}
-	nccl_net_ofi_set_multiplexing_schedule(size, num_rails, align, schedule);
-	*schedule_p = schedule;
-	return 0;
-}
-
 int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
 {
 	int ret = ref_xfer->rail_id != xfer->rail_id
@@ -72,331 +56,257 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 	return ret;
 }
 
-int test_multiplexing_schedule()
+int create_ref_schedule(nccl_net_ofi_schedule_t **schedule, int num_xfer_infos)
 {
-	nccl_net_ofi_schedule_t *schedule = NULL;
-	nccl_net_ofi_schedule_t *ref_schedule = (nccl_net_ofi_schedule_t *)malloc(
-		sizeof(nccl_net_ofi_schedule_t) + 3 * sizeof(nccl_net_ofi_xfer_info_t));
-	if (!ref_schedule) {
+	int ret = 0;
+	*schedule = (nccl_net_ofi_schedule_t *)malloc(sizeof(nccl_net_ofi_xfer_info_t) +
+	                                              num_xfer_infos * sizeof(nccl_net_ofi_xfer_info_t));
+
+	if (!(*schedule)) {
 		NCCL_OFI_WARN("Could not allocate schedule");
 		return -ENOMEM;
 	}
-	size_t size;
-	int num_rails;
-	size_t align;
+	(*schedule)->num_xfer_infos = num_xfer_infos;
+
+	return ret;
+}
+
+int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t index, int rail_id, int offset, int msg_size)
+{
 	int ret = 0;
+	if (index >= schedule->num_xfer_infos) {
+		NCCL_OFI_WARN("Index out of bounds");
+		return -EINVAL;
+	}
 
-	size = 1;
-	num_rails = 0;
-	align = 1;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
+	schedule->rail_xfer_infos[index].rail_id = rail_id;
+	schedule->rail_xfer_infos[index].offset = offset;
+	schedule->rail_xfer_infos[index].msg_size = msg_size;
+
+	return ret;
+}
+
+int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
+                     int num_rails,
+                     size_t msg_size,
+                     size_t num_stripes,
+                     int *rail_id,
+                     int *offset,
+                     size_t *msg_size_per_stripe)
+{
+	int ret = 0;
+	nccl_net_ofi_schedule_t *ref_schedule;
+	nccl_net_ofi_schedule_t *schedule = NULL;
+	if (create_ref_schedule(&ref_schedule, num_stripes)) {
+		return ret;
+	};
+
+	schedule = scheduler->get_schedule(scheduler, msg_size, num_rails);
+	if (!schedule) {
+		NCCL_OFI_WARN("Failed to get schedule");
 		free(ref_schedule);
 		return ret;
 	}
-	ref_schedule->num_xfer_infos = 0;
+	for (size_t idx = 0; idx < num_stripes; idx++) {
+		set_ref_schedule(ref_schedule, idx, rail_id[idx], offset[idx], msg_size_per_stripe[idx]);
+	}
+
 	ret = verify_schedule(schedule, ref_schedule);
 	if (ret) {
 		NCCL_OFI_WARN("Verification failed");
 		free(ref_schedule);
 		return ret;
 	}
-	free(schedule);
-
-	/************************/
-	/* Test one rail        */
-	/************************/
-
-	/* No data */
-	size = 0;
-	num_rails = 1;
-	align = 1;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 0;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = align - 1 */
-	size = 1;
-	num_rails = 1;
-	align = 2;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = size;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = align */
-	size = 2;
-	num_rails = 1;
-	align = 2;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = size;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = align + 1 */
-	size = 3;
-	num_rails = 1;
-	align = 2;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = size;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/************************/
-	/* Test three rail        */
-	/************************/
-
-	/* No data */
-	size = 0;
-	num_rails = 3;
-	align = 1;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 0;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = 4 * align - 1 */
-	num_rails = 3;
-	align = 3;
-	size = 4 * align - 1;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 2;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = 2 * align;
-	ref_schedule->rail_xfer_infos[1].rail_id = 1;
-	ref_schedule->rail_xfer_infos[1].offset = 2 * align;
-	ref_schedule->rail_xfer_infos[1].msg_size = 2 * align - 1;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = 4 * align */
-	num_rails = 3;
-	align = 3;
-	size = 4 * align;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 2;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = 2 * align;
-	ref_schedule->rail_xfer_infos[1].rail_id = 1;
-	ref_schedule->rail_xfer_infos[1].offset = 2 * align;
-	ref_schedule->rail_xfer_infos[1].msg_size = 2 * align;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
-	/* Data size = 4 * align + 1 */
-	num_rails = 3;
-	align = 3;
-	size = 4 * align + 1;
-	ret = create_multiplexed(size, num_rails, align, &schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to create multiplexed schedule");
-		free(ref_schedule);
-		return ret;
-	}
-	ref_schedule->num_xfer_infos = 3;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = 2 * align;
-	ref_schedule->rail_xfer_infos[1].rail_id = 1;
-	ref_schedule->rail_xfer_infos[1].offset = 2 * align;
-	ref_schedule->rail_xfer_infos[1].msg_size = 2 * align;
-	ref_schedule->rail_xfer_infos[2].rail_id = 2;
-	ref_schedule->rail_xfer_infos[2].offset = 4 * align;
-	ref_schedule->rail_xfer_infos[2].msg_size = 1;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	free(schedule);
-
+	nccl_net_ofi_release_schedule(scheduler, schedule);
 	free(ref_schedule);
-
-	return 0;
+	return ret;
 }
 
 int test_threshold_scheduler()
 {
-	nccl_net_ofi_schedule_t *schedule;
-	int num_rails = 2;
+	size_t min_stripe_size = 4096;
+	size_t align = 128;
+	int num_rails = 4;
+	int num_stripes = 0;
 	int ret = 0;
-	size_t rr_threshold = 8192;
-	nccl_net_ofi_schedule_t *ref_schedule = (nccl_net_ofi_schedule_t *)malloc(
-		sizeof(nccl_net_ofi_schedule_t) + num_rails * sizeof(nccl_net_ofi_xfer_info_t));
+
 	nccl_net_ofi_scheduler_t *scheduler;
-	if (nccl_net_ofi_threshold_scheduler_init(num_rails, rr_threshold, &scheduler)) {
+	if (nccl_net_ofi_threshold_scheduler_init(num_rails, min_stripe_size, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
-		free(ref_schedule);
-		return -1;
-	}
-
-	/* Verify that message with more than `rr_threshold' bytes is multiplexed */
-	schedule = scheduler->get_schedule(scheduler, rr_threshold + 1, num_rails);
-	if (!schedule) {
-		NCCL_OFI_WARN("Failed to get schedule");
-		free(ref_schedule);
-		return -1;
-	}
-	ref_schedule->num_xfer_infos = 2;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = rr_threshold / 2 + 128;
-	ref_schedule->rail_xfer_infos[1].rail_id = 1;
-	ref_schedule->rail_xfer_infos[1].offset = rr_threshold / 2 + 128;
-	ref_schedule->rail_xfer_infos[1].msg_size = rr_threshold / 2- 127;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
 		return ret;
 	}
-	nccl_net_ofi_release_schedule(scheduler, schedule);
 
-	/* Verify that three messages with `rr_threshold' bytes are assigned round robin */
-	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
-	if (!schedule) {
-		NCCL_OFI_WARN("Failed to get schedule");
-		free(ref_schedule);
-		return -1;
-	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = rr_threshold;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	nccl_net_ofi_release_schedule(scheduler, schedule);
+	/* To ensure that the LL128 alignment is maintained below message sizes are tested between the multiple of
+	`min_stripe_size`
+	1. min_stripe_size + 1
+	2. min_stripe_size + align - 1
+	3. min_stripe_size + align
+	4. min_stripe_size + align + 1
+	5. 2*min_stripe_size - 1
+	6. 2*min_stripe_size
+	*/
 
-	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
-	if (!schedule) {
-		NCCL_OFI_WARN("Failed to get schedule");
-		free(ref_schedule);
-		return -1;
+	/* Verify that message with less than or equal to `min_stripe_size' bytes is assigned
+	 * round-robin. Verify that zero-sized messages is also assigned one rail and follow
+	 * round-robin algorithm */
+	num_stripes = 1;
+	size_t msg_sizes_1[6] = {0,
+	                         (min_stripe_size / 2) + align - 1,
+	                         (min_stripe_size / 2) + align,
+	                         (min_stripe_size / 2) + align + 1,
+	                         min_stripe_size - 1,
+	                         min_stripe_size};
+	size_t msg_size_per_stripe_1[6][1] =
+		{{msg_sizes_1[0]}, {msg_sizes_1[1]}, {msg_sizes_1[2]}, {msg_sizes_1[3]}, {msg_sizes_1[4]}, {msg_sizes_1[5]}};
+	int rail_ids_1[6][1] = {{0}, {1}, {2}, {3}, {0}, {1}}; /* In round-robin for each iteration a new rail-id is used */
+	int offsets_1[6][1] = {{0}, {0}, {0}, {0}, {0}, {0}};  /* Offset remaines 0 in round robin */
+	for (int iter = 0; iter < 6; iter++) {
+		ret = test_multiplexer(scheduler,
+		                       num_rails,
+		                       msg_sizes_1[iter],
+		                       num_stripes,
+		                       rail_ids_1[iter],
+		                       offsets_1[iter],
+		                       msg_size_per_stripe_1[iter]);
+		if (ret) {
+			NCCL_OFI_WARN("Verification failed");
+			return ret;
+		}
 	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 1;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = rr_threshold;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
-	}
-	nccl_net_ofi_release_schedule(scheduler, schedule);
 
-	schedule = scheduler->get_schedule(scheduler, rr_threshold, num_rails);
-	if (!schedule) {
-		NCCL_OFI_WARN("Failed to get schedule");
-		free(ref_schedule);
-		return -1;
+	/* Verify that messages with greater than the `min_stripe_size' but less than 2x `min_stripe_size`
+	 * bytes are assigned 2 rail multiplexing */
+	num_stripes = 2;
+	size_t msg_sizes_2[6] = {min_stripe_size + 1,
+	                         min_stripe_size + align - 1,
+	                         min_stripe_size + align,
+	                         min_stripe_size + align + 1,
+	                         (2 * min_stripe_size) - 1,
+	                         (2 * min_stripe_size)};
+	size_t stripe_size[6];
+	size_t remaining_stripe_size[6];
+	for (int iter = 0; iter < 6; iter++) {
+		stripe_size[iter] = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(msg_sizes_2[iter], num_stripes), align) * align;
+		remaining_stripe_size[iter] = msg_sizes_2[iter] - stripe_size[iter];
 	}
-	ref_schedule->num_xfer_infos = 1;
-	ref_schedule->rail_xfer_infos[0].rail_id = 0;
-	ref_schedule->rail_xfer_infos[0].offset = 0;
-	ref_schedule->rail_xfer_infos[0].msg_size = rr_threshold;
-	ret = verify_schedule(schedule, ref_schedule);
-	if (ret) {
-		NCCL_OFI_WARN("Verification failed");
-		free(ref_schedule);
-		return ret;
+
+	/* For each message ensure that two rails are used. Also ensure that the rail-id pairs
+	 * are round-robin between each schedule */
+	int rail_ids_2[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
+	int offsets_2[6][2] = {{0, stripe_size[0]},
+	                       {0, stripe_size[1]},
+	                       {0, stripe_size[2]},
+	                       {0, stripe_size[3]},
+	                       {0, stripe_size[4]},
+	                       {0, stripe_size[5]}};
+	size_t msg_size_per_stripe_2[6][2] = {{stripe_size[0], remaining_stripe_size[0]},
+	                                      {stripe_size[1], remaining_stripe_size[1]},
+	                                      {stripe_size[2], remaining_stripe_size[2]},
+	                                      {stripe_size[3], remaining_stripe_size[3]},
+	                                      {stripe_size[4], remaining_stripe_size[4]},
+	                                      {stripe_size[5], remaining_stripe_size[5]}};
+	for (int iter = 0; iter < 6; iter++) {
+		ret = test_multiplexer(scheduler,
+		                       num_rails,
+		                       msg_sizes_2[iter],
+		                       num_stripes,
+		                       rail_ids_2[iter],
+		                       offsets_2[iter],
+		                       msg_size_per_stripe_2[iter]);
+		if (ret) {
+			NCCL_OFI_WARN("Verification failed");
+			return ret;
+		}
 	}
-	nccl_net_ofi_release_schedule(scheduler, schedule);
+
+	/* Verify that messages with greater than the 2x `min_stripe_size' but less than or equal to
+	 * 3x `min_stripe_size` bytes are assigned 3 rail multiplexing */
+	num_stripes = 3;
+	size_t msg_sizes_3[6] = {(2 * min_stripe_size) + 1,
+	                         (2 * min_stripe_size) + align - 1,
+	                         (2 * min_stripe_size) + align,
+	                         (2 * min_stripe_size) + align + 1,
+	                         (3 * min_stripe_size) - 1,
+	                         (3 * min_stripe_size)};
+	for (int iter = 0; iter < 6; iter++) {
+		stripe_size[iter] = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(msg_sizes_3[iter], num_stripes), align) * align;
+		remaining_stripe_size[iter] = msg_sizes_3[iter] - (2 * stripe_size[iter]);
+	}
+	/* For each message ensure that three rails are used. Also ensure that the rail-id triplets
+	 * are round-robin between each schedule */
+	int rail_ids_3[6][3] = {{2, 3, 0}, {1, 2, 3}, {0, 1, 2}, {3, 0, 1}, {2, 3, 0}, {1, 2, 3}};
+	int offsets_3[6][3] = {{0, stripe_size[0], stripe_size[0] * 2},
+	                       {0, stripe_size[1], stripe_size[1] * 2},
+	                       {0, stripe_size[2], stripe_size[2] * 2},
+	                       {0, stripe_size[3], stripe_size[3] * 2},
+	                       {0, stripe_size[4], stripe_size[4] * 2},
+	                       {0, stripe_size[5], stripe_size[5] * 2}};
+	size_t msg_size_per_stripe_3[6][3] = {{stripe_size[0], stripe_size[0], remaining_stripe_size[0]},
+	                                      {stripe_size[1], stripe_size[1], remaining_stripe_size[1]},
+	                                      {stripe_size[2], stripe_size[2], remaining_stripe_size[2]},
+	                                      {stripe_size[3], stripe_size[3], remaining_stripe_size[3]},
+	                                      {stripe_size[4], stripe_size[4], remaining_stripe_size[4]},
+	                                      {stripe_size[5], stripe_size[5], remaining_stripe_size[5]}};
+
+	for (int iter = 0; iter < 6; iter++) {
+		ret = test_multiplexer(scheduler,
+		                       num_rails,
+		                       msg_sizes_3[iter],
+		                       num_stripes,
+		                       rail_ids_3[iter],
+		                       offsets_3[iter],
+		                       msg_size_per_stripe_3[iter]);
+		if (ret) {
+			NCCL_OFI_WARN("Verification failed");
+			return ret;
+		}
+	}
+
+	/* Verify that messages with greater than the 3x `min_stripe_size' are assigned 4 rail multiplexing */
+	num_stripes = 4;
+	size_t msg_sizes_4[6] = {(3 * min_stripe_size) + 1,
+	                         (3 * min_stripe_size) + align - 1,
+	                         (3 * min_stripe_size) + align,
+	                         (3 * min_stripe_size) + align + 1,
+	                         (4 * min_stripe_size) - 1,
+	                         (4 * min_stripe_size)};
+	for (int iter = 0; iter < 6; iter++) {
+		stripe_size[iter] = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(msg_sizes_4[iter], num_stripes), align) * align;
+		remaining_stripe_size[iter] = msg_sizes_4[iter] - (3 * stripe_size[iter]);
+	}
+	/* For each message ensure that all four rails are used. */
+	int rail_ids_4[6][4] = {{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}};
+	int offsets_4[6][4] = {{0, stripe_size[0], stripe_size[0] * 2, stripe_size[0] * 3},
+	                       {0, stripe_size[1], stripe_size[1] * 2, stripe_size[1] * 3},
+	                       {0, stripe_size[2], stripe_size[2] * 2, stripe_size[2] * 3},
+	                       {0, stripe_size[3], stripe_size[3] * 2, stripe_size[3] * 3},
+	                       {0, stripe_size[4], stripe_size[4] * 2, stripe_size[4] * 3},
+	                       {0, stripe_size[5], stripe_size[5] * 2, stripe_size[5] * 3}};
+	size_t msg_size_per_stripe_4[6][4] = {{stripe_size[0], stripe_size[0], stripe_size[0], remaining_stripe_size[0]},
+	                                      {stripe_size[1], stripe_size[1], stripe_size[1], remaining_stripe_size[1]},
+	                                      {stripe_size[2], stripe_size[2], stripe_size[2], remaining_stripe_size[2]},
+	                                      {stripe_size[3], stripe_size[3], stripe_size[3], remaining_stripe_size[3]},
+	                                      {stripe_size[4], stripe_size[4], stripe_size[4], remaining_stripe_size[4]},
+	                                      {stripe_size[5], stripe_size[5], stripe_size[5], remaining_stripe_size[5]}};
+
+	for (int iter = 0; iter < 6; iter++) {
+		ret = test_multiplexer(scheduler,
+		                       num_rails,
+		                       msg_sizes_4[iter],
+		                       num_stripes,
+		                       rail_ids_4[iter],
+		                       offsets_4[iter],
+		                       msg_size_per_stripe_4[iter]);
+		if (ret) {
+			NCCL_OFI_WARN("Verification failed");
+			return ret;
+		}
+	}
 
 	ret = scheduler->fini(scheduler);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to destroy threshold scheduler");
 	}
-	free(ref_schedule);
-
 	return 0;
 }
 
@@ -406,7 +316,7 @@ int main(int argc, char *argv[])
 	ofi_log_function = logger;
 	system_page_size = 4096;
 
-	ret = test_multiplexing_schedule() || test_threshold_scheduler();
+	ret = test_threshold_scheduler();
 
 	/** Success!? **/
 	return ret;

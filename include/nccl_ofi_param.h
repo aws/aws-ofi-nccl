@@ -234,9 +234,9 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
 OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 
 /*
- * Maximum size of a message in bytes before message is multiplexed
+ * Messages sized larger than this threshold will be striped across multiple rails
  */
-OFI_NCCL_PARAM_UINT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", (256 * 1024));
+OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (64 * 1024));
 
 /*
  * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
