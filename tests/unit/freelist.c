@@ -207,7 +207,7 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 
-		if ((char *)item - (char *)simple_base != item->reginfo.base_offset) {
+		if ((uintptr_t)item - (long unsigned int)simple_base != item->reginfo.base_offset) {
 			NCCL_OFI_WARN("base_offset was wrong %p %p %lu %lu",
 				      item, simple_base, (char *)item - (char *)simple_base,
 				      item->reginfo.base_offset);
