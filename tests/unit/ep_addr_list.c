@@ -11,7 +11,7 @@
 
 static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_addr, int ep_num)
 {
-	for (int i = 0; i < num_addr; ++i) {
+	for (size_t i = 0; i < num_addr; ++i) {
 
 		nccl_net_ofi_ep_t *ep = NULL;
 		int ret = nccl_ofi_ep_addr_list_get(ep_addr_list, &i, sizeof(i),
@@ -37,7 +37,7 @@ static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_a
 				NCCL_OFI_WARN("No ep returned when expected. addr %d, ep_num %d", i, ep_num);
 				exit(1);
 			}
-			if ((uintptr_t)ep != ep_num) {
+			if ((uintptr_t)ep != (uintptr_t)ep_num) {
 				NCCL_OFI_WARN("Unexpected ep returned");
 			}
 		}
