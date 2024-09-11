@@ -4530,10 +4530,12 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_RECV_CONN;
 
+		fallthrough;
 	case COMM_RECV_CONN:
 
 		l_comm->stage = COMM_CONN_REQ_PENDING;
 
+		fallthrough;
 	case COMM_CONN_REQ_PENDING:
 		/* COMM_CONN_REQ_PENDING: Wait until connect message has been
 		 * received. Then, prepare for sending connect accept message,
@@ -4608,6 +4610,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_SEND_CONN;
 
+		fallthrough;
 	case COMM_SEND_CONN:
 
 		/* COMM_SEND_CONN: Send connect response message to remote */
@@ -4621,6 +4624,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_CONN_RESP_REQ_PENDING;
 
+		fallthrough;
 	case COMM_CONN_RESP_REQ_PENDING:
 		/* COMM_CONN_RESP_REQ_PENDING: Wait until connect
 		 * response message has been delivered. Afterwards,
@@ -6200,7 +6204,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		comm_state->stage = COMM_SEND_CONN;
-
+		fallthrough;
 	case COMM_SEND_CONN:
 
 		/* COMM_SEND_CONN: Post a connect message to send peer connections */
@@ -6215,7 +6219,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
-
+		fallthrough;
 	case COMM_CONN_REQ_PENDING:
 		/* COMM_CONN_REQ_PENDING: Wait until connect message
 		 * has been sent. Afterwards, reset previously used
@@ -6246,14 +6250,14 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		req = NULL;
 
 		comm_state->stage = COMM_RECV_CONN;
-
+		fallthrough;
 	case COMM_RECV_CONN:
 		/* COMM_RECV_CONN: Receive connect response message from remote */
 
 		assert(s_comm && s_comm->num_rails > 0);
 
 		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
-
+		fallthrough;
 	case COMM_CONN_RESP_REQ_PENDING:
 
 		/* Progress our engine to get completions. If the

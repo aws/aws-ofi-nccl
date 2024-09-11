@@ -24,6 +24,12 @@
 #define PATH_MAX	4096
 #endif
 
+#if __has_attribute(__fallthrough__)
+# define fallthrough                    __attribute__((__fallthrough__))
+#else
+# define fallthrough                    do {} while (0)  /* fallthrough */
+#endif
+
 /* Copied from libfabric:rdma/fabric.h@30ec628: "libfabric: Initial commit" */
 #ifndef container_of
 #define container_of(ptr, type, field) \
