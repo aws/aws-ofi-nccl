@@ -17,7 +17,7 @@ int main(int argc, char *argv[]) {
 	(void) ret; // Avoid unused-variable warning
 	size_t sizes[] = {0, 5, 63, 64, 65, 127, 128, 129, 255};
 
-	for (int t = 0; t < sizeof(sizes) / sizeof(size_t); t++) {
+	for (long unsigned int t = 0; t < sizeof(sizes) / sizeof(size_t); t++) {
 		size_t size = sizes[t];
 
 		/* Scale pool size to number of 64-bit uints (rounded up) */
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
 		assert(idpool->size == size);
 
 		/* Test that all bits are set */
-		for (int i = 0; i < num_long_elements; i++) {
+		for (size_t i = 0; i < num_long_elements; i++) {
 			if (i == num_long_elements - 1 && size % (sizeof(uint64_t) * 8)) {
 				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->ids[i]);
 			} else {
@@ -45,7 +45,7 @@ int main(int argc, char *argv[]) {
 		(void) id; // Avoid unused-variable warning
 		for (uint64_t i = 0; i < size; i++) {
 			id = nccl_ofi_idpool_allocate_id(idpool);
-			assert(id == i);
+			assert((uint64_t)id == i);
 		}
 		id = nccl_ofi_idpool_allocate_id(idpool);
 		assert(-ENOMEM == id);
@@ -54,14 +54,14 @@ int main(int argc, char *argv[]) {
 		if (size) {
 			int holes[] = {(int)(size/3), (int)(size/2)}; // Must be in increasing order
 
-			for (int i = 0; i < sizeof(holes) / sizeof(int); i++) {
+			for (size_t i = 0; i < sizeof(holes) / sizeof(int); i++) {
 				if (0 == i || holes[i] != holes[i-1]) {
 					ret = nccl_ofi_idpool_free_id(idpool, holes[i]);
 					assert(0 == ret);
 				}
 			}
 
-			for (int i = 0; i < sizeof(holes) / sizeof(int); i++) {
+			for (size_t i = 0; i < sizeof(holes) / sizeof(int); i++) {
 				if (0 == i || holes[i] != holes[i-1]) {
 					id = nccl_ofi_idpool_allocate_id(idpool);
 					assert(id == holes[i]);
@@ -73,7 +73,7 @@ int main(int argc, char *argv[]) {
 		ret = nccl_ofi_idpool_free_id(idpool, (int)size);
 		assert(-EINVAL == ret);
 
-		for (int i = 0; i < size; i++) {
+		for (size_t i = 0; i < size; i++) {
 			ret = nccl_ofi_idpool_free_id(idpool, i);
 			assert(0 == ret);
 		}
@@ -84,7 +84,7 @@ int main(int argc, char *argv[]) {
 		}
 
 		/* Test that all bits are set */
-		for (int i = 0; i < num_long_elements; i++) {
+		for (size_t i = 0; i < num_long_elements; i++) {
 			if (i == num_long_elements - 1 && size % (sizeof(uint64_t) * 8)) {
 				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->ids[i]);
 			} else {

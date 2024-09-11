@@ -64,7 +64,7 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 		return 1;
 	}
 
-	for (int info_id = 0; info_id != schedule->num_xfer_infos; ++info_id) {
+	for (size_t info_id = 0; info_id != schedule->num_xfer_infos; ++info_id) {
 		ret |= verify_xfer_info(&schedule->rail_xfer_infos[info_id],
 				     &ref_schedule->rail_xfer_infos[info_id], info_id);
 	}
