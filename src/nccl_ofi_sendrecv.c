@@ -1425,6 +1425,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		comm_state->stage = COMM_RECV_CONN;
+		/* fall through */
 
 	case COMM_RECV_CONN:
 
@@ -1452,6 +1453,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
 
+		/* fall through */
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
@@ -1485,8 +1487,11 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		break;
 
 	case COMM_SEND_CONN:
+		/* fall through */
 	case COMM_CONN_RESP_REQ_PENDING:
+		/* fall through */
 	case COMM_CONNECTED:
+		/* fall through */
 	default:
 		NCCL_OFI_WARN("Invalid state of receive communicator object: %d",
 			      stage);
@@ -2063,6 +2068,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 		comm_state->stage = COMM_SEND_CONN;
 
+		/* fall through */
 	case COMM_SEND_CONN:
 		/* Send "connect" message to remote EP */
 		rc = send_connect_message(s_comm, device, ep, req);
@@ -2079,6 +2085,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
+		/* fall through */
 
 	case COMM_CONN_REQ_PENDING:
 		if (s_comm->conn_info->connect_to_self == 1) {
@@ -2111,8 +2118,11 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		break;
 
 	case COMM_RECV_CONN:
+		/* fall through */
 	case COMM_CONN_RESP_REQ_PENDING:
+		/* fall through */
 	case COMM_CONNECTED:
+		/* fall through */
 	default:
 		NCCL_OFI_WARN("Invalid state of send communicator object: %d", stage);
 		return -EINVAL;

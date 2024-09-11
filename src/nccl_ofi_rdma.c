@@ -4546,10 +4546,12 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_RECV_CONN;
 
+		/* fall through */
 	case COMM_RECV_CONN:
 
 		l_comm->stage = COMM_CONN_REQ_PENDING;
 
+		/* fall through */
 	case COMM_CONN_REQ_PENDING:
 		/* COMM_CONN_REQ_PENDING: Wait until connect message has been
 		 * received. Then, prepare for sending connect accept message,
@@ -4624,6 +4626,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_SEND_CONN;
 
+		/* fall through */
 	case COMM_SEND_CONN:
 
 		/* COMM_SEND_CONN: Send connect response message to remote */
@@ -4637,6 +4640,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		l_comm->stage = COMM_CONN_RESP_REQ_PENDING;
 
+		/* fall through */
 	case COMM_CONN_RESP_REQ_PENDING:
 		/* COMM_CONN_RESP_REQ_PENDING: Wait until connect
 		 * response message has been delivered. Afterwards,
@@ -4670,6 +4674,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		break;
 
 	case COMM_CONNECTED:
+		/* fall through */
 	default:
 		NCCL_OFI_WARN("Invalid state of receive communicator object: %d",
 			      l_comm->stage);
@@ -6219,6 +6224,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		comm_state->stage = COMM_SEND_CONN;
+		/* fall through */
 
 	case COMM_SEND_CONN:
 
@@ -6234,6 +6240,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
+		/* fall through */
 
 	case COMM_CONN_REQ_PENDING:
 		/* COMM_CONN_REQ_PENDING: Wait until connect message
@@ -6265,6 +6272,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		req = NULL;
 
 		comm_state->stage = COMM_RECV_CONN;
+		/* fall through */
 
 	case COMM_RECV_CONN:
 		/* COMM_RECV_CONN: Receive connect response message from remote */
@@ -6272,6 +6280,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		assert(s_comm && s_comm->num_rails > 0);
 
 		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
+		/* fall through */
 
 	case COMM_CONN_RESP_REQ_PENDING:
 
