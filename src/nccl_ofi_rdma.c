@@ -1122,7 +1122,7 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 	 * header type.  So cast to a control message and lookup the
 	 * type from there. */
 	nccl_ofi_rdma_msg_type_t msg_type =
-		eager ? NCCL_OFI_RDMA_MSG_EAGER : ((nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg)->type;
+		eager ? (nccl_ofi_rdma_msg_type_t)NCCL_OFI_RDMA_MSG_EAGER : ((nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg)->type;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
