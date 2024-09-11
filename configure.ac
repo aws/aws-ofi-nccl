@@ -134,6 +134,14 @@ CHECK_PKG_HWLOC([],
 CHECK_PKG_VALGRIND()
 CHECK_VAR_REDZONE()
 
+NCCL_OFI_PLATFORM="none"
+AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
+
+AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
+      [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
+
+CHECK_ENABLE_MEMFD_CREATE()
+
 # do we want our tests?
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
@@ -178,15 +186,7 @@ AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CFLAGS.])
        CFLAGS="${CFLAGS} ${werror_flags}"])
 
-NCCL_OFI_PLATFORM="none"
-AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
-
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
-
-AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
-      [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
-
-CHECK_ENABLE_MEMFD_CREATE()
 
 AC_CONFIG_FILES([Makefile
                  include/Makefile
