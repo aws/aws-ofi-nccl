@@ -702,7 +702,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 	 * topology nodes that have a "NIC topology nodes" or a
 	 * "accelerator topology nodes" it their subtree, all info
 	 * structs are found. */
-	nccl_ofi_topo_data_iterator_t data_iter;
+	nccl_ofi_topo_data_iterator_t data_iter = {};
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
 	while ((source_data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
@@ -878,7 +878,7 @@ static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 	nccl_ofi_topo_data_t *data = NULL;
 
 	/* Iterate over user data of topology nodes */
-	nccl_ofi_topo_data_iterator_t data_iter;
+	nccl_ofi_topo_data_iterator_t data_iter = {};
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
 	while ((data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
@@ -917,7 +917,7 @@ static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
  */
 static void print_nic_groups(nccl_ofi_topo_t *topo) {
 	nccl_ofi_topo_data_t *data = NULL;
-	nccl_ofi_topo_data_iterator_t data_iter;
+	nccl_ofi_topo_data_iterator_t data_iter = {};
 	nccl_ofi_topo_set_to_begin(topo, &data_iter);
 
 	int group_idx = 0;
