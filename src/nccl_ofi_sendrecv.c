@@ -185,7 +185,7 @@ static int ofi_process_cq(struct fid_cq *cq, uint64_t max_tag)
 {
 	ssize_t rc = 0;
 	int ret = 0;
-	struct fi_cq_err_entry err_buffer = { 0 };
+	struct fi_cq_err_entry err_buffer = {};
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 
@@ -1841,7 +1841,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 					    nccl_net_ofi_sendrecv_ep_t *ep,
 					    nccl_net_ofi_sendrecv_send_comm_t **s_comm)
 {
-	char remote_ep_addr[MAX_EP_ADDR] = {0};
+	char remote_ep_addr[MAX_EP_ADDR] = {};
 	uint64_t tag = 0ULL;
 	uint64_t max_tag = 0;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
