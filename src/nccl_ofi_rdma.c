@@ -1527,7 +1527,7 @@ exit:
 static inline int process_err_completion(nccl_net_ofi_rdma_device_t *device,
 					 struct fid_cq *cq)
 {
-	struct fi_cq_err_entry err_entry = { 0 };
+	struct fi_cq_err_entry err_entry = {};
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	int ret = 0;
 
@@ -6752,7 +6752,7 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t
 
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		/* Create device-shared completion queue */
-		struct fi_cq_attr cq_attr = {0};
+		struct fi_cq_attr cq_attr = {};
 		cq_attr.format = FI_CQ_FORMAT_DATA;
 		ret = fi_cq_open(rail_dev->domain, &cq_attr, &rail_dev->cq, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
