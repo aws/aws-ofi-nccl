@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_RDMA_H_
 #define NCCL_OFI_RDMA_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <rdma/fabric.h>
 
 #include "nccl_ofi.h"
@@ -833,6 +829,11 @@ typedef struct nccl_net_ofi_rdma_device {
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 } nccl_net_ofi_rdma_device_t;
+
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /*
  * @brief	Initialize plugin with rdma protocol structures
