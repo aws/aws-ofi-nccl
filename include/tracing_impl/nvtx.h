@@ -6,7 +6,7 @@
 #define NVTX_H
 
 #if HAVE_NVTX_TRACING
-#include "nvToolsExt.h"
+#include <nvtx3/nvToolsExt.h>
 
 #define NCCL_OFI_N_NVTX_DOMAIN_PER_COMM 8
 
