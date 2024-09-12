@@ -5,6 +5,8 @@
 #ifndef NCCL_OFI_CONFIG_BOTTOM_H
 #define NCCL_OFI_CONFIG_BOTTOM_H
 
+#define NCCL_OFI_N_NVTX_DOMAIN_PER_COMM 8
+
 /* configure aborts if __buildin_expect() isn't available */
 #define OFI_LIKELY(x)   __builtin_expect((x), 1)
 #define OFI_UNLIKELY(x) __builtin_expect((x), 0)
