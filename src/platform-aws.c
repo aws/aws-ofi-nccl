@@ -34,7 +34,9 @@ struct ec2_platform_data {
 	bool net_flush_required;
 	const char *default_protocol;
 	int domain_per_thread;
-} platform_data_map[] = {
+};
+
+static struct ec2_platform_data platform_data_map[] = {
 	{
 		.name = "p4d.24xlarge",
 		.topology = "p4d-24xl-topo.xml",
@@ -88,6 +90,8 @@ struct ec2_platform_data {
 	{
 		.name = "g5.48xlarge",
 		.topology = "g5.48xl-topo.xml",
+		.default_dup_conns = 0,
+		.latency = 75.0,
 		.gdr_required = false,
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
@@ -95,6 +99,9 @@ struct ec2_platform_data {
 	},
 	{
 		.name = "trn1.32xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 75.0,
 		.gdr_required = true,
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
@@ -102,6 +109,9 @@ struct ec2_platform_data {
 	},
 	{
 		.name = "trn1n.32xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 75.0,
 		.gdr_required = true,
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
