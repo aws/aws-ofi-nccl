@@ -8,8 +8,6 @@
 #if HAVE_NVTX_TRACING
 #include <nvtx3/nvToolsExt.h>
 
-#define NCCL_OFI_N_NVTX_DOMAIN_PER_COMM 8
-
 static inline void nvtx_mark_domain(nvtxDomainHandle_t domain, const char* name, uint32_t color)
 {
 	nvtxEventAttributes_t eventAttrib = {};
