@@ -4759,7 +4759,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
 			     sizeof(nccl_net_ofi_rdma_close_msg_t)),
 		8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-		freelist_deregmr_host_fn, ep, 1,
+		freelist_deregmr_host_fn, ep, false, 1,
 		&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
@@ -6198,7 +6198,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_ofi_freelist_init_mr(ep->ctrl_rx_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, 1, &ep->ctrl_rx_buff_fl);
+					ep, false, 1, &ep->ctrl_rx_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init ctrl_rx_buff_fl");
 		if (nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl))
@@ -6209,7 +6209,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
+					ep, false, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
 		nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
