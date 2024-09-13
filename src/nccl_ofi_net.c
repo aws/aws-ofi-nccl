@@ -158,24 +158,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		NCCL_OFI_WARN("CUDA initialization failed.");
 		goto exit;
 	}
-
-	int cuda_version;
-	if (nccl_net_ofi_cuDriverGetVersion(&cuda_version) != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("cuDriverGetVersion failed");
-		ret = -ENOTSUP;
-		goto exit;
-	}
-
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using CUDA driver version %d", cuda_version);
-	if (ofi_nccl_cuda_flush_enable()) {
-		if (nccl_net_ofi_cuFlushGPUDirectRDMAWrites == NULL) {
-			NCCL_OFI_WARN("CUDA flush requested, but cuFlushGPUDirectRDMAWrites not found.");
-			cuda_flush = false;
-		} else {
-			NCCL_OFI_WARN("CUDA flush enabled");
-			cuda_flush = true;
-		}
-	}
 #endif
 
 	/* configuration parameters */
@@ -477,16 +459,18 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 
 	if (nic_dup_conns > 1) {
 #if HAVE_CUDA
-		int num_gpus_visible, active_cuda_device, gpus_per_conn;
-		size_t c;
+		int num_gpus_visible = nccl_net_ofi_cuda_get_num_devices();
+		int active_cuda_device = nccl_net_ofi_cuda_get_active_device_idx();
+		int gpus_per_conn = -1;
+		int c = 0;
 
-		if (nccl_net_ofi_cuDeviceGetCount(&num_gpus_visible) != CUDA_SUCCESS) {
+		if (!(num_gpus_visible > 0)) {
 			NCCL_OFI_WARN("Error getting CUDA device count");
 			ret = -ENOTSUP;
 			goto error;
 		}
 
-		if (nccl_net_ofi_cuCtxGetDevice(&active_cuda_device) != CUDA_SUCCESS) {
+		if (active_cuda_device < 0 || active_cuda_device >= num_gpus_visible) {
 			NCCL_OFI_WARN("Error getting current CUDA device");
 			ret = -ENOTSUP;
 			goto error;

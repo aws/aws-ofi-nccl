@@ -4,8 +4,9 @@
 # See LICENSE.txt for license information
 #
 
-AM_CPPFLAGS = -I$(top_srcdir)/include
-LDADD = $(top_builddir)/src/libinternal_net_plugin.la
+AM_CPPFLAGS = -I$(top_srcdir)/include $(CUDA_CPPFLAGS)
+LDADD = $(top_builddir)/src/libinternal_net_plugin.la $(CUDA_LIBS)
+AM_LDFLAGS = $(CUDA_LDFLAGS)
 
 noinst_HEADERS = test-common.h
 

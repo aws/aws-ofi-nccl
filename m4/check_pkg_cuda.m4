@@ -21,40 +21,63 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         [],
         [test "${with_cuda}" = "no"],
         [check_pkg_found=no],
-        [AS_IF([test -d ${with_cuda}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
-
-         CUDA_LDFLAGS="-L${with_cuda}/${check_pkg_libdir}"
-
-         CPPFLAGS="-I${with_cuda}/include ${CPPFLAGS}"
-         LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"])
+        [AS_IF([test -d $(realpath ${with_cuda})/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
+         CUDA_LDFLAGS="-L$(realpath ${with_cuda})/${check_pkg_libdir}"
+         CUDA_CPPFLAGS="-I$(realpath $(realpath ${with_cuda})/include)"
+         CUDA_LIBS="-lcudart_static -lrt -ldl"
+         LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
+         LIBS="${CUDA_LIBS} ${LIBS}"
+         CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"
+        ])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
-        [AC_CHECK_HEADERS([cuda.h], [], [check_pkg_found=no])])
+        [AC_SEARCH_LIBS(
+         [cudaGetDriverEntryPoint],
+         [cudart_static],
+         [],
+         [check_pkg_found=no],
+         [-ldl -lrt])])
 
-  dnl We only need to include libcuda.so for the functional tests, as
-  dnl the plugins themselves dynamicly load libcuda at runtime.  This
-  dnl is a problem when building in a container on a non-GPU instance,
-  dnl as frequently libcuda is pulled from the base AMI when using
-  dnl containers and not there on non-GPU instances, and this check
-  dnl would break the build in that situation.  Since unit tests don't
-  dnl have to be built, only check for libcuda.so if we're building
-  dnl the unit tests.
-  AS_IF([test "${check_pkg_found}" = "yes" -a "${enable_tests}" != "no"],
-        [AC_SEARCH_LIBS([cuMemHostAlloc], [cuda], [CUDA_LIBS="-lcuda"], [check_pkg_found=no])])
+  check_cuda_gdr_flush_define=0
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [
+        AC_MSG_CHECKING([if CUDA 11.3+ is available for GDR Write Flush support])
+        AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
+        #include <cuda.h>
+        _Static_assert(CUDA_VERSION >= 11030, "cudart>=11030 required for cuFlushGPUDirectRDMAWrites");
+        ])],[ check_cuda_gdr_flush_define=1 ],
+            [ check_cuda_gdr_flush_define=0 ])
+        AC_MSG_RESULT(${check_cuda_gdr_flush_define})
+        ])
+
+  check_cuda_dmabuf_define=0
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [
+        AC_MSG_CHECKING([if CUDA 11.7+ is available for DMA-BUF support])
+        AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
+        #include <cuda.h>
+        _Static_assert(CUDA_VERSION >= 11070, "cudart>=11070 required for DMABUF");
+        ])],[ check_cuda_dmabuf_define=1 ],
+            [ check_cuda_dmabuf_define=0 ])
+        AC_MSG_RESULT(${check_cuda_dmabuf_define})
+        ])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define=1
          $1],
         [check_pkg_define=0
-         CPPFLAGS="${check_pkg_CPPFLAGS_save}"
          $2])
 
   AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
+  AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_SUPPORT], [${check_cuda_dmabuf_define}], [Defined to 1 if CUDA DMA-BUF support is available])
+  AC_DEFINE_UNQUOTED([HAVE_CUDA_GDRFLUSH_SUPPORT], [${check_cuda_gdr_flush_define}], [Defined to 1 if CUDA cuFlushGPUDirectRDMAWrites support is available])
   AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
 
   AC_SUBST([CUDA_LDFLAGS])
+  AC_SUBST([CUDA_CPPFLAGS])
   AC_SUBST([CUDA_LIBS])
 
+  CPPFLAGS="${check_pkg_CPPFLAGS_save}"
   LDFLAGS="${check_pkg_LDFLAGS_save}"
   LIBS="${check_pkg_LIBS_save}"
 

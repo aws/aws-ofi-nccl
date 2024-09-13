@@ -20,7 +20,7 @@ int main(int argc, char* argv[])
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Plugin defines */
-	int ndev, cuda_dev;
+	int ndev;
 	nccl_net_ofi_send_comm_t *sComm = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
@@ -102,13 +102,7 @@ int main(int argc, char* argv[])
 	}
 
 	/* Set CUDA device for subsequent device memory allocation, in case GDR is used */
-	cuda_dev = local_rank;
-	NCCL_OFI_TRACE(NCCL_NET, "Using CUDA device %d for memory allocation", cuda_dev);
-
-	CUDACHECK(cuInit(0));
-	CUcontext context;
-	CUDACHECK(cuCtxCreate(&context, CU_CTX_SCHED_SPIN|CU_CTX_MAP_HOST, cuda_dev));
-	CUDACHECK(cuCtxSetCurrent(context));
+	NCCL_OFI_TRACE(NCCL_NET, "Using CUDA device %d for memory allocation", local_rank);
 
 	/* Get external Network from NCCL-OFI library */
 	extNet = get_extNet();
