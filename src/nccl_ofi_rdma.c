@@ -3237,6 +3237,42 @@ static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, vo
 }
 
 /**
+ * Register gpu memory for use with the given communicator
+ *
+ * This interface is suitable for use with freelist_init_mr.
+ *
+ * @param	data
+ *		Pointer to memory region. Must be aligned to page size.
+ * @param	size
+ *		Size of memory region. Must be a multiple of page size.
+ */
+__attribute__((unused))
+static int freelist_regmr_gpu_fn(void *ep_void_ptr, void *data, size_t size, void **handle)
+{
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)ep_void_ptr;
+
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
+	int ret = reg_internal_mr_ep(ep, data, size, NCCL_PTR_CUDA, &mr_handle);
+
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed call to reg_mr_ep: %d", ret);
+		return -EIO;
+	}
+
+	freelist_regmr_fn_handle_t *freelist_handle =
+		(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
+	if (!freelist_handle) {
+		NCCL_OFI_WARN("Failed to allocate memory for freelist handle");
+		return -ENOMEM;
+	}
+
+	freelist_handle->mr_handle = mr_handle;
+	freelist_handle->key_pool = &(rdma_endpoint_get_domain(ep)->base.mr_rkey_pool);
+	*handle = (void *)freelist_handle;
+	return 0;
+}
+
+/**
  * Deregister host memory registered with freelist_regmr_host_fn
  *
  * This interface is suitable for use with a freelist.
