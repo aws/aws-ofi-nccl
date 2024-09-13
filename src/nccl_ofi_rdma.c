@@ -2528,7 +2528,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 		goto exit;
 	}
 
-	ret = register_rail_mr_buffer(get_device_rail(device, 0)->domain, ep->control_rail.ofi_ep,
+	ret = register_rail_mr_buffer(ep->control_rail.domain, ep->control_rail.ofi_ep,
 				      -1, type, &mr_attr,
 				      &ret_handle->control_mr);
 	if (OFI_UNLIKELY(ret != 0)) {
