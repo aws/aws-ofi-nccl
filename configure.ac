@@ -86,18 +86,17 @@ AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2
 # Checks for external packages
 CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])
 
-CHECK_PKG_NVTX()
-CHECK_PKG_LTTNG()
-
 have_device_interface=no
 CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
                         [AC_MSG_ERROR([Cannot enable both CUDA and neuron.])],
                         [want_cuda=no])
                   have_device_interface=neuron])
 CHECK_PKG_CUDA([have_device_interface=cuda])
-
 AS_IF([test "${have_device_interface}" = "no"],
       [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
+
+CHECK_PKG_LTTNG()
+CHECK_PKG_NVTX()
 
 CHECK_PKG_HWLOC([],
 		[AC_MSG_ERROR([Could not find the hwloc library. Use --with-hwloc to provide the path to non-standard hwloc installation.])])

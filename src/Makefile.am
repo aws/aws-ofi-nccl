@@ -4,8 +4,6 @@
 # See LICENSE.txt for license information
 #
 
-AM_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
-
 #
 # net plugin
 #
@@ -34,8 +32,7 @@ endif
 if ENABLE_NEURON
   sources += nccl_ofi_interface_neuron.c
 else
-  sources += nccl_ofi_cuda.c \
-	nccl_ofi_interface_nvidia.c
+  sources += nccl_ofi_interface_nvidia.c
 endif
 
 # Build an internal-only library that can be used by unit tests as
@@ -43,7 +40,8 @@ endif
 # us writing dlopen() handlers for simple unit tests.
 noinst_LTLIBRARIES = libinternal_net_plugin.la
 libinternal_net_plugin_la_SOURCES = $(sources)
-libinternal_net_plugin_la_LDFLAGS = -avoid-version
+libinternal_net_plugin_la_CPPFLAGS = -I$(top_srcdir)/include -DXML_DIR=\"${pkgdatadir}/xml\"
+libinternal_net_plugin_la_LDFLAGS = -static -avoid-version
 
 if ENABLE_NEURON
   lib_LTLIBRARIES = libnccom-net.la
@@ -51,6 +49,12 @@ if ENABLE_NEURON
   libnccom_net_la_LIBADD = libinternal_net_plugin.la
   libnccom_net_la_LDFLAGS = -module -avoid-version
 else
+  noinst_LTLIBRARIES += libinternal_net_cudart_plugin.la
+  libinternal_net_cudart_plugin_la_SOURCES = nccl_ofi_cuda.c
+  libinternal_net_cudart_plugin_la_CPPFLAGS = $(CUDA_CPPFLAGS) -I$(top_srcdir)/include
+  libinternal_net_cudart_plugin_la_LDFLAGS = -whole-archive -static -avoid-version $(CUDA_LDFLAGS)
+  libinternal_net_cudart_plugin_la_LIBADD = $(CUDA_LIBS)
+  libinternal_net_plugin_la_LIBADD = libinternal_net_cudart_plugin.la
   lib_LTLIBRARIES = libnccl-net.la
   libnccl_net_la_SOURCES =
   libnccl_net_la_LIBADD = libinternal_net_plugin.la
@@ -67,12 +71,14 @@ tuner_sources = \
 	tuner/nccl_ofi_tuner.c
 libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
 libinternal_tuner_plugin_la_LDFLAGS = -avoid-version
+libinternal_tuner_plugin_la_CPPFLAGS = -I$(top_srcdir)/include
 
 if HAVE_CUDA
 if WANT_PLATFORM_AWS
   # NCCL tuner plugin
   lib_LTLIBRARIES += libnccl-ofi-tuner.la
   libnccl_ofi_tuner_la_SOURCES = $(tuner_sources)
+  libnccl_ofi_tuner_la_CPPFLAGS = -I$(top_srcdir)/include
   libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
 endif
 endif

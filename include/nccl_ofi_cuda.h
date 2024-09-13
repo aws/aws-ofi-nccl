@@ -6,12 +6,9 @@
 #ifndef NCCL_OFI_CUDA_H_
 #define NCCL_OFI_CUDA_H_
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-#include <cuda.h>
 
 int nccl_net_ofi_cuda_init(void);
 
@@ -24,26 +21,53 @@ int nccl_net_ofi_cuda_init(void);
  * @return	Valid CUDA device ID on success
  *		-1 on error
  * @return	0 on success
- *		non-zero on error
+ *		-EINVAL on error
  */
-int nccl_net_ofi_get_cuda_device(void *data, int *dev_id);
+int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
 
-extern CUresult (*nccl_net_ofi_cuDriverGetVersion)(int *driverVersion);
+/*
+ * @brief	wraps cudaFlushGPUDirectRDMAWrites() with default args.
 
-extern CUresult (*nccl_net_ofi_cuPointerGetAttribute)(void *data, CUpointer_attribute attribute, CUdeviceptr ptr);
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void);
 
-extern CUresult (*nccl_net_ofi_cuCtxGetDevice)(CUdevice *device);
-extern CUresult (*nccl_net_ofi_cuDeviceGetCount)(int* count);
+/*
+ * @brief	wraps cudaGetDevice()
 
-#if CUDA_VERSION >= 11030
-extern CUresult (*nccl_net_ofi_cuFlushGPUDirectRDMAWrites)(CUflushGPUDirectRDMAWritesTarget target,
-							   CUflushGPUDirectRDMAWritesScope scope);
-#else
-extern void *nccl_net_ofi_cuFlushGPUDirectRDMAWrites;
-#endif
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_cuda_get_num_devices(void);
+
+/*
+ * @brief	wraps cudaGetDeviceCount()
+
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_cuda_get_active_device_idx(void);
+
+
+/*
+ * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
+
+ * @return	true if attr is fetched successfully and true.
+ *		    false otherwise.
+ */
+bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
+
+/*
+ * @brief	query CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED
+
+ * @return	true if attr is fetched successfully and true.
+ *		    false otherwise
+ */
+bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
 
 #ifdef __cplusplus
-} // End extern "C"
+}  // End extern "C"
 #endif
 
-#endif // End NCCL_OFI_H_
+#endif  // End NCCL_OFI_H_

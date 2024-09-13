@@ -58,13 +58,13 @@ jobs:
             efainstallerdir: ALINUX2023
             nvidiadistro: amzn2023
             configmanager: dnf config-manager
-            cudapackages: cuda-cudart-devel-12-5 cuda-driver-devel-12-5
+            cudapackages: cuda-cudart-devel-12-6 cuda-crt-12-6
 
           - container: amazonlinux:2
             efainstallerdir: ALINUX2
             nvidiadistro: rhel7
             configmanager: yum-config-manager
-            cudapackages: cuda-cudart-devel-12-4 cuda-driver-devel-12-4
+            cudapackages: cuda-cudart-devel-12-4 cuda-crt-12-4
 
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
@@ -177,7 +177,12 @@ jobs:
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
         run: |
-          sudo apt-get install -y nvidia-cuda-toolkit
+          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
+          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
+          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -y
+          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
@@ -295,7 +300,12 @@ jobs:
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
         run: |
-          sudo apt-get install -y nvidia-cuda-toolkit
+          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
+          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
+          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -y
+          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
@@ -379,7 +389,12 @@ jobs:
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
         run: |
-          sudo apt-get install -y nvidia-cuda-toolkit
+          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
+          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
+          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
+          sudo dpkg -i cuda-keyring_1.1-1_all.deb
+          sudo apt-get update -y
+          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
