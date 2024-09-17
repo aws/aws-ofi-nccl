@@ -21,30 +21,33 @@ jobs:
       matrix:
         sdk:
           - cuda
-        amazonlinux:
-          - al2023
-          - al2
+        container:
+          - amazonlinux:2023
+          - amazonlinux:2
         efainstaller:
           - latest
           - 1.32.0
           - 1.31.0
           - 1.30.0
         include:
-          - amazonlinux: al2023
+          - container: amazonlinux:2023
             efainstallerdir: ALINUX2023
-            nvidiadistro: fedora37
+            nvidiadistro: amzn2023
             configmanager: dnf config-manager
-            cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
+            cudapackages: cuda-cudart-devel-12-5 cuda-driver-devel-12-5
 
-          - amazonlinux: al2
+          - container: amazonlinux:2
             efainstallerdir: ALINUX2
             nvidiadistro: rhel7
             configmanager: yum-config-manager
-            cudapackages: cuda-cudart-devel-12-3 cuda-driver-devel-12-3
+            cudapackages: cuda-cudart-devel-12-4 cuda-driver-devel-12-4
 
-    runs-on: codebuild-ghactions-${{ matrix.amazonlinux }}-${{ github.run_id }}-${{ github.run_attempt }}
-    name: ${{matrix.amazonlinux}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    name: ${{matrix.container}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
     steps:
+      - run: |
+          yum -y update && yum -y install git tar util-linux findutils yum-utils
       # note, do not bump to v4: https://github.com/actions/checkout/issues/1590
       - uses: actions/checkout@v3
       - name: Fetch and Install EFA Installer Dependencies
@@ -52,20 +55,21 @@ jobs:
           curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz
           tar -xf aws-efa-installer-*.tar.gz
           cd aws-efa-installer/RPMS/${{ matrix.efainstallerdir }}/x86_64
-          find . | grep rpm$ | xargs sudo yum -y localinstall
+          find . | grep rpm$ | xargs yum -y localinstall
       - name: Install hwloc, utilities.
         run: |
-          sudo yum -y install hwloc-devel yum-utils
+          yum -y install hwloc-devel autoconf automake libtool gcc g++ git make
       - name: Install CUDA
         run: |
-          sudo ${{ matrix.configmanager }} --add-repo \
+          ${{ matrix.configmanager }} --add-repo \
              http://developer.download.nvidia.com/compute/cuda/repos/${{ matrix.nvidiadistro }}/x86_64/cuda-${{ matrix.nvidiadistro }}.repo \
              --save
-          sudo yum -y clean expire-cache
-          sudo yum -y install ${{ matrix.cudapackages }}
+          yum -y clean expire-cache
+          yum -y install ${{ matrix.cudapackages }}
 
       - name: Call `autoreconf -ivf`
-        run: ./autogen.sh
+        run: |
+          ./autogen.sh
 
       - name: Call `./configure`
         run: |
@@ -79,7 +83,7 @@ jobs:
         run: make -j
 
       - name: Call `make install`
-        run: sudo make install
+        run: make install
 
   distcheck:
     runs-on: ubuntu-22.04
