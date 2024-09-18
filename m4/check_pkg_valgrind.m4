@@ -34,14 +34,15 @@ AC_DEFUN([CHECK_PKG_VALGRIND], [
          AC_MSG_CHECKING([for VALGRIND_MAKE_MEM_NOACCESS])
          AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
                             [[
-                              #include "valgrind/memcheck.h"
+                              #include <valgrind/memcheck.h>
                             ]],
                             [[#if !defined(VALGRIND_MAKE_MEM_NOACCESS)
                               #error Failed not defined $define
+                              return 1;
+                              #else
+                              return 0;
                               #endif
-                              int main(void) {
-                                return 0;
-                              }]])],
+                              ]])],
                            [AC_MSG_RESULT([yes])],
                            [AC_MSG_RESULT([no])
                             AC_MSG_ERROR([Need valgrind version 3.2.0 or later.])])])
