@@ -2146,18 +2146,17 @@ static inline int free_bounce_req(nccl_net_ofi_rdma_req_t *req,
 {
 	assert(!dec_inflight_reqs);
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
-	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 	/* Free buffer */
 	if (bounce_data->bounce_fl_item) {
-		nccl_ofi_freelist_entry_free(ep->bounce_buff_fl, bounce_data->bounce_fl_item);
+		nccl_ofi_freelist_entry_free(bounce_data->rail->bounce_buff_fl, bounce_data->bounce_fl_item);
 	}
-	return free_base_req(NULL, ep->bounce_buff_reqs_fl, req, false);
+	return free_base_req(NULL, bounce_data->rail->bounce_buff_reqs_fl, req, false);
 }
 
 static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *ep,
 							nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_rdma_req_t *req = allocate_req(ep->bounce_buff_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = allocate_req(rail->bounce_buff_reqs_fl);
 	if (!req) return NULL;
 
 	req->comm = NULL;
@@ -2167,9 +2166,11 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 
+	nccl_ofi_freelist_t *bounce_buff_fl = rail->bounce_buff_fl;
+
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item =
 		(nccl_net_ofi_rdma_bounce_fl_item_t *)nccl_ofi_freelist_entry_alloc(
-			ep->bounce_buff_fl);
+			bounce_buff_fl);
 	if (!bounce_fl_item) {
 		NCCL_OFI_WARN("Failed to allocate bounce_fl_item");
 		req->free(req, false);
@@ -2178,7 +2179,7 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 	assert(NCCL_OFI_IS_PTR_ALIGNED(&bounce_fl_item->bounce_msg, BOUNCE_BUFFER_ALIGNMENT));
 
 	bounce_data->bounce_fl_item = bounce_fl_item;
-	bounce_data->buff_len = ep->bounce_buff_size;
+	bounce_data->buff_len = rail->buff_size;
 	bounce_data->rail = rail;
 	bounce_data->ep = ep;
 	return req;
@@ -5128,8 +5129,7 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	/* Reset memcheck guards of bounce buffer freelist entry to
 	 * accessible but undefined to cover cases where the buffer
 	 * gets re-posted */
- 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
-	nccl_ofi_freelist_entry_set_undefined(ep->bounce_buff_fl,
+	nccl_ofi_freelist_entry_set_undefined(ep_rail->bounce_buff_fl,
 					      bounce_fl_item);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
@@ -5749,59 +5749,123 @@ static inline nccl_net_ofi_rdma_send_comm_t *calloc_rdma_send_comm(int num_rails
 /*
  * @brief	Initialize bounce buffer data of endpoint
  *
- * @param	ep
- *		Endpoint with bounce buffer and bounce requests not being
+ * @param	ep_rail
+ *		Endpoint rail with bounce buffer and bounce requests not being
  *		initialized yet.
+ * @param	ep
+ *		Corresponding endpoint
  * @return	0, on success
  *		non-zero, on error
  */
-static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
+static inline int init_bounce_buffers_rail(nccl_net_ofi_ep_rail_t *ep_rail, nccl_net_ofi_rdma_ep_t *ep,
+					   size_t buff_size, size_t entry_alignment)
 {
 	int ret = 0;
 
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
 				     ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
-				     &ep->bounce_buff_reqs_fl);
+				     &ep_rail->bounce_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_reqs_fl");
 		return ret;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) + ep->bounce_buff_size,
+	ep_rail->buff_size = buff_size;
+	ret = nccl_ofi_freelist_init_mr(buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, 0, BOUNCE_BUFFER_ALIGNMENT, &ep->bounce_buff_fl);
+					ep, 0, entry_alignment, &ep_rail->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_fl");
-		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl))
-			NCCL_OFI_WARN("Also failed to freelist_fini bounce_buff_reqs_fl");
+		goto error;
+	}
+
+	ep_rail->min_bounce_posted = ofi_nccl_rdma_min_posted_bounce_buffers();
+	ep_rail->max_bounce_posted = ofi_nccl_rdma_max_posted_bounce_buffers();
+	ep_rail->num_bounce_posted = 0;
+
+	ret = nccl_net_ofi_mutex_init(&ep_rail->bounce_mutex, NULL);
+	if (ret != 0) {
+		goto error;
+	}
+
+	return ret;
+
+error:
+	if (ep_rail->bounce_buff_reqs_fl != NULL) {
+		nccl_ofi_freelist_fini(ep_rail->bounce_buff_reqs_fl);
+		ep_rail->bounce_buff_reqs_fl = NULL;
+	}
+	if (ep_rail->bounce_buff_fl != NULL) {
+		nccl_ofi_freelist_fini(ep_rail->bounce_buff_fl);
+		ep_rail->bounce_buff_fl = NULL;
+	}
+
+	return ret;
+}
+
+static inline int fini_bounce_buffers_rail(nccl_net_ofi_ep_rail_t *ep_rail)
+{
+	int ret = nccl_net_ofi_mutex_destroy(&ep_rail->bounce_mutex);
+	if (ret != 0) {
 		return ret;
 	}
 
-	/*
-	 * The *_bounce_posted limits are used in the progress engine to
-	 * determine if the receive queue is hydrated with sufficient buffers.
-	 * The parameters account for all the rails, so scale down bounds to
-	 * what a single rail would need for the control endpoint.
-	 */
-	ep->control_rail.min_bounce_posted = NCCL_OFI_DIV_CEIL(
-		ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
-		);
-	ep->control_rail.max_bounce_posted = NCCL_OFI_DIV_CEIL(
-		ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
-		);
-	ep->control_rail.num_bounce_posted = 0;
-	ret = nccl_net_ofi_mutex_init(&ep->control_rail.bounce_mutex, NULL);
+	if (ep_rail->bounce_buff_fl) {
+		ret = nccl_ofi_freelist_fini(ep_rail->bounce_buff_fl);
+		ep_rail->bounce_buff_fl = NULL;
+		if (ret != 0) {
+			return ret;
+		}
+	}
 
+	if (ep_rail->bounce_buff_reqs_fl) {
+		ret = nccl_ofi_freelist_fini(ep_rail->bounce_buff_reqs_fl);
+		ep_rail->bounce_buff_reqs_fl = NULL;
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return ret;
+}
+
+static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
+{
+	int ret = 0;
+	/* Control rail */
+	{
+		size_t buff_size = sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) +
+				   NCCL_OFI_MAX(NCCL_OFI_MAX(
+					sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+					sizeof(nccl_ofi_rdma_connection_info_t)),
+					sizeof(nccl_net_ofi_rdma_close_msg_t));
+		ret = init_bounce_buffers_rail(&ep->control_rail, ep,
+			buff_size, BOUNCE_BUFFER_ALIGNMENT);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	/* Data rails */
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
+		size_t buff_size = sizeof(nccl_net_ofi_rdma_bounce_fl_item_t)
+			+ eager_max_size;
+
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-		rail->min_bounce_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
-		);
-		rail->max_bounce_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
-		);
-		nccl_net_ofi_mutex_init(&rail->bounce_mutex, NULL);
+
+		ret = init_bounce_buffers_rail(rail, ep, buff_size,
+			BOUNCE_BUFFER_ALIGNMENT);
+		if (ret != 0) {
+
+			/* Cleanup previously-established rails */
+			fini_bounce_buffers_rail(&ep->control_rail);
+			for (int i = 0; i < rail_id; ++i) {
+				fini_bounce_buffers_rail(get_rail(ep, i));
+			}
+
+			return ret;
+		}
 	}
 
 	return ret;
@@ -5819,24 +5883,17 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret = 0;
-	ret = nccl_ofi_freelist_fini(ep->bounce_buff_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to fini bounce_buff_fl");
-		return ret;
-	}
 
-	ret = nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to fini bounce_buff_reqs_fl");
-		return ret;
-	}
-
+	/* Data rails */
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
-		nccl_net_ofi_mutex_destroy(&rail->bounce_mutex);
+		ret = fini_bounce_buffers_rail(get_rail(ep, rail_id));
+		if (ret != 0) {
+			return ret;
+		}
 	}
 
-	nccl_net_ofi_mutex_destroy(&ep->control_rail.bounce_mutex);
+	/* Control rail */
+	ret = fini_bounce_buffers_rail(&ep->control_rail);
 
 	return ret;
 }
@@ -6717,9 +6774,6 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 		NCCL_OFI_WARN("Failed to init pending_reqs_queue: %d", ret);
 		goto error;
 	}
-
-	ep->bounce_buff_size = NCCL_OFI_MAX(NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t), eager_max_size),
-						sizeof(nccl_ofi_rdma_connection_info_t));
 
 	ep->is_endpoint_per_communicator_ep = false;
 

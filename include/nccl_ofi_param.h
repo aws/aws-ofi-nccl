@@ -239,18 +239,18 @@ OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (64 * 1024));
 
 /*
- * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
+ * Minimum bounce buffers posted per rail. The plugin will attempt to post
  * more bounce buffers if we dip below this threshold, allocating new bounce
  * buffers if needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64);
+OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 16);
 
 /*
- * Maximum bounce buffers posted per endpoint. The plugin will not attempt to
+ * Maximum bounce buffers posted per rail. The plugin will not attempt to
  * post more bounce buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
+OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 32);
 
 /*
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
