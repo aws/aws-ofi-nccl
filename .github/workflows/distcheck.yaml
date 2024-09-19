@@ -165,38 +165,29 @@ jobs:
           fi
 
       - name: Install Latest Compiler
-        uses: awalsh128/cache-apt-pkgs-action@latest
         if: matrix.cc-variant == 'latest'
-        with:
-          packages: ${{ matrix.cc }}-${{matrix.cc-version}}
-          version: compiler-${{ matrix.cc }}-${{matrix.cc-version}}
+        run: |
+          sudo apt-get install -y ${{ matrix.cc }}-${{matrix.cc-version}}
 
       - name: Install Base Dependencies
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ${{ env.APT_PACKAGES }}
-          version: base-packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ${{ env.APT_PACKAGES }}
 
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: nvidia-cuda-toolkit
-          version: cuda-packages
+        run: |
+          sudo apt-get install -y nvidia-cuda-toolkit
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: aws-neuronx-runtime-lib
-          version: neuron-packages
+        run: |
+          sudo apt-get install -y aws-neuronx-runtime-lib
 
       - name: Install lttng
-        uses: awalsh128/cache-apt-pkgs-action@latest
         if: matrix.tracing == 'lttng'
-        with:
-          packages: liblttng-ust-dev
-          version: lttng
+        run: |
+          sudo apt-get install -y liblttng-ust-dev
 
       - name: Fetch and Install EFA Installer Dependencies
         run: |
@@ -292,31 +283,24 @@ jobs:
           fi
 
       - name: Install Latest Compiler
-        uses: awalsh128/cache-apt-pkgs-action@latest
         if: matrix.cc-variant == 'latest'
-        with:
-          packages: ${{ matrix.cc }}-${{matrix.cc-version}}
-          version: compiler-${{ matrix.cc }}-${{matrix.cc-version}}
+        run: |
+          sudo apt-get install -y ${{ matrix.cc }}-${{matrix.cc-version}}
 
       - name: Install Base Dependencies
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ${{ env.APT_PACKAGES }}
-          version: base-packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ${{ env.APT_PACKAGES }}
 
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: nvidia-cuda-toolkit
-          version: cuda-packages
+        run: |
+          sudo apt-get install -y nvidia-cuda-toolkit
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: aws-neuronx-runtime-lib
-          version: neuron-packages
+        run: |
+          sudo apt-get install -y aws-neuronx-runtime-lib
 
       - name: Fetch and Install EFA Installer Dependencies
         run: |
@@ -388,30 +372,23 @@ jobs:
           sudo apt update -y
 
       - name: Install Base Dependencies
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: ${{ env.APT_PACKAGES }}
-          version: base-packages
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ${{ env.APT_PACKAGES }}
 
       - name: Install CUDA SDK
         if: matrix.sdk == 'cuda'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: nvidia-cuda-toolkit
-          version: cuda-packages
+        run: |
+          sudo apt-get install -y nvidia-cuda-toolkit
 
       - name: Install Neuron SDK
         if: matrix.sdk == 'neuron'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: aws-neuronx-runtime-lib
-          version: neuron-packages
+        run: |
+          sudo apt-get install -y aws-neuronx-runtime-lib
 
       - name: Install cppcheck
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: cppcheck
-          version: codechecker-cppcheck
+        run: |
+          sudo apt-get install -y cppcheck
 
       - name: Fetch and Install EFA Installer Dependencies
         run: |
