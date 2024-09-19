@@ -322,7 +322,7 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
 				FI_OPT_SHARED_MEMORY_PERMITTED, &optval,
 				sizeof(optval));
-		if (ret == -FI_EOPNOTSUPP) {
+		if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
 			/* One way we get here is running against
 			 * older libfabric builds that don't have
 			 * FI_OPT_SHARED_MEMORY_PERMITTED.  This isn't
@@ -347,7 +347,7 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
 				FI_OPT_CUDA_API_PERMITTED, &optval,
 				sizeof(optval));
-		if (ret == -FI_EOPNOTSUPP) {
+		if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
 			if (support_gdr == GDR_SUPPORTED) {
 				/* If we got here, that means we previously said
 				 * we definitely had GDR support, but now don't.
