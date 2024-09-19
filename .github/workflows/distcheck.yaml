@@ -129,7 +129,7 @@ jobs:
         include:
           - cc-variant: latest
             cc: clang
-            cc-version: 19
+            cc-version: 18
           - cc-variant: latest
             cc: gcc
             cc-version: 13
@@ -256,7 +256,7 @@ jobs:
         include:
           - cc-variant: latest
             cc: clang
-            cc-version: 19
+            cc-version: 18
           - cc-variant: latest
             cc: gcc
             cc-version: 13
