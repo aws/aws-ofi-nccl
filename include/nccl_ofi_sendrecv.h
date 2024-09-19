@@ -220,6 +220,15 @@ typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_sendrecv_req_direction_t direction;
 } nccl_net_ofi_sendrecv_req_t;
 
+
+struct nccl_net_ofi_sendrecv_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	struct fi_info *provider_list;
+};
+typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
+
+
 /*
  * @brief	Initialize plugin with sendrecv protocol structures
  */
