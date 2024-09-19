@@ -427,7 +427,7 @@ ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 				      "Choosing algo %d proto %d with cost %.8f µsecs for coll %d size %ld.",
 				      *algorithm,
 				      *protocol,
-				      0,
+				      0.0,
 				      collType,
 				      nBytes);
 		}

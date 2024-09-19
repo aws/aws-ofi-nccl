@@ -12,8 +12,13 @@ extern "C" {
 
 #include "nccl-headers/net.h"
 
+// GCC is happy with this hint to identify printf string code
+// mismatches.  Clang does not seem to want to apply the hint, but
+// also doesn't complain, so this is better than nothing.
+typedef ncclDebugLogger_t nccl_ofi_logger_t __attribute__ ((format (printf, 5, 6)));
+
 // Logger Function
-extern ncclDebugLogger_t ofi_log_function;
+extern nccl_ofi_logger_t ofi_log_function;
 
 #define NCCL_OFI_WARN(fmt, ...)							\
 	(*ofi_log_function)(NCCL_LOG_WARN, NCCL_ALL, __PRETTY_FUNCTION__,	\

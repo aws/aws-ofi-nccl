@@ -136,7 +136,7 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 			cache->hit_count++;
 			NCCL_OFI_TRACE(
 				NCCL_NET,
-				"Found MR handle %p for %p in cache slot %d",
+				"Found MR handle %p for %p in cache slot %zu",
 				cache->slots[slot]->handle,
 				addr,
 				slot);
@@ -200,7 +200,7 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
 			cache->used++;
 			NCCL_OFI_TRACE(
 				NCCL_NET,
-				"Inserted MR handle %p for %p in cache slot %d",
+				"Inserted MR handle %p for %p in cache slot %zu",
 				handle,
 				addr,
 				slot);
