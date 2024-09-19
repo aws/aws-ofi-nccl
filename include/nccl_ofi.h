@@ -484,6 +484,19 @@ struct nccl_net_ofi_recv_comm {
  */
 struct nccl_net_ofi_plugin {
 /* public */
+
+	/**
+	 * Complete initialization of plugin
+	 *
+	 * When a plugin is first created, it should not create any
+	 * network resources -- create is called to understand the
+	 * configuration of the network and see which transports can
+	 * run.  The base code will pick one and call complete_init,
+	 * at which point devices and network resources can be
+	 * created.
+	 */
+	int (*complete_init)(nccl_net_ofi_plugin_t *plugin);
+
 	int (*assign_device)(nccl_net_ofi_plugin_t *plugin,
 			     size_t device_index, nccl_net_ofi_device_t *device);
 

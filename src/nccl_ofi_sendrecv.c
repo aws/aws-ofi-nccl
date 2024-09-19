@@ -2529,6 +2529,11 @@ static void get_hints(struct fi_info *hints, int req_gdr)
 static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	int ret, last_error = 0;
+	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
+
+	if (sendrecv_plugin->provider_list != NULL) {
+		fi_freeinfo(sendrecv_plugin->provider_list);
+	}
 
 	ret = nccl_net_ofi_plugin_fini(plugin);
 	if (ret != 0) {
@@ -2545,26 +2550,66 @@ static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
+static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin_t *plugin)
+{
+	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
+	struct fi_info *info;
+	int dev_id = 0;
+	int ret;
+
+	/* Allocate and initialize nccl_net devices */
+	info = sendrecv_plugin->provider_list;
+	while (dev_id != sendrecv_plugin->base.p_num_devs) {
+		if (!info) {
+			NCCL_OFI_WARN("Insufficient Libfabric devices found");
+			return -EINVAL;
+		}
+
+		nccl_net_ofi_sendrecv_device_t *device =
+			nccl_net_ofi_sendrecv_device_create(plugin, dev_id, info);
+		if (device == NULL) {
+			NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
+			return -ENOMEM;
+		}
+
+		ret = plugin->assign_device(plugin, dev_id, &device->base);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
+			return ret;
+		}
+
+		dev_id++;
+		info = info->next;
+	}
+
+	return 0;
+}
+
+
 static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
-					       nccl_net_ofi_plugin_t **plugin_p)
+					       struct fi_info *provider_list,
+					       nccl_net_ofi_sendrecv_plugin_t **plugin_p)
 {
 	int ret;
-	nccl_net_ofi_plugin_t *plugin = NULL;
+	nccl_net_ofi_sendrecv_plugin_t *plugin = NULL;
 
-	plugin = (nccl_net_ofi_plugin_t *)malloc(sizeof(nccl_net_ofi_plugin_t));
+	plugin = (nccl_net_ofi_sendrecv_plugin_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_plugin_t));
 	if (plugin == NULL) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
+	ret = nccl_net_ofi_plugin_init(&plugin->base, num_devices);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing base plugin failed: %s",
 			      strerror(-ret));
 		return ret;
 	}
 
-	plugin->release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
+	plugin->provider_list = provider_list;
+
+	plugin->base.release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
+	plugin->base.complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
 
 	*plugin_p = plugin;
 
@@ -2576,10 +2621,9 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
-	int dev_id = 0;
-	struct fi_info *provider_list = NULL, *info;
+	struct fi_info *provider_list = NULL;
 	unsigned int num_providers;
-	nccl_net_ofi_plugin_t *plugin = NULL;
+	nccl_net_ofi_sendrecv_plugin_t *plugin = NULL;
 	struct fi_info *hints;
 
 	hints = fi_allocinfo();
@@ -2685,7 +2729,7 @@ found:
 			if (!tmp) {
 				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
 				ret = -ENOMEM;
-				goto exit;
+				goto error;
 			}
 			/* just in case */
 			tmp->next = NULL;
@@ -2713,52 +2757,24 @@ found:
 	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
-		goto exit;
+		goto error;
 	}
 
-	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, &plugin);
+	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, provider_list, &plugin);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		goto exit;
+		goto error;
 	}
 
-	/* Allocate and initialize nccl_net devices */
-	info = provider_list;
-	while (dev_id != num_providers) {
-		if (!info) {
-			NCCL_OFI_WARN("Insufficient Libfabric devices found");
-			ret = -EINVAL;
-			goto error;
-		}
+	*plugin_p = &plugin->base;
 
-		nccl_net_ofi_sendrecv_device_t *device =
-			nccl_net_ofi_sendrecv_device_create(plugin, dev_id, info);
-		if (device == NULL) {
-			NCCL_OFI_WARN("Unable to allocate device %i", dev_id);
-			ret = -ENOMEM;
-			goto error;
-		}
-
-		ret = plugin->assign_device(plugin, dev_id, &device->base);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Assigning device %d failed", dev_id);
-			goto error;
-		}
-
-		dev_id++;
-		info = info->next;
-	}
-
-	goto exit;
+	return ret;
 
  error:
 	if (plugin != NULL) {
-		plugin->release_plugin(plugin);
+		plugin->base.release_plugin(&plugin->base);
 		plugin = NULL;
 	}
-
- exit:
-	*plugin_p = plugin;
 
 	return ret;
 }

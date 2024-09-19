@@ -58,7 +58,7 @@ bool endpoint_mr = false;
 bool virt_addr_mr = false;
 
 /* Selected communication protocol. */
-const char *nccl_ofi_selected_protocol = "SENDRECV";
+const char *nccl_ofi_selected_protocol = NULL;
 
 /* Allocate one domain per process (0) or per thread (1) */
 int domain_per_thread = 0;
@@ -134,6 +134,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 {
 	int ret = 0;
 	const char *provider_filter = NULL;
+	nccl_net_ofi_plugin_t *plugin;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -188,34 +189,95 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			goto exit;
 	}
 
-	/* Select and initialize protocol data structure.
-	 * platform_init() may change the default, so this must occur
-	 * after the platform init call.
+	/* This is ugly, but here's the basic protocol selection
+	 * logic:
+	 *   1. if the user set NCCL_OFI_PROTOCOL, use that.
+	 *   2. if the platform init set nccl_ofi_selected_protocol,
+	 *      use that.
+	 *   3. If the rdma protocol reports multiple nics per device
+	 *      and initialized successfully, use that.
+	 *   4. If the sendrecv protocol initialized successfully, use
+	 *      that
+	 *   5. If the rdma protocol initialized successfully, use
+	 *      that.
 	 */
 	if (ofi_nccl_protocol()) {
 		nccl_ofi_selected_protocol = ofi_nccl_protocol();
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
 			      nccl_ofi_selected_protocol);
+	} else if (nccl_ofi_selected_protocol != NULL) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (platform set)",
+			      nccl_ofi_selected_protocol);
+	}
+
+	if (nccl_ofi_selected_protocol != NULL) {
+		bool dummy;
+
+		if (0 == strcasecmp(nccl_ofi_selected_protocol, "SENDRECV")) {
+			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
+				goto exit;
+			}
+		} else if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
+			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to initialize rdma protocol");
+				goto exit;
+			}
+		} else {
+			NCCL_OFI_WARN("Unable to find plugin protocol %s", nccl_ofi_selected_protocol);
+			ret = -ENOTSUP;
+			goto exit;
+		}
 	} else {
+		bool have_multiple_rails = false;
+		nccl_net_ofi_plugin_t *rdma_plugin = NULL, *sendrecv_plugin = NULL;
+
+		ret = nccl_net_ofi_rdma_init(provider_filter, &rdma_plugin, &have_multiple_rails);
+		if (ret != 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Failed to initialize rdma protocol: %s", fi_strerror(-ret));
+			have_multiple_rails = false;
+			rdma_plugin = NULL;
+		}
+
+		if (!have_multiple_rails) {
+			ret = nccl_net_ofi_sendrecv_init(provider_filter, &sendrecv_plugin);
+			if (ret != 0) {
+				NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+					       "Failed to initialized rdma protocol: %s", fi_strerror(-ret));
+				sendrecv_plugin = NULL;
+			}
+		}
+
+		if (have_multiple_rails && rdma_plugin != NULL) {
+			nccl_ofi_selected_protocol = "RDMA";
+			plugin = rdma_plugin;
+			if (sendrecv_plugin != NULL) {
+				sendrecv_plugin->release_plugin(sendrecv_plugin);
+			}
+		} else {
+			nccl_ofi_selected_protocol = "SENDRECV";
+			plugin = sendrecv_plugin;
+			if (rdma_plugin != NULL) {
+				rdma_plugin->release_plugin(rdma_plugin);
+			}
+		}
+
+		if (nccl_ofi_selected_protocol == NULL) {
+			NCCL_OFI_WARN("Unable to find a protocol that worked.  Failing initialization.");
+			ret = -EINVAL;
+			goto exit;
+		}
+
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
 			      nccl_ofi_selected_protocol);
 	}
 
-	if (0 == strcasecmp(nccl_ofi_selected_protocol, "SENDRECV")) {
-		ret = nccl_net_ofi_sendrecv_init(provider_filter, plugin_p);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
-			goto exit;
-		}
-	} else if (0 == strcasecmp(nccl_ofi_selected_protocol, "RDMA")) {
-		ret = nccl_net_ofi_rdma_init(provider_filter, plugin_p);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to initialize rdma protocol");
-			goto exit;
-		}
-	} else {
-		NCCL_OFI_WARN("Unable to find plugin protocol %s", nccl_ofi_selected_protocol);
-		ret = -ENOTSUP;
+	ret = plugin->complete_init(plugin);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to initialize rdma protocol");
 		goto exit;
 	}
 
@@ -230,7 +292,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * resources. This initialization happens once per process, and thus it
 	 * does not matter which device is used to create the endpoint.
 	 */
-	nccl_net_ofi_device_t *device = (*plugin_p)->get_device(*plugin_p, 0);
+	nccl_net_ofi_device_t *device = plugin->get_device(plugin, 0);
 	nccl_net_ofi_ep_t *base_ep = NULL;
 
 	ret = device->get_ep(device, &base_ep);
@@ -253,6 +315,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		ret = -ENOTSUP;
 		goto exit;
 	}
+
+	*plugin_p = plugin;
 
  exit:
 	if (ret != 0) {

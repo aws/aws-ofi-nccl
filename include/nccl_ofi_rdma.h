@@ -834,11 +834,21 @@ typedef struct nccl_net_ofi_rdma_device {
 #endif
 } nccl_net_ofi_rdma_device_t;
 
+
+struct nccl_net_ofi_rdma_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	nccl_ofi_topo_t *topo;
+};
+typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
+
+
 /*
  * @brief	Initialize plugin with rdma protocol structures
  */
 int nccl_net_ofi_rdma_init(const char *provider_filter,
-			   nccl_net_ofi_plugin_t **plugin_p);
+			   nccl_net_ofi_plugin_t **plugin_p,
+			   bool *found_multi_rail);
 
 #ifdef __cplusplus
 } // End extern "C"
