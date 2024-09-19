@@ -311,7 +311,7 @@ int main(int argc, char* argv[])
 						if (received_size !=
 						    NCCL_OFI_MIN(send_sizes[szidx], recv_sizes[szidx])) {
 							NCCL_OFI_WARN(
-								"Wrong received size %d (send size: %d recv size %d)",
+								"Wrong received size %d (send size: %zu recv size %zu)",
 								received_size, send_sizes[szidx], recv_sizes[szidx]);
 							res = ncclInternalError;
 							goto exit;

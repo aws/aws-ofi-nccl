@@ -158,7 +158,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 	}
 
 	if (OFI_UNLIKELY(id >= idpool->size)) {
-		NCCL_OFI_WARN("ID value %lu out of range (max: %lu)", id, idpool->size);
+		NCCL_OFI_WARN("ID value %d out of range (max: %lu)", id, idpool->size);
 		return -EINVAL;
 	}
 
@@ -169,7 +169,7 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, int id)
 
 	/* Check if bit is 1 already */
 	if (idpool->ids[i] & (1ULL << entry_index)) {
-		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%lu)", id);
+		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%d)", id);
 
 		nccl_net_ofi_mutex_unlock(&idpool->lock);
 		return -ENOTSUP;

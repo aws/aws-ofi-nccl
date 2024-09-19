@@ -1506,7 +1506,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 				ret = -EINVAL;
 			}
 		} else {
-			NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016X", comp_flags);
+			NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
 			ret = -EINVAL;
 		}
 
@@ -1691,7 +1691,7 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 	while (true) {
 		rc = nccl_ofi_deque_remove_front(pending_reqs_queue, &deque_elem);
 		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_remove_front: %zd", rc);
+			NCCL_OFI_WARN("Failed to nccl_ofi_deque_remove_front: %d", rc);
 			return rc;
 		}
 
@@ -1719,7 +1719,7 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 		}
 
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
-			NCCL_OFI_WARN("Unable to post request; RC: %zd", rc);
+			NCCL_OFI_WARN("Unable to post request; RC: %d", rc);
 			break;
 		} else if (rc == -FI_EAGAIN) {
 			/* Put the request in the front of the queue and try again later */
@@ -1804,7 +1804,7 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 	/* Process any pending requests */
 	ret = process_pending_reqs(ep);
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Failed call to process_pending_reqs: %zd", ret);
+		NCCL_OFI_WARN("Failed call to process_pending_reqs: %d", ret);
 	}
 
  exit:
@@ -2253,7 +2253,7 @@ static int init_send_comm_rails(nccl_net_ofi_rdma_send_comm_t *s_comm,
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
-				      "for device %d. RC: %d",
+				      "for device %d. RC: %s",
 				      dev_id, fi_strerror(-ret));
 			return -EINVAL;
 		}
@@ -3935,7 +3935,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (!network_busy) {
 		rc = receive_progress(req, true);
 		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Call to receive_progress failed: %zd", rc);
+			NCCL_OFI_WARN("Call to receive_progress failed: %zu", rc);
 			ret = rc;
 			goto error;
 		}
@@ -4178,8 +4178,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 
 	/* Validate received comm ID */
 	if (OFI_UNLIKELY(conn_msg->local_comm_id >= device->num_comm_ids)) {
-		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", conn_msg->local_comm_id,
-					  dev_id);
+		NCCL_OFI_WARN("Received an invalid communicator ID %" PRIu32 " for device %d",
+			      conn_msg->local_comm_id, dev_id);
 		goto error;
 	}
 
@@ -4238,7 +4238,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 			   &r_comm->control_rail.remote_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector "
-			      "for device %d. RC: %d",
+			      "for device %d. RC: %s",
 			      dev_id, fi_strerror(-ret));
 		goto error;
 	}
@@ -4247,7 +4247,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 			   &r_comm->control_rail.local_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert local address into address vector "
-			      "for device %d. RC: %d",
+			      "for device %d. RC: %s",
 			      dev_id, fi_strerror(-ret));
 		goto error;
 	}
@@ -4268,7 +4268,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
-				      "for device %d. RC: %d",
+				      "for device %d. RC: %s",
 				      dev_id, fi_strerror(-ret));
 			goto error;
 		}
@@ -4277,7 +4277,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 				   &comm_rail->local_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert local address into address vector "
-				      "for device %d. RC: %d",
+				      "for device %d. RC: %s",
 				      dev_id, fi_strerror(-ret));
 			goto error;
 		}
@@ -4783,7 +4783,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
  error:
 	if (l_comm && ~0 != l_comm->comm_id) {
 		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, l_comm->comm_id)) {
-			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu64, l_comm->comm_id);
+			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
 		}
 	}
 	free(l_comm);
@@ -5925,7 +5925,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
-		NCCL_OFI_WARN("Received an invalid communicator ID %lu for device %d", handle->comm_id,
+		NCCL_OFI_WARN("Received an invalid communicator ID %" PRIu32 " for device %d", handle->comm_id,
 			      dev_id);
 		ret = -EINVAL;
 		goto error;
@@ -6336,7 +6336,7 @@ static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *r
 			 (void *)rail->local_ep_name,
 			 &rail->local_ep_name_len);
 	if (res == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length (%d)",
 			      rail->local_ep_name_len, MAX_EP_ADDR);
 		return -EINVAL;
 	} else if (res != 0) {

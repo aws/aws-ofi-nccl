@@ -1291,7 +1291,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	ret = fi_av_insert(ep->av, (void *)remote_ep_addr, 1,
 			   &remote_ep, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
-		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %s",
 			      dev_id, fi_strerror(-ret));
 		return NULL;
 	}
@@ -1544,7 +1544,7 @@ static inline char *get_local_address(struct fid_ep *ep)
 			 (void *)local_ep_addr,
 			 &namelen);
 	if (ret == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length (%d)",
 			      namelen, MAX_EP_ADDR);
 		free(local_ep_addr);
 		return NULL;
@@ -1608,7 +1608,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
-		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %s",
 			      dev_id, fi_strerror(-ret));
 		ret = -EINVAL;
 		goto error;
@@ -1908,7 +1908,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 			 (void *)ret_s_comm->conn_info->ep_name,
 			 &ret_s_comm->conn_info->ep_namelen);
 	if (ret == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%d) is larger than supplied buffer length (%d)",
+		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length (%d)",
 			      ret_s_comm->conn_info->ep_namelen, MAX_EP_ADDR);
 		goto out;
 	} else if (ret != 0) {

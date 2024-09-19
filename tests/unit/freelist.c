@@ -162,7 +162,7 @@ int main(int argc, char *argv[])
 
 		if (last_buff) {
 			if (last_buff - (char *)entry != 1024 + MEMCHECK_REDZONE_SIZE) {
-				NCCL_OFI_WARN("bad spacing %ul", (char *)entry - last_buff);
+				NCCL_OFI_WARN("bad spacing %zu", (char *)entry - last_buff);
 				exit(1);
 			}
 		}

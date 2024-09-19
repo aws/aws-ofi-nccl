@@ -93,7 +93,7 @@ void print_dev_props(int dev, test_nccl_properties_t *props)
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
         NCCL_OFI_TRACE(NCCL_NET, "%s: PCIe Path: %s", props->name, props->pciPath);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Plugin Support: %d", props->name, props->ptrSupport);
-        NCCL_OFI_TRACE(NCCL_NET, "%s: Device GUID: %d", props->name, props->guid);
+        NCCL_OFI_TRACE(NCCL_NET, "%s: Device GUID: %zu", props->name, props->guid);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Speed: %d", props->name, props->speed);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Port: %d", props->name, props->port);
         NCCL_OFI_TRACE(NCCL_NET, "%s: Device Maximum Communicators: %d", props->name, props->maxComms);

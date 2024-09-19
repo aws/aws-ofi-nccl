@@ -381,19 +381,19 @@ int configure_nvls_option(void)
 				return -ENOTSUP;
 			}
 
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %lu", version);
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %d", version);
 		}
 
 		/* 2.18.5 */
 		if (version < 21805) {
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %lu", version);
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %d", version);
 			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
 				return -errno;
 			}
 		} else {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %lu", version);
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %d", version);
 		}
 	}
 

@@ -59,7 +59,7 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 	}
 
 	if (schedule->num_xfer_infos != ref_schedule->num_xfer_infos) {
-		NCCL_OFI_WARN("Wrong number of xfer infos. Expected %i, but got %i",
+		NCCL_OFI_WARN("Wrong number of xfer infos. Expected %zu, but got %zu",
 			      ref_schedule->num_xfer_infos, schedule->num_xfer_infos);
 		return 1;
 	}
