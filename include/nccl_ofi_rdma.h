@@ -688,6 +688,12 @@ struct nccl_net_ofi_ep_rail {
 	size_t max_bounce_posted;
 	/* Mutex for bounce buffer operations */
 	pthread_mutex_t bounce_mutex;
+	/* Bounce request fl */
+	nccl_ofi_freelist_t *bounce_buff_reqs_fl;
+	/* Buffer freelist */
+	nccl_ofi_freelist_t *bounce_buff_fl;
+	/* Size of bounce buffers */
+	size_t buff_size;
 };
 
 /*
@@ -721,13 +727,6 @@ struct nccl_net_ofi_rdma_ep {
 
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
-
-	/* Free list of bounce buffers */
-	nccl_ofi_freelist_t *bounce_buff_fl;
-	/* Free list of bounce buffer requests */
-	nccl_ofi_freelist_t *bounce_buff_reqs_fl;
-	/* Size of bounce buffers */
-	size_t bounce_buff_size;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
