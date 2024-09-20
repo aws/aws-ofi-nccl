@@ -12,7 +12,8 @@
 bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *expected_val)
 {
-	void *result = nccl_ofi_mr_cache_lookup_entry(cache, addr, size);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);;
+	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey);
 	if (result != expected_val) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_lookup_entry returned unexpected result. Expected: %p. Actual: %p",
 			expected_val, result);
@@ -29,7 +30,8 @@ bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *handle, int expected_ret)
 {
-	int ret = nccl_ofi_mr_cache_insert_entry(cache, addr, size, handle);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);
+	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, handle);
 	if (ret != expected_ret) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_insert_entry returned unexpected result. Expected: %d. Actual: %d",
 			expected_ret, ret);

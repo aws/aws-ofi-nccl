@@ -761,6 +761,7 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 					      size_t size, int type, void **mhandle)
 {
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
@@ -792,7 +793,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	 * insert a missing entry
 	 */
 	nccl_net_ofi_mutex_lock(&mr_cache->lock);
-	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, data, size);
+	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, &cache_key);
 	if (ret_handle) {
 		/* Cache hit */
 		goto unlock;
@@ -810,9 +811,8 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	}
 
 	ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
-						     data,
-						     size,
-						     ret_handle);
+					     &cache_key,
+					     ret_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		/* MR cache insert failed. Deregister memory region without
 		 * trying to delete MR cache entry.
