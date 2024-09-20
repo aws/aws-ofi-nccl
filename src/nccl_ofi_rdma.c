@@ -2696,6 +2696,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 
 	nccl_ofi_idpool_t *key_pool = &device->key_pool;
 
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -2703,7 +2704,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)
-			nccl_ofi_mr_cache_lookup_entry(mr_cache, data, size);
+			nccl_ofi_mr_cache_lookup_entry(mr_cache, &cache_key);
 
 		if (ret_handle) {
 			/* Cache hit */
@@ -2719,8 +2720,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 
 	if (mr_cache) {
 		ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
-						     data,
-						     size,
+						     &cache_key,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {

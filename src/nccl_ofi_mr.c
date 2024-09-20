@@ -108,14 +108,13 @@ static inline void compute_page_address(uintptr_t addr,
 }
 
 void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
-				     void *addr,
-				     size_t size)
+				     nccl_ofi_mr_ckey_ref ckey)
 {
 	uintptr_t page_addr;
 	size_t pages;
 
-	compute_page_address((uintptr_t)addr,
-			     size,
+	compute_page_address(nccl_ofi_mr_ckey_baseaddr(ckey),
+			     nccl_ofi_mr_ckey_len(ckey),
 			     (uintptr_t)cache->system_page_size,
 			     &page_addr,
 			     &pages);
@@ -134,12 +133,12 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 			    pages) <= cache->slots[slot]->pages) {
 			/* cache hit */
 			cache->hit_count++;
-			NCCL_OFI_TRACE(
-				NCCL_NET,
-				"Found MR handle %p for %p in cache slot %zu",
-				cache->slots[slot]->handle,
-				addr,
-				slot);
+			NCCL_OFI_TRACE(NCCL_NET,
+			               "Found MR handle %p for %ld(%s) in cache slot %zu",
+			               cache->slots[slot]->handle,
+			               nccl_ofi_mr_ckey_baseaddr(ckey),
+			               nccl_ofi_mr_ckey_type_str(ckey),
+			               slot);
 			cache->slots[slot]->refcnt++;
 			return cache->slots[slot]->handle;
 		}
@@ -147,19 +146,18 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 }
 
 int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
-				   void *addr,
-				   size_t size,
+				   nccl_ofi_mr_ckey_ref ckey,
 				   void *handle)
 {
 	uintptr_t page_addr;
 	size_t pages;
 	int ret = 0;
 
-	compute_page_address((uintptr_t)addr,
-			     size,
-			     (uintptr_t)cache->system_page_size,
-			     &page_addr,
-			     &pages);
+	compute_page_address((uintptr_t)nccl_ofi_mr_ckey_baseaddr(ckey),
+	                     nccl_ofi_mr_ckey_len(ckey),
+	                     (uintptr_t)cache->system_page_size,
+	                     &page_addr,
+	                     &pages);
 
 	for (size_t slot = 0;; slot++) {
 		assert(slot <= cache->used && slot <= cache->size);
@@ -198,19 +196,22 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
 			entry->handle = handle;
 
 			cache->used++;
-			NCCL_OFI_TRACE(
-				NCCL_NET,
-				"Inserted MR handle %p for %p in cache slot %zu",
-				handle,
-				addr,
-				slot);
+			NCCL_OFI_TRACE(NCCL_NET,
+			               "Inserted MR handle %p for %ld(%s) in cache slot %zu",
+			               handle,
+			               nccl_ofi_mr_ckey_baseaddr(ckey),
+			               nccl_ofi_mr_ckey_type_str(ckey),
+			               slot);
 			goto out;
 		} else if ((page_addr >= cache->slots[slot]->addr) &&
 			   ((page_addr - cache->slots[slot]->addr) /
 				    cache->system_page_size +
 			    pages) <= cache->slots[slot]->pages) {
 			/* cache hit */
-			NCCL_OFI_WARN("Entry already exists for addr %p size %zu", addr, size);
+			NCCL_OFI_WARN("Entry already exists for input (%s) base %lu size %zu",
+			              nccl_ofi_mr_ckey_type_str(ckey),
+			              nccl_ofi_mr_ckey_baseaddr(ckey),
+			              nccl_ofi_mr_ckey_len(ckey));
 			ret = -EEXIST;
 			goto out;
 		}

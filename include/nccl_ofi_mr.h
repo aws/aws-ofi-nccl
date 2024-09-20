@@ -9,7 +9,132 @@
 extern "C" {
 #endif
 
+#include <assert.h>
 #include <pthread.h>
+#include <stdint.h>
+#include <sys/uio.h>
+
+#include "config.h"
+#if HAVE_DECL_FI_MR_DMABUF
+#include <rdma/fi_domain.h>
+#endif
+
+enum nccl_ofi_mr_ckey_type {
+	NCCL_OFI_MR_CKEY_INVALID = 0,
+	NCCL_OFI_MR_CKEY_IOVEC,
+#if HAVE_DECL_FI_MR_DMABUF
+	NCCL_OFI_MR_CKEY_DMABUF,
+#endif
+};
+typedef enum nccl_ofi_mr_ckey_type nccl_ofi_mr_ckey_type_t;
+
+struct nccl_ofi_mr_ckey {
+	const union {
+		const struct iovec iovec;
+#if HAVE_DECL_FI_MR_DMABUF
+		const struct fi_mr_dmabuf fi_mr_dmabuf;
+#endif
+	};
+	const enum nccl_ofi_mr_ckey_type type;
+};
+typedef struct nccl_ofi_mr_ckey nccl_ofi_mr_ckey_t;
+typedef struct nccl_ofi_mr_ckey const *const nccl_ofi_mr_ckey_ref;
+
+static_assert(offsetof(struct nccl_ofi_mr_ckey, iovec) == 0, "Cache keys must be safe to cast to 'struct iovec'");
+#if HAVE_DECL_FI_MR_DMABUF
+static_assert(offsetof(struct nccl_ofi_mr_ckey, fi_mr_dmabuf) == 0,
+              "Cache keys must be safe to cast to 'struct fi_mr_dmabuf'");
+#endif
+
+static inline const char *nccl_ofi_mr_ckey_type_str(nccl_ofi_mr_ckey_ref ckey)
+{
+	switch (ckey->type) {
+	case NCCL_OFI_MR_CKEY_IOVEC:
+		return "iovec";
+#if HAVE_DECL_FI_MR_DMABUF
+	case NCCL_OFI_MR_CKEY_DMABUF:
+		return "dmabuf";
+#endif
+	default:
+		__builtin_unreachable();
+		assert(false);
+		return "";
+	}
+}
+
+static inline uintptr_t nccl_ofi_mr_ckey_baseaddr(nccl_ofi_mr_ckey_ref ckey)
+{
+	switch (ckey->type) {
+	case NCCL_OFI_MR_CKEY_IOVEC:
+		return (uintptr_t)ckey->iovec.iov_base;
+#if HAVE_DECL_FI_MR_DMABUF
+	case NCCL_OFI_MR_CKEY_DMABUF:
+		return (uintptr_t)ckey->fi_mr_dmabuf.base_addr + ckey->fi_mr_dmabuf.offset;
+#endif
+	default:
+		__builtin_unreachable();
+		assert(false);
+		return 0;
+	}
+}
+
+static inline uintptr_t nccl_ofi_mr_ckey_len(nccl_ofi_mr_ckey_ref ckey)
+{
+	switch (ckey->type) {
+	case NCCL_OFI_MR_CKEY_IOVEC:
+		return ckey->iovec.iov_len;
+#if HAVE_DECL_FI_MR_DMABUF
+	case NCCL_OFI_MR_CKEY_DMABUF:
+		return ckey->fi_mr_dmabuf.len;
+#endif
+	default:
+		__builtin_unreachable();
+		assert(false);
+		return 0;
+	}
+}
+
+#if HAVE_DECL_FI_MR_DMABUF
+static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t offset, size_t len, void *base_addr)
+{
+	return (nccl_ofi_mr_ckey_t){
+		.fi_mr_dmabuf =
+			{
+				.fd = fd,
+				.offset = offset,
+				.len = len,
+				.base_addr = base_addr,
+			},
+		.type = NCCL_OFI_MR_CKEY_DMABUF,
+	};
+}
+#endif
+
+static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len)
+{
+	return (nccl_ofi_mr_ckey_t){
+		.iovec =
+			{
+				.iov_base = iov_base,
+				.iov_len = iov_len,
+			},
+		.type = NCCL_OFI_MR_CKEY_IOVEC,
+	};
+}
+
+static inline void nccl_ofi_mr_ckey_fill_mr_attrs(nccl_ofi_mr_ckey_ref ckey, struct fi_mr_attr *attrs, uint64_t *flags)
+{
+	assert(ckey->type != NCCL_OFI_MR_CKEY_INVALID);
+	*flags = 0;
+#if HAVE_DECL_FI_MR_DMABUF
+	if (ckey->type == NCCL_OFI_MR_CKEY_DMABUF) {
+		*flags |= FI_MR_DMABUF;
+	}
+	attrs->dmabuf = (const struct fi_mr_dmabuf *)ckey;
+#endif
+	attrs->mr_iov = (const struct iovec *)ckey;
+	attrs->iov_count = 1;
+}
 
 /**
  * A memory registration cache entry
@@ -53,9 +178,7 @@ void nccl_ofi_mr_cache_finalize(nccl_ofi_mr_cache_t *cache);
  * If entry is found, refcnt is increased
  * @return mr handle if found, or NULL if not found
  */
-void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
-				     void *addr,
-				     size_t size);
+void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey);
 
 /**
  * Insert a new cache entry with the given address and size
@@ -64,10 +187,7 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
  *	   -ENOMEM, on allocation failure
  *	   -EEXIST, if matching entry already exists in cache
  */
-int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
-				   void *addr,
-				   size_t size,
-				   void *handle);
+int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey, void *handle);
 
 /**
  * Decrement refcnt of entry with given handle. If refcnt was reduced to 0,
