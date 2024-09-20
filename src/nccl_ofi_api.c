@@ -377,36 +377,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 				      int type, uint64_t offset,
 				      int fd, void** mhandle)
 {
-	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm =
-		(nccl_net_ofi_comm_t *)comm;
-	if (OFI_UNLIKELY(base_comm == NULL)) {
-		NCCL_OFI_WARN("Invalid comm object provided");
-		return ncclInternalError;
-	}
-
-	int ret = 0;
-	nccl_net_ofi_mr_handle_t **handle = (nccl_net_ofi_mr_handle_t **)mhandle;
-
-	switch (base_comm->type) {
-	case NCCL_NET_OFI_SEND_COMM:;
-		nccl_net_ofi_send_comm_t *send_comm =
-			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->regMrDmaBuf(send_comm, data, size, type, offset, fd, handle);
-		break;
-	case NCCL_NET_OFI_RECV_COMM:;
-		nccl_net_ofi_recv_comm_t *recv_comm =
-			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMrDmaBuf(recv_comm, data, size, type, offset, fd, handle);
-		break;
-	default:
-		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
-			      base_comm->type);
-		ret = -EINVAL;
-		break;
-	}
-
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate(-ENOTSUP);
 }
 
 

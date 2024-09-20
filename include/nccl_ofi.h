@@ -400,16 +400,6 @@ struct nccl_net_ofi_send_comm {
 			      void **mhandle);
 
 	/*
-	 * @brief	Register DMA memory region on send communicator (both Host and CUDA)
-	 *
-	 * This operation is not supported.
-	 *
-	 * @return	Memory handle for data send operations
-	 */
-	int (*regMrDmaBuf)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size,
-				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
-
-	/*
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
 	 *
 	 * @return	Memory handle for data send operations
@@ -441,16 +431,6 @@ struct nccl_net_ofi_recv_comm {
 	 */
 	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size, int type,
 			      void **mhandle);
-
-	/*
-	 * @brief	Register DMA memory region on recv communicator (both Host and CUDA)
-	 *
-	 * This operation is not supported.
-	 *
-	 * @return	Memory handle for data recv operations
-	 */
-	int (*regMrDmaBuf)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size,
-				    int type, uint64_t offset, int fd, nccl_net_ofi_mr_handle_t **handle);
 
 	/*
 	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
@@ -560,23 +540,6 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin);
  * @return	Populated props structure
  */
 int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, nccl_ofi_properties_t *props);
-
-
-/*
- * @brief	Register DMA buffer for send comm. Unimplemented.
- */
-int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
-					  nccl_net_ofi_mr_handle_t **handle);
-
-/*
- * @brief	Register DMA buffer for recv comm. Unimplemented.
- */
-int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
-					  nccl_net_ofi_mr_handle_t **handle);
 
 /*
  * @brief	Allocate memory region for memory registration

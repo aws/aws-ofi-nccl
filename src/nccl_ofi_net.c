@@ -539,24 +539,6 @@ exit:
 	return ret;
 }
 
-
-int nccl_net_ofi_reg_mr_dma_buf_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
-					  nccl_net_ofi_mr_handle_t **handle)
-{
-	return -ENOTSUP;
-}
-
-int nccl_net_ofi_reg_mr_dma_buf_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-					  void *data, size_t size,
-					  int type, uint64_t offset, int fd,
-					  nccl_net_ofi_mr_handle_t **handle)
-{
-	return -ENOTSUP;
-}
-
-
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers)
 {
