@@ -1304,7 +1304,6 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	r_comm->base.base.ep = &ep->base;
 	r_comm->base.base.dev_id = dev_id;
 	r_comm->base.regMr = reg_mr_recv_comm;
-	r_comm->base.regMrDmaBuf = nccl_net_ofi_reg_mr_dma_buf_recv_comm;
 	r_comm->base.deregMr = dereg_mr_recv_comm;
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
@@ -1879,7 +1878,6 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.base.ep = &ep->base;
 	ret_s_comm->base.base.dev_id = device->base.dev_id;
 	ret_s_comm->base.regMr = reg_mr_send_comm;
-	ret_s_comm->base.regMrDmaBuf = nccl_net_ofi_reg_mr_dma_buf_send_comm;
 	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
 	ret_s_comm->base.close = send_close;
