@@ -518,14 +518,17 @@ static bool skip_local_mr_buffer_registration(int type) {
  * @return	0 on success
  *		non-zero on error
  */
-static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
-					nccl_ofi_idpool_t *key_pool, int dev_id,
-					void *data, size_t size,
-					int type, struct fid_mr **mr_handle)
+static int register_mr_buffers(struct fid_domain *domain,
+                               struct fid_ep *ep,
+                               nccl_ofi_idpool_t *key_pool,
+                               int dev_id,
+                               nccl_ofi_mr_ckey_ref ckey,
+                               int type,
+                               struct fid_mr **mr_handle)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
-	struct iovec iov = {};
+	uint64_t regattr_flags = 0;
 
 	/* Check if provider requires registration of local buffers */
 	if (skip_local_mr_buffer_registration(type)) {
@@ -539,15 +542,8 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 		goto exit;
 	}
 
-	/* Populate IOV vector for memory registration */
-	iov.iov_base = data;
-	iov.iov_len = size;
-
-	/* Initialize MR attributes */
-	mr_attr.mr_iov = &iov;
-	mr_attr.iov_count = 1;
 	mr_attr.access = FI_SEND | FI_RECV;
-
+	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, &mr_attr, &regattr_flags);
 	switch (type) {
 	case NCCL_PTR_HOST:
 		mr_attr.access |= FI_READ;
@@ -559,7 +555,8 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 		mr_attr.iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
-		ret = nccl_net_ofi_get_cuda_device_for_addr(data, &mr_attr.device.cuda);
+		ret = nccl_net_ofi_get_cuda_device_for_addr((void *)nccl_ofi_mr_ckey_baseaddr(ckey),
+		                                            &mr_attr.device.cuda);
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
@@ -593,8 +590,7 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 		mr_attr.requested_key = (uint64_t)key;
 	}
 
-	ret = fi_mr_regattr(domain,
-			   &mr_attr, 0, mr_handle);
+	ret = fi_mr_regattr(domain, &mr_attr, regattr_flags, mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
 			      type, dev_id, ret, fi_strerror(-ret));
@@ -680,13 +676,13 @@ static int register_internal_mr_buffers(struct fid_domain *domain, struct fid_ep
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	return register_mr_buffers(domain, ep, key_pool, dev_id, data, size,
-				   type, mr_handle);
+	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
+	return register_mr_buffers(domain, ep, key_pool, dev_id, &cache_key, type, mr_handle);
 }
 
 static int reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 				nccl_ofi_idpool_t *key_pool, int dev_id,
-				void *data, size_t size, int type,
+				nccl_ofi_mr_ckey_ref ckey, int type,
 				void **mhandle)
 {
 	/* Validate type of buffer */
@@ -704,7 +700,7 @@ static int reg_mr_base(struct fid_domain *domain, struct fid_ep *ep,
 		return -EINVAL;
 	}
 
-	return register_mr_buffers(domain, ep, key_pool, dev_id, data, size, type,
+	return register_mr_buffers(domain, ep, key_pool, dev_id, ckey, type,
 				   (struct fid_mr **)mhandle);
 }
 
@@ -758,10 +754,10 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 	return ret;
 }
 
-static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
-					      size_t size, int type, void **mhandle)
+static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
+			    nccl_ofi_mr_ckey_ref ckey,
+			    int type, void **mhandle)
 {
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
@@ -793,7 +789,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	 * insert a missing entry
 	 */
 	nccl_net_ofi_mutex_lock(&mr_cache->lock);
-	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, &cache_key);
+	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
 	if (ret_handle) {
 		/* Cache hit */
 		goto unlock;
@@ -804,21 +800,20 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm, void *data,
 	struct fid_domain *domain;
 	domain = get_domain_from_endpoint(ep);
 	ret = reg_mr_base(domain, ep->ofi_ep, key_pool,
-			   dev_id, data, size, type, &ret_handle);
+			   dev_id, ckey, type, &ret_handle);
 	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 		ret_handle = NULL;
 		goto unlock;
 	}
 
-	ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
-					     &cache_key,
-					     ret_handle);
+	ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, ret_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		/* MR cache insert failed. Deregister memory region without
 		 * trying to delete MR cache entry.
 		 */
 		if (dereg_mr_base_comm((struct fid_mr *)ret_handle, key_pool, NULL) != 0) {
-			NCCL_OFI_WARN("Error deregistering memory region for addr %p", data);
+			NCCL_OFI_WARN("Error deregistering memory region for addr %ld (%s)",
+						  nccl_ofi_mr_ckey_baseaddr(ckey), nccl_ofi_mr_ckey_type_str(ckey));
 		}
 		ret_handle = NULL;
 		goto unlock;
@@ -831,16 +826,14 @@ exit:
 	return ret;
 }
 
-static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm, void *data,
-					      size_t size, int type, void **mhandle)
+static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
 {
-	return reg_mr_base_comm(&send_comm->base, data, size, type, mhandle);
+	return reg_mr_base_comm(&comm->base, ckey, type, mhandle);
 }
 
-static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
-					      size_t size, int type, void **mhandle)
+static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
 {
-	return reg_mr_base_comm(&recv_comm->base, data, size, type, mhandle);
+	return reg_mr_base_comm(&comm->base, ckey, type, mhandle);
 }
 
 static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,

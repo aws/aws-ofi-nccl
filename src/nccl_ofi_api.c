@@ -294,8 +294,20 @@ ncclResult_t nccl_net_ofi_regMr_v7(void *comm, void *data, int size, int type,
 ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
 				void **mhandle)
 {
-	int ret = 0;
+	return nccl_net_ofi_regMrDmaBuf(comm,
+					data,
+					size,
+					type,
+					0,  /* default value, no offset. */
+					-1, /* default value, invalid file descriptor. */
+					mhandle);
+}
 
+ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
+				      int type, uint64_t offset,
+				      int fd, void** mhandle)
+{
+	int ret;
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm =
 		(nccl_net_ofi_comm_t *)comm;
@@ -318,16 +330,28 @@ ncclResult_t nccl_net_ofi_regMr(void *comm, void *data, size_t size, int type,
 		return ncclInternalError;
 	}
 
+#if HAVE_DECL_FI_MR_DMABUF
+	const nccl_ofi_mr_ckey_t cache_key = (fd == -1)
+		? nccl_ofi_mr_ckey_mk_vec(data, size)
+		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
+#else
+	if (fd != -1) {
+		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
+		return nccl_net_ofi_retval_translate(-EINVAL);
+	}
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
+#endif
+
 	switch (base_comm->type) {
 	case NCCL_NET_OFI_SEND_COMM:;
 		nccl_net_ofi_send_comm_t *send_comm =
 			(nccl_net_ofi_send_comm_t *)base_comm;
-		ret = send_comm->regMr(send_comm, data, size, type, mhandle);
+		ret = send_comm->regMr(send_comm, &cache_key, type, mhandle);
 		break;
 	case NCCL_NET_OFI_RECV_COMM:;
 		nccl_net_ofi_recv_comm_t *recv_comm =
 			(nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMr(recv_comm, data, size, type, mhandle);
+		ret = recv_comm->regMr(recv_comm, &cache_key, type, mhandle);
 		break;
 	default:
 		NCCL_OFI_WARN("Unexpected communicator type. Communicator type: %d",
@@ -370,14 +394,6 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	}
 
 	return nccl_net_ofi_retval_translate(ret);
-}
-
-
-ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
-				      int type, uint64_t offset,
-				      int fd, void** mhandle)
-{
-	return nccl_net_ofi_retval_translate(-ENOTSUP);
 }
 
 

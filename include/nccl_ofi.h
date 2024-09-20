@@ -396,8 +396,8 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int type,
-			      void **mhandle);
+	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_ofi_mr_ckey_ref ckey, int type,
+				 void **mhandle);
 
 	/*
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
@@ -429,8 +429,8 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, void *data, size_t size, int type,
-			      void **mhandle);
+	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_ofi_mr_ckey_ref ckey, int type,
+				 void **mhandle);
 
 	/*
 	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
