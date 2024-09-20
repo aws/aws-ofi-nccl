@@ -385,23 +385,16 @@ exit:
  *		non-zero on error
  */ 
 static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
-				    void *data, size_t size, int type,
-				    struct fi_mr_attr *mr_attr, struct iovec *iov)
+			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
+			   int type, struct fi_mr_attr *mr_attr)
 {
 	int ret = 0;
-
-	/* Populate IOV vector for memory registration */
-	iov->iov_base = data;
-	iov->iov_len = size;
-
-	/* Initialize MR attributes */
-	mr_attr->mr_iov = iov;
-	mr_attr->iov_count = 1;
 	mr_attr->access = FI_SEND | FI_RECV;
 
 	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
 	   for RDMA send/recv buffers */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
+	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, mr_attr, flags);
 
 	switch (type) {
 	case NCCL_PTR_HOST:
@@ -414,7 +407,9 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 		mr_attr->iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
-		ret = nccl_net_ofi_get_cuda_device_for_addr(data, &mr_attr->device.cuda);
+		ret = nccl_net_ofi_get_cuda_device_for_addr(
+			(void*)nccl_ofi_mr_ckey_baseaddr(ckey),
+			&mr_attr->device.cuda);
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
@@ -455,11 +450,11 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 static int register_rail_mr_buffer(struct fid_domain *domain,
 					    struct fid_ep *ep, int dev_id,
 					    int type, struct fi_mr_attr *mr_attr,
-					    struct fid_mr **mr_handle)
+					    uint64_t flags, struct fid_mr **mr_handle)
 {
 	int ret = 0;
 
-	ret = fi_mr_regattr(domain, mr_attr, 0, mr_handle);
+	ret = fi_mr_regattr(domain, mr_attr, flags, mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
 			      type, dev_id, ret, fi_strerror(-ret));
@@ -2590,18 +2585,16 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 }
 
 static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
-				   void *data,
-				   size_t size,
+				   nccl_ofi_mr_ckey_ref ckey,
 				   int type,
 				   nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
 	*mhandle = NULL;
-
-	struct iovec iov = {};
 	struct fid_domain *domain;
 	struct fi_mr_attr mr_attr = {};
+	uint64_t regattr_flags = 0;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_device_t *device =
@@ -2621,7 +2614,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(key_pool, dev_id, data, size, type, &mr_attr, &iov);
+	ret = set_mr_req_attr(key_pool, dev_id, ckey, &regattr_flags, type, &mr_attr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			dev_id);
@@ -2631,7 +2624,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	}
 
 	ret = register_rail_mr_buffer(ep->control_rail.domain, ep->control_rail.ofi_ep,
-				      -1, type, &mr_attr,
+				      -1, type, &mr_attr, regattr_flags,
 				      &ret_handle->control_mr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(ret_handle);
@@ -2646,7 +2639,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 		domain = get_domain_from_endpoint(ep, rail_id);
 
 		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
-					      dev_id, type, &mr_attr,
+					      dev_id, type, &mr_attr, regattr_flags,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
@@ -2678,8 +2671,7 @@ exit:
  * @return	Memory registration handle
 */
 static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
-		     void *data,
-		     size_t size,
+		     nccl_ofi_mr_ckey_ref ckey,
 		     int type,
 		     nccl_ofi_mr_cache_t *mr_cache,
 		     nccl_net_ofi_rdma_mr_handle_t **mhandle)
@@ -2695,8 +2687,6 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 	assert(device != NULL);
 
 	nccl_ofi_idpool_t *key_pool = &device->key_pool;
-
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -2704,7 +2694,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)
-			nccl_ofi_mr_cache_lookup_entry(mr_cache, &cache_key);
+			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
 
 		if (ret_handle) {
 			/* Cache hit */
@@ -2713,14 +2703,14 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 		/* Cache miss */
 	}
 
-	ret = reg_mr_on_device(ep, data, size, type, &ret_handle);
+	ret = reg_mr_on_device(ep, ckey, type, &ret_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto exit;
 	}
 
 	if (mr_cache) {
 		ret = nccl_ofi_mr_cache_insert_entry(mr_cache,
-						     &cache_key,
+						     ckey,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
@@ -2802,34 +2792,35 @@ static int reg_internal_mr_ep(nccl_net_ofi_rdma_ep_t *ep, void *data,
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	return reg_mr_ep(ep, data, size, type, NULL, mhandle);
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size);
+	return reg_mr_ep(ep, &ckey, type, NULL, mhandle);
 }
 
-static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm, void *data,
-					      size_t size, int type, void **mhandle)
+static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
+			    nccl_ofi_mr_ckey_ref ckey,
+			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
 	assert(device != NULL);
 
 	return reg_mr_ep(ep,
-			 data,
-			 size,
+			 ckey,
 			 type,
 			 device->base.mr_cache,
 			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
-static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm, void *data,
-					      size_t size, int type, void **mhandle)
+static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
+			    nccl_ofi_mr_ckey_ref ckey,
+			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
 	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)ep->base.device;
 	assert(device != NULL);
 
 	return reg_mr_ep(ep,
-			 data,
-			 size,
+			 ckey,
 			 type,
 			 device->base.mr_cache,
 			 (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
