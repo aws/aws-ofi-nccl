@@ -12,6 +12,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+#include <rdma/fabric.h>
+
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
@@ -23,6 +25,7 @@
 #include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"
+#include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
@@ -2610,6 +2613,20 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 		NCCL_OFI_WARN("Allocation of fi_info failed");
 		ret = -FI_ENOMEM;
 		goto error;
+	}
+
+	if (nccl_ofi_dmabuf_viable()) {
+		get_hints(hints, true);
+		ret = nccl_ofi_ofiutils_get_providers(provider_filter,
+						      FI_VERSION(1, 20),
+						      hints,
+						      &provider_list,
+						      &num_providers);
+		if (ret == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric 1.20 API, with DMA-BUF support");
+			support_gdr = GDR_UNKNOWN;
+			goto found;
+		}
 	}
 
 	get_hints(hints, true);

@@ -25,6 +25,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
@@ -525,6 +526,15 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	}
 
 	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
+
+
+	props->dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
+		FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
+		nccl_ofi_dmabuf_viable()
+		;
+	if (props->dmabuf_support) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
+	}
 
 	goto exit;
 error:

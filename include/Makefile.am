@@ -28,6 +28,7 @@ noinst_HEADERS = \
 	nccl_ofi_topo.h \
 	nccl_ofi_tuner.h \
 	nccl_ofi_ofiutils.h \
+	nccl_ofi_dmabuf.h \
 	nccl_ofi_tracepoint.h \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
