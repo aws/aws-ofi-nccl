@@ -179,6 +179,23 @@ OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
 OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
 
 /*
+ * In cases where libfabric>=1.20 is available, and the provider has FI_HMEM
+ * support, the only further stated requirement for a user application to use
+ * dmabuf is to pass FI_MR_DMABUF in the flags on the call to fi_regattr(3).
+ *
+ * Unfortunately, the plugin needs to signal DMABUF support or lack thereof back
+ * to NCCL prior to having an opportuntiy to make any any memory registrations.
+ * This ultimately means that the plugin will opimistically assume DMA-BUF is
+ * viable on all FI_HMEM providers beyond libfabric 1.20.
+ *
+ * If dmabuf registrations fail, (ie: if ibv_reg_dmabuf_mr cannot be resolved),
+ * the plugin has no freedom to renegotiate DMABUF support with NCCL, and so it
+ * is fatal. Under those conditions, users should set this environment variable
+ * to force NCCL to avoid providing dmabuf file desciptors.
+ */
+OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
+
+/*
  * Maximum size of a message in bytes before message is multiplexed
  */
 OFI_NCCL_PARAM_INT(round_robin_threshold, "ROUND_ROBIN_THRESHOLD", (256 * 1024));

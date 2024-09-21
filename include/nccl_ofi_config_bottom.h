@@ -31,11 +31,6 @@
 #endif
 /* end of copied libfabric macros */
 
-// XXX: stub before build support is added for DMA-BUF.
-#ifndef HAVE_DECL_FI_MR_DMABUF
-#define HAVE_DECL_FI_MR_DMABUF 0
-#endif
-
 /* Workaround for platforms without memfd_create */
 #ifndef HAVE_MEMFD_CREATE
 #include <sys/syscall.h>

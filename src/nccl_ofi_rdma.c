@@ -26,6 +26,7 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_platform.h"
+#include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
 /* Message buffer size -- maximum span of simultaneous inflight messages */
@@ -7269,13 +7270,14 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 
 	get_hints(hints);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 18), hints,
+	uint32_t api_version = nccl_ofi_dmabuf_viable() ? FI_VERSION(1, 20) : FI_VERSION(1, 18);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
-			       1,
-			       18,
-			       "GPUDirect RDMA");
+			       FI_MAJOR(api_version),
+			       FI_MINOR(api_version),
+			       FI_VERSION_GE(FI_VERSION(1, 20), api_version) ? "DMA-BUF" : "GPUDirect RDMA");
 		/* The 1.18 API allows providers to use CUDA to
 		 * support HMEM pointers, so just having HMEM doesn't
 		 * tell us anything about the usability of CUDA
