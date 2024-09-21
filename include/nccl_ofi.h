@@ -630,6 +630,12 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 			    size_t *max_write_inline_size);
 
+/*
+ * @brief       gettid() wrapper
+ * return       thread id of the current thread (always succeeds)
+ */
+long nccl_net_ofi_gettid(void);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif

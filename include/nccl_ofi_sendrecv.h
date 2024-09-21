@@ -10,6 +10,8 @@ extern "C" {
 #endif
 
 #include <rdma/fabric.h>
+
+#include "contrib/uthash.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
@@ -129,6 +131,13 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	 * zero. sendrecv_release_ep() releases the resources if the
 	 * reference counter is decreased down to zero. */
 	int ref_cnt;
+
+	/* thread id of the thread that called get_ep().  Used as the
+	   hash key for the endpoint hash */
+	long creating_thread_id;
+
+	/* hash table handle */
+	UT_hash_handle hh;
 } nccl_net_ofi_sendrecv_ep_t;
 
 /**
@@ -158,15 +167,10 @@ typedef struct nccl_net_ofi_sendrecv_device {
 	 * and its base struct. */
 	nccl_net_ofi_device_t base;
 
-	/* Thread-specific data key to manage thread-local pointers to
-	 * sendrecv endpoints.  Every service thread maintains its own
-	 * endpoint associated with this device.  The endpoint
-	 * structure and resources are then used by the corresponding
-	 * proxy thread. See function get_ep of nccl_net_ofi_device_t
-	 * to obtain a "reference" to the endpoint. See function
-	 * release_ep of nccl_net_ofi_device_t to release the
-	 * reference. */
-	pthread_key_t ep_key;
+	/* hash table of active endpoints.  We reuse endpoints based
+	 * on the thread that calls get_ep().
+	 */
+	nccl_net_ofi_sendrecv_ep_t *endpoint_table;
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */
