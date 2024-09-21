@@ -6481,6 +6481,8 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
 				goto unlock;
 			}
+		} else {
+			HASH_DEL(device->endpoint_table, ep);
 		}
 
 		/* Ideally we would "un-post" the bounce buffers, but this
@@ -6500,9 +6502,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		free(ep->rails);
 		ep->rails = NULL;
 
-		if (!ep->thread_local_ep) {
-			free(ep);
-		}
+		free(ep);
 	}
 
  unlock:
@@ -6618,6 +6618,8 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
+	long thread_id;
+	nccl_net_ofi_rdma_ep_t *ep = NULL;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_device_t *device =
@@ -6631,10 +6633,12 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 	/* Obtain lock */
 	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
-	/* Obtain thread-local rdma endpoint. Allocate and
-	 * initialize endpoint if necessary. */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)pthread_getspecific(device->ep_key);
-	if (!ep) {
+	thread_id = nccl_net_ofi_gettid();
+	HASH_FIND(hh, device->endpoint_table, &thread_id,
+		  sizeof(ep->creating_thread_id), ep);
+
+	if (ep == NULL) {
+
 		/* Allocate endpoint */
 		ep = (nccl_net_ofi_rdma_ep_t *)calloc(1, sizeof(nccl_net_ofi_rdma_ep_t));
 		if (!ep) {
@@ -6645,13 +6649,13 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 
 		/* Initialize reference count */
 		ep->ref_cnt = 0;
+		ep->creating_thread_id = thread_id;
 
-		/* Store endpoint in thread-local variable */
-		pthread_setspecific(device->ep_key, (void *)ep);
+		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
+			 sizeof(ep->creating_thread_id), ep);
+
 		ep->thread_local_ep = true;
-	}
 
-	if (ep->ref_cnt == 0) {
 		ret = create_ep(device, ep);
 		if (ret != 0) {
 			goto unlock;
@@ -6767,13 +6771,6 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
 {
 	int ret;
-
-	/* Create pthead key */
-	ret = pthread_key_create(&devices->ep_key, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to create pthread key");
-		return -ret;
-	}
 
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&devices->ep_lock, NULL);

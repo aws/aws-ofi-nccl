@@ -11,6 +11,7 @@ extern "C" {
 
 #include <rdma/fabric.h>
 
+#include "contrib/uthash.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_scheduler.h"
@@ -739,6 +740,13 @@ struct nccl_net_ofi_rdma_ep {
 
 	/* True if this ep is stored in the thread-local store */
 	bool thread_local_ep;
+
+	/* thread id of the thread that called get_ep().  Used as the
+	   hash key for the endpoint hash */
+	long creating_thread_id;
+
+	/* hash table handle */
+	UT_hash_handle hh;
 };
 
 /*
@@ -791,15 +799,10 @@ typedef struct nccl_net_ofi_rdma_device {
 	/* Message scheduler */
 	nccl_net_ofi_scheduler_t *scheduler;
 
-	/* Thread-specific data key to manage thread-local pointers to
-	 * rdma endpoints.  Every service thread maintains its own
-	 * endpoint associated with this device.  The endpoint
-	 * structure and resources are then used by the corresponding
-	 * proxy thread. See function get_ep of nccl_net_ofi_device_t
-	 * to obtain a "reference" to the endpoint. See function
-	 * release_ep of nccl_net_ofi_device_t to release the
-	 * reference. */
-	pthread_key_t ep_key;
+	/* hash table of active endpoints.  We reuse endpoints based
+	 * on the thread that calls get_ep().
+	 */
+	nccl_net_ofi_rdma_ep_t *endpoint_table;
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */

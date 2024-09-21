@@ -2177,6 +2177,10 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		ep->ofi_ep = NULL;
 		ep->av = NULL;
 		ep->cq = NULL;
+
+		HASH_DEL(device->endpoint_table, ep);
+
+		free(ep);
 	}
 
 	nccl_net_ofi_mutex_unlock(&device->ep_lock);
@@ -2189,6 +2193,8 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 				    nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
+	long thread_id;
+	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
@@ -2202,11 +2208,11 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 	/* Obtain lock */
 	nccl_net_ofi_mutex_lock(&device->ep_lock);
 
-	/* Obtain thread-local sendrecv endpoint. Allocate and
-	 * initialize endpoint if necessary. */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)pthread_getspecific(device->ep_key);
-	if (!ep) {
+	thread_id = nccl_net_ofi_gettid();
+	HASH_FIND(hh, device->endpoint_table, &thread_id,
+		  sizeof(ep->creating_thread_id), ep);
+
+	if (ep == NULL) {
 		/* Allocate endpoint */
 		ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
 		if (!ep) {
@@ -2239,17 +2245,15 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 
 		/* Initialize reference count */
 		ep->ref_cnt = 0;
+		ep->creating_thread_id = thread_id;
 
-		/* Store endpoint in thread-local variable */
-		pthread_setspecific(device->ep_key, (void *)ep);
+		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
+			 sizeof(ep->creating_thread_id), ep);
 
 		NCCL_OFI_TRACE(NCCL_NET, "Sendrecv endpoint %p for dev #%d is created",
 			       ep,
 			       device->base.dev_id);
 
-	}
-
-	if (ep->ref_cnt == 0) {
 		struct fid_domain *domain;
 		domain = get_domain_from_endpoint(ep);
 		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info, domain, &ep->ofi_ep,
@@ -2338,14 +2342,6 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 static int device_init_thread_local(nccl_net_ofi_sendrecv_device_t *devices)
 {
 	int ret;
-
-	/* Create pthead key */
-	ret = pthread_key_create(&devices->ep_key, NULL);
-	if (ret != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to create pthread key");
-		return -ret;
-	}
 
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&devices->ep_lock, NULL);
