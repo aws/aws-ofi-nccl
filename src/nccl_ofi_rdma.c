@@ -6361,8 +6361,11 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	}
 #endif
 
-	ret = nccl_ofi_ofiutils_init_connection(FI_VERSION(1, 18), dev_rail->info, ep_rail->domain, &ep_rail->ofi_ep,
-						&ep_rail->av, &ep_rail->cq);
+	ret = nccl_ofi_ofiutils_init_connection(dev_rail->info,
+						ep_rail->domain,
+						&ep_rail->ofi_ep,
+						&ep_rail->av,
+						&ep_rail->cq);
 	if (ret != 0) {
 		return ret;
 	}
@@ -7269,6 +7272,10 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 18), hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
+			       1,
+			       18,
+			       "GPUDirect RDMA");
 		/* The 1.18 API allows providers to use CUDA to
 		 * support HMEM pointers, so just having HMEM doesn't
 		 * tell us anything about the usability of CUDA

@@ -155,7 +155,7 @@ static void filter_tcp_info_list(struct fi_info **info_list, unsigned int *num_i
 
 
 int nccl_ofi_ofiutils_get_providers(const char *prov_include,
-				    int required_version,
+				    uint32_t required_version,
 				    struct fi_info *hints,
 				    struct fi_info **prov_info_list,
 				    unsigned int *num_prov_infos)
@@ -244,7 +244,7 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	return rc;
 }
 
-int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, struct fid_domain *domain,
+int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
 {
 	int ret = 0;
@@ -338,7 +338,8 @@ int nccl_ofi_ofiutils_init_connection(int api_version, struct fi_info *info, str
 	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
 	 * using the Libfabric 1.18 API with HMEM support.
 	 */
-	if (api_version == FI_VERSION(1,18) && support_gdr != GDR_UNSUPPORTED) {
+	if (FI_VERSION_GE(info->fabric_attr->api_version,
+			  FI_VERSION(1, 18)) && support_gdr != GDR_UNSUPPORTED) {
 #if (HAVE_CUDA && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
 		bool optval = false;
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
