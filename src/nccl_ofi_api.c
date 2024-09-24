@@ -5,6 +5,8 @@
 
 #include "config.h"
 
+#include <stdlib.h>
+
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
@@ -77,6 +79,17 @@ static ncclResult_t nccl_net_ofi_retval_translate(int retval)
 }
 
 
+void nccl_net_ofi_fini(void)
+{
+	if (plugin != NULL) {
+		int ret = plugin->release_plugin(plugin);
+		if (ret != 0) {
+			NCCL_OFI_INFO(NCCL_NET, "Failure in plugin cleanup");
+		}
+	}
+}
+
+
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	int ret;
@@ -84,8 +97,18 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	ofi_log_function = logFunction;
 
 	ret = nccl_net_ofi_create_plugin(&plugin);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Initializing plugin failed");
+		return nccl_net_ofi_retval_translate(ret);
+	}
 
-	return nccl_net_ofi_retval_translate(ret);
+	ret = atexit(nccl_net_ofi_fini);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Adding cleanup function failed");
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	return ncclSuccess;
 }
 
 

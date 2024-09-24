@@ -83,6 +83,20 @@ AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlope
 AC_SEARCH_LIBS([pthread_mutexattr_settype], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads.])])
 AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2 library function.])])
 
+dnl Need at least glibc 2.3 or later (released 2002-10-02) , because
+dnl 2.2.3 added support for atexit() in shared libraries.
+AC_MSG_CHECKING([for glibc 2.3 or later])
+AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
+  [[#include <gnu/libc-version.h>
+  ]],
+  [[#if __GLIBC__ < 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ < 3)
+#error "Glibc too old to support atexit."
+#endif
+  ]])],
+    [AC_MSG_RESULT([yes])],
+    [AC_MSG_RESULT([no])
+     AC_MSG_ERROR([Found glibc prior to version 2.3.  Version 2.3 or later required])])
+
 # Checks for external packages
 CHECK_PKG_LIBFABRIC([], [AC_MSG_ERROR([NCCL OFI Plugin could not find a working Libfabric install.])])
 
