@@ -25,10 +25,6 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_mr.h"
 
-
-static int selected_api_version = 0;
-
-
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 				 nccl_ofi_properties_t *props)
 {
@@ -2241,7 +2237,9 @@ static int get_ep(nccl_net_ofi_device_t *base_dev,
 
 		struct fid_domain *domain;
 		domain = get_domain_from_endpoint(ep);
-		ret = nccl_ofi_ofiutils_init_connection(selected_api_version, device->info, domain, &ep->ofi_ep,
+		ret = nccl_ofi_ofiutils_init_connection(device->info,
+							domain,
+							&ep->ofi_ep,
 							&ep->av, &ep->cq);
 		if (ret != 0) {
 			goto unlock;
@@ -2615,8 +2613,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	}
 
 	get_hints(hints, true);
-	selected_api_version = FI_VERSION(1, 18);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 18), hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
 		/* The 1.18 API allows providers to use CUDA to
@@ -2633,8 +2630,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	}
 
 	get_hints(hints, true);
-	selected_api_version = FI_VERSION(1, 6);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 6), hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
@@ -2644,8 +2640,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	}
 
 	get_hints(hints, false);
-	selected_api_version = FI_VERSION(1, 6);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, selected_api_version, hints,
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 6), hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
