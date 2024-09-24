@@ -2368,6 +2368,11 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
+	unsigned num_endpoints = HASH_COUNT(device->endpoint_table);
+	if (num_endpoints > 0) {
+		NCCL_OFI_INFO(NCCL_NET, "%u endpoints still active at close", num_endpoints);
+	}
+
 	if (device->info != NULL) {
 		fi_freeinfo(device->info);
 	}
