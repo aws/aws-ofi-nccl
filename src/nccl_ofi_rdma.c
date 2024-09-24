@@ -791,7 +791,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 	if (send_data->remote_len < send_data->buff_len) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Remote recv buffer (%zu) smaller than send buffer (%zu)",
+		NCCL_OFI_TRACE(NCCL_NET, "Remote recv buffer (%zu) smaller than send buffer (%zu)",
 			       send_data->remote_len, send_data->buff_len);
 		req->size = send_data->remote_len;
 		send_data->buff_len = send_data->remote_len;
@@ -948,7 +948,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		send_data->remote_len = ctrl_msg->buff_len;
 		nccl_net_ofi_mutex_lock(&req->req_lock);
 		if (send_data->remote_len < send_data->buff_len) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			NCCL_OFI_TRACE(NCCL_NET,
 				       "Remote recv buffer (%zu) smaller than send buffer (%zu) in eager send",
 				       send_data->remote_len, send_data->buff_len);
 			req->size = send_data->remote_len;
@@ -3398,7 +3398,7 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
 	nccl_net_ofi_rdma_flush_buffer_t *flush_buff = &r_comm->flush_buff;
 
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
+	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
 	flush_buff->size = NCCL_OFI_FLUSH_SIZE;
 	assert(NCCL_OFI_FLUSH_SIZE <= system_page_size);
@@ -3425,7 +3425,7 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 			flush_buff->host_buffer = MAP_FAILED;
 		}
 	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		NCCL_OFI_TRACE(NCCL_NET,
 			       "Skip registering host buffer. local_mr: %d", local_mr);
 	}
 
@@ -5213,7 +5213,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	/* Validate size of data */
 	if (recv_data->dst_len < bounce_data->recv_len) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
+		NCCL_OFI_TRACE(NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
 			       recv_data->dst_len, bounce_data->recv_len);
 		bounce_data->recv_len = recv_data->dst_len;
 	}

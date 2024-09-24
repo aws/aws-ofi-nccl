@@ -64,7 +64,7 @@ void nccl_ofi_mr_cache_finalize(nccl_ofi_mr_cache_t *cache)
 {
 	assert(cache);
 
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+	NCCL_OFI_INFO(NCCL_NET,
 		      "MR cache %d hits %d misses",
 		      cache->hit_count,
 		      cache->miss_count);

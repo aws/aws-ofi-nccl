@@ -529,7 +529,7 @@ static int register_mr_buffers(struct fid_domain *domain, struct fid_ep *ep,
 
 	/* Check if provider requires registration of local buffers */
 	if (skip_local_mr_buffer_registration(type)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		NCCL_OFI_TRACE(NCCL_NET,
 			       "Skip registering host buffer. local_mr: %d", local_mr);
 		/* the mr handle will still be threaded through NCCL,
 		 * so we still need some sentinal to tell us not to try
@@ -715,7 +715,7 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 	int ret = 0;
 
 	if (OFI_LIKELY(mr_handle == NULL)) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
+		NCCL_OFI_TRACE(NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
 		goto exit;
 	}
 
@@ -1017,7 +1017,7 @@ static int recv_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	}
 
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "De-registering buffer for flush operations");
+		NCCL_OFI_TRACE(NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)r_comm->flush_buff.mr_handle;
 		if (mr_handle) {
@@ -1234,7 +1234,7 @@ static int alloc_and_reg_flush_buff(struct fid_domain *domain, struct fid_ep *ep
 	/* Verify that flush won't read more than the flush buffer size */
 	assert(flush_buff->size <= system_page_size);
 
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Registering buffer for flush operations");
+	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
 	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(flush_buff->host_buffer));
 	if (OFI_UNLIKELY(ret != 0)) {
