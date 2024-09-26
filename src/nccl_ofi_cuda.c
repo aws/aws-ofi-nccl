@@ -83,10 +83,6 @@ int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
 {
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 	static_assert(CUDA_VERSION >= 11030, "Requires cudart>=11.3");
-#ifdef __cplusplus
-	using cudaFlushGPUDirectRDMAWritesTarget::*;
-	using cudaFlushGPUDirectRDMAWritesScope::*;
-#endif
 	cudaError_t ret = cudaDeviceFlushGPUDirectRDMAWrites(cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
 	                                                     cudaFlushGPUDirectRDMAWritesToOwner);
 	return (ret == cudaSuccess) ? 0 : -EPERM;
