@@ -80,7 +80,13 @@ AC_CHECK_FUNC([memset], [], [AC_MSG_ERROR([NCCL OFI Plugin requires memset funct
 AC_CHECK_FUNC([realpath], [], [AC_MSG_ERROR([NCCL OFI Plugin requires realpath function.])])
 AC_CHECK_FUNCS([gettid])
 AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
+
+dnl it is insufficient to just link against pthread with -lpthread
+dnl background: https://stackoverflow.com/a/23251828
+CPPFLAGS="${CPPFLAGS} -pthread"
+LDFLAGS="${LDFLAGS} -pthread"
 AC_SEARCH_LIBS([pthread_mutexattr_settype], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads.])])
+
 AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2 library function.])])
 
 dnl Need at least glibc 2.3 or later (released 2002-10-02) , because
