@@ -38,6 +38,7 @@ dnl the risk of silently enabling system extensions is minimal.
 AC_USE_SYSTEM_EXTENSIONS
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
+AC_PROG_RANLIB
 LT_INIT([shared disable-static pic-only])
 
 NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
