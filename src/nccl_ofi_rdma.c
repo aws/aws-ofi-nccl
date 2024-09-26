@@ -6136,9 +6136,6 @@ static void get_hints(struct fi_info *hints)
 
 	hints->mode = 0;
 
-	hints->tx_attr->msg_order = FI_ORDER_NONE;
-	hints->rx_attr->msg_order = FI_ORDER_NONE;
-
 	hints->ep_attr->type = FI_EP_RDM;
 
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
