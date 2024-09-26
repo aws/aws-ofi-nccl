@@ -80,6 +80,10 @@ AC_CHECK_FUNC([memset], [], [AC_MSG_ERROR([NCCL OFI Plugin requires memset funct
 AC_CHECK_FUNC([realpath], [], [AC_MSG_ERROR([NCCL OFI Plugin requires realpath function.])])
 AC_CHECK_FUNCS([gettid])
 AC_SEARCH_LIBS([dlopen], [dl], [], [AC_MSG_ERROR([NCCL OFI Plugin requires dlopen])])
+dnl it is insufficient to merely link against pthread
+dnl -pthread must be passed in cflags: https://stackoverflow.com/a/23251828
+CFLAGS="${CFLAGS} -pthread"
+CPPFLAGS="${CPPFLAGS} -pthread"
 AC_SEARCH_LIBS([pthread_mutexattr_settype], [pthread], [], [AC_MSG_ERROR([NCCL OFI Plugin requires pthreads.])])
 AC_SEARCH_LIBS([log2], [m], [], [AC_MSG_ERROR([NCCL OFI Plugin requires the log2 library function.])])
 
