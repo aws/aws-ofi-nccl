@@ -52,8 +52,17 @@ AC_C_INLINE
 dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
 dnl bunch of debugging flags, so there's no ordering requirement
 dnl between this and AC_PROG_CC.
-AS_IF([test "${ax_enable_debug}" = "no"], [CFLAGS="${CFLAGS} -O3"])
+AS_IF([test "${ax_enable_debug}" = "no"], [
+             dnl Enable O3 optimization
+             CFLAGS="${CFLAGS} -O3"
 
+             dnl dead code elim
+             CFLAGS="${CFLAGS} -ffunction-sections -fdata-sections"
+
+             dnl https://maskray.me/blog/2021-05-09-fno-semantic-interposition
+             CFLAGS="${CFLAGS} -fno-semantic-interposition -fvisibility=hidden"
+             LDFLAGS="${LDFLAGS} -Bsymbolic"
+            ])
 CHECK_ENABLE_SANITIZER()
 
 
