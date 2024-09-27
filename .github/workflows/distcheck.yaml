@@ -48,19 +48,21 @@ jobs:
         sdk:
           - cuda
         container:
-          - amazonlinux:2023
-          - amazonlinux:2
+          - public.ecr.aws/amazonlinux/amazonlinux:2023
+          - public.ecr.aws/amazonlinux/amazonlinux:2
         efainstaller:
           - latest
           - 1.25.0
         include:
-          - container: amazonlinux:2023
+          - container: public.ecr.aws/amazonlinux/amazonlinux:2023
+            displayname: al2023
             efainstallerdir: ALINUX2023
             nvidiadistro: amzn2023
             configmanager: dnf config-manager
             cudapackages: cuda-cudart-devel-12-6 cuda-crt-12-6
 
-          - container: amazonlinux:2
+          - container: public.ecr.aws/amazonlinux/amazonlinux:2
+            displayname: al2
             efainstallerdir: ALINUX2
             nvidiadistro: rhel7
             configmanager: yum-config-manager
@@ -68,7 +70,7 @@ jobs:
 
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
-    name: ${{matrix.container}}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
+    name: ${{ matrix.displayname }}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
     steps:
       - run: |
           yum -y update && yum -y install git tar util-linux findutils yum-utils
