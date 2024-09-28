@@ -225,11 +225,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			rdma_plugin = NULL;
 		}
 
-		if (!have_multiple_rails) {
+		if (!have_multiple_rails || rdma_plugin == NULL) {
 			ret = nccl_net_ofi_sendrecv_init(provider_filter, &sendrecv_plugin);
 			if (ret != 0) {
 				NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-					       "Failed to initialized rdma protocol: %s", fi_strerror(-ret));
+					       "Failed to initialized sendrecv protocol: %s", fi_strerror(-ret));
 				sendrecv_plugin = NULL;
 			}
 		}
@@ -248,7 +248,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			}
 		}
 
-		if (nccl_ofi_selected_protocol == NULL) {
+		if (nccl_ofi_selected_protocol == NULL || plugin == NULL) {
 			NCCL_OFI_WARN("Unable to find a protocol that worked.  Failing initialization.");
 			ret = -EINVAL;
 			goto exit;
@@ -260,7 +260,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	ret = plugin->complete_init(plugin);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to initialize rdma protocol");
+		NCCL_OFI_WARN("Failed to initialize %s protocol", nccl_ofi_selected_protocol);
 		goto exit;
 	}
 
