@@ -106,10 +106,11 @@ static void filter_tcp_info_list(struct fi_info **info_list, unsigned int *num_i
 
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Removing unnecessary interfaces and address formats for TCP provider");
 
+	assert(info_list != NULL);
 	curr = *info_list;
-	expected_mem_tag_format = curr->ep_attr->mem_tag_format;
 
 	while (curr != NULL) {
+		expected_mem_tag_format = curr->ep_attr->mem_tag_format;
 
 		/* Check if interface name and format matches deletion criteria */
 		delete_prov = match_prov_info(curr->domain_attr->name,
@@ -163,15 +164,14 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	int rc = 0;
 	struct fi_info *providers = NULL, *prov = NULL, *last_prov;
 	char *selected_prov_name = NULL;
+	assert(num_prov_infos != NULL);
 	*num_prov_infos = 0;
 
 	rc = fi_getinfo(required_version, NULL, NULL, 0ULL, hints, &providers);
 	if (rc != 0)
 		goto error;
 
-	if (!providers)
-		goto error;
-	if (!num_prov_infos) {
+	if (providers == NULL) {
 		goto error;
 	}
 
@@ -202,22 +202,40 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	prov = providers;
 	providers = NULL;
 	last_prov = NULL;
-	while (prov) {
+	while (prov != NULL) {
 		struct fi_info *prov_next = prov->next;
 		prov->next = NULL;
 
 		if (strcmp(selected_prov_name, prov->fabric_attr->prov_name) != 0) {
+			/* Not a match. */
 			fi_freeinfo(prov);
-		} else {
-			if (!providers) {
-				providers = last_prov = prov;
-			} else {
-				last_prov->next = prov;
-				last_prov = prov;
-			}
-			(*num_prov_infos)++;
+			prov = prov_next;
+			continue;
 		}
+		/* if this is the first matching info, save-off the start of the
+		 * filtered list. */
+		if (providers == NULL) {
+			providers = prov;
+		}
+
+		/* If this is not the first matching info, update previous tail
+		 * of list to point at new tail of list. */
+		if (last_prov != NULL) {
+			last_prov->next = prov;
+		}
+
+		/* update tail of list */
+		last_prov = prov;
+
+		(*num_prov_infos)++;
 		prov = prov_next;
+	}
+
+	/* Potentially, we filtered all providers and never restored `providers`
+	 * to a non-NULL value, so we must check here that providers is non-NULL
+	 * before deref'ing providers->fabric_attr */
+	if (providers == NULL || *num_prov_infos == 0) {
+		return -FI_ENODATA;
 	}
 
 	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
