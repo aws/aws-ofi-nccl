@@ -175,7 +175,12 @@ static const char* get_platform_type(void)
 	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
 		platform_type[len++] = ch;
 		if (len >= platform_type_len) {
-			platform_type = (char*)realloc(platform_type, len + platform_type_len);
+			char *new_platform_type = (char *)realloc(platform_type, len + platform_type_len);
+			if (new_platform_type == NULL) {
+				NCCL_OFI_WARN("Unable to (re)allocate platform type");
+				goto error;
+			}
+			platform_type = new_platform_type;
 		}
 	}
 
