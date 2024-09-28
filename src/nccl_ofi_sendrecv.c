@@ -1550,7 +1550,6 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 			     nccl_net_ofi_conn_handle_t *handle,
 			     nccl_net_ofi_listen_comm_t **listen_comm)
 {
-	int ret = 0;
 	char *local_ep_name = NULL;
 	fi_addr_t local_ep_addr;
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = NULL;
@@ -1564,9 +1563,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
 	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+		return -EINVAL;
 	}
 
 	dev_id = device->base.dev_id;
@@ -1580,8 +1578,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
 			      " Maximum is %ld",
 			      dev_id, device->max_tag);
-		ret = -ENOSPC;
-		goto error;
+		return -ENOSPC;
 	}
 	tag = ++ep->tag;
 
@@ -1600,12 +1597,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
-		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %s",
-			      dev_id, fi_strerror(-ret));
-		ret = -EINVAL;
-		goto error;
-	} else {
-		ret = 0;
+		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d.", dev_id);
+		return -EINVAL;
 	}
 
 	/* Build listen_comm */
@@ -1614,8 +1607,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
 	if (OFI_UNLIKELY(l_comm == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
-		ret = -ENOMEM;
-		goto error;
+		return -ENOMEM;
 	}
 
 	/* Initialize listen communicator */
@@ -1629,15 +1621,8 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->accepted = false;
 	l_comm->local_ep_addr = local_ep_addr;
 
-	*listen_comm = &l_comm->base;
-
-	goto exit;
-
- error:
-	if (l_comm)
-		free(l_comm);
- exit:
-	return ret;
+	*listen_comm = (nccl_net_ofi_listen_comm_t *)l_comm;
+	return 0;
 }
 
 static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
