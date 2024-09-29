@@ -241,7 +241,7 @@ pipeline {
                     // p5 tests
                     stages["4_p5_alinux2"] = get_test_stage_with_lock("4_p5_alinux2", env.BUILD_TAG, "alinux2", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
                     stages["4_p5_ubuntu2004"] = get_test_stage_with_lock("4_p5_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
-                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock("4_p5_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
+                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock("4_p5_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args + " --ami-id ami-01af1dd786415a3d3")
 
                     // g4dn tests
                     stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_region, g4dn_lock_label, num_instances, g4dn_odcr, g4dn_addl_args)
