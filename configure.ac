@@ -176,9 +176,14 @@ AS_IF([test "${enable_picky_compiler}" != "no"],
        CFLAGS="${CFLAGS} ${picky_compiler_flags}"
        AS_UNSET([picky_compiler_flags])])
 
+static_analysis_flags=""
+gcc_fanalyzer_flags="-fanalyzer"
+AX_CHECK_COMPILE_FLAG([${gcc_fanalyzer_flags}], [static_analysis_flags="${gcc_fanalyzer_flags}"], [], [-Werror])
+dnl todo: clang-sa flags
+werror_flags="${static_analysis_flags} -Werror"
+
 AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
-werror_flags="-Werror"
 AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CFLAGS.])
        CFLAGS="${CFLAGS} ${werror_flags}"],
