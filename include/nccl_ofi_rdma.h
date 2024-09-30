@@ -530,7 +530,7 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
 
-	pthread_mutex_t receive_close_lock;
+	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
