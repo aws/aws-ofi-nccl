@@ -7279,7 +7279,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
 			       FI_MAJOR(api_version),
 			       FI_MINOR(api_version),
-			       FI_VERSION_GE(FI_VERSION(1, 20), api_version) ? "DMA-BUF" : "GPUDirect RDMA");
+			       FI_VERSION_GE(api_version, FI_VERSION(1, 20)) ? "DMA-BUF" : "GPUDirect RDMA");
 		/* The 1.18 API allows providers to use CUDA to
 		 * support HMEM pointers, so just having HMEM doesn't
 		 * tell us anything about the usability of CUDA
