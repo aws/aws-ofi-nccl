@@ -32,6 +32,9 @@
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
+static_assert(NCCL_OFI_RDMA_MSGBUFF_SIZE > NCCL_OFI_MAX_REQUESTS,
+	"Message buffer size must be larger than max_requests");
+
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
 #define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
@@ -90,6 +93,36 @@
  */
 #define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
 	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
+
+static inline uint16_t msg_seq_num_distance(uint16_t curr, uint16_t last)
+{
+	assert((curr <= MSG_SEQ_NUM_MASK) && (last <= MSG_SEQ_NUM_MASK));
+	return (curr - last) & MSG_SEQ_NUM_MASK;
+}
+
+/**
+ * True if msg_seq_num is within the message buffer width of last_ctrl_received
+ */
+static inline bool within_msgbuff_window(uint16_t msg_seq_num, uint16_t last_ctrl_received)
+{
+	return msg_seq_num_distance(msg_seq_num, last_ctrl_received)
+		<= NCCL_OFI_RDMA_MSGBUFF_SIZE;
+}
+
+static inline bool receiver_out_of_sync(uint16_t msg_seq_num, uint16_t recv_last_seq_num)
+{
+	/**
+	 * If receiver has started message n, then the last incomplete is no
+	 * less than n - max_requests + 1, and so the receiver's msgbuff has
+	 * space for at least message (last_incomplete + msgbuff_size - 1)
+	 *
+	 * Therefore, the condition for sender to wait for receiver is:
+	 *
+	 * distance(msg_seq_num, last_ctrl_received) == msgbuff_size - max_requests
+	 */
+	return msg_seq_num_distance(msg_seq_num, recv_last_seq_num) ==
+		(NCCL_OFI_RDMA_MSGBUFF_SIZE - NCCL_OFI_MAX_REQUESTS);
+}
 
 /** Global variables **/
 
@@ -1035,7 +1068,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	}
 
 	if (OFI_UNLIKELY(stat != NCCL_OFI_MSGBUFF_INPROGRESS)) {
-		NCCL_OFI_WARN("Unexpected message status (%d) (ctrl recv)", (int)stat);
+		NCCL_OFI_WARN("Unexpected message status (%d) for msg %hu", (int)stat, msg_seq_num);
 		return -EINVAL;
 	}
 
@@ -1213,6 +1246,10 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 
 		nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 		s_comm->n_ctrl_received += 1;
+		if (within_msgbuff_window((uint16_t)ctrl_msg->msg_seq_num,
+		    s_comm->last_ctrl_received)) {
+			s_comm->last_ctrl_received =  ctrl_msg->msg_seq_num;
+		}
 		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 		break;
@@ -3302,7 +3339,12 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 				goto error;
 			}
 		}
-	} else {
+	}
+
+	/* Send a ctrl message for non-eager messages or if we haven't sent one
+	   recently enough (see corresponding check in send) */
+	if ( (!eager) || receiver_out_of_sync(msg_seq_num, r_comm->last_ctrl_sent))
+	{
 		nccl_net_ofi_rdma_req_t *send_ctrl_req =
 			allocate_send_ctrl_req(r_comm, device, dev_id, msg_seq_num,
 					       buffers[0], sizes[0], mr_handles[0]);
@@ -3322,6 +3364,8 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			/* TODO: Remove req from message buffer */
 			goto error;
 		}
+
+		r_comm->last_ctrl_sent = msg_seq_num;
 	}
 
 	/* Return request to NCCL */
@@ -4173,6 +4217,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
 	r_comm->n_ctrl_sent = 0;
 	r_comm->n_ctrl_delivered = 0;
+	r_comm->last_ctrl_sent = (uint16_t)((-1) & MSG_SEQ_NUM_MASK);
 
 	/* Allocate recv communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
@@ -5389,6 +5434,10 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 		goto error;
 	}
 
+	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
+	uint16_t last_ctrl_received = s_comm->last_ctrl_received;
+	nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
+
 	dev_id = s_comm->base.base.dev_id;
 
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
@@ -5403,6 +5452,12 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	}
 	if (ret != 0) {
 		goto error;
+	}
+
+	if (receiver_out_of_sync(msg_seq_num, last_ctrl_received)) {
+		/* Wait for receiver to catch up */
+		ret = ofi_process_cq(ep);
+		goto free_req;
 	}
 
 	/*
@@ -5940,6 +5995,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->received_close_message = false;
 	ret_s_comm->n_ctrl_received = 0;
 	ret_s_comm->n_ctrl_expected = 0;
+	ret_s_comm->last_ctrl_received = (uint16_t)((-1) & MSG_SEQ_NUM_MASK);
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
