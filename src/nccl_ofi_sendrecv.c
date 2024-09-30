@@ -1696,16 +1696,17 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	if (OFI_UNLIKELY(s_comm->conn_info && (s_comm->conn_info->connect_to_self == 1))) {
 		nccl_ofi_connection_info_t *conn_info = s_comm->conn_info;
 		assert(conn_info->req != NULL);
-		nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)conn_info->req;
+		nccl_net_ofi_sendrecv_req_t *self_req = (nccl_net_ofi_sendrecv_req_t *)conn_info->req;
 
-		if (req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-			free_req_send_comm(s_comm, dev_id, req, false);
+		if (self_req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED) {
+			free_req_send_comm(s_comm, dev_id, self_req, false);
 			free(conn_info);
 			s_comm->conn_info = NULL;
 		} else {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-				       "Self-connect request: %p hasn't completed. Current State: %s",
-				       req, req_state_str(req->state));
+			               "Self-connect request: %p hasn't completed. Current State: %s",
+			               self_req,
+			               req_state_str(self_req->state));
 
 			ret = ofi_process_cq(ep->cq, device->max_tag);
 

@@ -27,13 +27,14 @@
 #define SEND_SIZE	(5000)
 #define RECV_SIZE	(5200)
 
-#define OFINCCLCHECK(call) do {					\
-	ncclResult_t res = call;				\
-	if (res != ncclSuccess) {				\
-		NCCL_OFI_WARN("OFI NCCL failure: %d", res);	\
-		return res;					\
-	}							\
-} while (false);
+#define OFINCCLCHECK(call)                                                \
+	do {                                                              \
+		ncclResult_t macro_res = call;                            \
+		if (macro_res != ncclSuccess) {                           \
+			NCCL_OFI_WARN("OFI NCCL failure: %d", macro_res); \
+			return macro_res;                                 \
+		}                                                         \
+	} while (false);
 
 #define OFINCCLCHECKGOTO(call, res, label) do {			\
 	res = call;						\

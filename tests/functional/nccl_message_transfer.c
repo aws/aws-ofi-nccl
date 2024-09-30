@@ -43,7 +43,7 @@ int main(int argc, char* argv[])
 	int done, received_size;
 
 	/* Indicates if NICs support GPUDirect */
-	int *support_gdr = NULL;
+	int *test_support_gdr = NULL;
 
 	/* All processors IDs, used to find out the local rank */
 	char *all_proc_name = NULL;
@@ -121,8 +121,8 @@ int main(int argc, char* argv[])
 	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
-	support_gdr = (int *)malloc(sizeof(int) * ndev);
-	if (support_gdr == NULL) {
+	test_support_gdr = (int *)malloc(sizeof(int) * ndev);
+	if (test_support_gdr == NULL) {
 		NCCL_OFI_WARN("Failed to allocate memory");
 		res = ncclInternalError;
 		goto exit;
@@ -134,7 +134,7 @@ int main(int argc, char* argv[])
 		print_dev_props(dev, &props);
 
 		/* Set CUDA support */
-		support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
+		test_support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 
 	/* Test all devices */
@@ -148,7 +148,7 @@ int main(int argc, char* argv[])
 
 		NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
 
-		if (support_gdr[dev] == 1) {
+		if (test_support_gdr[dev] == 1) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 					"Network supports communication using CUDA buffers. Dev: %d", dev);
 			buffer_type = NCCL_PTR_CUDA;
@@ -423,9 +423,9 @@ exit:;
 		expected_buf = NULL;
 	}
 
-	if (support_gdr) {
-		free(support_gdr);
-		support_gdr = NULL;
+	if (test_support_gdr) {
+		free(test_support_gdr);
+		test_support_gdr = NULL;
 	}
 
 	if (all_proc_name) {

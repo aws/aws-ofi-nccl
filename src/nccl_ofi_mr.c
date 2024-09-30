@@ -7,7 +7,6 @@
 #include <errno.h>
 #include <stdlib.h>
 
-#include "nccl_ofi.h"
 #include "nccl_ofi_mr.h"
 #include "nccl_ofi_pthread.h"
 
