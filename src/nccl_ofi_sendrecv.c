@@ -155,6 +155,8 @@ static const char *req_direction_str(nccl_net_ofi_sendrecv_req_direction_t direc
 		return "SEND";
 	case NCCL_OFI_SENDRECV_RECV:
 		return "RECV";
+	case NCCL_OFI_SENDRECV_INVALID_DIRECTION:
+		return "invalid";
 	default:
 		return "unknown";
 	}
