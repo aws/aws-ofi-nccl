@@ -9,15 +9,16 @@
 extern "C" {
 #endif
 
+#include "config.h"
+
 #include <assert.h>
 #include <pthread.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <sys/uio.h>
 
-#include "config.h"
-#if HAVE_DECL_FI_MR_DMABUF
 #include <rdma/fi_domain.h>
-#endif
 
 enum nccl_ofi_mr_ckey_type {
 	NCCL_OFI_MR_CKEY_INVALID = 0,

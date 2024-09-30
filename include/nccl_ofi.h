@@ -90,10 +90,6 @@ extern bool cuda_flush;
  * rings to use the connections
  */
 extern int nic_dup_conns;
-/* only allow providers in the comma-separated list provider_filter.
-   Default is no filter.  Used by platform files; users can get the
-   same behavior by setting FI_PROVIDER directly. */
-extern const char *provider_filter;
 
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be

@@ -67,10 +67,9 @@ int main(int argc, char *argv[])
 	const size_t cache_init_size = 16;
 
 	/* Doesn't have to be correct -- for functionality test only */
-	const size_t system_page_size = 1024;
+	const size_t fake_page_size = 1024;
 
-	nccl_ofi_mr_cache_t *cache = nccl_ofi_mr_cache_init(cache_init_size,
-		system_page_size);
+	nccl_ofi_mr_cache_t *cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
 	if (!cache) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_init failed");
 		exit(1);
@@ -79,23 +78,23 @@ int main(int argc, char *argv[])
 	for (size_t i = 0; i < 4 * cache_init_size; ++i) {
 		if (i != 0) {
 			/* Lookup left hit */
-			test_lookup(cache, (void *)((i - 1) * system_page_size + 2), 2, (void *)(i - 1));
+			test_lookup(cache, (void *)((i - 1) * fake_page_size + 2), 2, (void *)(i - 1));
 			/* Lookup left miss overlap right */
-			test_lookup(cache, (void *)(i * system_page_size - 1), 2, NULL);
+			test_lookup(cache, (void *)(i * fake_page_size - 1), 2, NULL);
 			/* Test insert existing */
-			test_insert(cache, (void *)((i - 1) * system_page_size + 1), 1, (void *)i, -EEXIST);
+			test_insert(cache, (void *)((i - 1) * fake_page_size + 1), 1, (void *)i, -EEXIST);
 		}
 		/* Lookup here miss */
-		test_lookup(cache, (void *)(i * system_page_size + 4), 2, NULL);
+		test_lookup(cache, (void *)(i * fake_page_size + 4), 2, NULL);
 		/* Test insert */
-		test_insert(cache, (void *)(i * system_page_size), 1, (void *)i, 0);
+		test_insert(cache, (void *)(i * fake_page_size), 1, (void *)i, 0);
 		/* Lookup here hit */
-		test_lookup(cache, (void *)(i * system_page_size), 2, (void *)i);
+		test_lookup(cache, (void *)(i * fake_page_size), 2, (void *)i);
 		/* Lookup here miss overlap right */
-		test_lookup(cache, (void *)((i + 1) * system_page_size - 1), 2, NULL);
+		test_lookup(cache, (void *)((i + 1) * fake_page_size - 1), 2, NULL);
 
 		/* Lookup right miss */
-		test_lookup(cache, (void *)((i + 1) * system_page_size + 2), 2, NULL);
+		test_lookup(cache, (void *)((i + 1) * fake_page_size + 2), 2, NULL);
 	}
 
 	/* At this point, every entry should have refcnt==3 (insert, here hit,
@@ -127,7 +126,7 @@ int main(int argc, char *argv[])
 		}
 
 		/* Lookup miss after removal */
-		test_lookup(cache, (void *)(i * system_page_size), 1, NULL);
+		test_lookup(cache, (void *)(i * fake_page_size), 1, NULL);
 	}
 
 	nccl_ofi_mr_cache_finalize(cache);

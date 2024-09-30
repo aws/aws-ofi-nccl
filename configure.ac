@@ -192,6 +192,9 @@ dnl them. TODO: explicitly annotate those functions, rather than setting this
 dnl globally.
 ADD_PICKY_FLAGS([-Wno-unused-parameter])
 
+dnl warn when a variable shadows another variable.
+ADD_PICKY_FLAGS([-Wshadow])
+
 dnl enable GCC's static analyzer
 ADD_PICKY_FLAGS([-fanalyzer])
 dnl todo: clang-sa flags

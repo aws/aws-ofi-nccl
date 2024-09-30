@@ -48,8 +48,6 @@ int nic_dup_conns = 0;
    read in the polling loop without protection of a lock. */
 size_t cq_read_count = 1;
 
-const char *provider_filter = NULL;
-
 /* Indicates if memory registration of local buffers is required */
 bool local_mr = false;
 /* Indicates if endpoint memory registration is required */

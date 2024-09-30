@@ -2015,7 +2015,6 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 
 	if (send_ctrl_data->ctrl_fl_item) {
-		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_item);
 		send_ctrl_data->ctrl_fl_item = NULL;
 	}
@@ -2042,7 +2041,6 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	}
 
 	if (send_close_data->ctrl_fl_item) {
-		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_close_data->ctrl_fl_item);
 		send_close_data->ctrl_fl_item = NULL;
 	}
