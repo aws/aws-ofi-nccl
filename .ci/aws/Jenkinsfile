@@ -12,7 +12,7 @@ def get_portafiducia_download_path() {
                 script: "aws sts get-caller-identity --query Account --output text | tr -dc 0-9",
                 returnStdout: true
               )
-    return "s3://libfabric-ci-$AWS_ACCOUNT_ID-us-west-2/portafiducia/portafiducia.tar.gz"
+    return "s3://vidsouza-testing/portafiducia.tar.gz"
 }
 
 def download_and_extract_portafiducia(outputDir) {
@@ -203,7 +203,7 @@ pipeline {
                     def nccl_test_iter = "--test-aws-ofi-nccl-nccltest-iterations 5"
                     def base_args = "${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${test_list} ${nccl_test_iter}"
 
-                    def num_instances = 4
+                    def num_instances = 1
                     def p3dn_lock_label = "p3dn-1-4node"
                     def p3dn_region = "ap-northeast-1"
                     def p3dn_odcr = "cr-08ecd03c0644442e4"
@@ -228,29 +228,7 @@ pipeline {
                     def trn1n_odcr = "cr-07342cf6439332dce"
                     def trn1n_addl_args = "${base_args} --odcr-placement-group-name trn1n-placement-group --test-list test_nccom_test"
 
-                    // p3dn tests
-                    stages["4_p3dn_al2"] = get_test_stage_with_lock("4_p3dn_al2", env.BUILD_TAG, "alinux2", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
-                    stages["4_p3dn_ubuntu2004"] = get_test_stage_with_lock("4_p3dn_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
-                    stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock("4_p3dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p3dn.24xlarge", p3dn_region, p3dn_lock_label, num_instances, p3dn_odcr, p3dn_addl_args)
-
-                    // p4d tests
-                    stages["4_p4d_alinux2"] = get_test_stage_with_lock("4_p4d_alinux2", env.BUILD_TAG, "alinux2", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
-                    stages["4_p4d_ubuntu2004"] = get_test_stage_with_lock("4_p4d_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
-                    stages["4_p4d_ubuntu2204"] = get_test_stage_with_lock("4_p4d_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p4d.24xlarge", p4d_region, p4d_lock_label, num_instances, p4d_odcr, p4_p5_addl_args)
-
-                    // p5 tests
-                    stages["4_p5_alinux2"] = get_test_stage_with_lock("4_p5_alinux2", env.BUILD_TAG, "alinux2", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
-                    stages["4_p5_ubuntu2004"] = get_test_stage_with_lock("4_p5_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
                     stages["4_p5_ubuntu2204"] = get_test_stage_with_lock("4_p5_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "p5.48xlarge", p5_region, p5_lock_label, num_instances, p5_odcr, p4_p5_addl_args)
-
-                    // g4dn tests
-                    stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_region, g4dn_lock_label, num_instances, g4dn_odcr, g4dn_addl_args)
-
-                    // trn1 tests
-                    stages["4_trn1_ubuntu2004"] = get_test_stage_with_lock("4_trn1_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "trn1.32xlarge", trn1_region, trn1_lock_label, num_instances, trn1_odcr, trn1_addl_args)
-
-                    // trn1n tests
-                    stages["4_trn1n_ubuntu2004"] = get_test_stage_with_lock("4_trn1n_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "trn1n.32xlarge", trn1n_region, trn1n_lock_label, num_instances, trn1n_odcr, trn1n_addl_args)
 
                     parallel stages
                 }
