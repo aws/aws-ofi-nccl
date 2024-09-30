@@ -8,8 +8,8 @@
 #ifndef NCCL_TUNER_H_
 #define NCCL_TUNER_H_
 
-#include "nccl-headers/net.h"
-#include "nccl-headers/error.h"
+#include "net.h"
+#include "err.h"
 
 #define NCCL_NUM_FUNCTIONS 5 // Send/Recv not included for now
 typedef enum {

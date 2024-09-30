@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#include "nccl-headers/net.h"
+#include <nccl/net.h>
 
 // GCC is happy with this hint to identify printf string code
 // mismatches.  Clang does not seem to want to apply the hint, but

@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -18,7 +19,8 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
-#include "nccl-headers/net.h"
+#include <nccl/net.h>
+
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"

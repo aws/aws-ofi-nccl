@@ -8,8 +8,8 @@
 #include "config.h"
 
 #include <linux/limits.h>
+#include <nccl/tuner.h>
 
-#include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_param.h"
 
 /* Maximum number of vertices per region */

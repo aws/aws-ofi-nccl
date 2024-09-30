@@ -11,8 +11,8 @@
 extern "C" {
 #endif
 
-#include "nccl-headers/net.h"
-#include "nccl-headers/error.h"
+#include <nccl/err.h>
+#include <nccl/net.h>
 
 struct nccl_ofi_properties;
 
