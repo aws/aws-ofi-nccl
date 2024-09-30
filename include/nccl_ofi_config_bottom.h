@@ -31,9 +31,9 @@
 #endif
 
 /* Copied from libfabric:rdma/fabric.h@30ec628: "libfabric: Initial commit" */
+#include <stdint.h>
 #ifndef container_of
-#define container_of(ptr, type, field) \
-	((type *) ((char *)ptr - offsetof(type, field)))
+#define container_of(ptr, type, field) ((type *)((uintptr_t)ptr - offsetof(type, field)))
 #endif
 /* end of copied libfabric macros */
 
