@@ -9,9 +9,9 @@
 extern "C" {
 #endif
 
+#include <uthash/uthash.h>
 #include <rdma/fabric.h>
 
-#include "contrib/uthash.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"

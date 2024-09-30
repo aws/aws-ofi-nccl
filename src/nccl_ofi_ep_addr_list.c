@@ -4,13 +4,12 @@
 
 #include "config.h"
 
+#include <uthash/uthash.h>
+#include <uthash/utlist.h>
+
 #include "nccl_ofi.h"
-
-#include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_pthread.h"
-
-#include "contrib/uthash.h"
-#include "contrib/utlist.h"
+#include "nccl_ofi_ep_addr_list.h"
 
 /**
  * A Libfabric address, stored in a form hashable by uthash

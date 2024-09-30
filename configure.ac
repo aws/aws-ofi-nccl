@@ -124,6 +124,8 @@ CHECK_PKG_NEURON([AS_IF([test -n "${want_cuda}"],
 CHECK_PKG_CUDA([have_device_interface=cuda])
 AS_IF([test "${have_device_interface}" = "no"],
       [AC_MSG_ERROR([NCCL OFI Plugin requires either CUDA or Neuron runtime.])])
+DEVICE_INTERFACE="${have_device_interface}"
+AC_SUBST([DEVICE_INTERFACE])
 
 CHECK_PKG_LTTNG()
 CHECK_PKG_NVTX()
@@ -234,7 +236,9 @@ AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
 AC_CONFIG_FILES([Makefile
                  include/Makefile
+                 3rd-party/Makefile
                  src/Makefile
+                 src/tuner/Makefile
                  tests/Makefile
                  tests/functional/Makefile
                  tests/unit/Makefile

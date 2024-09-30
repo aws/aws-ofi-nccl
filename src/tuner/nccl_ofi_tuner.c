@@ -10,13 +10,13 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <nccl/tuner.h>
+
+#include "internal/tuner/nccl_defaults.h"
+#include "nccl_ofi_tuner.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"
-#include "nccl_ofi_tuner.h"
-
-#include "internal/tuner/nccl_defaults.h"
-#include "nccl-headers/nvidia/tuner.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;

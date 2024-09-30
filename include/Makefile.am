@@ -33,27 +33,5 @@ noinst_HEADERS = \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
 	internal/tuner/nccl_defaults.h \
-	nccl-headers/net.h \
-	nccl-headers/error.h \
-	nccl-headers/nvidia/err.h \
-	nccl-headers/nvidia/net.h \
-	nccl-headers/nvidia/net_device.h \
-	nccl-headers/nvidia/net_v2.h \
-	nccl-headers/nvidia/net_v3.h \
-	nccl-headers/nvidia/net_v4.h \
-	nccl-headers/nvidia/net_v5.h \
-	nccl-headers/nvidia/net_v6.h \
-	nccl-headers/nvidia/net_v7.h \
-	nccl-headers/nvidia/net_v8.h \
-	nccl-headers/nvidia/types.h \
-	nccl-headers/nvidia/tuner.h \
-	nccl-headers/nvidia/tuner_v1.h \
-	nccl-headers/nvidia/tuner_v2.h \
-	nccl-headers/neuron/net.h \
-	nccl-headers/neuron/net_v4.h \
-	nccl-headers/neuron/net_v5.h \
-	nccl-headers/neuron/error.h \
 	nccl_ofi_platform.h \
-	contrib/uthash.h \
-	contrib/utlist.h \
 	nccl_ofi_ep_addr_list.h

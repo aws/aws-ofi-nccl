@@ -9,6 +9,7 @@ tags
 
 src/tuner/.dirstamp
 src/tuner/*.lo
+src/tuner/*.la
 
 tests/functional/*.o
 tests/unit/*.o

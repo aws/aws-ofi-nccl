@@ -5,20 +5,23 @@
 #ifndef TEST_COMMON_H_
 #define TEST_COMMON_H_
 
+#include "config.h"
+
+#include <dlfcn.h>
+#include <stdarg.h>
 #include <stdio.h>
-#include <string.h>
 #include <stdlib.h>
-#include "nccl-headers/net.h"
+#include <string.h>
+#include <unistd.h>
+
+#include <cuda_runtime.h>
+#include <nccl/net.h>
+#include <mpi.h>
+
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_param.h"
-#include "mpi.h"
-#include "config.h"
-#include <unistd.h>
-#include <dlfcn.h>
-#include <stdarg.h>
-#include <cuda_runtime.h>
 
 #define STR2(v)		#v
 #define STR(v)		STR2(v)

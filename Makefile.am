@@ -5,7 +5,7 @@
 #
 
 ACLOCAL_AMFLAGS = -I m4
-SUBDIRS = include src topology tests
+SUBDIRS = include 3rd-party src topology tests
 EXTRA_DIST = \
 	autogen.sh \
 	CODE_OF_CONDUCT.md \
