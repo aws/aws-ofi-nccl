@@ -1095,13 +1095,13 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *bounce_req)
 	nccl_net_ofi_rdma_send_comm_t *s_comm = get_send_comm(device, close_msg->send_comm_id);
 	assert(s_comm);
 
-	nccl_net_ofi_mutex_lock(&s_comm->receive_close_lock);
+	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 
 	assert(s_comm->received_close_message == false);
 	s_comm->received_close_message = true;
 	s_comm->n_ctrl_expected = close_msg->ctrl_counter;
 
-	nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
+	nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 	return repost_bounce_buff(ep, bounce_req);
 }
@@ -1211,9 +1211,9 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 			goto exit;
 		}
 
-		nccl_net_ofi_mutex_lock(&s_comm->receive_close_lock);
+		nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 		s_comm->n_ctrl_received += 1;
-		nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
+		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 		break;
 	case NCCL_OFI_RDMA_MSG_CLOSE:
@@ -3682,7 +3682,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	}
 #endif
 
-	ret = nccl_net_ofi_mutex_destroy(&s_comm->receive_close_lock);
+	ret = nccl_net_ofi_mutex_destroy(&s_comm->ctrl_recv_lock);
 	if (ret != 0) {
 		return ret;
 	}
@@ -3720,12 +3720,12 @@ static int send_comm_process_all_finalizing(void)
 			goto exit;
 		}
 
-		nccl_net_ofi_mutex_lock(&s_comm->receive_close_lock);
+		nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 
 		bool ready_to_destroy = (s_comm->received_close_message) &&
 			(s_comm->n_ctrl_received == s_comm->n_ctrl_expected);
 
-		nccl_net_ofi_mutex_unlock(&s_comm->receive_close_lock);
+		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 		if (ready_to_destroy) {
 			nccl_ofi_deque_remove(s_comm_cleanup_list, elem);
@@ -5917,7 +5917,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_mutex_init(&ret_s_comm->receive_close_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&ret_s_comm->ctrl_recv_lock, NULL);
 	if (ret != 0) {
 		free(ret_s_comm);
 		return ret;
@@ -6024,7 +6024,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, ret_s_comm->local_comm_id);
 			}
 		}
-		nccl_net_ofi_mutex_destroy(&ret_s_comm->receive_close_lock);
+		nccl_net_ofi_mutex_destroy(&ret_s_comm->ctrl_recv_lock);
 		free(ret_s_comm);
 	}
 
