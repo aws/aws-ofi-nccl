@@ -23,7 +23,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         [check_pkg_found=no],
         [AS_IF([test -d $(realpath ${with_cuda})/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
          CUDA_LDFLAGS="-L$(realpath ${with_cuda})/${check_pkg_libdir}"
-         CUDA_CPPFLAGS="-I$(realpath $(realpath ${with_cuda})/include)"
+         CUDA_CPPFLAGS="-isystem $(realpath $(realpath ${with_cuda})/include)"
          CUDA_LIBS="-lcudart_static -lrt -ldl"
          LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
          LIBS="${CUDA_LIBS} ${LIBS}"
