@@ -535,6 +535,7 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
 	uint64_t n_ctrl_expected;
+	uint16_t last_ctrl_received;
 
 	bool comm_active;
 
@@ -614,6 +615,8 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
+
+	uint16_t last_ctrl_sent;
 
 	/* Number of rails */
 	int num_rails;
