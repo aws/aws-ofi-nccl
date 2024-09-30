@@ -78,6 +78,9 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 #else
 			return;
 #endif
+		case NCCL_LOG_NONE:
+		case NCCL_LOG_VERSION:
+		case NCCL_LOG_ABORT:
 		default:
 			break;
 	};

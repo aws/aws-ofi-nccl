@@ -16,26 +16,25 @@
 
 #define QUOTE(x)                        #x
 #define DECLARE_CUDA_FUNCTION(function) static PFN_##function pfn_##function = NULL
-#define RESOLVE_CUDA_FUNCTION(function)                                                                             \
-	do {                                                                                                        \
-		enum cudaDriverEntryPointQueryResult result;                                                        \
-		cudaError_t err = cudaGetDriverEntryPoint(QUOTE(function),                                          \
-		                                          (void **)&pfn_##function,                                 \
-		                                          cudaEnableDefault,                                        \
-		                                          &result);                                                 \
-		if (err != cudaSuccess) {                                                                           \
-			switch (result) {                                                                           \
-			case cudaDriverEntryPointSymbolNotFound:                                                    \
-				NCCL_OFI_WARN("Failed to resolve CUDA function %s", QUOTE(function));               \
-				break;                                                                              \
-			case cudaDriverEntryPointVersionNotSufficent:                                               \
-				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", QUOTE(function));      \
-				break;                                                                              \
-			default:                                                                                    \
-				NCCL_OFI_WARN("Unexpected cudaDriverEntryPointQueryResutlt value %d", (int)result); \
-				break;                                                                              \
-			}                                                                                           \
-		}                                                                                                   \
+#define RESOLVE_CUDA_FUNCTION(function)                                                                                 \
+	do {                                                                                                            \
+		enum cudaDriverEntryPointQueryResult result;                                                            \
+		cudaError_t err =                                                                                       \
+			cudaGetDriverEntryPoint(QUOTE(function), (void **)&pfn_##function, cudaEnableDefault, &result); \
+		if (err != cudaSuccess) {                                                                               \
+			switch (result) {                                                                               \
+			case cudaDriverEntryPointSymbolNotFound:                                                        \
+				NCCL_OFI_WARN("Failed to resolve CUDA function %s", QUOTE(function));                   \
+				break;                                                                                  \
+			case cudaDriverEntryPointVersionNotSufficent:                                                   \
+				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", QUOTE(function));          \
+				break;                                                                                  \
+			case cudaDriverEntryPointSuccess:                                                               \
+			default:                                                                                        \
+				NCCL_OFI_WARN("Unexpected cudaDriverEntryPointQueryResutlt value %d", (int)result);     \
+				break;                                                                                  \
+			}                                                                                               \
+		}                                                                                                       \
 	} while (0);
 
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice);
@@ -125,6 +124,8 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
 	case cudaMemoryTypeDevice:
 		*dev_id = attrs.device;
 		return 0;
+	case cudaMemoryTypeUnregistered:
+	case cudaMemoryTypeHost:
 	default:
 		NCCL_OFI_WARN("Invalid buffer pointer provided");
 		*dev_id = -1;

@@ -1354,6 +1354,8 @@ static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
 		return "ERROR";
 	case NCCL_OFI_RDMA_REQ_INVALID_STATE:
 		return "INVALID";
+	default:
+		return "unknown";
 	}
 	return "unknown";
 }
@@ -1391,6 +1393,8 @@ static const char *req_type_str(nccl_net_ofi_rdma_req_type_t type)
 		return "EAGER_COPY";
 	case NCCL_OFI_RDMA_INVALID_TYPE:
 		return "INVALID";
+	default:
+		return "unknown";
 	}
 	return "unknown";
 }
@@ -1515,6 +1519,19 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
 				break;
 			}
+			case NCCL_OFI_RDMA_READ:
+			case NCCL_OFI_RDMA_RECV:
+			case NCCL_OFI_RDMA_SEND_CTRL:
+			case NCCL_OFI_RDMA_SEND_CLOSE:
+			case NCCL_OFI_RDMA_RECV_SEGMS:
+			case NCCL_OFI_RDMA_EAGER_COPY:
+			case NCCL_OFI_RDMA_BOUNCE:
+			case NCCL_OFI_RDMA_FLUSH:
+			case NCCL_OFI_RDMA_SEND_CONN:
+			case NCCL_OFI_RDMA_RECV_CONN:
+			case NCCL_OFI_RDMA_RECV_CONN_RESP:
+			case NCCL_OFI_RDMA_SEND_CONN_RESP:
+			case NCCL_OFI_RDMA_INVALID_TYPE:
 			default:
 				NCCL_OFI_WARN("Write complete from unexpected request type!");
 				ret = -EINVAL;
@@ -1539,6 +1556,18 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
 				break;
 			}
+			case NCCL_OFI_RDMA_SEND:
+			case NCCL_OFI_RDMA_WRITE:
+			case NCCL_OFI_RDMA_RECV:
+			case NCCL_OFI_RDMA_SEND_CTRL:
+			case NCCL_OFI_RDMA_SEND_CLOSE:
+			case NCCL_OFI_RDMA_RECV_SEGMS:
+			case NCCL_OFI_RDMA_BOUNCE:
+			case NCCL_OFI_RDMA_SEND_CONN:
+			case NCCL_OFI_RDMA_RECV_CONN:
+			case NCCL_OFI_RDMA_RECV_CONN_RESP:
+			case NCCL_OFI_RDMA_SEND_CONN_RESP:
+			case NCCL_OFI_RDMA_INVALID_TYPE:
 			default:
 				NCCL_OFI_WARN("Read complete from unexpected request type!");
 				ret = -EINVAL;
@@ -1688,6 +1717,16 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 		case NCCL_OFI_RDMA_READ: // Post RMA read
 			rc = post_rma_read(req);
 			break;
+		case NCCL_OFI_RDMA_WRITE:
+		case NCCL_OFI_RDMA_RECV:
+		case NCCL_OFI_RDMA_SEND:
+		case NCCL_OFI_RDMA_RECV_SEGMS:
+		case NCCL_OFI_RDMA_BOUNCE:
+		case NCCL_OFI_RDMA_SEND_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN_RESP:
+		case NCCL_OFI_RDMA_SEND_CONN_RESP:
+		case NCCL_OFI_RDMA_INVALID_TYPE:
 		default:
 			NCCL_OFI_WARN("Unexpected type: %d", req->type);
 			return -EINVAL;
@@ -1751,6 +1790,14 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 			case NCCL_OFI_RDMA_FLUSH:
 				rc = receive_progress(req, false);
 				break;
+			case NCCL_OFI_RDMA_RECV:
+			case NCCL_OFI_RDMA_RECV_SEGMS:
+			case NCCL_OFI_RDMA_SEND_CONN:
+			case NCCL_OFI_RDMA_SEND_CLOSE:
+			case NCCL_OFI_RDMA_RECV_CONN:
+			case NCCL_OFI_RDMA_RECV_CONN_RESP:
+			case NCCL_OFI_RDMA_SEND_CONN_RESP:
+			case NCCL_OFI_RDMA_INVALID_TYPE:
 			default:
 				NCCL_OFI_WARN("Unexpected type: %d", req->type);
 				return -EINVAL;

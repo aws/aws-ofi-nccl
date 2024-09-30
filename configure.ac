@@ -197,6 +197,10 @@ ADD_PICKY_FLAGS([-Wshadow])
 dnl warn on security issues around functions that format output (ie printf)
 ADD_PICKY_FLAGS([-Wformat=2])
 
+dnl warn when a case statement is missing a break or a line that contains a
+dnl comment before the next case.
+ADD_PICKY_FLAGS([-Wimplicit-fallthrough=2])
+
 dnl enable GCC's static analyzer
 ADD_PICKY_FLAGS([-fanalyzer])
 dnl todo: clang-sa flags

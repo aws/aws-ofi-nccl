@@ -56,6 +56,7 @@ static inline const char *nccl_ofi_mr_ckey_type_str(nccl_ofi_mr_ckey_ref ckey)
 	case NCCL_OFI_MR_CKEY_DMABUF:
 		return "dmabuf";
 #endif
+	case NCCL_OFI_MR_CKEY_INVALID:
 	default:
 		__builtin_unreachable();
 		assert(false);
@@ -72,6 +73,7 @@ static inline uintptr_t nccl_ofi_mr_ckey_baseaddr(nccl_ofi_mr_ckey_ref ckey)
 	case NCCL_OFI_MR_CKEY_DMABUF:
 		return (uintptr_t)ckey->fi_mr_dmabuf.base_addr + ckey->fi_mr_dmabuf.offset;
 #endif
+	case NCCL_OFI_MR_CKEY_INVALID:
 	default:
 		__builtin_unreachable();
 		assert(false);
@@ -88,6 +90,7 @@ static inline uintptr_t nccl_ofi_mr_ckey_len(nccl_ofi_mr_ckey_ref ckey)
 	case NCCL_OFI_MR_CKEY_DMABUF:
 		return ckey->fi_mr_dmabuf.len;
 #endif
+	case NCCL_OFI_MR_CKEY_INVALID:
 	default:
 		__builtin_unreachable();
 		assert(false);
