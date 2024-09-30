@@ -24,7 +24,7 @@ AC_DEFUN([CHECK_PKG_MPI], [
         [AS_IF([test -d ${with_mpi}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
          mpi_bindir="${with_mpi}/bin/"
 
-         MPI_CPPFLAGS="-I${with_mpi}/include"
+         MPI_CPPFLAGS="-isystem ${with_mpi}/include"
          MPI_LDFLAGS="-L${with_mpi}/${check_pkg_libdir}"
 
          CPPFLAGS="${MPI_CPPFLAGS} ${CPPFLAGS}"

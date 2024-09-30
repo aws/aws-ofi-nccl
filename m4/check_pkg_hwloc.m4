@@ -22,7 +22,7 @@ AC_DEFUN([CHECK_PKG_HWLOC], [
         [test "${with_hwloc}" = "no"],
         [check_pkg_found=no],
         [AS_IF([test -d ${with_hwloc}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
-         CPPFLAGS="-I${with_hwloc}/include ${CPPFLAGS}"
+         CPPFLAGS="-isystem ${with_hwloc}/include ${CPPFLAGS}"
          LDFLAGS="-L${with_hwloc}/${check_pkg_libdir} ${LDFLAGS}"])
 
   AS_IF([test "${check_pkg_found}" = "yes"],

@@ -22,7 +22,7 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
         [test "${with_libfabric}" = "no"],
         [check_pkg_found=no],
         [AS_IF([test -d ${with_libfabric}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
-         CPPFLAGS="-I${with_libfabric}/include ${CPPFLAGS}"
+         CPPFLAGS="-isystem ${with_libfabric}/include ${CPPFLAGS}"
          LDFLAGS="-L${with_libfabric}/${check_pkg_libdir} ${LDFLAGS}"])
 
   AS_IF([test "${check_pkg_found}" = "yes"],

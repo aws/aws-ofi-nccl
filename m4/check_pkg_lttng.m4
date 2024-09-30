@@ -20,7 +20,7 @@ AC_DEFUN([CHECK_PKG_LTTNG], [
         [test "${with_lttng}" = "no"],
         [check_pkg_found=no],
         [AS_IF([test -d ${with_lttng}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
-         CPPFLAGS="-I${with_lttng}/include ${CPPFLAGS}"
+         CPPFLAGS="-isystem ${with_lttng}/include ${CPPFLAGS}"
          LDFLAGS="-L${with_lttng}/${check_pkg_libdir} ${LDFLAGS}"])
 
   AS_IF([test "${check_pkg_found}" = "yes"],

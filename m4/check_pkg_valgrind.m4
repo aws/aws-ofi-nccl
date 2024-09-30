@@ -19,9 +19,9 @@ AC_DEFUN([CHECK_PKG_VALGRIND], [
 
   AS_IF([test "${valgrind_enabled}" = "1" -a "${with_valgrind}" != "yes"],
         [AS_IF([test -f ${with_valgrind}/valgrind/valgrind.h],
-               [CPPFLAGS="-I${with_valgrind} ${CPPFLAGS}"],
+               [CPPFLAGS="-isystem ${with_valgrind} ${CPPFLAGS}"],
                [test -f ${with_valgrind}/include/valgrind/valgrind.h],
-               [CPPFLAGS="-I${with_valgrind}/include ${CPPFLAGS}"],
+               [CPPFLAGS="-isystem ${with_valgrind}/include ${CPPFLAGS}"],
                [AC_MSG_ERROR(valgrind.h not found in ${with_valgrind})])])
 
   AS_IF([test "${valgrind_enabled}" = "1"],
