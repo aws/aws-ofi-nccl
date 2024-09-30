@@ -1038,9 +1038,9 @@ static int get_device_property(unsigned domain, unsigned bus,
 			       unsigned dev, unsigned func,
 			       const char *prop_name, char *prop)
 {
+	static char const *const path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
 	int ret = 0;
 	FILE *file;
-	const char *path_format = "/sys/bus/pci/devices/%04x:%02x:%02x.%01x/%s";
 	ssize_t path_len;
 	char *path = NULL;
 
