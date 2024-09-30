@@ -299,10 +299,10 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist, v
 	nccl_net_ofi_mutex_lock(&freelist->lock);
 
 	if (freelist->have_reginfo) {
-		entry = (struct nccl_ofi_freelist_elem_t *)((char*)entry_p + freelist->reginfo_offset);
+		entry = (struct nccl_ofi_freelist_elem_t *)((uintptr_t)entry_p + freelist->reginfo_offset);
 		nccl_net_ofi_mem_defined_unaligned(entry, sizeof(*entry));
 	} else {
-		entry = (struct nccl_ofi_freelist_elem_t *)entry_p;
+		entry = (struct nccl_ofi_freelist_elem_t *)(uintptr_t)entry_p;
 		entry->ptr = (void *)entry;
 	}
 

@@ -239,7 +239,7 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		return ret;
 	}
 
-	block = (struct nccl_ofi_freelist_block_t*)(buffer + (freelist->entry_size * allocation_count));
+	block = (struct nccl_ofi_freelist_block_t *)((uintptr_t)buffer + (freelist->entry_size * allocation_count));
 	block->memory = buffer;
 	block->memory_size = block_mem_size;
 	block->next = freelist->blocks;
@@ -293,12 +293,12 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 
 		if (freelist->have_reginfo) {
 			struct nccl_ofi_freelist_reginfo_t *reginfo =
-				(struct nccl_ofi_freelist_reginfo_t*)(buffer + freelist->reginfo_offset);
+				(struct nccl_ofi_freelist_reginfo_t *)((uintptr_t)buffer + freelist->reginfo_offset);
 			reginfo->base_offset = (char *)buffer - (char *)block->memory;
 			reginfo->mr_handle = block->mr_handle;
 			entry = &(reginfo->elem);
 		} else {
-			entry = (struct nccl_ofi_freelist_elem_t*)buffer;
+			entry = (struct nccl_ofi_freelist_elem_t *)(uintptr_t)buffer;
 		}
 		entry->ptr = buffer;
 		entry->next = freelist->entries;
