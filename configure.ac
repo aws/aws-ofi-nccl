@@ -194,6 +194,8 @@ ADD_PICKY_FLAGS([-Wno-unused-parameter])
 
 dnl warn when a variable shadows another variable.
 ADD_PICKY_FLAGS([-Wshadow])
+dnl warn on security issues around functions that format output (ie printf)
+ADD_PICKY_FLAGS([-Wformat=2])
 
 dnl enable GCC's static analyzer
 ADD_PICKY_FLAGS([-fanalyzer])

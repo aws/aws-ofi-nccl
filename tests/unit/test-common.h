@@ -34,10 +34,13 @@ static inline void logger(ncclDebugLogLevel level, unsigned long flags, const ch
 			break;
 	};
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat=2"
 	va_start(vargs, fmt);
 	vprintf(fmt, vargs);
 	printf("\n");
 	va_end(vargs);
+#pragma GCC diagnostic pop
 }
 
 #endif // End TEST_COMMON_H_

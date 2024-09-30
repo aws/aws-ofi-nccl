@@ -82,10 +82,13 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 			break;
 	};
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat=2"
 	va_start(vargs, fmt);
 	vprintf(fmt, vargs);
 	printf("\n");
 	va_end(vargs);
+#pragma GCC diagnostic pop
 }
 
 void print_dev_props(int dev, test_nccl_properties_t *props)
