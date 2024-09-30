@@ -198,6 +198,8 @@ dnl warn on security issues around functions that format output (ie printf)
 ADD_PICKY_FLAGS([-Wformat=2])
 dnl warn for potential performance problem casts
 ADD_PICKY_FLAGS([-Wcast-align])
+dnl warn if a null dereference is detected
+ADD_PICKY_FLAGS([-Wnull-dereference])
 
 dnl warn when a case statement is missing a break or a line that contains a
 dnl comment before the next case.
