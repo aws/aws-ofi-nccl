@@ -1587,6 +1587,9 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	/* Build handle */
 	local_ep_name = get_local_address(ep->ofi_ep);
+	if (local_ep_name == NULL) {
+		return -EINVAL;
+	}
 
 	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
 	handle->comm_id = (uint32_t)tag;
@@ -1937,6 +1940,10 @@ static inline nccl_net_ofi_sendrecv_req_t *prepare_send_req(nccl_net_ofi_sendrec
 {
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 
+	if (OFI_UNLIKELY(s_comm == NULL)) {
+		return NULL;
+	}
+
 	req = allocate_req(s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
@@ -2036,7 +2043,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 		/* Build send_comm */
 		ret = create_send_comm(handle, ep, &s_comm);
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret != 0 || s_comm == NULL)) {
 			return ret;
 		}
 
