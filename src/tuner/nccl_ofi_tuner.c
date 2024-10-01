@@ -352,6 +352,8 @@ ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 		protocol = nccl_ofi_tuner_ctx->regions[i].protocol;
 		if (table[algorithm][protocol] == NCCL_ALGO_PROTO_IGNORE || algorithm >= numAlgo ||
 		    protocol >= numProto) {
+			/* Either NCCL says this combination is not valid/applicable or the algorithm or protocol is
+			 * not in the table, hence it is not supported by this NCCL version. */
 			continue;
 		}
 
