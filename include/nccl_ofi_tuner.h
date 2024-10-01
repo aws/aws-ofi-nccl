@@ -45,14 +45,15 @@ typedef struct nccl_ofi_tuner_region {
 
 typedef struct nccl_ofi_tuner_context {
 	nccl_ofi_tuner_model_dims_t dims;
-	size_t num_regions;
-	nccl_ofi_tuner_region_t *regions;
+	size_t num_regions[NCCL_NUM_FUNCTIONS];
+	nccl_ofi_tuner_region_t *regions[NCCL_NUM_FUNCTIONS];
 } nccl_ofi_tuner_context_t;
 
 /* Functions to set and test regions */
 int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *region);
 
 ncclResult_t set_regions(nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx,
+			 ncclFunc_t collType,
 			 size_t num_regions,
 			 const nccl_ofi_tuner_region_t regions[]);
 

@@ -201,17 +201,19 @@ int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *regi
 
 /* Allocate and copy regions */
 ncclResult_t set_regions(nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx,
+			 ncclFunc_t collType,
 			 size_t num_regions,
 			 const nccl_ofi_tuner_region_t regions[])
 {
-	nccl_ofi_tuner_ctx->num_regions = num_regions;
-	nccl_ofi_tuner_ctx->regions = (nccl_ofi_tuner_region_t *)calloc(num_regions, sizeof(nccl_ofi_tuner_region_t));
-	if (nccl_ofi_tuner_ctx->regions == NULL) {
+	assert(collType < NCCL_NUM_FUNCTIONS);
+	nccl_ofi_tuner_ctx->num_regions[collType] = num_regions;
+	nccl_ofi_tuner_ctx->regions[collType] = (nccl_ofi_tuner_region_t *)calloc(num_regions, sizeof(nccl_ofi_tuner_region_t));
+	if (nccl_ofi_tuner_ctx->regions[collType] == NULL) {
 		NCCL_OFI_WARN("Context regions allocation failed.");
 		return ncclInternalError;
 	}
 
-	memcpy(nccl_ofi_tuner_ctx->regions, &regions[0], num_regions * sizeof(nccl_ofi_tuner_region_t));
+	memcpy(nccl_ofi_tuner_ctx->regions[collType], &regions[0], num_regions * sizeof(nccl_ofi_tuner_region_t));
 	return ncclSuccess;
 }
 
