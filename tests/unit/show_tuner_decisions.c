@@ -11,7 +11,7 @@
 
 #include "nccl_ofi_tuner.h"
 
-static const char *algo_names[] = { "tree", "ring", "collnet_direct", "collnet_chain", "nvls", "nvlstree" };
+static const char *algo_names[] = { "tree", "ring", "collnet_direct", "collnet_chain", "nvls", "nvlstree" , "pat" };
 static const char *proto_names[] = { "ll", "ll128", "simple" };
 void dummy_logger(ncclDebugLogLevel level, unsigned long flags, const char *file, int line, const char *fmt, ...) { return; };
 
