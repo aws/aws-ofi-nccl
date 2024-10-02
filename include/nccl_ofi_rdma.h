@@ -349,9 +349,8 @@ typedef struct {
 	void *data;
 	/* MR handles for the data buffer */
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	/* Schedule used to transfer this request. We save the pointer to
-	 * reference it when transferring the request over network. */
-	nccl_net_ofi_schedule_t *schedule;
+	/* Total number of completions. Expect completions from all NIC rail */
+	int total_num_compls;
 } rdma_req_flush_data_t;
 
 
