@@ -140,6 +140,9 @@ static int num_open_comms = 0;
 static size_t max_write_inline_size = 0;
 static bool is_max_write_inline_size_initialized = false;
 
+/* CPU cache line size */
+static ssize_t cpu_cache_line_size;
+
 /* Function prototypes */
 static int send_progress(nccl_net_ofi_rdma_req_t *req);
 
@@ -1338,6 +1341,19 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	return 0;
 }
 
+/**
+ * @brief	Handle completion for a flush request
+ */
+static inline int handle_flush_comp(nccl_net_ofi_rdma_req_t *req)
+{
+	int ret;
+	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+
+	ret = inc_req_completion(req, 0, flush_data->total_num_compls);
+
+	return ret;
+}
+
 static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
 {
 	switch(state) {
@@ -1537,9 +1553,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 			switch (req->type) {
 			case NCCL_OFI_RDMA_FLUSH: {
 				/* fi_read flush is complete */
-
-				rdma_req_flush_data_t *flush_data = get_flush_data(req);
-				ret = inc_req_completion(req, 0, flush_data->schedule->num_xfer_infos);
+				ret = handle_flush_comp(req);
 				break;
 			}
 			case NCCL_OFI_RDMA_EAGER_COPY: {
@@ -2116,15 +2130,7 @@ static inline int free_flush_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_FLUSH);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_flush_data_t *flush_data;
 
-	flush_data = get_flush_data(req);
-
-	if (flush_data->schedule) {
-		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
-		nccl_net_ofi_release_schedule(device->scheduler, flush_data->schedule);
-		flush_data->schedule = NULL;
-	}
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
 			req, dec_inflight_reqs);
 }
@@ -3485,6 +3491,7 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 	int rc;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
 	nccl_net_ofi_rdma_flush_buffer_t *flush_buff = &r_comm->flush_buff;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
@@ -3496,10 +3503,13 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 		return ret;
 	}
 
+	/* make sure flush destination address does not overflow beyond host buffer */
+	assert(((cpu_cache_line_size * ep->num_rails) + flush_buff->size) <= system_page_size);
+
 	/* Check if provider requires registration of local buffers */
 	if (local_mr == true) {
 		/* Register flush dummy buffer for provider access */
-		ret = reg_internal_mr_ep((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep, flush_buff->host_buffer, system_page_size,
+		ret = reg_internal_mr_ep(ep, flush_buff->host_buffer, system_page_size,
 			  NCCL_PTR_HOST, &mr_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
@@ -3903,6 +3913,38 @@ static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 	return ret;
 }
 
+static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+					void *buff,
+					nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
+					nccl_net_ofi_rdma_req_t **ret_req)
+{
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	int dev_id = r_comm->base.base.dev_id;
+	rdma_req_flush_data_t *flush_data = NULL;
+	*ret_req = NULL;
+
+	/* Allocate NCCL OFI request */
+	nccl_net_ofi_rdma_req_t *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
+			      dev_id);
+		return -ENOMEM;
+	}
+	req->comm = &r_comm->base.base;
+	req->dev_id = dev_id;
+	req->type = NCCL_OFI_RDMA_FLUSH;
+	req->free = free_flush_req;
+
+	flush_data = get_flush_data(req);
+	flush_data->data = buff;
+	flush_data->mr_handle = buff_mr_handle;
+	flush_data->total_num_compls = ep->num_rails;
+
+	*ret_req = req;
+
+	return 0;
+}
+
 static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 				   int *sizes, nccl_net_ofi_mr_handle_t **mhandles,
 				   nccl_net_ofi_req_t **base_req)
@@ -3910,17 +3952,12 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	int ret = 0;
 	int flush_n = 0;
 	bool network_busy = false;
-	int dev_id = 0;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
-	nccl_net_ofi_rdma_device_t *device = NULL;
-	nccl_net_ofi_scheduler_t *scheduler = NULL;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 
 	nccl_net_ofi_rdma_req_t *req = NULL;
-	rdma_req_flush_data_t *flush_data = NULL;
 	ssize_t rc = 0;
-	void *data = NULL;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
 
 	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
@@ -3930,16 +3967,8 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto error;
 	}
 
-	dev_id = recv_comm->base.dev_id;
-
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	assert(ep != NULL);
-
-	device = get_device_from_ep(ep);
-	assert(device != NULL);
-
-	scheduler = device->scheduler;
-	assert(scheduler != NULL);
 
 	/* Process any pending requests */
 	network_busy = false;
@@ -3989,33 +4018,8 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto exit;
 	}
 
-	data = buffers[flush_n];
-
-	/* Allocate NCCL OFI request */
-	req = allocate_req(r_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(req == NULL)) {
-		ret = -ENOMEM;
-		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
-			      dev_id);
-		goto exit;
-	}
-	req->comm = &r_comm->base.base;
-	req->dev_id = dev_id;
-	req->type = NCCL_OFI_RDMA_FLUSH;
-	req->free = free_flush_req;
-
-	flush_data = get_flush_data(req);
-	flush_data->data = data;
-	flush_data->mr_handle = mr_handles[flush_n];
-	flush_data->schedule = scheduler->get_schedule(scheduler, r_comm->flush_buff.size, device->num_rails);
-	if (OFI_UNLIKELY(flush_data->schedule == NULL)) {
-		ret = -EINVAL;
-		goto exit;
-	} else if (OFI_UNLIKELY(flush_data->schedule->num_xfer_infos != 1)) {
-		NCCL_OFI_WARN("Invalid schedule for flush message (%zu bytes). Expected one rail, but got %zu",
-			      r_comm->flush_buff.size,
-			      flush_data->schedule->num_xfer_infos);
-		ret = -EINVAL;
+	ret = rdma_comm_alloc_flush_req(r_comm, buffers[flush_n], mr_handles[flush_n], &req);
+	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
 
@@ -5346,47 +5350,48 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &r_comm->flush_buff;
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
-	nccl_net_ofi_schedule_t *schedule = flush_data->schedule;
-
-	assert(schedule != NULL);
-
-	// Should be using a single rail for posting the control message
-	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
-
-	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	comm_rail = get_recv_comm_rail(r_comm, xfer_info->rail_id);
+	ssize_t rc = 0;
 
-	void *desc = fi_mr_desc(r_comm->flush_buff.mr_handle->mr[xfer_info->rail_id]);
+	/* iterate all rails and post RDMA local read */
+	for (int rail_id = 0; rail_id < ep->num_rails; rail_id++) {
+		comm_rail = get_recv_comm_rail(r_comm, rail_id);
 
-	assert(xfer_info->offset == 0);
-	assert(r_comm->flush_buff.size == xfer_info->msg_size);
+		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
 
-	uint64_t cuda_key = 0ULL;
-	if (flush_data->mr_handle != NULL) {
-		struct fid_mr *mr_handle = NULL;
-		mr_handle = flush_data->mr_handle->mr[xfer_info->rail_id];
+		uint64_t cuda_key = 0ULL;
+		if (flush_data->mr_handle != NULL) {
+			struct fid_mr *mr_handle = NULL;
+			mr_handle = flush_data->mr_handle->mr[rail_id];
 
-		/* Extract remote key */
-		cuda_key = fi_mr_key(mr_handle);
-		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
-			NCCL_OFI_WARN("Memory registration may not have completed.");
-			return -1;
+			/* Extract remote key */
+			cuda_key = fi_mr_key(mr_handle);
+			if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+				NCCL_OFI_WARN("Memory registration may not have completed.");
+				rc = -FI_ENODATA;
+				goto exit;
+			}
+		}
+
+		uint64_t host_buff_addr = (uint64_t)f_buff->host_buffer + (cpu_cache_line_size * rail_id);
+
+		rc = fi_read(comm_rail->local_ep,
+			     (void *)host_buff_addr,
+			     f_buff->size, desc, comm_rail->local_addr,
+			     (uint64_t)(virt_addr_mr ? flush_data->data : 0),
+			     cuda_key, req);
+		if ((rc != 0) && (rc != -FI_EAGAIN)) {
+			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
+				      rc, fi_strerror(-rc));
+			goto exit;
 		}
 	}
 
-	ssize_t rc = fi_read(comm_rail->local_ep,
-			     r_comm->flush_buff.host_buffer,
-			     xfer_info->msg_size, desc, comm_rail->local_addr,
-			     (uint64_t)(virt_addr_mr ? flush_data->data : 0),
-			     cuda_key, req);
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
-			      rc, fi_strerror(-rc));
-	}
-
-	return rc;
+ exit:
+	return (int)rc;
 }
 
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req)
@@ -7452,6 +7457,15 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
 		goto error;
+	}
+
+	cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
+	if (cpu_cache_line_size < 0) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Unable to obtain CPU cache line size from sysconf. "
+			      "fallback to predefined value %llu",
+			      NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
+		cpu_cache_line_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE;
 	}
 
 	*plugin_p = &plugin->base;

@@ -75,6 +75,9 @@ extern "C" {
 /* Flush read size (bytes) */
 #define NCCL_OFI_FLUSH_SIZE             (4ULL)
 
+/* CPU cache line size (bytes) */
+#define NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE	(64ULL)
+
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
