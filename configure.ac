@@ -172,28 +172,44 @@ AS_IF([test "${enable_trace}" = "yes" ],
        AC_MSG_RESULT(no)])
 AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output should include TRACE level])
 
+picky_cflags=""
+AC_DEFUN([ADD_PICKY_FLAGS],[
+    AC_LANG_PUSH([C])
+    AX_CHECK_COMPILE_FLAG([$1], [picky_cflags="${picky_cflags} $1"], [], [-Werror])
+    AC_LANG_POP()
+    ])
+
+dnl standard and normal
+ADD_PICKY_FLAGS([-Wall -Wextra])
+dnl C specific warning that warngs when using C features which prevent parsing
+dnl as C++. Best-effort, and doesn't cover everything.
+ADD_PICKY_FLAGS([-Wc++-compat])
+
+dnl some top-level API functions have unused parameters, but we have to keep
+dnl them. TODO: explicitly annotate those functions, rather than setting this
+dnl globally.
+ADD_PICKY_FLAGS([-Wno-unused-parameter])
+
+dnl enable GCC's static analyzer
+ADD_PICKY_FLAGS([-fanalyzer])
+dnl todo: clang-sa flags
+
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
 AS_IF([test "${enable_picky_compiler}" != "no"],
-      [picky_compiler_flags="-Wall -Wc++-compat -Wextra -Wno-unused-parameter"
-       AC_MSG_NOTICE([Adding ${picky_compiler_flags} to CFLAGS.])
-       CFLAGS="${CFLAGS} ${picky_compiler_flags}"
-       AS_UNSET([picky_compiler_flags])])
+      [AC_MSG_NOTICE([Adding ${picky_cflags} to CFLAGS.])
+       CFLAGS="${CFLAGS} ${picky_cflags}"
+       AS_UNSET([picky_cflags])])
 
-static_analysis_flags=""
-gcc_fanalyzer_flags="-fanalyzer"
-AX_CHECK_COMPILE_FLAG([${gcc_fanalyzer_flags}], [static_analysis_flags="${gcc_fanalyzer_flags}"], [], [-Werror])
-dnl todo: clang-sa flags
-werror_flags="${static_analysis_flags} -Werror"
-
+werror_flags="-Werror"
 AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
 AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CFLAGS.])
-       CFLAGS="${CFLAGS} ${werror_flags}"],
+       CFLAGS="${werror_flags} ${CFLAGS}"],
       [test "${enable_werror}" = "yes"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CFLAGS.])
-       CFLAGS="${CFLAGS} ${werror_flags}"])
+       CFLAGS="${werror_flags} ${CFLAGS}"])
 
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
