@@ -5413,6 +5413,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
+	uint16_t last_ctrl_received = 0;
 	bool polled_cq = false;
 	bool have_ctrl = false;
 	bool eager = false;
@@ -5435,7 +5436,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	}
 
 	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
-	uint16_t last_ctrl_received = s_comm->last_ctrl_received;
+	last_ctrl_received = s_comm->last_ctrl_received;
 	nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 	dev_id = s_comm->base.base.dev_id;
