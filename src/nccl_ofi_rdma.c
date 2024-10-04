@@ -5758,12 +5758,13 @@ static inline nccl_net_ofi_rdma_send_comm_t *calloc_rdma_send_comm(int num_rails
  *		non-zero, on error
  */
 static inline int init_bounce_buffers_rail(nccl_net_ofi_ep_rail_t *ep_rail, nccl_net_ofi_rdma_ep_t *ep,
-					   size_t buff_size, size_t entry_alignment)
+					   size_t buff_size, size_t entry_alignment,
+					   size_t min_posted_count, size_t max_posted_count)
 {
 	int ret = 0;
 
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
-				     ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+				     max_posted_count, 16, 0,
 				     &ep_rail->bounce_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_reqs_fl");
@@ -5772,7 +5773,7 @@ static inline int init_bounce_buffers_rail(nccl_net_ofi_ep_rail_t *ep_rail, nccl
 
 	ep_rail->buff_size = buff_size;
 	ret = nccl_ofi_freelist_init_mr(buff_size,
-					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+					max_posted_count, 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					ep, 0, entry_alignment, &ep_rail->bounce_buff_fl);
 	if (ret != 0) {
@@ -5780,9 +5781,11 @@ static inline int init_bounce_buffers_rail(nccl_net_ofi_ep_rail_t *ep_rail, nccl
 		goto error;
 	}
 
-	ep_rail->min_bounce_posted = ofi_nccl_rdma_min_posted_bounce_buffers();
-	ep_rail->max_bounce_posted = ofi_nccl_rdma_max_posted_bounce_buffers();
+	ep_rail->min_bounce_posted = min_posted_count;
+	ep_rail->max_bounce_posted = max_posted_count;
 	ep_rail->num_bounce_posted = 0;
+
+	assert(ep_rail->max_bounce_posted >= ep_rail->min_bounce_posted);
 
 	ret = nccl_net_ofi_mutex_init(&ep_rail->bounce_mutex, NULL);
 	if (ret != 0) {
@@ -5841,7 +5844,9 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 					sizeof(nccl_ofi_rdma_connection_info_t)),
 					sizeof(nccl_net_ofi_rdma_close_msg_t));
 		ret = init_bounce_buffers_rail(&ep->control_rail, ep,
-			buff_size, BOUNCE_BUFFER_ALIGNMENT);
+			buff_size, BOUNCE_BUFFER_ALIGNMENT,
+			ofi_nccl_rdma_min_posted_ctrl_recv_buffers(),
+			ofi_nccl_rdma_max_posted_ctrl_recv_buffers());
 		if (ret != 0) {
 			return ret;
 		}
@@ -5855,7 +5860,9 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
 
 		ret = init_bounce_buffers_rail(rail, ep, buff_size,
-			BOUNCE_BUFFER_ALIGNMENT);
+			BOUNCE_BUFFER_ALIGNMENT,
+			ofi_nccl_rdma_min_posted_bounce_buffers(),
+			ofi_nccl_rdma_max_posted_bounce_buffers());
 		if (ret != 0) {
 
 			/* Cleanup previously-established rails */
