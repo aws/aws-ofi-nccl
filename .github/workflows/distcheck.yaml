@@ -47,6 +47,7 @@ jobs:
       matrix:
         sdk:
           - cuda
+          - neuron
         container:
           - public.ecr.aws/amazonlinux/amazonlinux:2023
           - public.ecr.aws/amazonlinux/amazonlinux:2
@@ -70,7 +71,7 @@ jobs:
 
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
-    name: ${{ matrix.displayname }}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/makeinstall
+    name: ${{ matrix.displayname }}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
     steps:
       - run: |
           yum -y update && yum -y install git tar util-linux findutils yum-utils
@@ -82,10 +83,13 @@ jobs:
           tar -xf aws-efa-installer-*.tar.gz
           cd aws-efa-installer/RPMS/${{ matrix.efainstallerdir }}/x86_64
           find . | grep rpm$ | xargs yum -y localinstall
+
       - name: Install hwloc, utilities.
         run: |
           yum -y install hwloc-devel autoconf automake libtool gcc g++ git make
+
       - name: Install CUDA
+        if: matrix.sdk == 'cuda'
         run: |
           ${{ matrix.configmanager }} --add-repo \
              http://developer.download.nvidia.com/compute/cuda/repos/${{ matrix.nvidiadistro }}/x86_64/cuda-${{ matrix.nvidiadistro }}.repo \
@@ -97,19 +101,37 @@ jobs:
         run: |
           ./autogen.sh
 
-      - name: Call `./configure`
+      - name: Run Configure
         run: |
-          ./configure --prefix=/opt/aws-ofi-nccl --with-mpi=/opt/amazon/openmpi \
-               --with-libfabric=/opt/amazon/efa \
-               --with-cuda=/usr/local/cuda \
-               --enable-tests=no \
-               --enable-platform-aws
+          if [ "${{ matrix.sdk }}" == "neuron" ]; then
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --enable-neuron
+          else
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --with-cuda=/usr/local/cuda/
+          fi
 
       - name: Call `make`
-        run: make -j
+        run: make
 
       - name: Call `make install`
         run: make install
+
+      - name: Call `make distcheck`
+        run: make distcheck
+
+      - name: Call `make check`
+        run: make check
 
   distcheck:
     runs-on: ubuntu-22.04
@@ -136,18 +158,9 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}/distcheck/
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
     steps:
       - uses: actions/checkout@v4
-      - name: Configure Neuron SDK Repository
-        if: matrix.sdk == 'neuron'
-        run: |
-          # Configure Linux for Neuron repository updates
-          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
-          deb https://apt.repos.neuron.amazonaws.com jammy main
-          EOF
-          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
-          sudo apt update -y
 
       - name: Add compiler repositories
         if: matrix.cc-variant == 'latest'
@@ -185,11 +198,6 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -y
           sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
-
-      - name: Install Neuron SDK
-        if: matrix.sdk == 'neuron'
-        run: |
-          sudo apt-get install -y aws-neuronx-runtime-lib
 
       - name: Install lttng
         if: matrix.tracing == 'lttng'
@@ -213,144 +221,38 @@ jobs:
           # actions/checkout@v4 would drop the plugin source in $PWD,
           # so go ahead and build it.
           ./autogen.sh
-          if [ "${{ matrix.sdk }}" == "cuda" ]
+          if [ "${{ matrix.sdk }}" == "neuron" ]
           then
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
-                        --with-cuda=/usr/local/cuda/ \
-                        --enable-tests \
-                        --enable-platform-aws
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --enable-neuron
           else
-            ./configure --with-libfabric=/opt/amazon/efa \
-                        --enable-neuron \
-                        --enable-platform-aws
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --with-cuda=/usr/local/cuda/
           fi
-          make -j "$(nproc)"
 
-      - name: Run Dist Check
+      - name: Call `make`
+        run: make
+
+      - name: Call `make install`
+        run: sudo make install
+
+      - name: Call `make distcheck`
         run: make distcheck
 
-      - name: Upload build logs
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.sdk }}-config.log
-          path: config.log
-          if-no-files-found: ignore
-
-  unit-tests:
-    runs-on: ubuntu-22.04
-    strategy:
-      matrix:
-        cc-variant:
-          - latest
-          - legacy
-        cc:
-          - gcc
-          - clang
-        sdk:
-          - cuda
-          - neuron
-        include:
-          - cc-variant: latest
-            cc: clang
-            cc-version: 18
-          - cc-variant: latest
-            cc: gcc
-            cc-version: 13
-
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}(${{matrix.cc-variant}})/unit-tests/
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure Neuron SDK Repository
-        if: matrix.sdk == 'neuron'
-        run: |
-          # Configure Linux for Neuron repository updates
-          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
-          deb https://apt.repos.neuron.amazonaws.com jammy main
-          EOF
-          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
-          sudo apt update -y
-
-      - name: Add compiler repositories
-        if: matrix.cc-variant == 'latest'
-        run: |
-          if [ "${{ matrix.cc }}" == "clang" ]; then
-            wget https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            # Delete the last line, allowing us to use the cache below for
-            # actually installing the package; this just adds the
-            # repository.
-            sed -i '$ d' llvm.sh
-            sudo ./llvm.sh ${{ matrix.cc-version }}
-          fi
-
-          if [ "${{ matrix.cc }}" == "gcc" ]; then
-            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-          fi
-
-      - name: Install Latest Compiler
-        if: matrix.cc-variant == 'latest'
-        run: |
-          sudo apt-get install -y ${{ matrix.cc }}-${{matrix.cc-version}}
-
-      - name: Install Base Dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ env.APT_PACKAGES }}
-
-      - name: Install CUDA SDK
-        if: matrix.sdk == 'cuda'
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
-          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
-          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update -y
-          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
-
-      - name: Install Neuron SDK
-        if: matrix.sdk == 'neuron'
-        run: |
-          sudo apt-get install -y aws-neuronx-runtime-lib
-
-      - name: Fetch and Install EFA Installer Dependencies
-        run: |
-          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
-          tar -xf aws-efa-installer-*.tar.gz
-          pushd aws-efa-installer/
-              sudo ./efa_installer.sh -y --skip-kmod
-          popd
-
-      - name: Build Plugin
-        run: |
-          set -x
-
-          export CC="${{ matrix.realcc || matrix.cc }}"
-
-          # actions/checkout@v4 would drop the plugin source in $PWD,
-          # so go ahead and build it.
-          ./autogen.sh
-          if [ "${{ matrix.sdk }}" == "cuda" ]
-          then
-            ./configure --with-mpi=/opt/amazon/openmpi \
-                        --with-libfabric=/opt/amazon/efa \
-                        --with-cuda=/usr/local/cuda/ \
-                        --enable-tests \
-                        --enable-debug \
-                        --enable-platform-aws
-          else
-            ./configure --with-libfabric=/opt/amazon/efa \
-                        --enable-neuron \
-                        --enable-debug \
-                        --enable-platform-aws
-          fi
-          make -j "$(nproc)"
-
-      - name: Run unit tests
+      - name: Call `make check`
         run: make check
 
-      - name: Upload build logs
+      - name: Upload config.log
         if: failure()
         uses: actions/upload-artifact@v4
         with:
@@ -373,16 +275,6 @@ jobs:
         with:
           python-version: '3.9'
 
-      - name: Configure Neuron SDK Repository
-        if: matrix.sdk == 'neuron'
-        run: |
-          # Configure Linux for Neuron repository updates
-          sudo tee /etc/apt/sources.list.d/neuron.list > /dev/null << EOF
-          deb https://apt.repos.neuron.amazonaws.com jammy main
-          EOF
-          wget -qO - https://apt.repos.neuron.amazonaws.com/GPG-PUB-KEY-AMAZON-AWS-NEURON.PUB | sudo apt-key add -
-          sudo apt update -y
-
       - name: Install Base Dependencies
         run: |
           sudo apt-get update -y
@@ -397,11 +289,6 @@ jobs:
           sudo dpkg -i cuda-keyring_1.1-1_all.deb
           sudo apt-get update -y
           sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
-
-      - name: Install Neuron SDK
-        if: matrix.sdk == 'neuron'
-        run: |
-          sudo apt-get install -y aws-neuronx-runtime-lib
 
       - name: Install cppcheck
         run: |
@@ -419,17 +306,21 @@ jobs:
         run: |
           ./autogen.sh
           if [ "${{ matrix.sdk }}" == "neuron" ]; then
-            ./configure \
-              --with-libfabric="/opt/amazon/efa" \
-              --enable-neuron \
-              --enable-platform-aws
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --enable-neuron
           else
-            ./configure \
-              --with-libfabric="/opt/amazon/efa" \
-              --with-mpi="/opt/amazon/openmpi" \
-              --with-cuda=/usr/local/cuda/ \
-              --enable-tests \
-              --enable-platform-aws
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --with-cuda=/usr/local/cuda/
           fi
 
       - name: Run CodeChecker
