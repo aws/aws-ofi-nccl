@@ -146,16 +146,20 @@ CHECK_ENABLE_MEMFD_CREATE()
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
 
 AC_ARG_ENABLE([tests],
-   [AS_HELP_STRING([--disable-tests], [Disable build of functional test binaries])])
-AS_IF([test "${enable_tests}" != "no" -a "${enable_neuron}" = "yes"],
-      [AC_MSG_WARN([Disabling tests due to Neuron configuration.])
-       enable_tests=no],
-      [test "${enable_tests}" = "yes" -a "${found_mpi}" = "no"],
-      [AC_MSG_ERROR([Tests requested, but MPI not found.  Aborting.])],
-      [test "${found_mpi}" = "no"],
-      [AC_MSG_WARN([Disabling tests due to no MPI.])
-       enable_tests=no])
-AM_CONDITIONAL([ENABLE_TESTS], [test "$enable_tests" != "no"])
+   [AS_HELP_STRING([--disable-tests], [Disable build of unit/functional test binaries])])
+
+build_unit_tests=yes
+build_func_tests=yes
+AS_IF([test "${enable_tests}" == "no"],
+      [build_unit_tests=no build_func_tests=no])
+AS_IF([test "${enable_tests}" != "no" -a "${found_mpi}" = "no" ],
+      [AC_MSG_WARN([Cannot build functional tests without MPI. Disabling functional tests.])
+       build_func_tests=no])
+AS_IF([test "${enable_tests}" != "no" -a "${have_device_interface}" = "neuron" ],
+      [AC_MSG_WARN([Functional tests not available on neuron, disabling.])
+       build_func_tests=no])
+AM_CONDITIONAL([ENABLE_UNIT_TESTS], [test "$build_unit_tests" == "yes"])
+AM_CONDITIONAL([ENABLE_FUNC_TESTS], [test "$build_func_tests" == "yes"])
 
 # Enable output at the TRACE level for unit tests.
 AC_ARG_ENABLE([trace],

@@ -4,6 +4,7 @@
 # See LICENSE.txt for license information
 #
 
+if ENABLE_UNIT_TESTS
 AM_CPPFLAGS = -I$(top_srcdir)/include $(CUDA_CPPFLAGS)
 LDADD = $(top_builddir)/src/libinternal_net_plugin.la $(CUDA_LIBS)
 AM_LDFLAGS = $(CUDA_LDFLAGS)
@@ -31,3 +32,4 @@ msgbuff_SOURCES = msgbuff.c
 scheduler_SOURCES = scheduler.c
 ep_addr_list_SOURCES = ep_addr_list.c
 mr_SOURCES = mr.c
+endif
