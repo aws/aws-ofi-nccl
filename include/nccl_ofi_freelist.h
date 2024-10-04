@@ -10,6 +10,7 @@
 extern "C" {
 #endif
 
+#include <stdbool.h>
 #include <assert.h>
 #include <stdlib.h>
 #include <pthread.h>
