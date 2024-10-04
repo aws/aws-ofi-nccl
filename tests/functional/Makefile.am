@@ -10,12 +10,12 @@ AM_LDFLAGS = $(MPI_LDFLAGS) $(CUDA_LDFLAGS)
 LDADD = $(top_builddir)/src/libinternal_net_plugin.la $(MPI_LIBS) $(CUDA_LIBS)
 CC = $(MPICC)
 
+if ENABLE_FUNC_TESTS
 noinst_HEADERS = test-common.h
 
-if ENABLE_TESTS
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
-endif
 
 nccl_connection_SOURCES = nccl_connection.c
 nccl_message_transfer_SOURCES = nccl_message_transfer.c
 ring_SOURCES = ring.c
+endif
