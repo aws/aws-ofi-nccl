@@ -302,6 +302,7 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 				    bool dec_inflight_reqs)
 {
 	int ret = 0;
+	nccl_ofi_freelist_elem_t *elem = NULL;
 
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
@@ -317,10 +318,13 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 		goto exit;
 	}
 
+	elem = req->elem;
+
 	/* Zero out buffer */
 	sendrecv_req_zero(req);
 
-	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, req);
+	assert(elem);
+	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, elem);
 
 	/* Reduce inflight commands */
 	if (OFI_LIKELY(dec_inflight_reqs == true))
@@ -909,17 +913,22 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 static inline nccl_net_ofi_sendrecv_req_t *sendrecv_allocate_req(nccl_ofi_freelist_t *fl)
 {
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
+	nccl_ofi_freelist_elem_t *elem = NULL;
 
 	if (OFI_UNLIKELY(fl == NULL)) {
 		NCCL_OFI_WARN("Freelist not allocated");
 		goto exit;
 	}
 
-	req = (nccl_net_ofi_sendrecv_req_t*)nccl_ofi_freelist_entry_alloc(fl);
-	if (OFI_UNLIKELY(req == NULL)) {
+	elem = nccl_ofi_freelist_entry_alloc(fl);
+	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("No freelist items available");
 		goto exit;
 	}
+
+	req = (nccl_net_ofi_sendrecv_req_t*) elem->ptr;
+	assert(req);
+	req->elem = elem;
 
 	req->base.test = sendrecv_req_test;
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
