@@ -218,7 +218,7 @@ exit:
  * @return	NULL, if no topology found
  * 		platform data, if match found
  */
-struct ec2_platform_data *get_platform_data()
+static struct ec2_platform_data *get_platform_data()
 {
 	static bool init = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -381,7 +381,7 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 
 typedef ncclResult_t (*nccl_get_version_fn_t)(int *version);
 
-int configure_nvls_option(void)
+static int configure_nvls_option(void)
 {
 	/* Disable NVLS topology discovery for older NCCL versions. There's a
 	 * bug with EFA and NCCL version 2.18.3 and earlier on platforms with

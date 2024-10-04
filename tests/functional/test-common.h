@@ -59,8 +59,8 @@
 typedef ncclNet_v8_t test_nccl_net_t;
 typedef ncclNetProperties_v8_t test_nccl_properties_t;
 
-void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
-	    int line, const char *fmt, ...)
+static void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
+		   int line, const char *fmt, ...)
 {
 	va_list vargs;
 
@@ -94,7 +94,7 @@ void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 #pragma GCC diagnostic pop
 }
 
-void print_dev_props(int dev, test_nccl_properties_t *props)
+static inline void print_dev_props(int dev, test_nccl_properties_t *props)
 {
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
         NCCL_OFI_TRACE(NCCL_NET, "%s: PCIe Path: %s", props->name, props->pciPath);
@@ -107,7 +107,7 @@ void print_dev_props(int dev, test_nccl_properties_t *props)
 	NCCL_OFI_TRACE(NCCL_NET, "%s: Global registration: %d", props->name, props->regIsGlobal);
 }
 
-int is_gdr_supported_nic(uint64_t ptr_support)
+static inline int is_gdr_supported_nic(uint64_t ptr_support)
 {
 	if (ptr_support & NCCL_PTR_CUDA)
 		return 1;
@@ -115,7 +115,7 @@ int is_gdr_supported_nic(uint64_t ptr_support)
 	return 0;
 }
 
-ncclResult_t allocate_buff(void **buf, size_t size, int buffer_type)
+static inline ncclResult_t allocate_buff(void **buf, size_t size, int buffer_type)
 {
 	switch (buffer_type) {
 	case NCCL_PTR_CUDA:
@@ -134,7 +134,7 @@ ncclResult_t allocate_buff(void **buf, size_t size, int buffer_type)
 	return ncclSuccess;
 }
 
-ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
+static inline ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
 {
 	switch (buffer_type) {
 	case NCCL_PTR_CUDA:
@@ -151,7 +151,7 @@ ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
 	return ncclSuccess;
 }
 
-ncclResult_t deallocate_buffer(void *buf, int buffer_type)
+static inline ncclResult_t deallocate_buffer(void *buf, int buffer_type)
 {
 	switch (buffer_type) {
 	case NCCL_PTR_CUDA:
@@ -168,7 +168,7 @@ ncclResult_t deallocate_buffer(void *buf, int buffer_type)
 	return ncclSuccess;
 }
 
-ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int buffer_type)
+static inline ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int buffer_type)
 {
 	int ret = 0;
 	char *recv_buf_host = NULL;
@@ -201,7 +201,7 @@ ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int 
 	return ncclSuccess;
 }
 
-test_nccl_net_t *get_extNet(void)
+static test_nccl_net_t *get_extNet(void)
 {
 	void *netPluginLib = NULL;
 	test_nccl_net_t *extNet = NULL;

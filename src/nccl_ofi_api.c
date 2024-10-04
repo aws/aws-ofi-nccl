@@ -79,7 +79,7 @@ static ncclResult_t nccl_net_ofi_retval_translate(int retval)
 }
 
 
-void nccl_net_ofi_fini(void)
+static void nccl_net_ofi_fini(void)
 {
 	if (plugin != NULL) {
 		int ret = plugin->release_plugin(plugin);

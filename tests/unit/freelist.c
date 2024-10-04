@@ -13,7 +13,7 @@ void *simple_base;
 size_t simple_size;
 void *simple_handle;
 
-int regmr_simple(void *opaque, void *data, size_t size, void **handle)
+static inline int regmr_simple(void *opaque, void *data, size_t size, void **handle)
 {
 	*handle = simple_handle = opaque;
 	simple_base = data;
@@ -26,7 +26,7 @@ int regmr_simple(void *opaque, void *data, size_t size, void **handle)
 	return ncclSuccess;
 }
 
-int deregmr_simple(void *handle)
+static inline int deregmr_simple(void *handle)
 {
 	if (simple_handle != handle)
 		return ncclSystemError;
