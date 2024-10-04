@@ -6247,6 +6247,9 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
+		if (OFI_UNLIKELY(s_comm == NULL)) {
+			return -ENOMEM;
+		}
 		comm_state->comm = &s_comm->base.base;
 
 		/* Prepare connect request to be sent to peer */
