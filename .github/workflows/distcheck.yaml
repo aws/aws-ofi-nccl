@@ -162,27 +162,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Add compiler repositories
-        if: matrix.cc-variant == 'latest'
+      - name: Configure Compilers
         run: |
           if [ "${{ matrix.cc }}" == "clang" ]; then
-            wget https://apt.llvm.org/llvm.sh
-            chmod +x llvm.sh
-            # Delete the last line, allowing us to use the cache below for
-            # actually installing the package; this just adds the
-            # repository.
-            sed -i '$ d' llvm.sh
-            sudo ./llvm.sh ${{ matrix.cc-version }}
+            if [ "${{ matrix.cc-variant }}" == "latest" ]; then
+              wget https://apt.llvm.org/llvm.sh
+              chmod +x llvm.sh
+              sudo ./llvm.sh ${{ matrix.cc-version }}
+              sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${{ matrix.cc-version }} 10
+              sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${{ matrix.cc-version }} 10
+            else
+              sudo apt-get install -y clang
+            fi
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang 10
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++ 10
           fi
 
           if [ "${{ matrix.cc }}" == "gcc" ]; then
-            sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+            if [ "${{ matrix.cc-variant }}" == "latest" ]; then
+              sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+              sudo apt-get install -y gcc-${{ matrix.cc-version }} g++-${{ matrix.cc-version }}
+              sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${{ matrix.cc-version }} 10
+              sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${{ matrix.cc-version }} 10
+            else
+              sudo apt-get install -y gcc g++
+            fi
+            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 10
+            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 10
           fi
-
-      - name: Install Latest Compiler
-        if: matrix.cc-variant == 'latest'
-        run: |
-          sudo apt-get install -y ${{ matrix.cc }}-${{matrix.cc-version}}
 
       - name: Install Base Dependencies
         run: |
@@ -216,7 +223,8 @@ jobs:
         run: |
           set -x
 
-          export CC="${{ matrix.realcc || matrix.cc }}"
+          export CC="cc"
+          export CXX="c++"
 
           # actions/checkout@v4 would drop the plugin source in $PWD,
           # so go ahead and build it.
