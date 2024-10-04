@@ -184,25 +184,8 @@ typedef struct nccl_net_ofi_rdma_close_msg {
 	uint32_t send_comm_id;
 } nccl_net_ofi_rdma_close_msg_t;
 
-/* Structure used to store control messages in a free list */
-typedef struct nccl_net_ofi_rdma_ctrl_fl_item {
-	nccl_ofi_freelist_reginfo_t fl_reginfo;
-	union {
-		nccl_net_ofi_rdma_ctrl_msg_t ctrl_msg;
-		nccl_net_ofi_rdma_close_msg_t close_msg;
-	};
-} nccl_net_ofi_rdma_ctrl_fl_item_t;
-
 /* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
 #define BOUNCE_BUFFER_ALIGNMENT 128
-
-/* Structure used to store bounce buffers in a free list */
-typedef struct nccl_net_ofi_rdma_bounce_fl_item {
-	nccl_ofi_freelist_reginfo_t fl_reginfo;
-#define PADDING_SIZE (BOUNCE_BUFFER_ALIGNMENT - (sizeof(nccl_ofi_freelist_reginfo_t) % BOUNCE_BUFFER_ALIGNMENT))
-	char padding[PADDING_SIZE];
-	char bounce_msg[];
-} nccl_net_ofi_rdma_bounce_fl_item_t;
 
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_rdma_ep;
@@ -213,7 +196,7 @@ typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
 	/* Bounce buffer freelist item */
-	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item;
+	nccl_ofi_freelist_elem_t *bounce_fl_elem;
 	/* Length of bounce buffer */
 	size_t buff_len;
 	/* Length of received data */
@@ -289,7 +272,7 @@ typedef struct {
  */
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem;
 	/* Schedule used to transfer the control buffer. We save the
 	 * pointer to reference it when transferring the buffer over
 	 * network. */
@@ -306,7 +289,7 @@ typedef struct {
  */
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem;
 	/* Schedule used to transfer the close buffer. We save the
 	 * pointer to reference it when transferring the buffer over
 	 * network. */
@@ -419,6 +402,9 @@ typedef struct nccl_net_ofi_rdma_req {
 
 	/* Type of request */
 	nccl_net_ofi_rdma_req_type_t type;
+
+	/* Backpointer to freelist element */
+	nccl_ofi_freelist_elem_t *elem;
 
 	/* Deinitialzie and free request. This function returns error
 	 * in cases where cleanup fails. This function may also return

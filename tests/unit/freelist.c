@@ -40,14 +40,13 @@ static inline int deregmr_simple(void *handle)
 
 struct random_freelisted_item {
 	int random;
-	nccl_ofi_freelist_reginfo_t reginfo;
 	char buf[419];
 };
 
 int main(int argc, char *argv[])
 {
 	struct nccl_ofi_freelist_t *freelist;
-	void *entry;
+	nccl_ofi_freelist_elem_t *entry;
 	int ret;
 	size_t i;
 
@@ -65,7 +64,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
-		entry = (struct random_freelisted_item *)nccl_ofi_freelist_entry_alloc(freelist);
+		entry = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
@@ -138,7 +137,7 @@ int main(int argc, char *argv[])
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
-		nccl_ofi_freelist_entry_free(freelist, (void*)entry);
+		nccl_ofi_freelist_entry_free(freelist, entry);
 	}
 	nccl_ofi_freelist_fini(freelist);
 
@@ -161,12 +160,12 @@ int main(int argc, char *argv[])
 		}
 
 		if (last_buff) {
-			if (last_buff - (char *)entry != 1024 + MEMCHECK_REDZONE_SIZE) {
-				NCCL_OFI_WARN("bad spacing %zu", (char *)entry - last_buff);
+			if (last_buff - (char *)entry->ptr != 1024 + MEMCHECK_REDZONE_SIZE) {
+				NCCL_OFI_WARN("bad spacing %zu", (char *)entry->ptr - last_buff);
 				exit(1);
 			}
 		}
-		last_buff = (char *)entry;
+		last_buff = (char *)entry->ptr;
 	}
 	ret = nccl_ofi_freelist_fini(freelist);
 	if (ret != ncclSuccess) {
@@ -183,7 +182,6 @@ int main(int argc, char *argv[])
 					regmr_simple,
 					deregmr_simple,
 					(void *)0xdeadbeaf,
-					offsetof(struct random_freelisted_item, reginfo),
 					1,
 					&freelist);
 	if (ret != ncclSuccess) {
@@ -195,22 +193,14 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
-		struct random_freelisted_item *item =
-			(struct random_freelisted_item *)nccl_ofi_freelist_entry_alloc(freelist);
+		nccl_ofi_freelist_elem_t *item = nccl_ofi_freelist_entry_alloc(freelist);
 		if (!item) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
 
-		if (item->reginfo.mr_handle != simple_handle) {
-			NCCL_OFI_WARN("allocation handle mismatch %p %p", item->reginfo.mr_handle, simple_handle);
-			exit(1);
-		}
-
-		if ((uintptr_t)item - (long unsigned int)simple_base != item->reginfo.base_offset) {
-			NCCL_OFI_WARN("base_offset was wrong %p %p %lu %lu",
-				      item, simple_base, (char *)item - (char *)simple_base,
-				      item->reginfo.base_offset);
+		if (item->mr_handle != simple_handle) {
+			NCCL_OFI_WARN("allocation handle mismatch %p %p", item->mr_handle, simple_handle);
 			exit(1);
 		}
 	}

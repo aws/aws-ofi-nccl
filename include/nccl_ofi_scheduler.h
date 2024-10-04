@@ -40,6 +40,9 @@ typedef struct nccl_net_ofi_schedule {
 	/* Number of transfer information entries set by the scheduler */
 	size_t num_xfer_infos;
 
+	/* Backpointer to freelist element (for cleanup) */
+	nccl_ofi_freelist_elem_t *elem;
+
 	/* Array of transfer information structs. The array has at
 	 * least 'num_xfer_infos' entries. */
 	nccl_net_ofi_xfer_info_t rail_xfer_infos[];
