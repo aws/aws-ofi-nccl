@@ -122,16 +122,16 @@ jobs:
           fi
 
       - name: Call `make`
-        run: make
+        run: make V=1
 
       - name: Call `make install`
-        run: make install
+        run: make install V=1
 
       - name: Call `make distcheck`
-        run: make distcheck
+        run: make distcheck V=1
 
       - name: Call `make check`
-        run: make check
+        run: make check V=1
 
   distcheck:
     runs-on: ubuntu-22.04
@@ -241,16 +241,16 @@ jobs:
           fi
 
       - name: Call `make`
-        run: make
+        run: make V=1
 
       - name: Call `make install`
-        run: sudo make install
+        run: sudo make install V=1
 
       - name: Call `make distcheck`
-        run: make distcheck
+        run: make distcheck V=1
 
       - name: Call `make check`
-        run: make check
+        run: make check V=1
 
       - name: Upload config.log
         if: failure()
