@@ -223,30 +223,48 @@ static inline nccl_net_ofi_rdma_recv_comm_t *get_recv_comm(nccl_net_ofi_rdma_dev
  * Get connection message from bounce buffer
  */
 static inline nccl_ofi_rdma_connection_info_t *get_bounce_connection_msg(
-	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item)
+	rdma_req_bounce_data_t *bounce_data)
 {
-	return (nccl_ofi_rdma_connection_info_t *)&bounce_fl_item->bounce_msg;
+	return (nccl_ofi_rdma_connection_info_t *)bounce_data->bounce_fl_elem->ptr;
 }
 
 /*
  * Get ctrl message from bounce buffer
  */
 static inline nccl_net_ofi_rdma_ctrl_msg_t *get_bounce_ctrl_msg
-	(nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item)
+	(rdma_req_bounce_data_t *bounce_data)
 {
-	return (nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg;
+	return (nccl_net_ofi_rdma_ctrl_msg_t *)bounce_data->bounce_fl_elem->ptr;
 }
 
 /*
  * Get close message from bounce buffer
  */
 static inline nccl_net_ofi_rdma_close_msg_t *bounce_get_close_msg
-	(nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item)
+	(rdma_req_bounce_data_t *bounce_data)
 {
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
-		(nccl_net_ofi_rdma_close_msg_t *)&bounce_fl_item->bounce_msg;
+		(nccl_net_ofi_rdma_close_msg_t *)bounce_data->bounce_fl_elem->ptr;
 	assert(close_msg->type == NCCL_OFI_RDMA_MSG_CLOSE);
 	return close_msg;
+}
+
+/**
+ * Get ctrl message from send_ctrl_data
+ */
+static inline nccl_net_ofi_rdma_ctrl_msg_t *send_ctrl_get_msg
+	(rdma_req_send_ctrl_data_t *send_ctrl_data)
+{
+	return (nccl_net_ofi_rdma_ctrl_msg_t *)send_ctrl_data->ctrl_fl_elem->ptr;
+}
+
+/**
+ * Get close message from send_close_data
+ */
+static inline nccl_net_ofi_rdma_close_msg_t *send_close_get_msg
+	(rdma_req_send_close_data_t *send_close_data)
+{
+	return (nccl_net_ofi_rdma_close_msg_t *)send_close_data->ctrl_fl_elem->ptr;
 }
 
 /*
@@ -806,7 +824,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data);
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		if (ep->use_long_rkeys) {
@@ -950,7 +968,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t *)elem;
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data);
 
 	if (!send_data->eager) {
 		ret = update_send_data_from_remote(s_comm, bounce_req, req);
@@ -1120,7 +1138,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *bounce_req)
 	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
 
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
-		bounce_get_close_msg(bounce_data->bounce_fl_item);
+		bounce_get_close_msg(bounce_data);
 
 	nccl_net_ofi_rdma_send_comm_t *s_comm = get_send_comm(device, close_msg->send_comm_id);
 	assert(s_comm);
@@ -1146,7 +1164,6 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 {
 	int ret = 0;
 	rdma_req_bounce_data_t *bounce_data = NULL;
-	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = NULL;
 	nccl_ofi_rdma_connection_info_t *conn_msg = NULL;
 	nccl_ofi_rdma_connection_info_t *conn_resp_msg = NULL;
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = NULL;
@@ -1165,7 +1182,6 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 
 	bounce_data = get_bounce_data(bounce_req);
 	bounce_data->recv_len = cq_entry->len;
-	bounce_fl_item = bounce_data->bounce_fl_item;
 
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 
@@ -1173,14 +1189,14 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 	 * header type.  So cast to a control message and lookup the
 	 * type from there. */
 	nccl_ofi_rdma_msg_type_t msg_type = eager ? (nccl_ofi_rdma_msg_type_t)NCCL_OFI_RDMA_MSG_EAGER
-	                                          : ((nccl_net_ofi_rdma_ctrl_msg_t *)&bounce_fl_item->bounce_msg)->type;
+	                                          :  get_bounce_ctrl_msg(bounce_data)->type;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
 		/* CONN receive completion */
 		assert(sizeof(nccl_ofi_rdma_connection_info_t) == cq_entry->len);
 
-		conn_msg = get_bounce_connection_msg(bounce_fl_item);
+		conn_msg = get_bounce_connection_msg(bounce_data);
 		l_comm = get_listen_comm(device, conn_msg->remote_comm_id);
 
 		assert(l_comm->req.comm->type == NCCL_NET_OFI_LISTEN_COMM);
@@ -1205,7 +1221,7 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 		/* CONN_RESP receive completion */
 		assert(sizeof(nccl_ofi_rdma_connection_info_t) == cq_entry->len);
 
-		conn_resp_msg = get_bounce_connection_msg(bounce_fl_item);
+		conn_resp_msg = get_bounce_connection_msg(bounce_data);
 		s_comm = get_send_comm(device, conn_resp_msg->remote_comm_id);
 
 		assert(NULL != s_comm->conn_resp_req);
@@ -1231,7 +1247,7 @@ static inline int handle_bounce_recv(nccl_net_ofi_rdma_device_t *device, int rai
 		/* CTRL receive completion */
 		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
 
-		ctrl_msg = get_bounce_ctrl_msg(bounce_fl_item);
+		ctrl_msg = get_bounce_ctrl_msg(bounce_data);
 		s_comm = get_send_comm(device, ctrl_msg->remote_comm_id);
 
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(s_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
@@ -1920,6 +1936,7 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 					 bool dec_inflight_reqs)
 {
 	int ret = 0;
+	nccl_ofi_freelist_elem_t *elem = NULL;
 	
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
@@ -1936,10 +1953,13 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 		goto exit;
 	}
 
+	elem = req->elem;
+
 	/* Zero out buffer */
 	zero_nccl_ofi_req(req);
 
-	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, req);
+	assert(elem);
+	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, elem);
 
 	/* Reduce inflight commands */
 	if (OFI_LIKELY(dec_inflight_reqs == true) && (num_inflight_reqs != NULL))
@@ -2058,9 +2078,9 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 
-	if (send_ctrl_data->ctrl_fl_item) {
-		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_item);
-		send_ctrl_data->ctrl_fl_item = NULL;
+	if (send_ctrl_data->ctrl_fl_elem) {
+		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_elem);
+		send_ctrl_data->ctrl_fl_elem = NULL;
 	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
@@ -2084,9 +2104,9 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 		send_close_data->ctrl_schedule = NULL;
 	}
 
-	if (send_close_data->ctrl_fl_item) {
-		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_close_data->ctrl_fl_item);
-		send_close_data->ctrl_fl_item = NULL;
+	if (send_close_data->ctrl_fl_elem) {
+		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_close_data->ctrl_fl_elem);
+		send_close_data->ctrl_fl_elem = NULL;
 	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
@@ -2148,8 +2168,8 @@ static inline int free_bounce_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 	/* Free buffer */
-	if (bounce_data->bounce_fl_item) {
-		nccl_ofi_freelist_entry_free(ep->bounce_buff_fl, bounce_data->bounce_fl_item);
+	if (bounce_data->bounce_fl_elem) {
+		nccl_ofi_freelist_entry_free(ep->bounce_buff_fl, bounce_data->bounce_fl_elem);
 	}
 	return free_base_req(NULL, ep->bounce_buff_reqs_fl, req, false);
 }
@@ -2167,17 +2187,16 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 
-	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item =
-		(nccl_net_ofi_rdma_bounce_fl_item_t *)nccl_ofi_freelist_entry_alloc(
-			ep->bounce_buff_fl);
-	if (!bounce_fl_item) {
-		NCCL_OFI_WARN("Failed to allocate bounce_fl_item");
+	nccl_ofi_freelist_elem_t *bounce_fl_elem =
+		nccl_ofi_freelist_entry_alloc(ep->bounce_buff_fl);
+	if (!bounce_fl_elem) {
+		NCCL_OFI_WARN("Failed to allocate bounce_fl_elem");
 		req->free(req, false);
 		return NULL;
 	}
-	assert(NCCL_OFI_IS_PTR_ALIGNED(&bounce_fl_item->bounce_msg, BOUNCE_BUFFER_ALIGNMENT));
+	assert(NCCL_OFI_IS_PTR_ALIGNED(bounce_fl_elem->ptr, BOUNCE_BUFFER_ALIGNMENT));
 
-	bounce_data->bounce_fl_item = bounce_fl_item;
+	bounce_data->bounce_fl_elem = bounce_fl_elem;
 	bounce_data->buff_len = ep->bounce_buff_size;
 	bounce_data->rail = rail;
 	bounce_data->ep = ep;
@@ -2990,13 +3009,17 @@ static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 {
 	assert(fl != NULL);
 
-	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t*)nccl_ofi_freelist_entry_alloc(fl);
-	if (OFI_UNLIKELY(req == NULL)) {
+	nccl_ofi_freelist_elem_t *elem = nccl_ofi_freelist_entry_alloc(fl);
+	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("No freelist items available");
 		return NULL;
 	}
 
+	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t*)elem->ptr;
+	assert(req);
+
 	zero_nccl_ofi_req(req);
+	req->elem = elem;
 	req->base.test = test;
 	req->ncompls = 0;
 
@@ -3008,7 +3031,7 @@ static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 
 	return req;
 cleanup:
-	nccl_ofi_freelist_entry_free(fl, req);
+	nccl_ofi_freelist_entry_free(fl, elem);
 	return NULL;
 }
 
@@ -3039,16 +3062,15 @@ static inline nccl_net_ofi_rdma_req_t * allocate_send_ctrl_req(
 
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(send_ctrl_req);
 
-	send_ctrl_data->ctrl_fl_item = NULL;
+	send_ctrl_data->ctrl_fl_elem = NULL;
 
 	/*
 	 * Allocate RDMA control buffer which transfers the RDMA write buffer
 	 * information to sender.
 	 */
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item =
-		(nccl_net_ofi_rdma_ctrl_fl_item_t *)nccl_ofi_freelist_entry_alloc(
-			r_comm->ctrl_buff_fl);
-	if (ctrl_fl_item == NULL) {
+	send_ctrl_data->ctrl_fl_elem = nccl_ofi_freelist_entry_alloc
+					(r_comm->ctrl_buff_fl);
+	if (send_ctrl_data->ctrl_fl_elem == NULL) {
 		NCCL_OFI_WARN("Call to nccl_ofi_freelist_entry_alloc failed");
 		return NULL;
 	}
@@ -3062,11 +3084,13 @@ static inline nccl_net_ofi_rdma_req_t * allocate_send_ctrl_req(
 		return NULL;
 	}
 
-	ctrl_fl_item->ctrl_msg.type = NCCL_OFI_RDMA_MSG_CTRL;
-	ctrl_fl_item->ctrl_msg.remote_comm_id = r_comm->remote_comm_id;
-	ctrl_fl_item->ctrl_msg.msg_seq_num = msg_seq_num;
-	ctrl_fl_item->ctrl_msg.buff_addr = (uint64_t)buff;
-	ctrl_fl_item->ctrl_msg.buff_len = size;
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = send_ctrl_get_msg(send_ctrl_data);
+
+	ctrl_msg->type = NCCL_OFI_RDMA_MSG_CTRL;
+	ctrl_msg->remote_comm_id = r_comm->remote_comm_id;
+	ctrl_msg->msg_seq_num = msg_seq_num;
+	ctrl_msg->buff_addr = (uint64_t)buff;
+	ctrl_msg->buff_len = size;
 
 	int rail_id = 0;
 	for (; rail_id < r_comm->num_rails; rail_id++) {
@@ -3078,18 +3102,16 @@ static inline nccl_net_ofi_rdma_req_t * allocate_send_ctrl_req(
 		}
 
 		if (ep->use_long_rkeys) {
-			ctrl_fl_item->ctrl_msg.long_buff_mr_key[rail_id] = rkey;
+			ctrl_msg->long_buff_mr_key[rail_id] = rkey;
 		} else {
 			if (rkey > (1ULL << (NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE * 8)) - 1) {
 				NCCL_OFI_WARN("Libfabric returned rkey larger than declared rkey size: %" PRIu64,
 					      rkey);
 				return NULL;
 			}
-			ctrl_fl_item->ctrl_msg.short_buff_mr_key[rail_id] = rkey;
+			ctrl_msg->short_buff_mr_key[rail_id] = rkey;
 		}
 	}
-
-	send_ctrl_data->ctrl_fl_item = ctrl_fl_item;
 
 	return send_ctrl_req;
 }
@@ -3621,7 +3643,6 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(send_close_req);
 
-	send_close_data->ctrl_fl_item = NULL;
 	send_close_data->ctrl_schedule = scheduler->get_schedule
 		(scheduler, sizeof(nccl_net_ofi_rdma_close_msg_t),
 		 device->num_rails);
@@ -3639,18 +3660,19 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 	/*
 	 * Set up send close message
 	 */
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item =
-		(nccl_net_ofi_rdma_ctrl_fl_item_t *)nccl_ofi_freelist_entry_alloc(
-			r_comm->ctrl_buff_fl);
-	if (ctrl_fl_item == NULL) {
+	send_close_data->ctrl_fl_elem = nccl_ofi_freelist_entry_alloc
+		(r_comm->ctrl_buff_fl);
+	if (send_close_data->ctrl_fl_elem == NULL) {
 		NCCL_OFI_WARN("Call to nccl_ofi_freelist_entry_alloc failed");
 		send_close_req->free(send_close_req, false);
 		return -ENOMEM;
 	}
-	ctrl_fl_item->close_msg.type = NCCL_OFI_RDMA_MSG_CLOSE;
-	ctrl_fl_item->close_msg.ctrl_counter = r_comm->n_ctrl_delivered;
-	ctrl_fl_item->close_msg.send_comm_id = r_comm->remote_comm_id;
-	send_close_data->ctrl_fl_item = ctrl_fl_item;
+
+	nccl_net_ofi_rdma_close_msg_t *close_msg = send_close_get_msg(send_close_data);
+
+	close_msg->type = NCCL_OFI_RDMA_MSG_CLOSE;
+	close_msg->ctrl_counter = r_comm->n_ctrl_delivered;
+	close_msg->send_comm_id = r_comm->remote_comm_id;
 
 	r_comm->send_close_req = send_close_req;
 	return 0;
@@ -4401,10 +4423,12 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 		return NULL;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_ctrl_fl_item_t), 8, 8,
-					NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-					freelist_deregmr_host_fn, ep, 0, 1,
-					&r_comm->ctrl_buff_fl);
+	ret = nccl_ofi_freelist_init_mr(
+		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+			     sizeof(nccl_net_ofi_rdma_close_msg_t)),
+		8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
+		freelist_deregmr_host_fn, ep, 1,
+		&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
 		return NULL;
@@ -5120,9 +5144,9 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 			      nccl_net_ofi_ep_rail_t *ep_rail)
 {
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
-	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = bounce_data->bounce_fl_item;
+	nccl_ofi_freelist_elem_t *bounce_fl_elem = bounce_data->bounce_fl_elem;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
-		(freelist_regmr_fn_handle_t *)bounce_fl_item->fl_reginfo.mr_handle;
+		(freelist_regmr_fn_handle_t *)bounce_fl_elem->reginfo.mr_handle;
 	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[bounce_data->rail->rail_id]);
 
 	/* Reset memcheck guards of bounce buffer freelist entry to
@@ -5130,11 +5154,11 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	 * gets re-posted */
  	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
 	nccl_ofi_freelist_entry_set_undefined(ep->bounce_buff_fl,
-					      bounce_fl_item);
+					      bounce_fl_elem->ptr);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 	ssize_t rc =
-		fi_recv(ep_rail->ofi_ep, &bounce_fl_item->bounce_msg, bounce_data->buff_len, desc, FI_ADDR_UNSPEC, req);
+		fi_recv(ep_rail->ofi_ep, bounce_fl_elem->ptr, bounce_data->buff_len, desc, FI_ADDR_UNSPEC, req);
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting bounce buffer. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
@@ -5230,11 +5254,11 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = &r_comm->control_rail;
 
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item = send_ctrl_data->ctrl_fl_item;
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_ctrl_data->ctrl_fl_elem;
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)ctrl_fl_item->fl_reginfo.mr_handle;
+		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->reginfo.mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
 	void *desc = fi_mr_desc(mr_handle->control_mr);
@@ -5243,7 +5267,9 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
 
-	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->ctrl_msg,
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = send_ctrl_get_msg(send_ctrl_data);
+
+	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_msg,
 			     ctrl_msg_len,
 			     desc,
 			     comm_rail->remote_addr, req);
@@ -5272,18 +5298,20 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	comm_rail = get_recv_comm_rail(r_comm, xfer_info->rail_id);
 
-	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item = send_close_data->ctrl_fl_item;
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_close_data->ctrl_fl_elem;
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)ctrl_fl_item->fl_reginfo.mr_handle;
+		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->reginfo.mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
 	assert(xfer_info->rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 
-	ssize_t rc = fi_send(comm_rail->local_ep, &ctrl_fl_item->close_msg,
+	nccl_net_ofi_rdma_close_msg_t *close_msg = send_close_get_msg(send_close_data);
+
+	ssize_t rc = fi_send(comm_rail->local_ep, close_msg,
 			     sizeof(nccl_net_ofi_rdma_close_msg_t),
 			     desc,
 			     comm_rail->remote_addr, req);
@@ -5317,7 +5345,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)bounce_data->bounce_fl_item->fl_reginfo.mr_handle;
+		(freelist_regmr_fn_handle_t *)bounce_data->bounce_fl_elem->reginfo.mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *bounce_mr_handle = fl_handle->mr_handle;
 
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->dest_mr_handle;
@@ -5325,7 +5353,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	assert(bounce_rail_id < dest_mr_handle->num_rails);
 	void *desc = fi_mr_desc(dest_mr_handle->mr[bounce_rail_id]);
 
-	void *bounce_buff = &bounce_data->bounce_fl_item->bounce_msg;
+	void *bounce_buff = bounce_data->bounce_fl_elem->ptr;
 	uint64_t bounce_key = fi_mr_key(bounce_mr_handle->mr[bounce_rail_id]);
 	if (bounce_key == FI_KEY_NOTAVAIL) {
 		NCCL_OFI_WARN("Failed to get bounce_key");
@@ -5767,10 +5795,10 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_rdma_bounce_fl_item_t) + ep->bounce_buff_size,
+	ret = nccl_ofi_freelist_init_mr(ep->bounce_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, 0, BOUNCE_BUFFER_ALIGNMENT, &ep->bounce_buff_fl);
+					ep, BOUNCE_BUFFER_ALIGNMENT, &ep->bounce_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init bounce_buff_fl");
 		if (nccl_ofi_freelist_fini(ep->bounce_buff_reqs_fl))
