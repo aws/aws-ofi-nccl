@@ -189,7 +189,7 @@ int main(int argc, char* argv[])
 
 			NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d",
 					peer_rank);
-		} else if (rank == 1) {
+		} else {
 			peer_rank = (rank - 1) % num_ranks;
 
 			/* MPI recv */
@@ -268,7 +268,7 @@ int main(int argc, char* argv[])
 				}
 				NCCL_OFI_INFO(NCCL_NET, "Successfully sent %d requests to rank %d", NUM_REQUESTS,
 						peer_rank);
-			} else if (rank == 1) {
+			} else {
 
 				/* Receive NUM_REQUESTS from peer */
 				NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank,
@@ -337,8 +337,7 @@ int main(int argc, char* argv[])
 							OFINCCLCHECKGOTO(
 								extNet->deregMr((void *)sComm, mhandle[idx]), res,
 								exit);
-						}
-						else if (rank == 1) {
+						} else {
 							if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
 								/* Data validation may fail if flush operations are disabled */
 							} else {
@@ -371,7 +370,7 @@ int main(int argc, char* argv[])
 			if (rank == 0) {
 				NCCL_OFI_INFO(NCCL_NET, "Successfully completed size %lu for rank %d",
 					      send_sizes[szidx], rank);
-			} else if (rank == 1) {
+			} else {
 				NCCL_OFI_INFO(NCCL_NET, "Successfully completed size %lu for rank %d",
 					      recv_sizes[szidx], rank);
 			}

@@ -41,6 +41,13 @@ int main(int argc, char* argv[])
 		res = ncclInvalidArgument;
 		goto exit;
 	}
+	if (!(0 <= rank && rank <= 1)) {
+		NCCL_OFI_WARN("World size was %d, but was local rank is %d. "
+			      "MPI is behaving strangely, cannot continue.",
+			      size, rank);
+		res = ncclInvalidArgument;
+		goto exit;
+	}
 
 	MPI_Get_processor_name(name, &proc_name);
 
@@ -123,8 +130,7 @@ int main(int argc, char* argv[])
 
 			NCCL_OFI_INFO(NCCL_INIT, "Successfully accepted connection from rank %d",
 					peer_rank);
-		}
-		else if (rank == 1) {
+		} else {
 			int peer_rank = (rank - 1) % size;
 
 			/* MPI recv */
