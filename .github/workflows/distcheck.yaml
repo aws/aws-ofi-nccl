@@ -136,7 +136,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/libfabric@git/${{matrix.cc}}(${{matrix.cc-variant}})/distcheck/
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}/distcheck/
     steps:
       - uses: actions/checkout@v4
       - name: Configure Neuron SDK Repository
