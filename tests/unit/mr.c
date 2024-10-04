@@ -9,7 +9,7 @@
 #include "test-common.h"
 #include "nccl_ofi_mr.h"
 
-bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
+static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *expected_val)
 {
 	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);;
@@ -27,7 +27,7 @@ bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		exit(1);                                          \
 	}
 
-bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
+static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *handle, int expected_ret)
 {
 	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);
@@ -45,7 +45,7 @@ bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		exit(1);                                                  \
 	}
 
-bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, int expected_ret)
+static inline bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, int expected_ret)
 {
 	int ret = nccl_ofi_mr_cache_del_entry(cache, handle);
 	if (ret != expected_ret) {

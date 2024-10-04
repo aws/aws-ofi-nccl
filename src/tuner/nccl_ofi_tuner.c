@@ -21,7 +21,7 @@
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
 
-ncclResult_t nccl_ofi_tuner_destroy(void *context)
+static ncclResult_t nccl_ofi_tuner_destroy(void *context)
 {
 	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
 
@@ -39,7 +39,7 @@ ncclResult_t nccl_ofi_tuner_destroy(void *context)
 	return ncclSuccess;
 }
 
-ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
+static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
 	ncclResult_t ret = ncclSuccess;
 	*context = NULL;
@@ -393,14 +393,14 @@ void nccl_ofi_tuner_disable(float **collCostTable, int algorithm, int protocol, 
 	}
 }
 
-ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
-					  ncclFunc_t collType,
-					  size_t nBytes,
-					  int numPipeOps,
-					  float **collCostTable,
-					  int numAlgo,
-					  int numProto,
-					  int *nChannels)
+static ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
+						 ncclFunc_t collType,
+						 size_t nBytes,
+						 int numPipeOps,
+						 float **collCostTable,
+						 int numAlgo,
+						 int numProto,
+						 int *nChannels)
 {
 	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;
 
@@ -453,7 +453,7 @@ const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
 					   .destroy = nccl_ofi_tuner_destroy};
 
 /* **** V2 **** */
-ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
+static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	void *context, ncclFunc_t collType, size_t nBytes, int collNetSupport, int nvlsSupport, int numPipeOps, int *algorithm, int *protocol, int *nChannels)
 {
 	nccl_ofi_tuner_context_t *nccl_ofi_tuner_ctx = (nccl_ofi_tuner_context_t *)context;

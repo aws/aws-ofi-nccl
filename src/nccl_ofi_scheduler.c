@@ -31,11 +31,11 @@ static inline size_t sizeof_schedule(int num_rails)
  * data. The number of rails are calculated based on the ratio of
  * (`data_size` / `min_stripe_size`)
  */
-int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *scheduler,
-                              size_t size,
-                              int num_rails,
-                              size_t align,
-                              nccl_net_ofi_schedule_t *schedule)
+static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *scheduler,
+					    size_t size,
+					    int num_rails,
+					    size_t align,
+					    nccl_net_ofi_schedule_t *schedule)
 {
 	int ret = 0;
 
@@ -209,7 +209,7 @@ static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
  * @return	0, on success
  *		non-zero, on others
  */
-int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *scheduler)
+static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *scheduler)
 {
 	int ret = 0;
 

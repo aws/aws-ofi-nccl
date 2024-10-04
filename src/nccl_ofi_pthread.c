@@ -15,7 +15,7 @@ static pthread_once_t errorcheck_once = PTHREAD_ONCE_INIT;
 static pthread_mutexattr_t errorcheck_attr;
 
 
-void errorcheck_init(void)
+static void errorcheck_init(void)
 {
 	int ret;
 

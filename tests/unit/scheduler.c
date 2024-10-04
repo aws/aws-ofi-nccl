@@ -14,7 +14,7 @@
 #include "test-common.h"
 #include "nccl_ofi_scheduler.h"
 
-int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
+static inline int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
 {
 	int ret = ref_xfer->rail_id != xfer->rail_id
 		|| ref_xfer->offset != xfer->offset
@@ -33,7 +33,7 @@ int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *r
 	return ret;
 }
 
-int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *ref_schedule)
+static inline int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *ref_schedule)
 {
 	int ret = 0;
 
@@ -56,7 +56,7 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 	return ret;
 }
 
-int create_ref_schedule(nccl_net_ofi_schedule_t **schedule, int num_xfer_infos)
+static inline int create_ref_schedule(nccl_net_ofi_schedule_t **schedule, int num_xfer_infos)
 {
 	int ret = 0;
 	*schedule = (nccl_net_ofi_schedule_t *)malloc(sizeof(nccl_net_ofi_schedule_t) +
@@ -71,7 +71,7 @@ int create_ref_schedule(nccl_net_ofi_schedule_t **schedule, int num_xfer_infos)
 	return ret;
 }
 
-int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t index, int rail_id, int offset, int msg_size)
+static inline int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t index, int rail_id, int offset, int msg_size)
 {
 	int ret = 0;
 	if (index >= schedule->num_xfer_infos) {
@@ -86,13 +86,13 @@ int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t index, int rail_i
 	return ret;
 }
 
-int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
-                     int num_rails,
-                     size_t msg_size,
-                     size_t num_stripes,
-                     int *rail_id,
-                     int *offset,
-                     size_t *msg_size_per_stripe)
+static inline int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
+								   int num_rails,
+								   size_t msg_size,
+								   size_t num_stripes,
+								   int *rail_id,
+								   int *offset,
+								   size_t *msg_size_per_stripe)
 {
 	int ret = 0;
 	nccl_net_ofi_schedule_t *ref_schedule;
@@ -122,7 +122,7 @@ int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
 	return ret;
 }
 
-int test_threshold_scheduler()
+static inline int test_threshold_scheduler()
 {
 	size_t min_stripe_size = 4096;
 	size_t align = 128;

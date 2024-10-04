@@ -203,6 +203,10 @@ dnl warn when a case statement is missing a break or a line that contains a
 dnl comment before the next case.
 ADD_PICKY_FLAGS([-Wimplicit-fallthrough=2])
 
+dnl functions should either have internal linkage (static) or there should be a
+dnl header declarating the function.
+ADD_PICKY_FLAGS([-Wmissing-declarations])
+
 dnl enable GCC's static analyzer
 ADD_PICKY_FLAGS([-fanalyzer])
 dnl todo: clang-sa flags
