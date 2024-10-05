@@ -93,9 +93,9 @@ typedef struct nccl_net_ofi_threshold_scheduler {
 	unsigned int rr_counter;
 	/* Lock for round robin counter */
 	pthread_mutex_t rr_lock;
-	/* Maximum size of a message in bytes before message is
+	/* Minimum size of the message in bytes before message is
 	 * multiplexed */
-	size_t rr_threshold;
+	size_t min_stripe_size;
 } nccl_net_ofi_threshold_scheduler_t;
 
 /*
@@ -109,30 +109,14 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
  *
  * @param	num_rails
  *		Number of rails
- * @param	rr_threshold
- *		Maximum size of a message in bytes before message is multiplexed
- *
+ * @param min_stripe_size
+ * 		Minimum size of a message in bytes before message is multiplexed
  * @return	Scheduler, on success
  *		NULL, on error
  * @return	0, on success
  *		non-zero, on error
  */
-int nccl_net_ofi_threshold_scheduler_init(int num_rails,
-					  size_t rr_threshold,
-					  nccl_net_ofi_scheduler_t **scheduler);
-
-/*
- * Internal: Set schedule that multiplexes messages to all rails.
- *
- * A mininal stripe size `max_stripe_size' is calculated (multiple of
- * `align') that is sufficient to assign the whole message. Rails are
- * filled from low id to large id. The last rail may get assigned less
- * data.
- */
-void nccl_net_ofi_set_multiplexing_schedule(size_t size,
-					    int num_rails,
-					    size_t align,
-					    nccl_net_ofi_schedule_t *schedule);
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler);
 
 #ifdef __cplusplus
 } // End extern "C"

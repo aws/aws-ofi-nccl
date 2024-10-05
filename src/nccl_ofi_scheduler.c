@@ -22,80 +22,65 @@ static inline size_t sizeof_schedule(int num_rails)
 		+ num_rails * sizeof(nccl_net_ofi_xfer_info_t);
 }
 
-void nccl_net_ofi_set_multiplexing_schedule(size_t size, int num_rails,
-					    size_t align,
-					    nccl_net_ofi_schedule_t *schedule)
+/*
+ * Internal: Set schedule that multiplexes messages to all rails.
+ *
+ * A mininal stripe size `max_stripe_size' is calculated (multiple of
+ * `align') that is sufficient to assign the whole message. Rails are
+ * filled from low id to large id. The last rail may get assigned less
+ * data. The number of rails are calculated based on the ratio of
+ * (`data_size` / `min_stripe_size`)
+ */
+int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *scheduler,
+                              size_t size,
+                              int num_rails,
+                              size_t align,
+                              nccl_net_ofi_schedule_t *schedule)
 {
+	int ret = 0;
+
+	/* Number of stripes is atleast 1 for zero-sized messages and at most equal to num of rails */
+	int num_stripes =
+		(int)NCCL_OFI_MAX(1, NCCL_OFI_MIN(NCCL_OFI_DIV_CEIL(size, scheduler->min_stripe_size), (unsigned)num_rails));
+	if (OFI_UNLIKELY(num_rails == 0)) {
+		return -EINVAL;
+	}
+
+	assert(num_stripes <= num_rails);
+
+	int curr_rail_id, next_rail_id;
+	nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
+
+	/* Retieve and increment multiplex-round-robin counter; wrap around if required */
+	curr_rail_id = scheduler->rr_counter;
+	next_rail_id = (curr_rail_id + num_stripes) % num_rails;
+	scheduler->rr_counter = next_rail_id;
+
+	nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
+
 	/* Number of bytes left to assign */
 	size_t left = size;
 	/* Offset into message */
 	size_t offset = 0;
-	/* Maximum size of a stripe */
-	size_t max_stripe_size = 0;
 
-	schedule->num_xfer_infos = 0;
+	/* Calculate max stripe size as a multiple of 128 for alignment.
+	 * Split message size across stripes, ensuring each stripe is within max_stripe_size and LL128 aligned */
+	size_t max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_stripes), align) * align;
 
-	if (OFI_UNLIKELY(num_rails == 0)) return;
-
-	max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_rails), align) * align;
+	schedule->num_xfer_infos = num_stripes;
 
 	/* Compute stripes and assign to rails */
-	for (int rail_id = 0; rail_id != num_rails && left > 0; ++rail_id) {
+	for (int stripe_idx = 0; stripe_idx < num_stripes; ++stripe_idx) {
 		size_t stripe_size = NCCL_OFI_MIN(left, max_stripe_size);
 
-		schedule->rail_xfer_infos[rail_id].rail_id = rail_id;
-		schedule->rail_xfer_infos[rail_id].offset = offset;
-		schedule->rail_xfer_infos[rail_id].msg_size = stripe_size;
+		schedule->rail_xfer_infos[stripe_idx].rail_id = curr_rail_id;
+		schedule->rail_xfer_infos[stripe_idx].offset = offset;
+		schedule->rail_xfer_infos[stripe_idx].msg_size = stripe_size;
 
-		schedule->num_xfer_infos++;
 		offset += stripe_size;
 		left -= stripe_size;
-	}
-}
 
-/*
- * @brief	Assign message round-robin
- */
-static inline int set_round_robin_schedule(nccl_net_ofi_threshold_scheduler_t *scheduler,
-                                           size_t size,
-                                           size_t num_rails,
-                                           nccl_net_ofi_schedule_t *schedule)
-{
-	int rail_id;
-
-	nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
-
-	/* Retieve and increment round-robin counter; wrap around if required */
-	rail_id = (scheduler->rr_counter)++;
-	scheduler->rr_counter = scheduler->rr_counter == num_rails ? 0 : scheduler->rr_counter;
-
-	nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
-
-	schedule->num_xfer_infos = 1;
-	schedule->rail_xfer_infos[0].rail_id = rail_id;
-	schedule->rail_xfer_infos[0].offset = 0;
-	schedule->rail_xfer_infos[0].msg_size = size;
-
-	return 0;
-}
-
-/*
- * @brief	Assign message round-robin or multiplex message depending on its size
- *
- * Messages larger than `threshold' are multiplexed. Smaller messages are assigned round-robin.
- */
-static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *scheduler,
-					    size_t size,
-					    int num_rails,
-					    size_t align,
-					    nccl_net_ofi_schedule_t *schedule)
-{
-	int ret = 0;
-	if (size > scheduler->rr_threshold) {
-		nccl_net_ofi_set_multiplexing_schedule(size, num_rails,
-						       align, schedule);
-	} else {
-		ret = set_round_robin_schedule(scheduler, size, num_rails, schedule);
+		curr_rail_id = (curr_rail_id + 1) % num_rails;
 	}
 	return ret;
 }
@@ -237,9 +222,7 @@ int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *scheduler)
 	return ret;
 }
 
-int nccl_net_ofi_threshold_scheduler_init(int num_rails,
-					  size_t rr_threshold,
-					  nccl_net_ofi_scheduler_t **scheduler_p)
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler_p)
 {
 	int ret = 0;
 	nccl_net_ofi_threshold_scheduler_t *scheduler = NULL;
@@ -261,7 +244,7 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails,
 	scheduler->base.get_schedule = get_threshold_schedule;
 	scheduler->base.fini = threshold_scheduler_fini;
 	scheduler->rr_counter = 0;
-	scheduler->rr_threshold = rr_threshold;
+	scheduler->min_stripe_size = min_stripe_size;
 
 	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
 	if (ret) {

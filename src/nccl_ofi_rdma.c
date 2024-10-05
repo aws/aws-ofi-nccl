@@ -7017,10 +7017,8 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 /**
  * Create an rdma device object
  */
-static nccl_net_ofi_rdma_device_t *
-nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
-				int dev_id, struct fi_info *info_list,
-				nccl_ofi_topo_t *topo, size_t rr_threshold)
+static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
+	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo, size_t min_strip_size)
 {
 	int ret = 0;
 	bool provide_own_mr_key = false;
@@ -7063,9 +7061,7 @@ nccl_net_ofi_rdma_device_create(nccl_net_ofi_plugin_t *plugin,
 	}
 
 	/* Create scheduler */
-	ret = nccl_net_ofi_threshold_scheduler_init(length,
-						    rr_threshold,
-						    &device->scheduler);
+	ret = nccl_net_ofi_threshold_scheduler_init(length, min_strip_size, &device->scheduler);
 	if (ret != 0) {
 		goto error;
 	}
@@ -7275,7 +7271,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 		                                                                     (int)dev_id,
 		                                                                     info_list,
 		                                                                     rdma_plugin->topo,
-		                                                                     ofi_nccl_round_robin_threshold());
+		                                                                     ofi_nccl_min_stripe_size());
 		if (device == NULL) {
 			NCCL_OFI_WARN("Device creation failed");
 			return -ENOMEM;
@@ -7402,7 +7398,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (ofi_nccl_eager_max_size() > ofi_nccl_round_robin_threshold()) {
+	if (ofi_nccl_eager_max_size() > ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
 		goto error;
