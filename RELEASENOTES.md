@@ -10,6 +10,22 @@ have unified the code into a single branch, and made the AWS-specific parts a
 compile-time option.  When a feature (or entire release) only supports one of
 the two variants, we note that in the release notes.
 
+# v1.12.0-aws release notes
+
+This release is intended only for use on AWS P* instances. A general release that supports other Libfabric networks will be made in the near future. This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and supports [NCCL 2.23.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.23.4-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+New Features:
+* Support for tuner v3 APIs
+* Support for AllGather and ReduceScatter in the tuner
+* Support for PAT algorithm in the tuner
+
+Bug fixes:
+* Fixed NULL pointer access in the endpoint per communicator path
+* Replaced the NVLSTree option in the tuner with RING if nRanks==nNodes
+
+The plugin has been tested with following libfabric providers using tests bundled in the source code and [nccl-tests](https://github.com/NVIDIA/nccl-tests) suite:
+* efa
+
 # v1.11.0-aws release notes
 
 This release is intended only for use on AWS P* instances. A general release that supports other Libfabric networks will be made in the near future. This release requires [Libfabric v1.18.0](https://github.com/ofiwg/libfabric/releases/tag/v1.18.0) or later and supports [NCCL 2.22.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.22.3-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
