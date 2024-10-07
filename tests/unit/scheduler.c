@@ -59,7 +59,7 @@ int verify_schedule(nccl_net_ofi_schedule_t *schedule, nccl_net_ofi_schedule_t *
 int create_ref_schedule(nccl_net_ofi_schedule_t **schedule, int num_xfer_infos)
 {
 	int ret = 0;
-	*schedule = (nccl_net_ofi_schedule_t *)malloc(sizeof(nccl_net_ofi_xfer_info_t) +
+	*schedule = (nccl_net_ofi_schedule_t *)malloc(sizeof(nccl_net_ofi_schedule_t) +
 	                                              num_xfer_infos * sizeof(nccl_net_ofi_xfer_info_t));
 
 	if (!(*schedule)) {
