@@ -4684,9 +4684,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(device->ep_lock));
+		nccl_net_ofi_mutex_lock(&(device->device_lock));
 		ep->ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(device->ep_lock));
+		nccl_net_ofi_mutex_unlock(&(device->device_lock));
 
 		/* Reset request state for connect response message */
 		prepare_send_conn_resp_req(l_comm);
@@ -6574,7 +6574,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		goto exit;
 	}
 
-	nccl_net_ofi_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->device_lock);
 
 	/* Decrease reference counter of endpoint. */
 	ep->ref_cnt--;
@@ -6633,7 +6633,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 	}
 
  unlock:
-	nccl_net_ofi_mutex_unlock(&device->ep_lock);
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
  exit:
 	return ret;
@@ -6758,7 +6758,7 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 	}
 
 	/* Obtain lock */
-	nccl_net_ofi_mutex_lock(&device->ep_lock);
+	nccl_net_ofi_mutex_lock(&device->device_lock);
 
 	thread_id = nccl_net_ofi_gettid();
 	HASH_FIND(hh, device->endpoint_table, &thread_id,
@@ -6793,7 +6793,7 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 	*base_ep = &ep->base;
 
  unlock:
-	nccl_net_ofi_mutex_unlock(&device->ep_lock);
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 	/* During plugin initialization, this function is invoked the
 	 * first time. Consequently, initialization function of
@@ -6900,7 +6900,7 @@ static int device_init_thread_local(nccl_net_ofi_rdma_device_t *devices)
 	int ret;
 
 	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&devices->ep_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&devices->device_lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;
