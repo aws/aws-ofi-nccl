@@ -86,12 +86,12 @@ static inline int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t ind
 }
 
 static inline int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
-								   int num_rails,
-								   size_t msg_size,
-								   size_t num_stripes,
-								   int *rail_id,
-								   int *offset,
-								   size_t *msg_size_per_stripe)
+				   int num_rails,
+				   size_t msg_size,
+				   size_t num_stripes,
+				   int *rail_id,
+				   size_t *offset,
+				   size_t *msg_size_per_stripe)
 {
 	int ret = 0;
 	nccl_net_ofi_schedule_t *ref_schedule;
@@ -158,7 +158,7 @@ static inline int test_threshold_scheduler()
 	size_t msg_size_per_stripe_1[6][1] =
 		{{msg_sizes_1[0]}, {msg_sizes_1[1]}, {msg_sizes_1[2]}, {msg_sizes_1[3]}, {msg_sizes_1[4]}, {msg_sizes_1[5]}};
 	int rail_ids_1[6][1] = {{0}, {1}, {2}, {3}, {0}, {1}}; /* In round-robin for each iteration a new rail-id is used */
-	int offsets_1[6][1] = {{0}, {0}, {0}, {0}, {0}, {0}};  /* Offset remaines 0 in round robin */
+	size_t offsets_1[6][1] = {{0}, {0}, {0}, {0}, {0}, {0}}; /* Offset remaines 0 in round robin */
 	for (int iter = 0; iter < 6; iter++) {
 		ret = test_multiplexer(scheduler,
 		                       num_rails,
@@ -192,12 +192,12 @@ static inline int test_threshold_scheduler()
 	/* For each message ensure that two rails are used. Also ensure that the rail-id pairs
 	 * are round-robin between each schedule */
 	int rail_ids_2[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
-	int offsets_2[6][2] = {{0, stripe_size[0]},
-	                       {0, stripe_size[1]},
-	                       {0, stripe_size[2]},
-	                       {0, stripe_size[3]},
-	                       {0, stripe_size[4]},
-	                       {0, stripe_size[5]}};
+	size_t offsets_2[6][2] = {{0, stripe_size[0]},
+				  {0, stripe_size[1]},
+				  {0, stripe_size[2]},
+				  {0, stripe_size[3]},
+				  {0, stripe_size[4]},
+				  {0, stripe_size[5]}};
 	size_t msg_size_per_stripe_2[6][2] = {{stripe_size[0], remaining_stripe_size[0]},
 	                                      {stripe_size[1], remaining_stripe_size[1]},
 	                                      {stripe_size[2], remaining_stripe_size[2]},
@@ -234,12 +234,12 @@ static inline int test_threshold_scheduler()
 	/* For each message ensure that three rails are used. Also ensure that the rail-id triplets
 	 * are round-robin between each schedule */
 	int rail_ids_3[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
-	int offsets_3[6][2] = {{0, (stripe_size[0] * 2) / 2},
-	                       {0, (stripe_size[1] * 2) / 2},
-	                       {0, (stripe_size[2] * 2) / 2},
-	                       {0, (stripe_size[3] * 2) / 2},
-	                       {0, (stripe_size[4] * 2) / 2},
-	                       {0, (stripe_size[5] * 2) / 2}};
+	size_t offsets_3[6][2] = {{0, (stripe_size[0] * 2) / 2},
+				  {0, (stripe_size[1] * 2) / 2},
+				  {0, (stripe_size[2] * 2) / 2},
+				  {0, (stripe_size[3] * 2) / 2},
+				  {0, (stripe_size[4] * 2) / 2},
+				  {0, (stripe_size[5] * 2) / 2}};
 	size_t msg_size_per_stripe_3[6][2] = {{(stripe_size[0] * 2) / 2, remaining_stripe_size[0]},
 	                                      {(stripe_size[1] * 2) / 2, remaining_stripe_size[1]},
 	                                      {(stripe_size[2] * 2) / 2, remaining_stripe_size[2]},
@@ -275,12 +275,12 @@ static inline int test_threshold_scheduler()
 	}
 	/* For each message ensure that all four rails are used. */
 	int rail_ids_4[6][4] = {{2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}};
-	int offsets_4[6][4] = {{0, stripe_size[0], stripe_size[0] * 2, stripe_size[0] * 3},
-	                       {0, stripe_size[1], stripe_size[1] * 2, stripe_size[1] * 3},
-	                       {0, stripe_size[2], stripe_size[2] * 2, stripe_size[2] * 3},
-	                       {0, stripe_size[3], stripe_size[3] * 2, stripe_size[3] * 3},
-	                       {0, stripe_size[4], stripe_size[4] * 2, stripe_size[4] * 3},
-	                       {0, stripe_size[5], stripe_size[5] * 2, stripe_size[5] * 3}};
+	size_t offsets_4[6][4] = {{0, stripe_size[0], stripe_size[0] * 2, stripe_size[0] * 3},
+				  {0, stripe_size[1], stripe_size[1] * 2, stripe_size[1] * 3},
+				  {0, stripe_size[2], stripe_size[2] * 2, stripe_size[2] * 3},
+				  {0, stripe_size[3], stripe_size[3] * 2, stripe_size[3] * 3},
+				  {0, stripe_size[4], stripe_size[4] * 2, stripe_size[4] * 3},
+				  {0, stripe_size[5], stripe_size[5] * 2, stripe_size[5] * 3}};
 	size_t msg_size_per_stripe_4[6][4] = {{stripe_size[0], stripe_size[0], stripe_size[0], remaining_stripe_size[0]},
 	                                      {stripe_size[1], stripe_size[1], stripe_size[1], remaining_stripe_size[1]},
 	                                      {stripe_size[2], stripe_size[2], stripe_size[2], remaining_stripe_size[2]},
