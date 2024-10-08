@@ -810,7 +810,7 @@ typedef struct nccl_net_ofi_rdma_device {
 
 	/* Lock for concurrency since endpoints can be shared by
 	 * multiple entities. */
-	pthread_mutex_t ep_lock;
+	pthread_mutex_t device_lock;
 
 	/* Number of rails */
 	int num_rails;
