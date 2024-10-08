@@ -4307,7 +4307,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 				goto error;
 			}
 
-			new_ep->thread_local_ep = false;
+			new_ep->is_endpoint_per_communicator_ep = true;
 
 			ep_for_addr = &new_ep->base;
 
@@ -6602,7 +6602,7 @@ static int release_ep(nccl_net_ofi_ep_t *base_ep)
 		 * Remove ep from the ep address list. Currently, we don't store the
 		 * thread-local ep(s) in the address list, so condition on that here.
 		 */
-		if (ofi_nccl_endpoint_per_communicator() != 0 && !ep->thread_local_ep) {
+		if (ep->is_endpoint_per_communicator_ep) {
 			ret = nccl_ofi_ep_addr_list_delete(device->ep_addr_list, &ep->base);
 			if (ret != 0) {
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
@@ -6781,7 +6781,7 @@ static inline int get_ep(nccl_net_ofi_device_t *base_dev, nccl_net_ofi_ep_t **ba
 		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
 			 sizeof(ep->creating_thread_id), ep);
 
-		ep->thread_local_ep = true;
+		ep->is_endpoint_per_communicator_ep = false;
 
 		ret = create_ep(device, ep);
 		if (ret != 0) {

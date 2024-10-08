@@ -741,8 +741,9 @@ struct nccl_net_ofi_rdma_ep {
 	/* Size of bounce buffers */
 	size_t bounce_buff_size;
 
-	/* True if this ep is stored in the thread-local store */
-	bool thread_local_ep;
+	/* true if the current endpoint is a endpoint_per_communicator
+	   receive communicator */
+	bool is_endpoint_per_communicator_ep;
 
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
