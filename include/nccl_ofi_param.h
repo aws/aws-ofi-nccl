@@ -174,7 +174,20 @@ OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2);
  * registration with the device, so it may cause a significant performance
  * degradation.
  */
-OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE", 0);
+OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
+#if HAVE_NEURON
+		/*
+		 * 1. NeuronRuntime maintains its own MR cache, making the aws-ofi-nccl
+		 *	  MR cache redundant.
+		 * 2. Neuron registers MRs that are smaller than system page size.
+		 *    NeuronRuntime MR cache supports that, while aws-ofi-nccl MR
+		 *    cache doesn't.
+		 */
+		1
+#else
+		0
+#endif
+		);
 
 /*
  * Maximum number of cq entries to read in a single call to
