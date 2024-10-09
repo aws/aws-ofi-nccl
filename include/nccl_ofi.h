@@ -124,15 +124,6 @@ extern bool virt_addr_mr;
  */
 extern const char *nccl_ofi_selected_protocol;
 
-/*
- * Determine whether to allocate the domain per process or per
- * thread.
- * 0: allocate domain per process
- * 1: allocate domain per thread
- */
-
-extern int domain_per_thread;
-
 /* Internode network latency reported to NCCL. */
 extern float net_latency;
 
@@ -531,6 +522,14 @@ struct nccl_net_ofi_plugin {
 
 	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
 
+	/*
+	 * Determine whether to allocate the domain per process or per
+	 * thread.
+	 * false: allocate domain per process
+	 * true: allocate domain per thread
+	 */
+	bool domain_per_thread;
+
 /* private */
 	/* Array of devices */
 	nccl_net_ofi_device_t **p_devs;
@@ -589,7 +588,8 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin);
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices, nccl_ofi_properties_t *props);
+int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
+				 int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
 /*
  * @brief	Allocate memory region for memory registration

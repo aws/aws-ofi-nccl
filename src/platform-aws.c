@@ -533,16 +533,6 @@ int platform_init(const char **provider_filter)
 		nccl_ofi_selected_protocol = platform_data->default_protocol;
 	}
 
-	domain_per_thread = ofi_nccl_domain_per_thread();
-	if (domain_per_thread == -1) {
-		if (platform_data != NULL) {
-			domain_per_thread = platform_data->domain_per_thread;
-		} else {
-			domain_per_thread = 0;
-		}
-	}
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s", domain_per_thread ? "thread" : "process");
-
 exit:
 	return ret;
 }
@@ -811,4 +801,14 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails)
 
 error:
 	return;
+}
+
+
+bool platform_default_domain_per_thread(void)
+{
+	struct ec2_platform_data *platform_data = get_platform_data();
+	if (platform_data != NULL && platform_data->domain_per_thread != 0) {
+		return true;
+	}
+	return false;
 }

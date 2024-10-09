@@ -167,6 +167,19 @@ static inline nccl_net_ofi_rdma_device_t *get_device_from_ep(nccl_net_ofi_rdma_e
 	return (nccl_net_ofi_rdma_device_t*)ep->base.device;
 }
 
+
+static nccl_net_ofi_rdma_plugin_t *rdma_endpoint_get_plugin(nccl_net_ofi_rdma_ep_t *ep)
+{
+	return (nccl_net_ofi_rdma_plugin_t*)ep->base.device->plugin;
+}
+
+
+static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_device_t *device)
+{
+	return (nccl_net_ofi_rdma_plugin_t*)device->base.plugin;
+}
+
+
 /*
  * @brief	Get endpoint communicator with given ID
  */
@@ -526,11 +539,15 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)base_dev;
 	int dev_id = device->base.dev_id;
+	int ret;
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = device->device_rails[0].info;
 	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
-	int ret =  nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
+	nccl_net_ofi_rdma_plugin_t *plugin = rdma_device_get_plugin(device);
+	assert(plugin != NULL);
+
+	ret =  nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
@@ -6475,8 +6492,9 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 			nccl_net_ofi_ep_rail_t *ep_rail)
 {
 	int ret = 0;
+	nccl_net_ofi_rdma_plugin_t *plugin = rdma_endpoint_get_plugin(ep);
 
-	if (domain_per_thread == 1) {
+	if (plugin->base.domain_per_thread) {
 		ret = fi_domain(dev_rail->fabric, dev_rail->info,
 			&ep_rail->domain, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -6773,9 +6791,14 @@ error:
  * @brief	Allocates and initialises various libfabric resources like
  *		fabric and domain to make device rail ready for rail creation.
  */
-static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
+static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
+						 nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
 	int ret = 0;
+	nccl_net_ofi_rdma_plugin_t *plugin;
+
+	plugin = rdma_device_get_plugin(device);
+	assert(plugin != NULL);
 
 	/* Create fabric */
 	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, NULL);
@@ -6791,7 +6814,7 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t
          * platforms, libfabric locks when accessing the domain, so retaining separate domains
          * per thread and per endpoint reduces contention for that lock.
          */
-	if (domain_per_thread == 0) {
+	if (!plugin->base.domain_per_thread) {
 		/* Create domain */
 		ret = fi_domain(rail_dev->fabric, rail_dev->info,
 				&rail_dev->domain, NULL);
@@ -6843,7 +6866,7 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
 
 	for (; begin != end; ++begin) {
-		ret = init_device_rail_ofi_resources(begin);
+		ret = init_device_rail_ofi_resources(device, begin);
 		if (ret != 0) {
 			return ret;
 		}
@@ -7233,6 +7256,12 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
+	if (rdma_plugin->base.domain_per_thread && ofi_nccl_endpoint_per_communicator() != 0) {
+		/* TODO support this configuration */
+		NCCL_OFI_WARN("domain_per_thread is true and ofi_nccl_endpoint_per_communicator() != 0 are not supported together");
+		return ncclInvalidArgument;
+	}
+
 	/* Initialize user data iterator */
 	ret = nccl_ofi_topo_set_to_begin(rdma_plugin->topo, &data_iter);
 	if (ret != 0) {
@@ -7390,13 +7419,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 	eager_max_size = (size_t) ofi_nccl_eager_max_size();
-
-	if (domain_per_thread == 1 && ofi_nccl_endpoint_per_communicator() != 0) {
-		/* TODO support this configuration */
-		NCCL_OFI_WARN("domain_per_thread == 1 and ofi_nccl_endpoint_per_communicator() != 0 are not supported together");
-		ret = ncclInvalidArgument;
-		goto error;
-	}
 
 	/* Create NCCL OFI topology */
 	topo = nccl_ofi_topo_create(provider_list);
