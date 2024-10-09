@@ -30,6 +30,12 @@
 #include "nccl_ofi_mr.h"
 
 
+static nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device(nccl_net_ofi_sendrecv_ep_t *ep)
+{
+	return (nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+}
+
+
 static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_sendrecv_device_t *device)
 {
 	return (nccl_net_ofi_sendrecv_plugin_t*)device->base.plugin;
@@ -392,7 +398,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	}
 
 	/* Retrieve and validate device */
-	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -780,7 +786,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+		sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -860,8 +866,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -918,7 +923,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	/* Retrieve and validate device */
-	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -1168,8 +1173,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			}
 
 			/* Retrieve and validate device */
-			nccl_net_ofi_sendrecv_device_t *device =
-				(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+			nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
 			if (OFI_UNLIKELY(device == NULL)) {
 				ret = -EINVAL;
 				NCCL_OFI_WARN("Invalid device provided");
@@ -1384,7 +1388,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+		sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -1571,8 +1575,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -1649,7 +1652,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+		sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -1683,7 +1686,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	}
 
 	/* Retrieve and validate device */
-	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -1835,7 +1838,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	int ret = 0;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device.");
 		return -EINVAL;
@@ -2009,7 +2012,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 
 	/* Retrieve and validate devices */
-	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_ep->device;
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
@@ -2136,7 +2139,7 @@ static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 	}
 
 	/* Validate device */
-	device = (nccl_net_ofi_sendrecv_device_t *)ep->base.device;
+	device = sendrecv_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
