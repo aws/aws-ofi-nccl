@@ -162,7 +162,8 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 static inline int check_post_bounce_req(nccl_net_ofi_rdma_req_t *bounce_req);
 
-static inline nccl_net_ofi_rdma_device_t *get_device_from_ep(nccl_net_ofi_rdma_ep_t *ep)
+
+static nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device(nccl_net_ofi_rdma_ep_t *ep)
 {
 	return (nccl_net_ofi_rdma_device_t*)ep->base.device;
 }
@@ -821,7 +822,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 	assert(ep != NULL);
 
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 
 	rdma_req_send_data_t *send_data = get_send_data(req);
@@ -1137,7 +1138,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *bounce_req)
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 
 	nccl_net_ofi_rdma_ep_t *ep = bounce_data->ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
 		bounce_get_close_msg(bounce_data->bounce_fl_item);
@@ -1858,11 +1859,11 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
 		if (rc > 0) {
-			ret = process_completions(cqe_buffers, rc, get_device_from_ep(ep), rail->rail_id);
+			ret = process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-			ret = process_err_completion(get_device_from_ep(ep), rail->cq);
+			ret = process_err_completion(rdma_endpoint_get_device(ep), rail->cq);
 			if (ret == 0) {
 				/* Error entry not available yet */
 				break;
@@ -2185,7 +2186,7 @@ static inline nccl_net_ofi_rdma_req_t *alloc_bounce_req(nccl_net_ofi_rdma_ep_t *
 
 	req->comm = NULL;
 	req->type = NCCL_OFI_RDMA_BOUNCE;
-	req->dev_id = get_device_from_ep(ep)->base.dev_id;
+	req->dev_id = rdma_endpoint_get_device(ep)->base.dev_id;
 	req->free = free_bounce_req;
 
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
@@ -2405,7 +2406,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	}
 
 	/* Retrieve and validate device */
-	device = get_device_from_ep(ep);
+	device = rdma_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -2704,7 +2705,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	uint64_t regattr_flags = 0;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
@@ -2789,7 +2790,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 	assert(ep);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	nccl_ofi_idpool_t *key_pool = &device->key_pool;
@@ -2907,7 +2908,7 @@ static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	return reg_mr_ep(ep,
@@ -2922,7 +2923,7 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 			    int type, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	return reg_mr_ep(ep,
@@ -2967,7 +2968,7 @@ static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, vo
 	}
 
 	freelist_handle->mr_handle = mr_handle;
-	freelist_handle->key_pool = &(get_device_from_ep(ep))->key_pool;
+	freelist_handle->key_pool = &(rdma_endpoint_get_device(ep))->key_pool;
 	*handle = (void *)freelist_handle;
 	return 0;
 }
@@ -2998,7 +2999,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(ep != NULL);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
@@ -3298,7 +3299,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	assert(ep != NULL);
 
-	device = get_device_from_ep(ep);
+	device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	ret = process_cq_if_pending(ep);
@@ -3632,7 +3633,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_req_t *send_close_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_close_req == NULL)) {
@@ -3777,7 +3778,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	}
 
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	set_comm(device, s_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
@@ -4609,7 +4610,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(l_comm_ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(l_comm_ep);
 	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
@@ -4815,7 +4816,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(get_device_from_ep((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool,
+	ret = nccl_ofi_idpool_free_id(rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool,
 				      l_comm->comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
@@ -4838,7 +4839,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 		(nccl_net_ofi_rdma_ep_t *)base_ep;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	int dev_id = device->base.dev_id;
@@ -4912,7 +4913,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 	assert(ep != NULL);
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
@@ -4954,7 +4955,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 					nccl_net_ofi_rdma_req_t **ret_req)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	*ret_req = NULL;
 
@@ -6017,7 +6018,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	*s_comm = NULL;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = get_device_from_ep(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device");
 		return -EINVAL;
@@ -6588,7 +6589,7 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 		nccl_net_ofi_rdma_device_t *device = NULL;
 
 		/* Validate device */
-		device = get_device_from_ep(ep);
+		device = rdma_endpoint_get_device(ep);
 		if (OFI_UNLIKELY(device == NULL)) {
 			NCCL_OFI_WARN("Invalid device provided");
 			return -EINVAL;
