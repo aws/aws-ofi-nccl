@@ -18,6 +18,8 @@ extern "C" {
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
+
+#include "contrib/uthash.h"
 #include "nccl-headers/net.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
