@@ -8,7 +8,7 @@
 
 #include "nccl_ofi_msgbuff.h"
 
-#include "test-common.h"
+#include "test-common.hpp"
 
 int main(int argc, char *argv[])
 {

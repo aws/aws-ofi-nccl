@@ -30,14 +30,15 @@ enum nccl_ofi_mr_ckey_type {
 typedef enum nccl_ofi_mr_ckey_type nccl_ofi_mr_ckey_type_t;
 
 struct nccl_ofi_mr_ckey {
-	const union {
-		const struct iovec iovec;
+	union {
+		struct iovec iovec;
 #if HAVE_DECL_FI_MR_DMABUF
-		const struct fi_mr_dmabuf fi_mr_dmabuf;
+		struct fi_mr_dmabuf fi_mr_dmabuf;
 #endif
 	};
-	const enum nccl_ofi_mr_ckey_type type;
+	enum nccl_ofi_mr_ckey_type type;
 };
+
 typedef struct nccl_ofi_mr_ckey nccl_ofi_mr_ckey_t;
 typedef struct nccl_ofi_mr_ckey const *const nccl_ofi_mr_ckey_ref;
 
@@ -101,29 +102,23 @@ static inline uintptr_t nccl_ofi_mr_ckey_len(nccl_ofi_mr_ckey_ref ckey)
 #if HAVE_DECL_FI_MR_DMABUF
 static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t offset, size_t len, void *base_addr)
 {
-	return (nccl_ofi_mr_ckey_t){
-		.fi_mr_dmabuf =
-			{
-				.fd = fd,
-				.offset = offset,
-				.len = len,
-				.base_addr = base_addr,
-			},
-		.type = NCCL_OFI_MR_CKEY_DMABUF,
-	};
+	nccl_ofi_mr_ckey_t cache_key = {};
+	cache_key.fi_mr_dmabuf.fd = fd;
+	cache_key.fi_mr_dmabuf.offset = offset;
+	cache_key.fi_mr_dmabuf.len = len;
+	cache_key.fi_mr_dmabuf.base_addr = base_addr;
+	cache_key.type = NCCL_OFI_MR_CKEY_DMABUF;
+	return cache_key;
 }
 #endif
 
 static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len)
 {
-	return (nccl_ofi_mr_ckey_t){
-		.iovec =
-			{
-				.iov_base = iov_base,
-				.iov_len = iov_len,
-			},
-		.type = NCCL_OFI_MR_CKEY_IOVEC,
-	};
+	nccl_ofi_mr_ckey_t cache_key = {};
+	cache_key.iovec.iov_base = iov_base;
+	cache_key.iovec.iov_len = iov_len;
+	cache_key.type = NCCL_OFI_MR_CKEY_IOVEC;
+	return cache_key;
 }
 
 static inline void nccl_ofi_mr_ckey_fill_mr_attrs(nccl_ofi_mr_ckey_ref ckey, struct fi_mr_attr *attrs, uint64_t *flags)

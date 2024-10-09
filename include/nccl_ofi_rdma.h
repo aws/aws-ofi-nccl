@@ -9,6 +9,8 @@
 extern "C" {
 #endif
 
+#include "config.h"
+
 #include <uthash/uthash.h>
 #include <rdma/fabric.h>
 
@@ -20,8 +22,10 @@ extern "C" {
 #include "nccl_ofi_deque.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
-#include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_ep_addr_list.h"
+#if HAVE_NVTX_TRACING
+#include <nvtx3/nvToolsExt.h>
+#endif
 
 /* Maximum number of rails supported. This defines the size of
  * messages exchanged during connection establishment (linear

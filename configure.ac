@@ -46,7 +46,9 @@ NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 # Checks for programs
 AC_PROG_CC
 AM_PROG_CC_C_O
+AC_PROG_CXX
 m4_version_prereq([2.70], [], [AC_PROG_CC_STDC])
+AC_PROG_CXX
 AC_C_INLINE
 
 dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
@@ -55,12 +57,18 @@ dnl between this and AC_PROG_CC.
 AS_IF([test "${ax_enable_debug}" = "no"], [
              dnl Enable O3 optimization
              CFLAGS="${CFLAGS} -O3"
+             CXXFLAGS="${CXXFLAGS} -O3"
+
+             dnl use C++17, disable exceptions, and disable runtime type information
+             CXXFLAGS="-std=c++17 -fno-rtti -fno-exceptions"
 
              dnl dead code elim
              CFLAGS="${CFLAGS} -ffunction-sections -fdata-sections"
+             CXXFLAGS="${CXXFLAGS} -ffunction-sections -fdata-sections"
 
              dnl https://maskray.me/blog/2021-05-09-fno-semantic-interposition
              CFLAGS="${CFLAGS} -fno-semantic-interposition -fvisibility=hidden"
+             CXXFLAGS="${CXXFLAGS} -fno-semantic-interposition -fvisibility=hidden "
              LDFLAGS="${LDFLAGS} -Bsymbolic"
             ])
 CHECK_ENABLE_SANITIZER()
@@ -175,9 +183,14 @@ AS_IF([test "${enable_trace}" = "yes" ],
 AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output should include TRACE level])
 
 picky_cflags=""
+picky_cxxflags=""
 AC_DEFUN([ADD_PICKY_FLAGS],[
     AC_LANG_PUSH([C])
     AX_CHECK_COMPILE_FLAG([$1], [picky_cflags="${picky_cflags} $1"], [], [-Werror])
+    AC_LANG_POP()
+
+    AC_LANG_PUSH([C++])
+    AX_CHECK_COMPILE_FLAG([$1], [picky_cxxflags="${picky_cxxflags} $1"], [], [-Werror -x c++])
     AC_LANG_POP()
     ])
 
@@ -220,6 +233,8 @@ AC_ARG_ENABLE([picky-compiler],
 AS_IF([test "${enable_picky_compiler}" != "no"],
       [AC_MSG_NOTICE([Adding ${picky_cflags} to CFLAGS.])
        CFLAGS="${CFLAGS} ${picky_cflags}"
+       CXXFLAGS="${CXXFLAGS} ${picky_cxxflags}"
+       AS_UNSET([picky_cxxflags])
        AS_UNSET([picky_cflags])])
 
 werror_flags="-Werror"
@@ -227,10 +242,12 @@ AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
 AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CFLAGS.])
-       CFLAGS="${werror_flags} ${CFLAGS}"],
+       CXXFLAGS="${werror_flags} ${CXXFLAGS} "
+       CFLAGS="${werror_flags} ${CFLAGS} "],
       [test "${enable_werror}" = "yes"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CFLAGS.])
-       CFLAGS="${werror_flags} ${CFLAGS}"])
+       CXXFLAGS="${werror_flags} ${CXXFLAGS} "
+       CFLAGS="${werror_flags} ${CFLAGS} "])
 
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
