@@ -27,6 +27,7 @@ sources = \
 	tracepoint.c
 
 if WANT_PLATFORM_AWS
+sources += instance-aws.c
 sources += platform-aws.c
 endif
 
@@ -69,7 +70,8 @@ endif
 noinst_LTLIBRARIES += libinternal_tuner_plugin.la
 tuner_sources = \
 	tuner/nccl_ofi_regions.c \
-	tuner/nccl_ofi_tuner.c
+	tuner/nccl_ofi_tuner.c \
+  instance-aws.c
 libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
 libinternal_tuner_plugin_la_LDFLAGS = -avoid-version
 libinternal_tuner_plugin_la_CPPFLAGS = -I$(top_srcdir)/include

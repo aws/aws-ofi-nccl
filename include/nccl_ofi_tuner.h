@@ -11,6 +11,7 @@
 
 #include "nccl-headers/nvidia/tuner.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_platform.h"
 
 /* Maximum number of vertices per region */
 #define TUNER_MAX_NUM_VERTICES 20
