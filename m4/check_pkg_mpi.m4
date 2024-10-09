@@ -31,6 +31,7 @@ AC_DEFUN([CHECK_PKG_MPI], [
          LDFLAGS="${MPI_LDFLAGS} ${LDFLAGS}"])
 
   MPICC=${mpi_bindir}mpicc
+  MPICXX=${mpi_bindir}mpicxx
 
   AC_MSG_CHECKING([for working mpicc])
   ${MPICC} --help >& AS_MESSAGE_LOG_FD
@@ -38,6 +39,7 @@ AC_DEFUN([CHECK_PKG_MPI], [
         [AC_MSG_RESULT([yes])],
         [AC_MSG_RESULT([no])
          MPICC="${CC}"
+         MPICXX="${CXX}"
          AS_IF([test "${check_pkg_found}" = "yes"],
                [AC_CHECK_HEADERS([mpi.h], [], [check_pkg_found=no])])
 
@@ -49,6 +51,7 @@ AC_DEFUN([CHECK_PKG_MPI], [
         [$2])
 
   AC_SUBST([MPICC])
+  AC_SUBST([MPICXX])
   AC_SUBST([MPI_CPPFLAGS])
   AC_SUBST([MPI_LDFLAGS])
   AC_SUBST([MPI_LIBS])

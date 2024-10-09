@@ -86,7 +86,7 @@ jobs:
 
       - name: Install hwloc, utilities.
         run: |
-          yum -y install hwloc-devel autoconf automake libtool gcc g++ git make
+          yum -y install hwloc-devel autoconf automake libtool gcc gcc-c++ git make
 
       - name: Install CUDA
         if: matrix.sdk == 'cuda'
@@ -109,6 +109,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --enable-neuron
           else
@@ -117,6 +118,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --with-cuda=/usr/local/cuda/
           fi
@@ -143,6 +145,9 @@ jobs:
         cc:
           - gcc
           - clang
+        mode:
+          - cxx
+          - c
         tracing:
           - lttng
           - none
@@ -158,7 +163,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test(${{ matrix.mode }})
     steps:
       - uses: actions/checkout@v4
 
@@ -236,6 +241,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --enable-neuron
           else
@@ -244,6 +250,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --with-cuda=/usr/local/cuda/
           fi
@@ -276,7 +283,10 @@ jobs:
         sdk:
           - cuda
           - neuron
-    name: CodeChecker - ${{ matrix.sdk }}
+        mode:
+          - cxx
+          - c
+    name: CodeChecker - ${{ matrix.sdk }} ${{ matrix.mode }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -319,6 +329,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --enable-neuron
           else
@@ -327,6 +338,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
+                        --enable-cxx=${{ matrix.mode == 'cxx' && 'yes' || 'no' }} \
                         --enable-platform-aws \
                         --with-cuda=/usr/local/cuda/
           fi
@@ -345,7 +357,7 @@ jobs:
       - name: Save CodeChecker HTML output.
         uses: actions/upload-artifact@v4
         with:
-          name: CodeChecker Bug Reports for ${{ matrix.sdk }}
+          name: CodeChecker Bug Reports for ${{ matrix.sdk }} ${{ matrix.mode }}
           path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
 
       - name: CodeChecker Pass Or Fail?

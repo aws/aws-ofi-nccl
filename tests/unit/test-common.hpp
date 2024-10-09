@@ -5,14 +5,18 @@
 #ifndef TEST_COMMON_H_
 #define TEST_COMMON_H_
 
+#include "config.h"
+
 #include <stdarg.h>
 #include <stdio.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
-static inline void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
-			  int line, const char *fmt, ...)
+namespace {
+
+void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
+			  int line, char const *const fmt, ...)
 {
 	va_list vargs;
 
@@ -24,7 +28,7 @@ static inline void logger(ncclDebugLogLevel level, unsigned long flags, const ch
 			printf("INFO: Function: %s Line: %d: ", filefunc, line);
 			break;
 		case NCCL_LOG_TRACE:
-#if OFI_NCCL_TRACE
+#if defined(OFI_NCCL_TRACE) && OFI_NCCL_TRACE
 			printf("TRACE: Function: %s Line: %d: ", filefunc, line);
 			break;
 #else
@@ -44,6 +48,8 @@ static inline void logger(ncclDebugLogLevel level, unsigned long flags, const ch
 	printf("\n");
 	va_end(vargs);
 #pragma GCC diagnostic pop
+}
+
 }
 
 #endif // End TEST_COMMON_H_
