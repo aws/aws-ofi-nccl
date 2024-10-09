@@ -787,17 +787,19 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 		goto exit;
 	}
 
-	/*
-	 * MR cache is locked between lookup and insert, to be sure we
-	 * insert a missing entry
-	 */
-	nccl_net_ofi_mutex_lock(&mr_cache->lock);
-	ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
-	if (ret_handle) {
-		/* Cache hit */
-		goto unlock;
+	if (mr_cache) {
+		/*
+		 * MR cache is locked between lookup and insert, to be sure we
+		 * insert a missing entry
+		 */
+		nccl_net_ofi_mutex_lock(&mr_cache->lock);
+		ret_handle = nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey);
+		if (ret_handle) {
+			/* Cache hit */
+			goto unlock;
+		}
+		/* Cache miss */
 	}
-	/* Cache miss */
 
 	key_pool = &device->key_pool;
 	struct fid_domain *domain;
@@ -809,21 +811,25 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 		goto unlock;
 	}
 
-	ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, ret_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
-		/* MR cache insert failed. Deregister memory region without
-		 * trying to delete MR cache entry.
-		 */
-		if (dereg_mr_base_comm((struct fid_mr *)ret_handle, key_pool, NULL) != 0) {
-			NCCL_OFI_WARN("Error deregistering memory region for addr %ld (%s)",
-						  nccl_ofi_mr_ckey_baseaddr(ckey), nccl_ofi_mr_ckey_type_str(ckey));
+	if (mr_cache) {
+		ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, ret_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			/* MR cache insert failed. Deregister memory region without
+			 * trying to delete MR cache entry.
+			 */
+			if (dereg_mr_base_comm((struct fid_mr *)ret_handle, key_pool, NULL) != 0) {
+				NCCL_OFI_WARN("Error deregistering memory region for addr %ld (%s)",
+					      nccl_ofi_mr_ckey_baseaddr(ckey), nccl_ofi_mr_ckey_type_str(ckey));
+			}
+			ret_handle = NULL;
+			goto unlock;
 		}
-		ret_handle = NULL;
-		goto unlock;
 	}
 
 unlock:
-	nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+	if (mr_cache) {
+		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+	}
 exit:
 	*mhandle = ret_handle;
 	return ret;
