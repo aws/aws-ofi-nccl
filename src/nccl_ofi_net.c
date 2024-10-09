@@ -59,9 +59,6 @@ bool virt_addr_mr = false;
 /* Selected communication protocol. */
 const char *nccl_ofi_selected_protocol = NULL;
 
-/* Allocate one domain per process (0) or per thread (1) */
-int domain_per_thread = 0;
-
 /* Internode network latency. */
 float net_latency = .0;
 
@@ -259,6 +256,18 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			      nccl_ofi_selected_protocol);
 	}
 
+	if (ofi_nccl_domain_per_thread() != -1) {
+		plugin->domain_per_thread = (ofi_nccl_domain_per_thread() > 0);
+	} else {
+		if (platform_default_domain_per_thread) {
+			plugin->domain_per_thread = platform_default_domain_per_thread();
+		} else {
+			plugin->domain_per_thread = false;
+		}
+	}
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s",
+		      plugin->domain_per_thread ? "thread" : "process");
+
 	ret = plugin->complete_init(plugin);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to initialize %s protocol", nccl_ofi_selected_protocol);
@@ -398,8 +407,8 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
  *
  * @return	Populated props structure
  */
-int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_devices,
-				 nccl_ofi_properties_t *props)
+int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
+				 int dev_id, int num_devices, nccl_ofi_properties_t *props)
 {
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
@@ -441,7 +450,7 @@ int nccl_net_ofi_info_properties(struct fi_info *nic_prov, int dev_id, int num_d
 	 * Also, if we have different domains for different threads, registrations
 	 * are not reported as global even if they are tied to the domain.
 	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || domain_per_thread == 1) {
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || plugin->domain_per_thread) {
 		props->regIsGlobal = 0;
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {

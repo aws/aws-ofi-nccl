@@ -29,6 +29,13 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
+
+static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_sendrecv_device_t *device)
+{
+	return (nccl_net_ofi_sendrecv_plugin_t*)device->base.plugin;
+}
+
+
 static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 				 nccl_ofi_properties_t *props)
 {
@@ -38,6 +45,8 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	int dev_id = device->base.dev_id;
 	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
 	int ret;
+	nccl_net_ofi_sendrecv_plugin_t *plugin = sendrecv_device_get_plugin(device);
+	assert(plugin != NULL);
 
 	/* Validate libfabric NIC info */
 	if (OFI_UNLIKELY(info == NULL)) {
@@ -46,7 +55,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(info, dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
@@ -2152,6 +2161,7 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
+	nccl_net_ofi_sendrecv_plugin_t *plugin;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
@@ -2160,6 +2170,9 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
+
+	plugin = sendrecv_device_get_plugin(device);
+	assert(plugin != NULL);
 
 	/* Allocate endpoint */
 	ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
@@ -2175,7 +2188,7 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 		return ret;
 	}
 
-	if (domain_per_thread == 1) {
+	if (plugin->base.domain_per_thread) {
 		ret = fi_domain(device->fabric, device->info,
 				&ep->domain, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2218,6 +2231,10 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 {
 	int ret = 0;
 	int ofi_tag_leading_zeroes = 0, ofi_tag_bits_for_ring_id = 64;
+	nccl_net_ofi_sendrecv_plugin_t *plugin;
+
+	plugin = sendrecv_device_get_plugin(device);
+	assert(plugin != NULL);
 
 	/* Determine if any tag bits are used by provider */
 	while (!((device->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
@@ -2252,7 +2269,7 @@ static int device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
 	 * platforms, libfabric locks when accessing the domain, so retaining separate domains
 	 * per thread and per endpoint reduces contention for that lock.
 	 */
-	if (domain_per_thread == 0) {
+	if (!plugin->base.domain_per_thread) {
 		/* Create domain */
 		ret = fi_domain(device->fabric, device->info,
 				&device->domain, NULL);
