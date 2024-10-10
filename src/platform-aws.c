@@ -699,6 +699,31 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	}
 
 	nccl_net_ofi_mutex_lock(&mutex);
+
+	/* TODO: This is a temporary hack to disable setting
+	 * NCCL_PROTO=simple on P5en when using the RDMA protocol.  EFA
+	 * on P5en does not currently report
+	 * WRITE_IN_ORDER_ALIGNED_128_BYTES because it can deliver the
+	 * (correct) payload twice.  This violates the meaning of the
+	 * WRITE_IN_ORDER_ALIGNED_128_BYTES flag in rdma-core, but
+	 * does not violate any assumptions about buffer reuse in
+	 * NCCL. We have confirmed that the EFA provider in Libfabric
+	 * will not segment messages for fi_write(), so this is safe.
+	 * Note that the SENDRECV protocol does have segmentation
+	 * challenges that require us to obey the
+	 * SENDRECV_IN_ORDER_ALIGNED_128_BYTES flag, so we only skip
+	 * the check when using the RDMA protocol.
+	 */
+	if (!nccl_proto_configured) {
+		if ((NULL == getenv("NCCL_PROTO")) &&
+		    (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) &&
+		    (0 == strcmp(get_platform_type(), "p5en.48xlarge"))) {
+			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5en + RDMA");
+			need_ordering = false;
+			nccl_proto_configured = true;
+		}
+	}
+
 	/* If we know we need byte delivery ordering (need_ordering ==
 	 * true) or this is the first time that we're configuring an
 	 * endpoint (nccl_proto_configured == false), then try to
