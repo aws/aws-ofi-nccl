@@ -4676,9 +4676,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(device->device_lock));
+		nccl_net_ofi_mutex_lock(&(device->base.device_lock));
 		ep->base.ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(device->device_lock));
+		nccl_net_ofi_mutex_unlock(&(device->base.device_lock));
 
 		/* Reset request state for connect response message */
 		prepare_send_conn_resp_req(l_comm);
