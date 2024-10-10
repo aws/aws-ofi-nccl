@@ -789,10 +789,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	/* Message scheduler */
 	nccl_net_ofi_scheduler_t *scheduler;
 
-	/* Lock for concurrency since endpoints can be shared by
-	 * multiple entities. */
-	pthread_mutex_t device_lock;
-
 	/* Number of rails */
 	int num_rails;
 
