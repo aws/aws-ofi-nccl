@@ -27,7 +27,7 @@ if WANT_PLATFORM_AWS
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += show_tuner_decisions
   show_tuner_decisions_SOURCES = show_tuner_decisions.c
-  show_tuner_decisions_LDADD = $(top_builddir)/src/tuner/libinternal_tuner_plugin.la
+  show_tuner_decisions_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
 endif
 endif
 
