@@ -280,7 +280,7 @@ static inline nccl_net_ofi_rdma_close_msg_t *bounce_get_close_msg
 /*
  * @brief Return send communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *get_send_comm_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
+static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
 								int rail_id)
 {
 	assert(s_comm->rails);
@@ -292,7 +292,7 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *get_send_comm_rail(nccl_net_of
 /*
  * @brief Return receive communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *get_recv_comm_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 								int rail_id)
 {
 	assert(r_comm->rails);
@@ -303,7 +303,7 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *get_recv_comm_rail(nccl_net_of
 /*
  * @brief Return device rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_device_rail_t *get_device_rail(nccl_net_ofi_rdma_device_t *device,
+static inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(nccl_net_ofi_rdma_device_t *device,
 							       int rail_id)
 {
 	assert(device->device_rails);
@@ -314,7 +314,7 @@ static inline nccl_net_ofi_rdma_device_rail_t *get_device_rail(nccl_net_ofi_rdma
 /*
  * @brief Return endpoint rail with index `rail_id`
  */
-static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
+static inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_rail(nccl_net_ofi_rdma_ep_t *ep,
 						 int rail_id)
 {
 	assert(ep->rails);
@@ -325,10 +325,9 @@ static inline nccl_net_ofi_ep_rail_t *get_rail(nccl_net_ofi_rdma_ep_t *ep,
 /*
  * @brief return the domain for the endpoint and rail.
  */
-
 static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
 {
-	return get_rail(ep, rail_id)->domain;
+	return rdma_endpoint_get_rail(ep, rail_id)->domain;
 }
 
 /*
@@ -1709,7 +1708,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 {
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = get_recv_comm_rail(r_comm, 0);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, 0);
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -1913,7 +1912,7 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 	int ret;
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 
 		ret = ofi_process_cq_rail(ep, rail);
 		if (ret != 0) {
@@ -2288,7 +2287,7 @@ static inline int post_bounce_buffs(nccl_net_ofi_rdma_ep_t *ep)
 	int ret = 0;
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		ret = post_bounce_buffs_on_rail(ep, rail);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed call to post_bounce_buffs_on_rail");
@@ -2753,7 +2752,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	/* Register memory on each rail */
 	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		domain = get_domain_from_endpoint(ep, rail_id);
 
 		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
@@ -4377,8 +4376,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen
 
 	/* Initialize local and remote endpoint resources for each rail */
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = get_recv_comm_rail(r_comm, rail_id);
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
 		comm_rail->local_ep = rail->ofi_ep;
@@ -4508,7 +4507,7 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 	/* Set libfabric endpoint names for each rail */
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_ofi_rdma_ep_name_t *rdma_ep_name = &conn_resp->ep_names[rail_id];
-		nccl_net_ofi_ep_rail_t *ep_rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *ep_rail = rdma_endpoint_get_rail(ep, rail_id);
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
 		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
@@ -5058,7 +5057,7 @@ static int insert_rdma_send_req_into_msgbuff(nccl_net_ofi_rdma_send_comm_t *s_co
 static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = get_send_comm_rail(s_comm, 0);
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, 0);
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -5212,7 +5211,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 
 			/* Get communicator rail information to xfer the req */
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-				get_send_comm_rail(s_comm, xfer_info->rail_id);
+				rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
@@ -5221,7 +5220,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
 				/* Get communicator rail information to xfer the req */
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-					get_send_comm_rail(s_comm, xfer_info->rail_id);
+					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
 
 				ret = post_rdma_write(req, comm_rail, xfer_info);
 
@@ -5302,7 +5301,7 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	comm_rail = get_recv_comm_rail(r_comm, xfer_info->rail_id);
+	comm_rail = rdma_recv_comm_get_rail(r_comm, xfer_info->rail_id);
 
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item = send_close_data->ctrl_fl_item;
 
@@ -5345,7 +5344,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	int bounce_rail_id = bounce_data->rail->rail_id;
-	comm_rail = get_recv_comm_rail(r_comm, bounce_rail_id);
+	comm_rail = rdma_recv_comm_get_rail(r_comm, bounce_rail_id);
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
@@ -5387,7 +5386,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 
 	/* iterate all rails and post RDMA local read */
 	for (int rail_id = 0; rail_id < ep->num_rails; rail_id++) {
-		comm_rail = get_recv_comm_rail(r_comm, rail_id);
+		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
 
 		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
 
@@ -5827,7 +5826,7 @@ static inline int init_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_net_ofi_mutex_init(&ep->control_rail.bounce_mutex, NULL);
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		rail->min_bounce_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
 		);
@@ -5865,7 +5864,7 @@ static inline int fini_bounce_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	}
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		nccl_net_ofi_mutex_destroy(&rail->bounce_mutex);
 	}
 
@@ -6461,7 +6460,7 @@ static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 {
 	ep_rail_release(&ep->control_rail, dev_id);
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		ep_rail_release(get_rail(ep, rail_id), dev_id);
+		ep_rail_release(rdma_endpoint_get_rail(ep, rail_id), dev_id);
 	}
 }
 
@@ -6561,8 +6560,8 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	/* Initialize libfabric resources of endpoint rails */
 	for (int rail_id = 0; rail_id != device->num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_device_rail_t *rail_dev =
-			get_device_rail(device, rail_id);
-		nccl_net_ofi_ep_rail_t *rail = get_rail(ep, rail_id);
+			rdma_device_get_rail(device, rail_id);
+		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 
 		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail);
 		if (ret != 0) {
