@@ -181,6 +181,17 @@ static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_devi
 }
 
 
+static nccl_net_ofi_rdma_ep_t *rdma_req_get_ep(nccl_net_ofi_rdma_req_t *req)
+{
+	return (nccl_net_ofi_rdma_ep_t *)req->comm->ep;
+}
+
+
+static nccl_net_ofi_rdma_device_t *rdma_req_get_device(nccl_net_ofi_rdma_req_t *req)
+{
+	return (nccl_net_ofi_rdma_device_t *)rdma_req_get_ep(req)->base.device;
+}
+
 /*
  * @brief	Get endpoint communicator with given ID
  */
@@ -2022,7 +2033,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 	send_data = get_send_data(req);
 
 	if (send_data->schedule) {
-		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
+		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
 		nccl_net_ofi_release_schedule(device->scheduler, send_data->schedule);
 		send_data->schedule = NULL;
 	}
@@ -2111,7 +2122,7 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)req->comm->ep->device;
+		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
 		nccl_net_ofi_release_schedule(device->scheduler, send_close_data->ctrl_schedule);
 		send_close_data->ctrl_schedule = NULL;
 	}
