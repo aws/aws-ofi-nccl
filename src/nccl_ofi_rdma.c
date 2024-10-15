@@ -325,7 +325,7 @@ static inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_rail(nccl_net_ofi_rdma_e
 /*
  * @brief return the domain for the endpoint and rail.
  */
-static inline struct fid_domain *get_domain_from_endpoint(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
+static inline struct fid_domain *rdma_endpoint_get_ofi_domain(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
 {
 	return rdma_endpoint_get_rail(ep, rail_id)->domain;
 }
@@ -2753,7 +2753,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 	ret_handle->num_rails = num_rails;
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
-		domain = get_domain_from_endpoint(ep, rail_id);
+		domain = rdma_endpoint_get_ofi_domain(ep, rail_id);
 
 		ret = register_rail_mr_buffer(domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr, regattr_flags,
