@@ -17,6 +17,7 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"
+#include "nccl_ofi_system.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 ncclDebugLogger_t ofi_log_function = NULL;
@@ -41,6 +42,7 @@ static ncclResult_t nccl_ofi_tuner_destroy(void *context)
 
 static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
+	const char *platform_type = NULL;
 	ncclResult_t ret = ncclSuccess;
 	*context = NULL;
 
@@ -58,6 +60,22 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 
 	nccl_ofi_tuner_ctx->dims.num_ranks = nRanks;
 	nccl_ofi_tuner_ctx->dims.num_nodes = nNodes;
+
+
+	/*
+	 * Retrieve platform type and check if NCCL_OFI_TUNER is supported.
+	 * If platform type is NULL or not "p5.48xlarge" or "p5en.48xlarge",
+	 * log a warning and exit.
+	 */
+	platform_type = nccl_net_ofi_get_product_name();
+	if (platform_type == NULL) {
+		NCCL_OFI_WARN("NCCL_OFI_TUNER is not available because platform type is unavailable.");
+		goto exit;
+	}
+	if (strcmp(platform_type, "p5.48xlarge") != 0 && strcmp(platform_type, "p5en.48xlarge") != 0) {
+		NCCL_OFI_WARN("NCCL_OFI_TUNER is not available for platform : %s", platform_type);
+		goto exit;
+	}
 
 	/* Define regions where a certain combination of algorithm and protocol
 	 * should be used. Any point not covered by any region would fall back

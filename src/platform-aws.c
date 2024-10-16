@@ -24,6 +24,7 @@
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
+#include "nccl_ofi_system.h"
 
 struct ec2_platform_data {
 	const char* name;
@@ -130,87 +131,6 @@ static struct ec2_platform_data platform_data_map[] = {
 };
 
 /*
- * @brief	Provides EC2 platform type as reported by the
- * 		first line of
- *		/sys/devices/virtual/dmi/id/product_name.
- *		Users of this API *should* free the buffer when a
- *		Non-NULL string is returned.
- *
- * @return	NULL, on allocation and file system error
- * 		EC2 platform type, on success
- */
-static const char* get_platform_type(void)
-{
-	char file[] = "/sys/devices/virtual/dmi/id/product_name";
-	FILE *fd = NULL;
-	char ch;
-	size_t len = 0;
-	size_t platform_type_len = 64;
-	static bool init = false;
-	static char *platform_type = NULL;
-	static pthread_mutex_t platform_mutex = PTHREAD_MUTEX_INITIALIZER;
-
-	nccl_net_ofi_mutex_lock(&platform_mutex);
-
-	if (init) {
-		nccl_net_ofi_mutex_unlock(&platform_mutex);
-		return platform_type;
-	}
-
-	init = true;
-
-	fd = fopen(file, "r");
-	if (fd == NULL) {
-		NCCL_OFI_WARN("Error opening file: %s", file);
-		goto error;
-	}
-
-	platform_type = (char *)malloc(sizeof(char)*platform_type_len);
-	if (platform_type == NULL) {
-		NCCL_OFI_WARN("Unable to allocate platform type");
-		goto error;
-	}
-
-	/* Read first line of the file, reallocing the buffer as necessary */
-	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
-		platform_type[len++] = ch;
-		if (len >= platform_type_len) {
-			char *new_platform_type = (char *)realloc(platform_type, len + platform_type_len);
-			if (new_platform_type == NULL) {
-				NCCL_OFI_WARN("Unable to (re)allocate platform type");
-				goto error;
-			}
-			platform_type = new_platform_type;
-		}
-	}
-
-	platform_type[len] = '\0';
-
-	if (ferror(fd)) {
-		NCCL_OFI_WARN("Error reading file: %s", file);
-		goto error;
-	}
-
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "EC2 platform type is %s", platform_type);
-
-	goto exit;
-
-error:
-	if (platform_type) {
-		free(platform_type);
-		platform_type = NULL;
-	}
-
-exit:
-	if (fd)
-		fclose(fd);
-
-	nccl_net_ofi_mutex_unlock(&platform_mutex);
-
-	return platform_type;
-}
-
-/*
  * @brief	Returns platform data for current platform type, if found
  *
  * @input	Platform type
@@ -234,7 +154,7 @@ static struct ec2_platform_data *get_platform_data()
 	}
 	init = true;
 
-	platform_type = get_platform_type();
+	platform_type = nccl_net_ofi_get_product_name();
 	if (platform_type == NULL) {
 		nccl_net_ofi_mutex_unlock(&mutex);
 		return NULL;
@@ -569,7 +489,7 @@ int platform_init(const char **provider_filter)
 	if (getenv("NCCL_TOPO_FILE")) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "Running on %s platform, NCCL_TOPO_FILE environment variable is already set to %s",
-			      get_platform_type(), getenv("NCCL_TOPO_FILE"));
+			      nccl_net_ofi_get_product_name(), getenv("NCCL_TOPO_FILE"));
 	} else if (platform_data && platform_data->topology) {
 		char topology_path[PATH_MAX];
 
@@ -584,7 +504,7 @@ int platform_init(const char **provider_filter)
 
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
-				get_platform_type(), topology_path);
+				nccl_net_ofi_get_product_name(), topology_path);
 
 		ret = setenv("NCCL_TOPO_FILE", topology_path, 1);
 		if (ret != 0) {
@@ -717,7 +637,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	if (!nccl_proto_configured) {
 		if ((NULL == getenv("NCCL_PROTO")) &&
 		    (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) &&
-		    (0 == strcmp(get_platform_type(), "p5en.48xlarge"))) {
+		    (0 == strcmp(nccl_net_ofi_get_product_name(), "p5en.48xlarge"))) {
 			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5en + RDMA");
 			need_ordering = false;
 			nccl_proto_configured = true;

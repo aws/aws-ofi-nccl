@@ -238,7 +238,6 @@ AC_CONFIG_FILES([Makefile
                  include/Makefile
                  3rd-party/Makefile
                  src/Makefile
-                 src/tuner/Makefile
                  tests/Makefile
                  tests/functional/Makefile
                  tests/unit/Makefile

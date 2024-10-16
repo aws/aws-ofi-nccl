@@ -4,7 +4,6 @@
 # See LICENSE.txt for license information
 #
 
-SUBDIRS = tuner
 #
 # net plugin
 #
@@ -13,6 +12,7 @@ sources = \
 	nccl_ofi_compat.c \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
+	nccl_ofi_system.c \
 	nccl_ofi_rdma.c \
 	nccl_ofi_scheduler.c \
 	nccl_ofi_topo.c \
@@ -68,4 +68,33 @@ else
   libnccl_net_la_SOURCES =
   libnccl_net_la_LIBADD = libinternal_net_plugin.la
   libnccl_net_la_LDFLAGS = -module -avoid-version
+endif
+
+
+#
+# Tuner
+#
+
+if WANT_PLATFORM_AWS
+if !ENABLE_NEURON
+
+noinst_LTLIBRARIES += libinternal_tuner_plugin.la
+tuner_sources =  \
+	tuner/nccl_ofi_regions.c \
+	tuner/nccl_ofi_tuner.c \
+	nccl_ofi_system.c
+
+libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
+libinternal_tuner_plugin_la_LDFLAGS = -avoid-version
+libinternal_tuner_plugin_la_CPPFLAGS = -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
+libinternal_tuner_plugin_la_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/uthash/include
+libinternal_tuner_plugin_la_CPPFLAGS += -I$(top_srcdir)/include
+
+# NCCL tuner plugin
+lib_LTLIBRARIES += libnccl-ofi-tuner.la
+libnccl_ofi_tuner_la_SOURCES = $(tuner_sources)
+libnccl_ofi_tuner_la_CPPFLAGS = -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include -isystem $(abs_top_srcdir)/3rd-party/uthash/include -I$(top_srcdir)/include
+libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
+
+endif
 endif
