@@ -300,6 +300,13 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_n
 	return &r_comm->rails[rail_id];
 }
 
+
+static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
+{
+	return (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+}
+
+
 /*
  * @brief Return device rail with index `rail_id`
  */
@@ -3566,14 +3573,15 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = r_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
+	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return ret;
 	}
 
-	device = (nccl_net_ofi_rdma_device_t *)base_ep->device;
+	device = rdma_endpoint_get_device(ep);
+	assert(device != NULL);
 
 	if (r_comm->send_close_req != NULL) {
 		ret = r_comm->send_close_req->free(r_comm->send_close_req, false);
@@ -3631,7 +3639,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 
 	free(r_comm);
 
-	ret = base_ep->release_ep(base_ep);
+	ret = ep->base.release_ep(&ep->base);
 
 	return ret;
 }
