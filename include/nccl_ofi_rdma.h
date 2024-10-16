@@ -282,7 +282,8 @@ typedef struct {
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
-
+	/* Pointer to recv parent request */
+	nccl_net_ofi_rdma_req_t *recv_req;
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
 #endif
@@ -325,6 +326,8 @@ typedef struct {
 	size_t dst_len;
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
+	/* Pointer to send control message child request */
+	nccl_net_ofi_rdma_req_t *send_ctrl_req;
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req_t *recv_segms_req;
 	/* (Eager messages) pointer to eager local copy request */
@@ -533,7 +536,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
 	uint64_t n_ctrl_expected;
-	uint16_t last_ctrl_received;
 
 	bool comm_active;
 
@@ -613,8 +615,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
-
-	uint16_t last_ctrl_sent;
 
 	/* Number of rails */
 	int num_rails;
