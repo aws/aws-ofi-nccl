@@ -27,6 +27,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
+#include "nccl_ofi_ofiutils.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
@@ -726,13 +727,13 @@ unlock:
 
 
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, const char *device_name)
+			     int device_index, struct fi_info *ofi_info)
 {
 	int ret = 0;
 
 	device->plugin = plugin;
 	device->dev_id = device_index;
-	device->name = strdup(device_name);
+	device->name = strdup(ofi_info->fabric_attr->prov_name);
 	if (device->name == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device name");
 		ret = -ENOMEM;
@@ -763,6 +764,38 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		return -ret;
 	}
 
+	/* Initialize mr rkey handling */
+	device->need_mr_rkey_pool = true;
+	ret = nccl_ofi_mr_keys_need_own_key(ofi_info, &device->need_mr_rkey_pool);
+	if (ret != 0) {
+		NCCL_OFI_WARN("MR key config parsing failed: %s",
+			      strerror(-ret));
+		return -ret;
+	}
+	if (device->need_mr_rkey_pool) {
+		/* The provider may return support for a larger key size. Use
+		 * the size requested by the user to allow them to limit the
+		 * size of the mr_keys table. */
+		const size_t shift = (ofi_nccl_mr_key_size() * 8);
+		const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
+		if (shift > (size_t_bits - 1)) {
+			NCCL_OFI_WARN(
+				"Provided mr keypool size of %lu must be less than %zu",
+				ofi_nccl_mr_key_size(),
+				size_t_bits);
+			return -EINVAL;
+		}
+		ret = nccl_ofi_idpool_init(&device->mr_rkey_pool, 1 << shift);
+	} else {
+		/* Mark key pool as not in use */
+		ret = nccl_ofi_idpool_init(&device->mr_rkey_pool, 0);
+	}
+	if (ret != 0) {
+		NCCL_OFI_WARN("Creating MR id pool failed: %s",
+			      strerror(-ret));
+		return -ret;
+	}
+
 	device->create_endpoint = NULL;
 	device->endpoint_table = NULL;
 
@@ -773,6 +806,7 @@ exit:
 
 int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 {
+
 	if (device == NULL) {
 		return 0;
 	}
@@ -784,6 +818,8 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 	if (device->name != NULL) {
 		free(device->name);
 	}
+
+	nccl_ofi_idpool_fini(&device->mr_rkey_pool);
 
 	return 0;
 }

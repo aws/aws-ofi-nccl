@@ -804,9 +804,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	   lookup of comms in the RDMA protocol. */
 	nccl_net_ofi_comm_t **comms;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t key_pool;
-
 	bool use_long_rkeys;
 
 	/* List of endpoints and set of addresses they have connections to */
