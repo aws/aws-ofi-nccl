@@ -105,7 +105,6 @@ static inline void sendrecv_req_update(nccl_net_ofi_sendrecv_req_t *req, nccl_ne
 	req->size = size;
 	/* As nccl_net_ofi_test() can be called on other thread, state should
 	 * be updated last and there should be a barrier before state update */
-	__sync_synchronize();
 	req->state = state;
 }
 
@@ -389,12 +388,12 @@ static inline int sendrecv_comm_free_req(nccl_net_ofi_comm_t *base_comm,
 	}
 }
 
-#define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
 
 static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)base_req;
+	nccl_net_ofi_sendrecv_domain_t *domain = NULL;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate comm */
@@ -413,17 +412,26 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		goto exit;
 	}
 
+	/* Retrieve and validate domain */
+	domain = sendrecv_endpoint_get_domain(ep);
+	if (OFI_UNLIKELY(domain == NULL)) {
+		ret = -EINVAL;
+		NCCL_OFI_WARN("Invalid domain provided");
+		goto exit;
+	}
+
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
 		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0))
-			goto exit;
+			goto unlock;
 	}
 
 	/* Determine whether the request has finished and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED ||
 		       req->state == NCCL_OFI_SENDRECV_REQ_ERROR)) {
-		__compiler_barrier();
 		if (size)
 			*size = req->size;
 		/* Mark as done */
@@ -438,6 +446,9 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	else {
 		*done = 0;
 	}
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
  exit:
 	return ret;
@@ -728,16 +739,26 @@ static int sendrecv_mr_base_register(struct fid_domain *domain, struct fid_ep *e
 				   (struct fid_mr **)mhandle);
 }
 
-static int sendrecv_comm_mr_base_dereg(struct fid_mr *mr_handle,
-				       nccl_ofi_idpool_t *key_pool,
+static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_comm_t *base_comm,
+				       struct fid_mr *mr_handle,
 				       nccl_ofi_mr_cache_t *mr_cache)
 {
 	int ret = 0;
 
 	if (OFI_LIKELY(mr_handle == NULL)) {
 		NCCL_OFI_TRACE(NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
-		goto exit;
+		return 0;
 	}
+
+	nccl_net_ofi_sendrecv_ep_t *ep = (nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
+	assert(ep != NULL);
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
+	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 	if (mr_cache) {
 		/*
@@ -752,7 +773,7 @@ static int sendrecv_comm_mr_base_dereg(struct fid_mr *mr_handle,
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
 			/* Entry must not be deregistered */
-			return ret;
+			goto unlock;
 		}
 	}
 
@@ -774,7 +795,9 @@ static int sendrecv_comm_mr_base_dereg(struct fid_mr *mr_handle,
 			      ret, fi_strerror(-ret));
 	}
 
- exit:
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
 	return ret;
 }
 
@@ -804,13 +827,15 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	int dev_id = device->base.dev_id;
 
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+
 	int ret = 0;
 	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
 	void *ret_handle = NULL;
 
 	if (sendrecv_mr_buffer_skip_local_registration(type)) {
 		/* Registraton and caching are unnecessary */
-		goto exit;
+		goto unlock;
 	}
 
 	if (mr_cache) {
@@ -843,7 +868,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.
 			 */
-			if (sendrecv_comm_mr_base_dereg((struct fid_mr *)ret_handle, key_pool, NULL) != 0) {
+			if (sendrecv_comm_mr_base_dereg(base_comm, (struct fid_mr *)ret_handle, NULL) != 0) {
 				NCCL_OFI_WARN("Error deregistering memory region for addr %ld (%s)",
 					      nccl_ofi_mr_ckey_baseaddr(ckey), nccl_ofi_mr_ckey_type_str(ckey));
 			}
@@ -856,7 +881,9 @@ unlock:
 	if (mr_cache) {
 		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 	}
-exit:
+
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
 	*mhandle = ret_handle;
 	return ret;
 }
@@ -893,7 +920,7 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(domain != NULL);
 
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
+	return sendrecv_comm_mr_base_dereg(&recv_comm->base, mr_handle, domain->base.mr_cache);
 }
 
 /*
@@ -934,6 +961,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
+	nccl_net_ofi_sendrecv_domain_t *domain = NULL;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
 		(nccl_net_ofi_sendrecv_recv_comm_t *)recv_comm;
 	int dev_id = r_comm->base.base.dev_id;
@@ -944,8 +972,12 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto error;
+		goto exit;
 	}
+
+	/* Retrieve and validate domain */
+	domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
 	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
@@ -980,6 +1012,19 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		NCCL_OFI_WARN("Memory handles array is NULL");
 		goto error;
 	}
+
+	/* The Nvidia and Neuron threading guarantee is that at most
+	 * one thread will access communicator resources at a time.
+	 * This means that it is safe to manipulate the request
+	 * objects (which are per-communicator resources) outside of
+	 * the lock.
+	 */
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+
+	/* Progress NCCL OFI */
+	ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+	if (OFI_UNLIKELY(ret != 0))
+		goto error;
 
 	/* Currently, plugin doesn't support grouped receives */
 	assert(n <= NCCL_OFI_MAX_RECVS);
@@ -1019,11 +1064,15 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	/* Return request to NCCL */
 	*base_req = (nccl_net_ofi_req_t *)req;
 
-	goto exit;
+	goto unlock;
 
  error:
 	if (req)
 		sendrecv_recv_comm_free_req(r_comm, dev_id, req, false);
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
  exit:
 	return ret;
 }
@@ -1038,10 +1087,16 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_ep_t *base_ep = r_comm->base.base.ep;
 	if (OFI_UNLIKELY(base_ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
+		return -EINVAL;
 	}
+	nccl_net_ofi_sendrecv_ep_t *ep = (nccl_net_ofi_sendrecv_ep_t *)base_ep;
+
+	/* Retrieve and validate endpoint */
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_NET, "De-registering buffer for flush operations");
@@ -1067,8 +1122,11 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
 
-	ret = base_ep->release_ep(base_ep, false, false);
  exit:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
+	ret = base_ep->release_ep(base_ep, false, false);
+
 	return ret;
 }
 
@@ -1088,6 +1146,14 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	int dev_id = recv_comm->base.dev_id;
 	int flush_n = -1;
 	struct fid_mr **mr_handles = (struct fid_mr **)mhandles;
+	nccl_net_ofi_sendrecv_ep_t *ep;
+	nccl_net_ofi_sendrecv_domain_t *domain;
+
+	ep = (nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
+	assert(ep != NULL);
+
+	domain = sendrecv_endpoint_get_domain(ep);
+	assert(ep != NULL);
 
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
@@ -1144,7 +1210,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 		ret = -ENOTSUP;
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
 			      dev_id);
-		goto exit;
+		goto error;
 	}
 
 	req->comm = &r_comm->base.base;
@@ -1167,6 +1233,14 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 		}
 	}
 
+	/* The Nvidia and Neuron threading guarantee is that at most
+	 * one thread will access communicator resources at a time.
+	 * This means that it is safe to manipulate the request
+	 * objects (which are per-communicator resources) outside of
+	 * the lock.
+	 */
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+
 	NCCL_OFI_TRACE_FLUSH_SENDRECV(req, base_req);
 
 	/* Issue RDMA read */
@@ -1180,27 +1254,18 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 		if (rc == 0) {
 			break;
 		} else if (rc == -FI_EAGAIN) {
-			/* Retrieve and validate endpoint */
-			nccl_net_ofi_sendrecv_ep_t *ep =
-				(nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
-			if (OFI_UNLIKELY(ep == NULL)) {
-				ret = -EINVAL;
-				NCCL_OFI_WARN("Invalid endpoint provided");
-				goto error;
-			}
-
 			/*
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
 			ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 			if (OFI_UNLIKELY(ret != 0))
-				goto error;
+				goto unlock;
 		} else {
 			NCCL_OFI_WARN("Unable to issue read operation for dev %d. RC: %zd, ERROR: %s",
 				      dev_id, rc, fi_strerror(-rc));
 			ret = -ENOTSUP;
-			goto error;
+			goto unlock;
 		}
 	} while (true);
 
@@ -1212,6 +1277,9 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	*base_req = &req->base;
 
 	return ret;
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
  error:
 	if (req)
@@ -1410,6 +1478,8 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		return ret;
 	}
 
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+
 	/*
 	 * Take appropriate actions based on connection stage of communicator.
 	 *
@@ -1430,14 +1500,13 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
 		ep->base.ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
 
 		/* Prepare receive request to accept connections */
 		req = sendrecv_recv_req_prepare(l_comm);
 		if (req == NULL) {
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto unlock;
 		}
 
 		comm_state->stage = COMM_RECV_CONN;
@@ -1458,12 +1527,13 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 			/* Save recv request and buffer address for retry */
 			comm_state->req = &req->base;
 			l_comm->conn_info = conn_info;
-			return 0;
+			ret = 0;
+			goto unlock;
 		} else if (ret != 0) {
 			free(req);
 			free(conn_info);
 			l_comm->conn_info = NULL;
-			return ret;
+			goto unlock;
 		}
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
@@ -1475,14 +1545,15 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(req);
-			return ret;
+			goto unlock;
 		}
 
 		if (l_comm->accepted != true) {
 			/* Save recv request and buffer to retest completion */
 			comm_state->req = &req->base;
 			l_comm->conn_info = conn_info;
-			return 0;
+			ret = 0;
+			goto unlock;
 		}
 
 		if (conn_info->connect_to_self) {
@@ -1491,7 +1562,8 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 				(nccl_net_ofi_sendrecv_req_t *)conn_info->req;
 			if (conn_info_req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
 				l_comm->conn_info = conn_info;
-				return 0;
+				ret = 0;
+				goto unlock;
 			}
 		}
 
@@ -1507,13 +1579,15 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	default:
 		NCCL_OFI_WARN("Invalid state of receive communicator object: %d",
 			      stage);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	}
 
 	/* Prepare receive communicator object for the received peer connection */
 	r_comm = sendrecv_recv_comm_prepare(l_comm, device, domain, ep, conn_info->ep_name);
 	if (OFI_UNLIKELY(r_comm == NULL)) {
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto unlock;
 	}
 
 	free(conn_info);
@@ -1521,9 +1595,23 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	comm_state->comm = &r_comm->base.base;
 	*recv_comm = &r_comm->base;
 
+unlock:
+	nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
+
 	return ret;
 }
 
+
+/*
+ * @brief  Free listen communicator
+ *
+ * @note NCCL plugin semantics are that no two threads will access a
+ * communicator at the same time, implying that the upper layer will
+ * make sure that no other thread can access the listen_comm during
+ * comm_close().  There is no locking in this function, because
+ * outside of the endpoint release (which has its own locking), there
+ * can be no contention on the comm resources.
+ */
 static int sendrecv_listen_comm_close(nccl_net_ofi_listen_comm_t *listen_comm)
 {
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm =
@@ -1538,6 +1626,7 @@ static int sendrecv_listen_comm_close(nccl_net_ofi_listen_comm_t *listen_comm)
 		goto exit;
 	}
 
+	/* release_ep will take the domain lock */
 	ret = base_ep->release_ep(base_ep, false, false);
 	free(listen_comm);
  exit:
@@ -1586,6 +1675,7 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	uint64_t tag;
 	int dev_id = 0;
 	int num_addrs;
+	int ret = 0;
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 
@@ -1596,10 +1686,15 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 		return -EINVAL;
 	}
 
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	dev_id = device->base.dev_id;
 
 	/* Zero-out the handle */
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
+
+	nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
 
 	/* Increase tag ID */
 	if (ep->tag + 1 >=
@@ -1607,14 +1702,16 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
 			      " Maximum is %ld",
 			      dev_id, device->max_tag);
-		return -ENOSPC;
+		ret = -ENOSPC;
+		goto unlock;
 	}
 	tag = ++ep->tag;
 
 	/* Build handle */
 	local_ep_name = sendrecv_get_local_address(ep->ofi_ep);
 	if (local_ep_name == NULL) {
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	}
 
 	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
@@ -1627,7 +1724,8 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d.", dev_id);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	}
 
 	/* Build listen_comm */
@@ -1636,7 +1734,8 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 		sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
 	if (OFI_UNLIKELY(l_comm == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto unlock;
 	}
 
 	/* Initialize listen communicator */
@@ -1651,7 +1750,11 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->local_ep_addr = local_ep_addr;
 
 	*listen_comm = (nccl_net_ofi_listen_comm_t *)l_comm;
-	return 0;
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
+
+	return ret;
 }
 
 static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
@@ -1677,8 +1780,7 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 	assert(domain != NULL);
 
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool,
-				  domain->base.mr_cache);
+	return sendrecv_comm_mr_base_dereg(&send_comm->base, mr_handle, domain->base.mr_cache);
 }
 
 static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
@@ -1690,6 +1792,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 	void *desc = NULL;
+	nccl_net_ofi_sendrecv_domain_t *domain = NULL;
 	int dev_id = s_comm->base.base.dev_id;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 
@@ -1697,18 +1800,27 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)s_comm->base.base.ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto error;
+		return -EINVAL;
 	}
+
+	domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_SEND_REQUESTS);
-		goto error;
+		return -EINVAL;
 	}
+
+	/* The Nvidia and Neuron threading guarantee is that at most
+	 * one thread will access communicator resources at a time.
+	 * This means that it is safe to manipulate the request
+	 * objects (which are per-communicator resources) outside of
+	 * the lock.
+	 */
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 	/*
 	 * In case, we are connecting to self, ensure that the request has
@@ -1795,9 +1907,22 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	if (req)
 		sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
  exit:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
 	return ret;
 }
 
+
+/*
+ * @brief  Free send communicator
+ *
+ * @note NCCL plugin semantics are that no two threads will access a
+ * communicator at the same time, implying that the upper layer will
+ * make sure that no other thread can access the send_comm during
+ * comm_close().  There is no locking in this function, because
+ * outside of the endpoint release (which has its own locking), there
+ * can be no contention on the comm resources.
+ */
 static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 {
 	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
@@ -1871,7 +1996,8 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
 			      device->base.dev_id, ret);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto out;
 	}
 
 	/* Allocate and initialize send_comm */
@@ -1879,7 +2005,8 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 		calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm_t));
 	if (OFI_UNLIKELY(ret_s_comm == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->base.dev_id);
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto out;
 	}
 
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
@@ -2028,11 +2155,16 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 	}
 	int dev_id = device->base.dev_id;
 
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
 	nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)comm_state->req;
 	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
 		(nccl_net_ofi_sendrecv_send_comm_t *)comm_state->comm;
+
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 	/*
 	 * Take appropriate actions based on connection stage of communicator.
@@ -2053,14 +2185,15 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		/* Build send_comm */
 		ret = sendrecv_send_comm_create(handle, ep, &s_comm);
 		if (OFI_UNLIKELY(ret != 0 || s_comm == NULL)) {
-			return ret;
+			goto unlock;
 		}
 
 		/* Prepare connect request to be sent to peer */
 		req = sendrecv_send_comm_prepare_send_req(s_comm);
 		if (OFI_UNLIKELY(req == NULL)) {
 			free(s_comm);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto unlock;
 		}
 
 		comm_state->stage = COMM_SEND_CONN;
@@ -2073,12 +2206,14 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 			/* Save connection state */
 			comm_state->comm = &s_comm->base.base;
 			comm_state->req = &req->base;
-			return 0;
+			ret = 0;
+			goto unlock;
 		}
 		else if (rc != 0) {
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
 			free(s_comm);
-			return rc;
+			ret = rc;
+			goto unlock;
 		}
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
@@ -2098,7 +2233,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 			assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
 			free(s_comm);
-			return ret;
+			goto unlock;
 		}
 
 		/* Check if the connect message is sent */
@@ -2106,7 +2241,8 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 			/* Save connection state */
 			comm_state->comm = &s_comm->base.base;
 			comm_state->req = &req->base;
-			return 0;
+			ret = 0;
+			goto unlock;
 		}
 
 		comm_state->stage = COMM_CONNECTED;
@@ -2118,7 +2254,8 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 	case COMM_CONNECTED:
 	default:
 		NCCL_OFI_WARN("Invalid state of send communicator object: %d", stage);
-		return -EINVAL;
+		ret = -EINVAL;
+		goto unlock;
 	};
 
 	*send_comm = &s_comm->base;
@@ -2128,6 +2265,9 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		free(s_comm->conn_info);
 		s_comm->conn_info = NULL;
 	}
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 	return ret;
 }
