@@ -598,7 +598,7 @@ static int register_mr_buffers(struct fid_domain *domain,
 		goto exit;
 	}
 
-	if (key_pool->ids) {
+	if (nccl_ofi_idpool_active(key_pool)) {
 		int key = nccl_ofi_idpool_allocate_id(key_pool);
 		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
@@ -749,7 +749,7 @@ static int dereg_mr_base_comm(struct fid_mr *mr_handle,
 		}
 	}
 
-	if (key_pool->ids) {
+	if (nccl_ofi_idpool_active(key_pool)) {
 		uint64_t key = fi_mr_key(mr_handle);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
