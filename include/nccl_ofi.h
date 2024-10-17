@@ -260,6 +260,15 @@ struct nccl_net_ofi_device {
 	 */
 	nccl_ofi_mr_cache_t *mr_cache;
 
+	/* do we need to use an mr rkey pool?  This is a
+	 * provider-specific behavior determined when providers are
+	 * selected.
+	 */
+	bool need_mr_rkey_pool;
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t mr_rkey_pool;
+
 	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
 			      nccl_ofi_properties_t *props);
 
@@ -559,7 +568,7 @@ int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep);
  * Constructor for a device object
  */
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, const char *device_name);
+			     int device_index, struct fi_info *ofi_info);
 
 /**
  * Destructor for a device object
