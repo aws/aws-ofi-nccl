@@ -816,7 +816,7 @@ static int reg_mr_base_comm(nccl_net_ofi_comm_t *base_comm,
 		/* Cache miss */
 	}
 
-	key_pool = &device->key_pool;
+	key_pool = &device->base.mr_rkey_pool;
 	struct fid_domain *domain;
 	domain = get_domain_from_endpoint(ep);
 	ret = reg_mr_base(domain, ep->ofi_ep, key_pool,
@@ -878,7 +878,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 		return -EINVAL;
 	}
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return dereg_mr_base_comm(mr_handle, &device->key_pool, device->base.mr_cache);
+	return dereg_mr_base_comm(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
 }
 
 /*
@@ -1293,7 +1293,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *prepare_recv_comm(nccl_net_ofi_sendrec
 	struct fid_domain *domain;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
-	nccl_ofi_idpool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
 	int dev_id = device->base.dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1665,7 +1665,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 	}
 
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return dereg_mr_base_comm(mr_handle, &device->key_pool,
+	return dereg_mr_base_comm(mr_handle, &device->base.mr_rkey_pool,
 				  device->base.mr_cache);
 }
 
@@ -2344,7 +2344,6 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 				int dev_id, struct fi_info *info)
 {
 	int ret;
-	bool provide_own_mr_key = true;
 
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
@@ -2354,7 +2353,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	}
 
 	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
-				       info->fabric_attr->prov_name);
+				       info);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
 		return NULL;
@@ -2380,41 +2379,6 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	ret = device_prepare_for_connection(device);
 	if (ret != 0) {
 		NCCL_OFI_WARN("preparing for connection failed: %s",
-			      strerror(-ret));
-		goto error;
-	}
-
-	/* Indicates if the provider selects MR keys */
-	ret = nccl_ofi_mr_keys_need_own_key(info, &provide_own_mr_key);
-	if (ret != 0) {
-		NCCL_OFI_WARN("MR key config parsing failed: %s",
-			      strerror(-ret));
-		goto error;
-	}
-
-	/* Initialize mr key pool */
-	if (provide_own_mr_key) {
-		/* The provider may return support for a larger key size. Use
-		 * the size requested by the user to allow them to limit the
-		 * size of the mr_keys table. */
-		const size_t shift = (ofi_nccl_mr_key_size() * 8);
-		const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
-		if (shift > (size_t_bits - 1)) {
-			NCCL_OFI_WARN(
-				"Provided mr keypool size of %lu must be less than %zu",
-				ofi_nccl_mr_key_size(),
-				size_t_bits);
-			ret = -EINVAL;
-			goto error;
-		}
-		ret = nccl_ofi_idpool_init(&device->key_pool, 1 << shift);
-	} else {
-		/* Mark key pool as not in use */
-		ret = nccl_ofi_idpool_init(&device->key_pool, 0);
-	}
-
-	if (ret != 0) {
-		NCCL_OFI_WARN("Creating id pool failed: %s",
 			      strerror(-ret));
 		goto error;
 	}

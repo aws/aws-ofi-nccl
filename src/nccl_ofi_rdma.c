@@ -2734,7 +2734,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 
 	int dev_id = device->base.dev_id;
 	int num_rails = device->num_rails;
-	nccl_ofi_idpool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
 
 	/* Allocate rdma memory registration handle */
 	ret_handle = calloc_rdma_mr_handle(num_rails);
@@ -2817,7 +2817,7 @@ static int reg_mr_ep(nccl_net_ofi_rdma_ep_t *ep,
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
-	nccl_ofi_idpool_t *key_pool = &device->key_pool;
+	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -2992,7 +2992,7 @@ static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, vo
 	}
 
 	freelist_handle->mr_handle = mr_handle;
-	freelist_handle->key_pool = &(rdma_endpoint_get_device(ep))->key_pool;
+	freelist_handle->key_pool = &(rdma_endpoint_get_device(ep))->base.mr_rkey_pool;
 	*handle = (void *)freelist_handle;
 	return 0;
 }
@@ -3027,7 +3027,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(device != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->key_pool, device->base.mr_cache);
+	return dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
 }
 
 /*
@@ -3491,7 +3491,7 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = r_comm->flush_buff.mr_handle;
 
 	if (mr_handle) {
-		ret = dereg_mr_ep(mr_handle, &device->key_pool, NULL);
+		ret = dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, NULL);
 	}
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
@@ -4937,7 +4937,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr_ep(mr_handle, &device->key_pool, device->base.mr_cache);
+	return dereg_mr_ep(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
 }
 
 static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
@@ -7046,7 +7046,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo, size_t min_strip_size)
 {
 	int ret = 0;
-	bool provide_own_mr_key = false;
 	int length = 0;
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
@@ -7056,7 +7055,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
-				       info_list->fabric_attr->prov_name);
+				       info_list);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
 		return NULL;
@@ -7142,30 +7141,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(device->comm_idpool);
 		device->comm_idpool = NULL;
-		goto error;
-	}
-
-	/* Initialize mr key pool */
-	provide_own_mr_key = true;
-	ret = nccl_ofi_mr_keys_need_own_key(info_list, &provide_own_mr_key);
-	if (ret != 0) {
-		NCCL_OFI_WARN("MR key config parsing failed: %s",
-			      strerror(-ret));
-		goto error;
-	}
-
-	if (provide_own_mr_key) {
-		/* The provider may return support for a larger key size. Use
-		 * the size requested by the user to allow them to limit the
-		 * size of the mr_keys table. */
-		ret = nccl_ofi_idpool_init(&device->key_pool, (size_t)(1 << (ofi_nccl_mr_key_size() * 8)));
-	} else {
-		/* Mark key pool as not in use */
-		ret = nccl_ofi_idpool_init(&device->key_pool, 0);
-	}
-	if (ret != 0) {
-		NCCL_OFI_WARN("Creating id pool failed: %s",
-			      strerror(-ret));
 		goto error;
 	}
 
