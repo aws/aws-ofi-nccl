@@ -471,7 +471,7 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 		goto exit;
 	}
 
-	if (key_pool->ids) {
+	if (nccl_ofi_idpool_active(key_pool)) {
 		int key = nccl_ofi_idpool_allocate_id(key_pool);
 		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
@@ -2697,7 +2697,7 @@ static int dereg_mr_ep(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		}
 	}
 
-	if (key_pool->ids) {
+	if (nccl_ofi_idpool_active(key_pool)) {
 		uint64_t key = fi_mr_key(mr_handle->mr[0]);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			ret = -ENOENT;
