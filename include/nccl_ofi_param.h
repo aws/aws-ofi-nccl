@@ -18,9 +18,40 @@ extern "C" {
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"
 
+/*
+ * This is an ugly hack.  The original implementation of
+ * nccl_ofi_param created inline functions to access each environment
+ * variable, using the macros found in nccl_ofi_param.h.  However,
+ * this creates something of an ODR problem, as multiple complication
+ * units can call the same param lookup function, and that results in
+ * naming conflicts.  So instead, we have the header file act like a
+ * normal header file most of the time, and when included from
+ * nccl_ofi_param.c with OFI_NCCL_PARAM_DEFINE set to 1, stamps out
+ * the original implementations of the functions.  So now we have one
+ * copy of each function that everyone can call.
+ *
+ * This is intended to be a transient state.  We want to rewrite the
+ * entire param system once we've finished moving to C++, but need to
+ * solve the ODR problem before we move to C++.  So here lies one of
+ * the more terrible pieces of code I've ever written.
+ */
+#ifndef OFI_NCCL_PARAM_DEFINE
+
+#define OFI_NCCL_PARAM_UINT(name, env, default_value) \
+uint64_t ofi_nccl_##name(void);
+
+#define OFI_NCCL_PARAM_INT(name, env, default_value) \
+int64_t ofi_nccl_##name(void);
+
+#define OFI_NCCL_PARAM_STR(name, env, default_value) \
+const char *ofi_nccl_##name(void);
+
+#else
+
 #define OFI_NCCL_PARAM_UINT(name, env, default_value)                                                                       \
+	uint64_t ofi_nccl_##name(void);                                                                                     \
 	static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER;                                      \
-	static inline uint64_t ofi_nccl_##name()                                                                            \
+	uint64_t ofi_nccl_##name(void)                                                                                      \
 	{                                                                                                                   \
 		static bool initialized = false;                                                                            \
 		static uint64_t value = default_value;                                                                      \
@@ -57,8 +88,9 @@ extern "C" {
 	}
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
+int64_t ofi_nccl_##name(); \
 static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline int64_t ofi_nccl_##name() { \
+int64_t ofi_nccl_##name() { \
     static bool initialized = false; \
     static int64_t value = default_value; \
     if (initialized) { \
@@ -89,8 +121,9 @@ static inline int64_t ofi_nccl_##name() { \
 }
 
 #define OFI_NCCL_PARAM_STR(name, env, default_value) \
+const char *ofi_nccl_##name(); \
 static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline const char *ofi_nccl_##name() { \
+const char *ofi_nccl_##name() { \
     static bool initialized = false; \
     static const char *value = default_value; \
     if (initialized) { \
@@ -118,11 +151,13 @@ static inline const char *ofi_nccl_##name() { \
     return value; \
 }
 
+#endif
+
 /*
  * Enable using endpoints with IPv6 addressing format for TCP provider.
  * By default, we disable using endpoints having IPv6 addressing format.
  */
-OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
+OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0)
 
 /*
  * List of interface names (comma-separated) to be filtered out for TCP provider.
@@ -130,7 +165,7 @@ OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
  *
  * TODO: Remove lo after https://github.com/ofiwg/libfabric/issues/6127 is fixed
  */
-OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
+OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0")
 
 /*
  * Disable flush operation when using GPUDirect. Flush commands
@@ -139,14 +174,14 @@ OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
  * ensures data consistency.
  * By default, plugin issues flush commands.
  */
-OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
+OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0)
 
 /*
  * Specify the number of network connections created by
  * NIC_DUP_CONNS.  Each chosen Libfabric provider will be duplicated N
  * times and exposed to NCCL as a unique endpoint.
  */
-OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
+OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0)
 
 /*
  * When using GPUDirect use the cudaDeviceFlushGPUDirectRDMAWrites
@@ -156,13 +191,13 @@ OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
  * PCIe configurations require an additional network-level flush that
  * is not provided by this option.
  */
-OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
+OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0)
 
 /*
  * Specify the memory registration key size in bytes when using a libfabric
  * provider that supports application-selected memory registration keys.
  */
-OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2);
+OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2)
 
 /*
  * Disable the MR cache. The MR cache is used to keep track of registered
@@ -187,20 +222,20 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
 #else
 		0
 #endif
-		);
+		)
 
 /*
  * Maximum number of cq entries to read in a single call to
  * fi_cq_read.
  */
-OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
+OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4)
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
  * SENDRECV and RDMA, with SENDRECV the default.  Default param is
  * NULL so that we can determine if user set the option.
  */
-OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
+OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL)
 
 /*
  * Override the platform default for domain allocation, with
@@ -211,7 +246,7 @@ OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
  * 1: Allocate one domain per thread
  */
 
-OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
+OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1)
 
 /*
  * Disable the native RDMA write support check when using the "RDMA" protocol
@@ -220,14 +255,14 @@ OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
  * supported or cannot be verified to be supported. By default, the plugin
  * peforms the native RDMA support checks.
  */
-OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
+OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0)
 
 /*
  * Disable the check for required GDR support on EC2 instances. When this check
  * is disabled, the plugin can be used without GDR support even on platforms
  * that support GDR (P4d and later). By default, the plugin performs the check.
  */
-OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
+OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0)
 
 /*
  * In cases where libfabric>=1.20 is available, and the provider has FI_HMEM
@@ -244,38 +279,38 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
  * is fatal. Under those conditions, users should set this environment variable
  * to force NCCL to avoid providing dmabuf file desciptors.
  */
-OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
+OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0)
 
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
  */
-OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (64 * 1024));
+OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (64 * 1024))
 
 /*
  * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
  * more bounce buffers if we dip below this threshold, allocating new bounce
  * buffers if needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64);
+OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64)
 
 /*
  * Maximum bounce buffers posted per endpoint. The plugin will not attempt to
  * post more bounce buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
+OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128)
 
 /*
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
  * platform sets a specific value.
  */
-OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
+OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1)
 
 /*
  * Eager message size limit when using RDMA protocol. Message sizes greater than
  * this limit will always be sent using RDMA write instead of eagerly.
  */
-OFI_NCCL_PARAM_UINT(eager_max_size, "EAGER_MAX_SIZE", 8192);
+OFI_NCCL_PARAM_UINT(eager_max_size, "EAGER_MAX_SIZE", 8192)
 
 /*
  * Decide whether or not mutexes should default to errorcheck mode.
@@ -295,7 +330,7 @@ OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
  * communicators.  If non-0, create a Libfabric endpoint per
  * communicator.
  */
-OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
+OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0)
 
 #ifdef __cplusplus
 } // End extern "C"
