@@ -219,8 +219,8 @@ static inline int test_threshold_scheduler()
 	}
 
 	/* Verify that messages with greater than the 2x `min_stripe_size' but less than or equal to
-	 * 3x `min_stripe_size` bytes are assigned 3 rail multiplexing */
-	num_stripes = 3;
+	 * 3x `min_stripe_size` bytes are also assigned 2 rail multiplexing */
+	num_stripes = 2;
 	size_t msg_sizes_3[6] = {(2 * min_stripe_size) + 1,
 	                         (2 * min_stripe_size) + align - 1,
 	                         (2 * min_stripe_size) + align,
@@ -229,23 +229,23 @@ static inline int test_threshold_scheduler()
 	                         (3 * min_stripe_size)};
 	for (int iter = 0; iter < 6; iter++) {
 		stripe_size[iter] = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(msg_sizes_3[iter], num_stripes), align) * align;
-		remaining_stripe_size[iter] = msg_sizes_3[iter] - (2 * stripe_size[iter]);
+		remaining_stripe_size[iter] = msg_sizes_3[iter] - (2 * stripe_size[iter]) / 2;
 	}
 	/* For each message ensure that three rails are used. Also ensure that the rail-id triplets
 	 * are round-robin between each schedule */
-	int rail_ids_3[6][3] = {{2, 3, 0}, {1, 2, 3}, {0, 1, 2}, {3, 0, 1}, {2, 3, 0}, {1, 2, 3}};
-	int offsets_3[6][3] = {{0, stripe_size[0], stripe_size[0] * 2},
-	                       {0, stripe_size[1], stripe_size[1] * 2},
-	                       {0, stripe_size[2], stripe_size[2] * 2},
-	                       {0, stripe_size[3], stripe_size[3] * 2},
-	                       {0, stripe_size[4], stripe_size[4] * 2},
-	                       {0, stripe_size[5], stripe_size[5] * 2}};
-	size_t msg_size_per_stripe_3[6][3] = {{stripe_size[0], stripe_size[0], remaining_stripe_size[0]},
-	                                      {stripe_size[1], stripe_size[1], remaining_stripe_size[1]},
-	                                      {stripe_size[2], stripe_size[2], remaining_stripe_size[2]},
-	                                      {stripe_size[3], stripe_size[3], remaining_stripe_size[3]},
-	                                      {stripe_size[4], stripe_size[4], remaining_stripe_size[4]},
-	                                      {stripe_size[5], stripe_size[5], remaining_stripe_size[5]}};
+	int rail_ids_3[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
+	int offsets_3[6][2] = {{0, (stripe_size[0] * 2) / 2},
+	                       {0, (stripe_size[1] * 2) / 2},
+	                       {0, (stripe_size[2] * 2) / 2},
+	                       {0, (stripe_size[3] * 2) / 2},
+	                       {0, (stripe_size[4] * 2) / 2},
+	                       {0, (stripe_size[5] * 2) / 2}};
+	size_t msg_size_per_stripe_3[6][2] = {{(stripe_size[0] * 2) / 2, remaining_stripe_size[0]},
+	                                      {(stripe_size[1] * 2) / 2, remaining_stripe_size[1]},
+	                                      {(stripe_size[2] * 2) / 2, remaining_stripe_size[2]},
+	                                      {(stripe_size[3] * 2) / 2, remaining_stripe_size[3]},
+	                                      {(stripe_size[4] * 2) / 2, remaining_stripe_size[4]},
+	                                      {(stripe_size[5] * 2) / 2, remaining_stripe_size[5]}};
 
 	for (int iter = 0; iter < 6; iter++) {
 		ret = test_multiplexer(scheduler,
@@ -274,7 +274,7 @@ static inline int test_threshold_scheduler()
 		remaining_stripe_size[iter] = msg_sizes_4[iter] - (3 * stripe_size[iter]);
 	}
 	/* For each message ensure that all four rails are used. */
-	int rail_ids_4[6][4] = {{0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}, {0, 1, 2, 3}};
+	int rail_ids_4[6][4] = {{2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}};
 	int offsets_4[6][4] = {{0, stripe_size[0], stripe_size[0] * 2, stripe_size[0] * 3},
 	                       {0, stripe_size[1], stripe_size[1] * 2, stripe_size[1] * 3},
 	                       {0, stripe_size[2], stripe_size[2] * 2, stripe_size[2] * 3},

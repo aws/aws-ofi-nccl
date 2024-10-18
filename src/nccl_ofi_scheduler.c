@@ -42,6 +42,16 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 	/* Number of stripes is atleast 1 for zero-sized messages and at most equal to num of rails */
 	int num_stripes =
 		(int)NCCL_OFI_MAX(1, NCCL_OFI_MIN(NCCL_OFI_DIV_CEIL(size, scheduler->min_stripe_size), (unsigned)num_rails));
+
+	/* Ensure num_stripes is the nearest lower power of 2 */
+	if (num_stripes > 1) {
+		int nearest_divisible_stripe_size = 1;
+		while (nearest_divisible_stripe_size * 2 <= num_stripes) {
+			nearest_divisible_stripe_size *= 2;
+		}
+		num_stripes = nearest_divisible_stripe_size;
+	}
+
 	if (OFI_UNLIKELY(num_rails == 0)) {
 		return -EINVAL;
 	}
