@@ -87,6 +87,16 @@ int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, size_t id);
  */
 int nccl_ofi_idpool_fini(nccl_ofi_idpool_t *idpool);
 
+
+/*
+ * @brief        Check if an idpool has been initialized with a size
+ *               other than 0.
+ */
+static inline bool nccl_ofi_idpool_active(nccl_ofi_idpool_t *idpool) {
+	return (idpool->size != 0);
+}
+
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif

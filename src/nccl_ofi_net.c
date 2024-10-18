@@ -27,6 +27,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
+#include "nccl_ofi_ofiutils.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
@@ -683,40 +684,81 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
-static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
-				      nccl_net_ofi_ep_t **ep_p)
+/*
+ * implementation of retreiving a domain from a device.  This code
+ * assumes the device lock is already held, because in the case of
+ * get_domain() we only need to worry about the device lock, but in
+ * the device->get_ep call, hold the lock while we're also creating
+ * the ep.
+ */
+static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_device_t *device)
 {
-	int ret = 0;
-	long thread_id;
-	nccl_net_ofi_ep_t *ep = NULL;
+	nccl_net_ofi_plugin_t *plugin = NULL;
+	nccl_net_ofi_domain_t *domain = NULL;
+	long lookup_key = 0;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	assert(device != NULL);
 
-	thread_id = nccl_net_ofi_gettid();
-	HASH_FIND(hh, device->endpoint_table, &thread_id,
-		  sizeof(ep->creating_thread_id), ep);
+	plugin = device->plugin;
+	assert(plugin != NULL);
 
-	if (ep == NULL) {
-		ret = device->create_endpoint(device, &ep);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Creating new endpoint for device %s failed: %s",
-				      device->name, fi_strerror(-ret));
-			goto unlock;
+	if (plugin->domain_per_thread) {
+		lookup_key = nccl_net_ofi_gettid();
+	}
+
+	HASH_FIND(hh, device->domain_table, &lookup_key,
+		  sizeof(domain->creating_thread_id), domain);
+
+	if (domain == NULL) {
+		domain = device->create_domain(device);
+		if (domain == NULL) {
+			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
+				      device->name);
+			return NULL;
 		}
 
-		ep->creating_thread_id = thread_id;
+		domain->creating_thread_id = lookup_key;
 
-		HASH_ADD(hh, device->endpoint_table, creating_thread_id,
-			 sizeof(ep->creating_thread_id), ep);
+		HASH_ADD(hh, device->domain_table, creating_thread_id,
+			 sizeof(domain->creating_thread_id), domain);
 
-		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for device #%d (%s) is created",
-			       ep,
+		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
+			       domain,
 			       device->dev_id,
 			       device->name);
 	}
 
-	ep->ref_cnt++;
-	*ep_p = ep;
+	return domain;
+}
+
+
+static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain(nccl_net_ofi_device_t *device)
+{
+	nccl_net_ofi_domain_t *domain;
+
+	nccl_net_ofi_mutex_lock(&device->device_lock);
+	domain = nccl_net_ofi_device_get_domain_impl(device);
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
+
+	return domain;
+}
+
+
+static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
+				      nccl_net_ofi_ep_t **ep_p)
+{
+	int ret;
+	nccl_net_ofi_domain_t *domain = NULL;
+
+	nccl_net_ofi_mutex_lock(&device->device_lock);
+
+	domain = nccl_net_ofi_device_get_domain_impl(device);
+	if (domain == NULL) {
+		ret = -EINVAL;
+		goto unlock;
+	}
+
+	ret = domain->get_ep(domain, ep_p);
 
 unlock:
 	nccl_net_ofi_mutex_unlock(&device->device_lock);
@@ -726,31 +768,21 @@ unlock:
 
 
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, const char *device_name)
+			     int device_index, struct fi_info *ofi_info)
 {
 	int ret = 0;
 
 	device->plugin = plugin;
 	device->dev_id = device_index;
-	device->name = strdup(device_name);
+	device->name = strdup(ofi_info->fabric_attr->prov_name);
 	if (device->name == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device name");
 		ret = -ENOMEM;
 		goto exit;
 	}
 
-	device->mr_cache = NULL;
-	if (!ofi_nccl_mr_cache_disable()) {
-		device->mr_cache =
-			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
-					       system_page_size);
-		if (!device->mr_cache) {
-			ret = -ENOMEM;
-			goto exit;
-		}
-	}
-
 	device->get_properties = NULL;
+	device->get_domain = nccl_net_ofi_device_get_domain;
 	device->get_ep = nccl_net_ofi_device_get_ep;
 	device->get_mr_key = NULL;
 	device->release = nccl_net_ofi_device_fini;
@@ -763,22 +795,29 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		return -ret;
 	}
 
-	device->create_endpoint = NULL;
-	device->endpoint_table = NULL;
+	/* Initialize mr rkey handling */
+	device->need_mr_rkey_pool = true;
+	ret = nccl_ofi_mr_keys_need_own_key(ofi_info, &device->need_mr_rkey_pool);
+	if (ret != 0) {
+		NCCL_OFI_WARN("MR key config parsing failed: %s",
+			      strerror(-ret));
+		return -ret;
+	}
+
+	device->create_domain = NULL;
+	device->domain_table = NULL;
 
 exit:
+
 	return ret;
 }
 
 
 int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 {
+
 	if (device == NULL) {
 		return 0;
-	}
-
-	if (device->mr_cache != NULL) {
-		nccl_ofi_mr_cache_finalize(device->mr_cache);
 	}
 
 	if (device->name != NULL) {
@@ -789,20 +828,159 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 }
 
 
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
+static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
+				      nccl_net_ofi_ep_t **ep_p)
+{
+	int ret = 0;
+	long thread_id;
+	nccl_net_ofi_ep_t *ep = NULL;
+
+	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+
+	thread_id = nccl_net_ofi_gettid();
+	HASH_FIND(hh, domain->endpoint_table, &thread_id,
+		  sizeof(ep->creating_thread_id), ep);
+
+	if (ep == NULL) {
+		ret = domain->create_endpoint(domain, &ep);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Creating new endpoint for domain %p failed: %s",
+				      domain, fi_strerror(-ret));
+			goto unlock;
+		}
+
+		ep->creating_thread_id = thread_id;
+
+		HASH_ADD(hh, domain->endpoint_table, creating_thread_id,
+			 sizeof(ep->creating_thread_id), ep);
+
+		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for domain %p is created",
+			       ep, domain);
+	}
+
+	ep->ref_cnt++;
+	*ep_p = ep;
+
+unlock:
+	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+	return ret;
+}
+
+
+static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device;
 
-	assert(ep != NULL);
-	device = ep->device;
+	assert(domain != NULL);
+	device = domain->device;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+
+	if (HASH_COUNT(domain->endpoint_table) == 0) {
+		nccl_net_ofi_mutex_lock(&device->device_lock);
+		HASH_DEL(device->domain_table, domain);
+
+		ret = domain->free(domain);
+		nccl_net_ofi_mutex_unlock(&device->device_lock);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
+			goto cleanup;
+		}
+	}
+
+cleanup:
+	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+	return ret;
+}
+
+
+int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain)
+{
+	int ret;
+
+	domain->device = device;
+
+	ret = nccl_net_ofi_mutex_init(&domain->domain_lock, NULL);
+	if (ret != 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Unable to initialize domain mutex");
+		return -ret;
+	}
+
+	domain->get_ep = nccl_net_ofi_domain_get_ep;
+	domain->release = nccl_net_ofi_domain_release;
+	domain->endpoint_table = NULL;
+	domain->creating_thread_id = 0;
+
+	domain->mr_cache = NULL;
+	if (!ofi_nccl_mr_cache_disable()) {
+		domain->mr_cache =
+			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
+					       system_page_size);
+		if (!domain->mr_cache) {
+			ret = -ENOMEM;
+			goto exit;
+		}
+	}
+
+	if (device->need_mr_rkey_pool) {
+		/* The provider may return support for a larger key size. Use
+		 * the size requested by the user to allow them to limit the
+		 * size of the mr_keys table. */
+		const size_t shift = (ofi_nccl_mr_key_size() * 8);
+		const size_t size_t_bits = (sizeof(size_t) * CHAR_BIT);
+		if (shift > (size_t_bits - 1)) {
+			NCCL_OFI_WARN(
+				"Provided mr keypool size of %lu must be less than %zu",
+				ofi_nccl_mr_key_size(),
+				size_t_bits);
+			return -EINVAL;
+		}
+		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 1 << shift);
+	} else {
+		/* Mark key pool as not in use */
+		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 0);
+	}
+	if (ret != 0) {
+		NCCL_OFI_WARN("Creating MR id pool failed: %s",
+			      strerror(-ret));
+		return -ret;
+	}
+
+exit:
+	return ret;
+}
+
+
+int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
+{
+	if (domain->mr_cache != NULL) {
+		nccl_ofi_mr_cache_finalize(domain->mr_cache);
+	}
+
+	nccl_ofi_idpool_fini(&domain->mr_rkey_pool);
+
+	return 0;
+}
+
+
+int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
+{
+	int ret = 0;
+	nccl_net_ofi_domain_t *domain;
+
+	assert(ep != NULL);
+	domain = ep->domain;
+
+	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
 	ep->ref_cnt--;
 
 	if (ep->ref_cnt == 0) {
-		HASH_DEL(device->endpoint_table, ep);
+		HASH_DEL(domain->endpoint_table, ep);
 
 		ret = ep->free_ep(ep);
 		if (ret != 0) {
@@ -812,20 +990,23 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 	}
 
 cleanup:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+	if (ret == 0) {
+		ret = domain->release(domain);
+	}
 
 	return ret;
-
 }
 
 
-int nccl_net_ofi_endpoint_init(nccl_net_ofi_device_t *device,
+int nccl_net_ofi_endpoint_init(nccl_net_ofi_domain_t *domain,
 			       nccl_net_ofi_ep_t *ep)
 {
-	assert(device != NULL);
+	assert(domain != NULL);
 	assert(ep != NULL);
 
-	ep->device = device;
+	ep->domain = domain;
 	ep->release_ep = nccl_net_ofi_endpoint_release;
 
 	ep->creating_thread_id = 0;
