@@ -4254,8 +4254,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen_comm_t *l_comm,
-							nccl_net_ofi_rdma_device_t *device,
+static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device_t *device,
 							nccl_net_ofi_rdma_ep_t *l_comm_ep,
 							nccl_ofi_rdma_connection_info_t *conn_msg)
 {
@@ -4695,7 +4694,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Prepare receive communicator object for the received peer connection */
-		r_comm = prepare_recv_comm(l_comm, device, l_comm_ep, conn_msg);
+		r_comm = prepare_recv_comm(device, l_comm_ep, conn_msg);
 		if (OFI_UNLIKELY(r_comm == NULL)) {
 			ret = -EINVAL;
 			goto exit;
@@ -4889,7 +4888,6 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = accept;
 	l_comm->base.close = listen_close;
-	l_comm->leader_local_ep = ep->control_rail.ofi_ep;
 
 	/* Allocate listen communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
