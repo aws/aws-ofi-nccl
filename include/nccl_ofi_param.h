@@ -18,9 +18,40 @@ extern "C" {
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"
 
+/*
+ * This is an ugly hack.  The original implementation of
+ * nccl_ofi_param created inline functions to access each environment
+ * variable, using the macros found in nccl_ofi_param.h.  However,
+ * this creates something of an ODR problem, as multiple complication
+ * units can call the same param lookup function, and that results in
+ * naming conflicts.  So instead, we have the header file act like a
+ * normal header file most of the time, and when included from
+ * nccl_ofi_param.c with OFI_NCCL_PARAM_DEFINE set to 1, stamps out
+ * the original implementations of the functions.  So now we have one
+ * copy of each function that everyone can call.
+ *
+ * This is intended to be a transient state.  We want to rewrite the
+ * entire param system once we've finished moving to C++, but need to
+ * solve the ODR problem before we move to C++.  So here lies one of
+ * the more terrible pieces of code I've ever written.
+ */
+#ifndef OFI_NCCL_PARAM_DEFINE
+
+#define OFI_NCCL_PARAM_UINT(name, env, default_value) \
+uint64_t ofi_nccl_##name(void)
+
+#define OFI_NCCL_PARAM_INT(name, env, default_value) \
+int64_t ofi_nccl_##name(void)
+
+#define OFI_NCCL_PARAM_STR(name, env, default_value) \
+const char *ofi_nccl_##name(void)
+
+#else
+
 #define OFI_NCCL_PARAM_UINT(name, env, default_value)                                                                       \
+	uint64_t ofi_nccl_##name(void);                                                                                     \
 	static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER;                                      \
-	static inline uint64_t ofi_nccl_##name()                                                                            \
+	uint64_t ofi_nccl_##name(void)                                                                                      \
 	{                                                                                                                   \
 		static bool initialized = false;                                                                            \
 		static uint64_t value = default_value;                                                                      \
@@ -57,8 +88,9 @@ extern "C" {
 	}
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
+int64_t ofi_nccl_##name(); \
 static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline int64_t ofi_nccl_##name() { \
+int64_t ofi_nccl_##name() { \
     static bool initialized = false; \
     static int64_t value = default_value; \
     if (initialized) { \
@@ -89,8 +121,9 @@ static inline int64_t ofi_nccl_##name() { \
 }
 
 #define OFI_NCCL_PARAM_STR(name, env, default_value) \
+const char *ofi_nccl_##name(); \
 static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-static inline const char *ofi_nccl_##name() { \
+const char *ofi_nccl_##name() { \
     static bool initialized = false; \
     static const char *value = default_value; \
     if (initialized) { \
@@ -117,6 +150,8 @@ static inline const char *ofi_nccl_##name() { \
     nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
     return value; \
 }
+
+#endif
 
 /*
  * Enable using endpoints with IPv6 addressing format for TCP provider.
@@ -288,7 +323,7 @@ OFI_NCCL_PARAM_UINT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 #define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT 1
 #endif
 OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
-		   OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT)
+		   OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT);
 
 /*
  * If 0, create a Libfabric endpoint per domain, shared across all
