@@ -1924,11 +1924,6 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 		}
 	}
 
-	ret = ofi_process_cq_rail(ep, &ep->control_rail);
-	if (ret != 0) {
-		goto exit;
-	}
-
 	/* Process any pending requests */
 	ret = process_pending_reqs(ep);
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
@@ -6430,7 +6425,7 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 }
 
 
-static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
+static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id, struct fid_cq *cq)
 {
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		/* when using an endpoint per communicator with a shared cq
@@ -6440,7 +6435,7 @@ static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
 		rail->cq = NULL;
 	}
 	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
-				     rail->cq, dev_id);
+				     cq, dev_id);
 	rail->ofi_ep = NULL;
 	rail->av = NULL;
 	rail->cq = NULL;
@@ -6452,9 +6447,11 @@ static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
  */
 static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 {
-	ep_rail_release(&ep->control_rail, dev_id);
+	nccl_net_ofi_ep_rail_t * rail = &ep->control_rail;
+	ep_rail_release(rail, dev_id, NULL);
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		ep_rail_release(rdma_endpoint_get_rail(ep, rail_id), dev_id);
+		rail = rdma_endpoint_get_rail(ep, rail_id);
+		ep_rail_release(rail, dev_id, rail->cq);
 	}
 }
 
@@ -6511,13 +6508,13 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 		ep_rail->domain = dev_rail->domain;
 	}
 
-	ep_rail->cq = dev_rail->cq;
+	if (dev_rail->cq != NULL) {
+		ep_rail->cq = dev_rail->cq;
+	}
 
 #ifndef NDEBUG
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		assert(ep_rail->cq != NULL);
-	} else {
-		assert(ep_rail->cq == NULL);
 	}
 #endif
 
@@ -6534,7 +6531,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 
 	ret = set_local_address(ep_rail->ofi_ep, ep_rail);
 	if (ret != 0) {
-		ep_rail_release(ep_rail, dev_id);
+		ep_rail_release(ep_rail, dev_id, ep_rail->cq);
 		return ret;
 	}
 
@@ -6550,18 +6547,32 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 {
 	int ret = 0;
 	int dev_id = device->base.dev_id;
+	nccl_net_ofi_rdma_device_rail_t *rail_dev;
+	nccl_net_ofi_ep_rail_t *rail;
 
 	/* Initialize libfabric resources of endpoint rails */
 	for (int rail_id = 0; rail_id != device->num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_device_rail_t *rail_dev =
-			rdma_device_get_rail(device, rail_id);
-		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
+		rail_dev = rdma_device_get_rail(device, rail_id);
+		rail = rdma_endpoint_get_rail(ep, rail_id);
 
 		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail);
 		if (ret != 0) {
 			goto exit;
 		}
 	}
+
+	/* we pass 0 as the railid for the control rail, so
+	 * that any lookups based on railid in the domain find
+	 * the right domain */
+	rail_dev = rdma_device_get_rail(device, 0);
+	rail = rdma_endpoint_get_rail(ep, 0);
+	ep->control_rail.cq = rail->cq;
+	ret = ep_rail_init(ep, dev_id, 0, rail_dev, &ep->control_rail);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Initializing control rail failed");
+		goto exit;
+	}
+
 
  exit:
 	if (ret != 0) {
@@ -6717,16 +6728,6 @@ static int nccl_net_ofi_rdma_device_create_endpoint(nccl_net_ofi_device_t *base_
 	ep->base.connect = connect;
 	ep->base.release_ep = nccl_net_ofi_rdma_endpoint_release;
 	ep->base.free_ep = nccl_net_ofi_rdma_endpoint_free;
-
-	/* we pass 0 as the railid for the control rail, so
-	 * that any lookups based on railid in the domain find
-	 * the right domain */
-	memset(&ep->control_rail, 0, sizeof(ep->control_rail));
-	ret = ep_rail_init(ep, device->base.dev_id, 0, &device->device_rails[0], &ep->control_rail);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing control rail failed");
-		goto error;
-	}
 
 	ep->num_rails = device->num_rails;
 	ep->use_long_rkeys = device->use_long_rkeys;
