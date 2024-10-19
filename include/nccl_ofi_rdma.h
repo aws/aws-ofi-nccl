@@ -633,7 +633,6 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 
 	/* Comm ID provided by local endpoint */
 	uint32_t comm_id;
-	struct fid_ep *leader_local_ep;
 
 	/* Communicator created while accept routine is executed */
 	nccl_net_ofi_rdma_recv_comm_t *r_comm;
