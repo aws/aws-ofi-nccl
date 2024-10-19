@@ -3153,7 +3153,6 @@ static inline int insert_recv_segms_req(
 				nccl_net_ofi_rdma_device_t *device,
 				int dev_id, uint16_t msg_seq_num, void *buff,
 				size_t size,
-				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 				nccl_net_ofi_rdma_req_t *recv_req)
 {
 	/* Allocate recv segms request */
@@ -3223,7 +3222,7 @@ static inline int allocate_rdma_recv_req(
 		return ret;
 	}
 
-	ret = insert_recv_segms_req(r_comm, device, dev_id, msg_seq_num, buff, size, buff_mr_handle, req);
+	ret = insert_recv_segms_req(r_comm, device, dev_id, msg_seq_num, buff, size, req);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to insert receive segments request into recv request");
 		return ret;
@@ -4253,8 +4252,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_listen_comm_t *l_comm,
-							nccl_net_ofi_rdma_device_t *device,
+static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_device_t *device,
 							nccl_net_ofi_rdma_ep_t *l_comm_ep,
 							nccl_ofi_rdma_connection_info_t *conn_msg)
 {
@@ -4694,7 +4692,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Prepare receive communicator object for the received peer connection */
-		r_comm = prepare_recv_comm(l_comm, device, l_comm_ep, conn_msg);
+		r_comm = prepare_recv_comm(device, l_comm_ep, conn_msg);
 		if (OFI_UNLIKELY(r_comm == NULL)) {
 			ret = -EINVAL;
 			goto exit;
@@ -4888,7 +4886,6 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = accept;
 	l_comm->base.close = listen_close;
-	l_comm->leader_local_ep = ep->control_rail.ofi_ep;
 
 	/* Allocate listen communicator ID */
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
@@ -4969,7 +4966,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 					uint16_t msg_seq_num,
 					void *buff, size_t size,
 					nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
-					bool eager, bool have_ctrl,
+					bool eager,
 					nccl_net_ofi_rdma_req_t **ret_req)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
@@ -5596,7 +5593,7 @@ retry:
 	}
 
 	ret = alloc_rdma_send_req(s_comm, msg_seq_num, data,
-				  size, mr_handle, eager, have_ctrl, &req);
+				  size, mr_handle, eager, &req);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
