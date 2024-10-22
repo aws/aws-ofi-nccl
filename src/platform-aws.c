@@ -89,6 +89,16 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
+		.name = "p5en.48xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 75.0,
+		.gdr_required = true,
+		.net_flush_required = false,
+		.default_protocol = "RDMA",
+		.domain_per_thread = 0,
+	},
+	{
 		.name = "g5.48xlarge",
 		.topology = "g5.48xl-topo.xml",
 		.default_dup_conns = 0,
