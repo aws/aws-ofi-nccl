@@ -112,18 +112,22 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
 
 /*
  * @brief	Rdma memory registration handle
-
- * Note that the rdma memory registration handle has a variable array
- * member. Use function `calloc_rdma_mr_handle(int num_rails)' to
- * allocate a rdma memory registration handle with `num_rails' rails.
+ *
+ * Use function `calloc_rdma_mr_handle(int num_rails, int num_control_rails)' to
+ * allocate a RDMA memory registration handle with `num_rails`+`num_control_rails` rails.
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
-	struct fid_mr *control_mr;
 
 	int num_rails;
 
+	int num_control_rails;
+
 	/* Array of size `num_rails' */
-	struct fid_mr *mr[];
+	struct fid_mr **mr;
+
+	/* Array of size `num_control_rails' */
+	struct fid_mr **control_mr;
+
 } nccl_net_ofi_rdma_mr_handle_t;
 
 /* Contents of ctrl message sent from receiver to sender to advertise
@@ -282,6 +286,10 @@ typedef struct {
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
 	nccl_net_ofi_rdma_ctrl_fl_item_t *ctrl_fl_item;
+	/* Schedule used to transfer the control buffer. We save the
+	 * pointer to reference it when transferring the buffer over
+	 * network. */
+	nccl_net_ofi_schedule_t *ctrl_schedule;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
 #if HAVE_NVTX_TRACING
@@ -442,6 +450,7 @@ typedef struct nccl_ofi_rdma_connection_info {
 
 	/* Number of rails */
 	uint16_t num_rails;
+	uint16_t num_control_rails;
 
 	/* A comm identitifer that uniquely identifies the comm on the sender
 	   side. The receiver must use this ID when sending messages to sender */
@@ -451,15 +460,14 @@ typedef struct nccl_ofi_rdma_connection_info {
 	 * on the receiver side */
 	uint32_t remote_comm_id;
 
-	nccl_ofi_rdma_ep_name_t control_ep_name;
-
-	/* Array of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
-	 * structs. The member `num_rails` indicates the number of
-	 * entries that are in use. */
+	/* Arrays of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
+	 * structs. The member `num_rails` and `num_control_rails` indicate
+	 * the number of entries that are in use. */
+	nccl_ofi_rdma_ep_name_t control_ep_names[MAX_NUM_RAILS];
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 336,
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 528,
 			  "Wrong size for RDMA connect message");
 
 /*
@@ -480,9 +488,8 @@ typedef struct nccl_net_ofi_rdma_send_comm_rail {
 /*
  * @brief	RDMA send communicator
  *
- * Note that the RDMA send communicator has a variable array
- * member. Use function `calloc_rdma_send_comm(int num_rails)' to
- * allocate a RMDA send communicator with `num_rails' rails.
+ * Use function `calloc_rdma_send_comm(int num_rails, int num_control_rails)' to
+ * allocate a RDMA send communicator with `num_rails'+`num_control_rails' rails.
  */
 typedef struct nccl_net_ofi_rdma_send_comm {
 	/* This base send communicator must be the first member of this
@@ -511,19 +518,19 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	nccl_ofi_msgbuff_t *msgbuff;
 
-	nccl_net_ofi_rdma_send_comm_rail_t control_rail;
-
 	/* Number of rails */
 	int num_rails;
+	/* Number of rails */
+	int num_control_rails;
 
 	/* Number of initialized rails. The function
 	 * `create_send_comm()' creates a send communicator with one
-	 * initialized rail and sets `num_init_rails=0' after the
+	 * initialized control rail and sets `num_init_control_rails=1' after the
 	 * out-of-bounds message is received. After the connect
 	 * response message has been received, the remaining rails
 	 * will be initialized via function `init_send_comm_rails()'
-	 * and `num_init_rails' is adjusted. */
-	int num_init_rails;
+	 * and `num_init_control_rails' is adjusted. */
+	int num_init_control_rails;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -540,7 +547,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	bool comm_active;
 
 	/* Array of `num_rails` communicator rails */
-	nccl_net_ofi_rdma_send_comm_rail_t rails[];
+	nccl_net_ofi_rdma_send_comm_rail_t *rails;
+	/* Array of `num_control_rails` communicator rails */
+	nccl_net_ofi_rdma_send_comm_rail_t *control_rails;
 
 } nccl_net_ofi_rdma_send_comm_t;
 
@@ -573,9 +582,8 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
 /*
  * @brief	RDMA receive communicator
  *
- * Note that the RDMA receive communicator has a variable array
- * member. Use function `calloc_rdma_recv_comm(int num_rails)' to
- * allocate a RMDA receive communicator with `num_rails' rails.
+ * Use function `calloc_rdma_recv_comm(int num_rails, int num_control_rails)' to
+ * allocate a RDMA receive communicator with `num_rails'+`num_control_rails' rails.
  */
 typedef struct nccl_net_ofi_rdma_recv_comm {
 	/* This base receive communicator must be the first member of
@@ -605,8 +613,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
-	nccl_net_ofi_rdma_recv_comm_rail_t control_rail;
-
 	nccl_net_ofi_rdma_req_t *send_close_req;
 
 	nccl_ofi_deque_elem_t cleanup_list_elem;
@@ -618,11 +624,15 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	/* Number of rails */
 	int num_rails;
+	/* Number of control rails */
+	int num_control_rails;
 
 	bool comm_active;
 
 	/* Array of `num_rails` communicator rails */
-	nccl_net_ofi_rdma_recv_comm_rail_t rails[];
+	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
+	/* Array of `num_control_rails` communicator rails */
+	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
 } nccl_net_ofi_rdma_recv_comm_t;
 
 typedef struct nccl_net_ofi_rdma_listen_comm {
@@ -708,15 +718,19 @@ struct nccl_net_ofi_rdma_ep {
 	 * and its base struct. */
 	nccl_net_ofi_ep_t base;
 
-	nccl_net_ofi_ep_rail_t control_rail;
-
 	/* Number of rails */
 	int num_rails;
 
-	bool use_long_rkeys;
+	/* Number of control rails */
+	int num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
 	nccl_net_ofi_ep_rail_t *rails;
+
+	/* Array of `num_control_rails` endpoint rails */
+	nccl_net_ofi_ep_rail_t *control_rails;
+
+	bool use_long_rkeys;
 
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
