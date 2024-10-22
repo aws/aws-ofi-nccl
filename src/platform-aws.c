@@ -532,8 +532,14 @@ int platform_init(const char **provider_filter)
 		if (platform_data && platform_data->latency >= 0.0) {
 			net_latency = platform_data->latency;
 		} else {
-			/* For historical reasons, default value for EFA is 150 us */
-			net_latency = 150.0;
+			/*
+			 * Empirical testing on P5 had shown that NCCL's
+			 * internal tuner choices work better with this value.
+			 * While this needs to be revisited for newer
+			 * generations of EFA, using it as the fall-through
+			 * default for undefined platforms.
+			 */
+			net_latency = 75.0;
 		}
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
 				net_latency);
