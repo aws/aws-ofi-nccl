@@ -25,7 +25,6 @@
 #include "nccl_ofi_memcheck.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_pthread.h"
-#include "nccl_ofi_platform.h"
 #include "nccl_ofi_mr.h"
 
 /* Message buffer size -- maximum span of simultaneous inflight messages */
@@ -5856,10 +5855,6 @@ static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info 
 							  sizeof(nccl_net_ofi_rdma_device_rail_t));
 	if (device_rails == NULL) {
 		return NULL;
-	}
-
-	if (platform_sort_rails != NULL) {
-		platform_sort_rails(&info_list, num_infos);
 	}
 
 	for (int i = 0 ; i < num_infos ; i++) {
