@@ -711,25 +711,23 @@ exit:
 
 static int get_rail_vf_idx(struct fi_info *info)
 {
-	char guid_file[256], guid[20];
-	char *endptr;
+	char *node_guid_filename = NULL;
+	FILE *fp = NULL;
 	int vf_idx;
-	FILE *fp;
+	int ret;
 
-	snprintf(guid_file, sizeof(guid_file), "/sys/class/infiniband/%s/node_guid",
-		info->nic->device_attr->name);
-	fp = fopen(guid_file, "r");
+	ret = asprintf(&node_guid_filename, "/sys/class/infiniband/%s/node_guid",
+		       info->nic->device_attr->name);
+	if (ret < 0) {
+		vf_idx = -errno;
+		goto cleanup;
+	}
+	fp = fopen(node_guid_filename, "r");
 	if (fp == NULL) {
-		NCCL_OFI_WARN("Error opening file: %s", guid_file);
-		return -EIO;
+		NCCL_OFI_WARN("Error opening file: %s", node_guid_filename);
+		vf_idx = -errno;
+		goto cleanup;
 	}
-
-	if (fgets(guid, sizeof(guid), fp) == NULL) {
-		NCCL_OFI_WARN("Error reading file: %s", guid_file);
-		fclose(fp);
-		return -EIO;
-	}
-	fclose(fp);
 
 	/**
 	 * GUID is a 64-bit hex number with format:
@@ -738,22 +736,19 @@ static int get_rail_vf_idx(struct fi_info *info)
 	 *
 	 * The lowest 8 bits are the VF id.
 	 */
-	if (strlen(guid) != 19) {
-		NCCL_OFI_WARN("Bad GUID format: wrong size: %s", guid);
-		return -EINVAL;
+	ret = fscanf(fp, "%*x:%*x:%*x:%*2x%2x", &vf_idx);
+	if (ret != 1) {
+		NCCL_OFI_WARN("GUID parsing failed, got %d, expected 1", ret);
+		vf_idx = -EIO;
+		goto cleanup;
 	}
 
-	if (guid[14] != ':') {
-		NCCL_OFI_WARN("Bad GUID format: wrong colon pos: %s", guid);
-		return -EINVAL;
+cleanup:
+	if (node_guid_filename) {
+		free(node_guid_filename);
 	}
-	/* guid[14...] string should now have format ":XXXX". Extract the final two digits
-	   as the vf idx */
-	vf_idx = (int)strtol(guid + 17, &endptr, 10);
-	if (endptr != guid + 19) {
-		/* No valid conversion was performed */
-		NCCL_OFI_WARN("Can't locate vf_idx in GUID %s", guid);
-		return -EINVAL;
+	if (fp != NULL) {
+		fclose(fp);
 	}
 
 	return vf_idx;
