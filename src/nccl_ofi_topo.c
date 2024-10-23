@@ -16,6 +16,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_platform.h"
 
 static const uint8_t target_class_id = 0x03;		/* Display controller class */
 static const unsigned short target_vendor_id = 0x10de;	/* NVIDIA */
@@ -804,6 +805,15 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	 * groups */
 	const int num_large_groups = num_infos % num_groups;
 	int group_size = num_infos / num_groups + 1;
+
+	/* sort the provider list to match network rail ordering.  See
+	 * the documentation comment for platform_sort_rails() for
+	 * more information.  We do this here so that there is
+	 * consistency
+	 */
+	if (platform_sort_rails != NULL) {
+		platform_sort_rails(info_list, num_infos, (size_t)group_size);
+	}
 
 	for (; group_idx < num_groups; ++group_idx) {
 		hwloc_obj_t obj;

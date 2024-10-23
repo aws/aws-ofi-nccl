@@ -759,7 +759,7 @@ static int get_rail_vf_idx(struct fi_info *info)
 	return vf_idx;
 }
 
-void platform_sort_rails(struct fi_info **info_list, int num_rails)
+void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_groups)
 {
 	struct fi_info *info_list_in = *info_list;
 	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
