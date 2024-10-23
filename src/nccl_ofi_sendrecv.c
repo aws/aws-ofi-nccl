@@ -1609,7 +1609,11 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 		return -EINVAL;
 	}
 
-	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
+	if (local_ep_name != NULL) {
+		memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
+		free(local_ep_name);
+	}
+
 	handle->comm_id = (uint32_t)tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
