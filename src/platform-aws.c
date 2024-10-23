@@ -759,63 +759,134 @@ static int get_rail_vf_idx(struct fi_info *info)
 	return vf_idx;
 }
 
+
+/*
+ * On P5/P5e, there are up to 32 EFA devices.  Each pair of EFA
+ * devices shares some Nitro card resources, and there is a marginal
+ * performance gain if the 0th device in the pair only talks to 0th
+ * devices in the remote and so on.  Unfortunately, the hypervisor is
+ * not consistent in mapping BDFs between the two devices that share
+ * resources such that the natural Libfabric provider sorting ends up
+ * with this pairing happening naturally.  So this code reorders the
+ * provider list to make that happen.
+ *
+ * We maintain BDF ordering in general, but do minimal reordering so
+ * that there is an alternating of the 0th pair index and then the 1st
+ * pair index, and so on.
+ */
 void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups)
 {
-	struct fi_info *info_list_in = *info_list;
-	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
-	struct fi_info *info_ptr = NULL;
+	struct fi_info **info_array = NULL;
+	struct fi_info *info_iter = NULL;
+	size_t *vf_array = NULL;
+	struct fi_info *output_info_list = NULL;
+	struct fi_info *output_info_end = NULL;
+	size_t highest_vf_idx = 0;
+	size_t next_vf_idx = 0;
+	size_t info_count;
 
-	if (num_rails <= 0) {
+	/* we only want to reorder if there's more than one NIC per
+	 * group (ie, per GPU).  Less than that (P4d or trainium), we
+	 * assume topo ordering is sufficient */
+	if ((num_rails / num_groups) <= 1) {
 		return;
 	}
 
-	for (size_t i = 0; i < num_rails; ++i) {
-		sorted_info_array[i] = NULL;
+	info_array = (struct fi_info **)calloc(num_rails, sizeof(struct fi_info*));
+	if (info_array == NULL) {
+		NCCL_OFI_WARN("Did not reorder arrays due to calloc failure");
+		goto cleanup;
 	}
 
-	size_t rail_map[2] = {0, 2};
-
-	for (size_t i = 0; i < num_rails; ++i) {
-		if (info_list_in == NULL) {
-			goto error;
-		}
-
-		int vf_idx = get_rail_vf_idx(info_list_in);
-		if (vf_idx < 0 || vf_idx >= 2) {
-			NCCL_OFI_WARN("Invalid vf_idx value %d", vf_idx);
-			goto error;
-		}
-
-		size_t rail_idx = rail_map[vf_idx];
-		rail_map[vf_idx]++;
-
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Assigning rail index %d to info list idx %d",
-			rail_idx, i);
-
-		if (sorted_info_array[rail_idx]) {
-			NCCL_OFI_WARN("Attempted to fill rail slot with duplicate infos");
-			goto error;
-		}
-		sorted_info_array[rail_idx] = info_list_in;
-
-		info_list_in = info_list_in->next;
+	vf_array = (size_t *)calloc(num_rails, sizeof(size_t));
+	if (vf_array == NULL) {
+		NCCL_OFI_WARN("Did not reorder arrays due to calloc failure");
+		goto cleanup;
 	}
 
-	/* Update info_list references to match sorted order */
-	*info_list = sorted_info_array[0];
-	info_ptr = *info_list;
-	for (size_t i = 0; i < num_rails; ++i) {
-		assert(info_ptr);
-		assert(sorted_info_array[i]);
-		if (i == num_rails - 1) {
-			info_ptr->next = NULL;
-		} else {
-			info_ptr->next = sorted_info_array[i+1];
+	/* copy the input list into an array so that we can more *
+	 * easily associate more data (like the vf array) with the
+	 * input and keep everything organized */
+	info_iter = *info_list;
+	info_count = 0;
+	while (info_iter != NULL && info_count < num_rails) {
+		info_array[info_count] = fi_dupinfo(info_iter);
+		if (info_array[info_count] == NULL) {
+			NCCL_OFI_WARN("fi_dupinfo failed");
+			goto cleanup;
 		}
-		info_ptr = info_ptr->next;
+		info_iter = info_iter->next;
+
+		int ret = get_rail_vf_idx(info_array[info_count]);
+		if (ret < 0) {
+			NCCL_OFI_WARN("lookup of rail for index %lu failed: %s",
+				      info_count, strerror(-ret));
+			goto cleanup;
+		}
+		vf_array[info_count] = ret;
+		if (vf_array[info_count] > highest_vf_idx) {
+			highest_vf_idx = vf_array[info_count];
+		}
+
+		info_count++;
+	}
+	if (info_count != num_rails) {
+		NCCL_OFI_WARN("Info count (%lu) and num_rails (%lu) do not match.  Aborting reorder.",
+			      info_count, num_rails);
+		goto cleanup;
 	}
 
-error:
+	/* No reorder required, as devices all have the same vf idx
+	   and end result would be the input array */
+	if (highest_vf_idx == 0) {
+		goto cleanup;
+	}
+
+	for (size_t i = 0 ; i < num_rails ; i++) {
+		size_t j = num_rails;
+		for (j = 0 ; j < num_rails ; j++) {
+			if (info_array[j] == NULL) {
+				continue;
+			}
+
+			if (vf_array[j] == next_vf_idx) {
+				if (output_info_list == NULL) {
+					output_info_list = output_info_end = info_array[j];
+				} else {
+					output_info_end->next = info_array[j];
+					output_info_end = info_array[j];
+				}
+				info_array[j] = NULL;
+				next_vf_idx = (next_vf_idx + 1) % (highest_vf_idx + 1);
+				break;
+			}
+		}
+		if (j == num_rails) {
+			NCCL_OFI_WARN("Did not find a device with expected index %zu", next_vf_idx);
+			goto cleanup;
+		}
+	}
+
+	fi_freeinfo(*info_list);
+	*info_list = output_info_list;
+	output_info_list = NULL;
+
+cleanup:
+	if (info_array != NULL) {
+		for (size_t i = 0 ; i < num_rails ; i++) {
+			if (info_array[i] != NULL) {
+				fi_freeinfo(info_array[i]);
+			}
+		}
+		free(info_array);
+	}
+	if (vf_array != NULL) {
+		free(vf_array);
+	}
+	if (output_info_list != NULL) {
+		fi_freeinfo(output_info_list);
+	}
+
 	return;
 }
 
