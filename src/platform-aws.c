@@ -759,7 +759,7 @@ static int get_rail_vf_idx(struct fi_info *info)
 	return vf_idx;
 }
 
-void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_groups)
+void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups)
 {
 	struct fi_info *info_list_in = *info_list;
 	struct fi_info **sorted_info_array = (struct fi_info **)alloca(num_rails*sizeof(struct fi_info *));
@@ -769,13 +769,13 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_g
 		return;
 	}
 
-	for (int i = 0; i < num_rails; ++i) {
+	for (size_t i = 0; i < num_rails; ++i) {
 		sorted_info_array[i] = NULL;
 	}
 
-	int rail_map[2] = {0, 2};
+	size_t rail_map[2] = {0, 2};
 
-	for (int i = 0; i < num_rails; ++i) {
+	for (size_t i = 0; i < num_rails; ++i) {
 		if (info_list_in == NULL) {
 			goto error;
 		}
@@ -786,7 +786,7 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_g
 			goto error;
 		}
 
-		int rail_idx = rail_map[vf_idx];
+		size_t rail_idx = rail_map[vf_idx];
 		rail_map[vf_idx]++;
 
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Assigning rail index %d to info list idx %d",
@@ -804,7 +804,7 @@ void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_g
 	/* Update info_list references to match sorted order */
 	*info_list = sorted_info_array[0];
 	info_ptr = *info_list;
-	for (int i = 0; i < num_rails; ++i) {
+	for (size_t i = 0; i < num_rails; ++i) {
 		assert(info_ptr);
 		assert(sorted_info_array[i]);
 		if (i == num_rails - 1) {

@@ -812,7 +812,7 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	 * consistency
 	 */
 	if (platform_sort_rails != NULL) {
-		platform_sort_rails(info_list, num_infos, (size_t)group_size);
+		platform_sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
 	}
 
 	for (; group_idx < num_groups; ++group_idx) {
