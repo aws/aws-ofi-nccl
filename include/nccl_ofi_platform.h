@@ -27,12 +27,4 @@ int platform_init(const char **provider_filter) __attribute__((weak));
  */
 int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribute__((weak));
 
-/* Platform-specific hook to sort in the multi-rail protocol of the plugin. Some
- * providers rely on having a consistent ordering of rail indices for best
- * performance.
- * @param info_list: pointer to list of `num_rails` info objects
- * @param num_rails: number of rails
- */
-void platform_sort_rails(struct fi_info **info_list, int num_rails) __attribute__((weak));
-
 #endif // End NCCL_OFI_PLATFORM_H_
