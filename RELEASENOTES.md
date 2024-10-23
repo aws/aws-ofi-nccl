@@ -10,6 +10,8 @@ have unified the code into a single branch, and made the AWS-specific parts a
 compile-time option.  When a feature (or entire release) only supports one of
 the two variants, we note that in the release notes.
 
+# v1.12.2-aws UNRELEASED
+
 # v1.12.1-aws
 
 All users of v1.12.0-aws are strongly recommended to take this fix when using
