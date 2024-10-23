@@ -30,9 +30,21 @@
 #include "nccl_ofi_mr.h"
 
 
+static nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain(nccl_net_ofi_sendrecv_ep_t *ep)
+{
+	return (nccl_net_ofi_sendrecv_domain_t*)ep->base.domain;
+}
+
+
 static nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	return (nccl_net_ofi_sendrecv_device_t*)ep->base.device;
+	return (nccl_net_ofi_sendrecv_device_t*)sendrecv_endpoint_get_domain(ep)->base.device;
+}
+
+
+static nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device(nccl_net_ofi_sendrecv_domain_t *domain)
+{
+	return (nccl_net_ofi_sendrecv_device_t *)domain->base.device;
 }
 
 
@@ -191,6 +203,7 @@ static const char *nccl_net_ofi_req_str(nccl_net_ofi_sendrecv_req_t *req)
 		);
 	return buf;
 }
+
 
 /*
  * @brief	Process completion entries for the given completion quque.
@@ -514,7 +527,8 @@ static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 
 static inline struct fid_domain* sendrecv_endpoint_get_ofi_domain(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	return ep->domain;
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	return domain->domain;
 }
 
 /*
@@ -791,10 +805,14 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	int dev_id = device->base.dev_id;
 
 	int ret = 0;
-	nccl_ofi_mr_cache_t *mr_cache = device->base.mr_cache;
+	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
 	void *ret_handle = NULL;
 
 	if (sendrecv_mr_buffer_skip_local_registration(type)) {
@@ -816,10 +834,10 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		/* Cache miss */
 	}
 
-	key_pool = &device->base.mr_rkey_pool;
-	struct fid_domain *domain;
-	domain = sendrecv_endpoint_get_ofi_domain(ep);
-	ret = sendrecv_mr_base_register(domain, ep->ofi_ep, key_pool,
+	key_pool = &domain->base.mr_rkey_pool;
+	struct fid_domain *ofi_domain;
+	ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
+	ret = sendrecv_mr_base_register(ofi_domain, ep->ofi_ep, key_pool,
 					dev_id, ckey, type, &ret_handle);
 	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 		ret_handle = NULL;
@@ -877,8 +895,12 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &device->base.mr_rkey_pool, device->base.mr_cache);
+	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
 }
 
 /*
@@ -1286,15 +1308,16 @@ static int sendrecv_recv_comm_alloc_and_reg_flush_buff(struct fid_domain *domain
  */
 static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 								     nccl_net_ofi_sendrecv_device_t *device,
+								     nccl_net_ofi_sendrecv_domain_t *domain,
 								     nccl_net_ofi_sendrecv_ep_t *ep,
 								     char *remote_ep_addr)
 {
 	int ret = 0;
 	fi_addr_t remote_ep;
-	struct fid_domain *domain;
+	struct fid_domain *ofi_domain;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
-	nccl_ofi_idpool_t *key_pool = &device->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
 	int dev_id = device->base.dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1341,7 +1364,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 		return NULL;
 	}
 
-	domain = sendrecv_endpoint_get_ofi_domain(ep);
+	ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
 
 	/*
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
@@ -1349,7 +1372,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	 */
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
-		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep->ofi_ep, key_pool,
+		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(ofi_domain, ep->ofi_ep, key_pool,
 								  &r_comm->flush_buff, dev_id);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(r_comm);
@@ -1393,6 +1416,11 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		return ret;
 	}
 
+	/* Retrieve and validate domain */
+	nccl_net_ofi_sendrecv_domain_t *domain =
+		sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
 		sendrecv_endpoint_get_device(ep);
@@ -1422,9 +1450,9 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(device->base.device_lock));
+		nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
 		ep->base.ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(device->base.device_lock));
+		nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
 
 		/* Prepare receive request to accept connections */
 		req = sendrecv_recv_req_prepare(l_comm);
@@ -1503,7 +1531,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	}
 
 	/* Prepare receive communicator object for the received peer connection */
-	r_comm = sendrecv_recv_comm_prepare(l_comm, device, ep, conn_info->ep_name);
+	r_comm = sendrecv_recv_comm_prepare(l_comm, device, domain, ep, conn_info->ep_name);
 	if (OFI_UNLIKELY(r_comm == NULL)) {
 		return -ENOMEM;
 	}
@@ -1665,9 +1693,12 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 		return -EINVAL;
 	}
 
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	assert(domain != NULL);
+
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &device->base.mr_rkey_pool,
-				  device->base.mr_cache);
+	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool,
+				  domain->base.mr_cache);
 }
 
 static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
@@ -2166,23 +2197,23 @@ static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 }
 
 
-static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *base_dev,
+static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *base_domain,
 							nccl_net_ofi_ep_t **base_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
-	nccl_net_ofi_sendrecv_plugin_t *plugin;
+	nccl_net_ofi_sendrecv_device_t *device;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t*)base_dev;
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
+	nccl_net_ofi_sendrecv_domain_t *domain =
+		(nccl_net_ofi_sendrecv_domain_t*)base_domain;
+	if (OFI_UNLIKELY(domain == NULL)) {
+		NCCL_OFI_WARN("Invalid domain provided");
 		return -EINVAL;
 	}
 
-	plugin = sendrecv_device_get_plugin(device);
-	assert(plugin != NULL);
+	device = sendrecv_domain_get_device(domain);
+	assert(device != NULL);
 
 	/* Allocate endpoint */
 	ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
@@ -2192,23 +2223,10 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_endpoint_init(&device->base, &ep->base);
+	ret = nccl_net_ofi_endpoint_init(&domain->base, &ep->base);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing endpoint base failed");
 		return ret;
-	}
-
-	if (plugin->base.domain_per_thread) {
-		ret = fi_domain(device->fabric, device->info,
-				&ep->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			free(ep);
-			return ret;
-		}
-	} else {
-		ep->domain = device->domain;
 	}
 
 	/* Initialize base endpoint */
@@ -2219,9 +2237,9 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 	/* Initialize endpoint tag */
 	ep->tag = 0;
 
-	struct fid_domain *domain = sendrecv_endpoint_get_ofi_domain(ep);
+	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
-						domain,
+						ofi_domain,
 						&ep->ofi_ep,
 						&ep->av, &ep->cq);
 	if (ret != 0) {
@@ -2233,6 +2251,64 @@ static int nccl_net_ofi_sendrecv_device_create_endpoint(nccl_net_ofi_device_t *b
 	return ret;
 }
 
+
+static int nccl_net_ofi_sendrecv_domain_free(nccl_net_ofi_domain_t *base_domain)
+{
+	int ret;
+	nccl_net_ofi_sendrecv_domain_t *domain = (nccl_net_ofi_sendrecv_domain_t *)base_domain;
+
+	ret = nccl_net_ofi_domain_fini(base_domain);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to cleanup base domain: %d", ret);
+	}
+
+	if (domain->domain)
+		fi_close((fid_t)domain->domain);
+
+	free(base_domain);
+
+	return 0;
+}
+
+
+static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_net_ofi_device_t *base_device)
+{
+	int ret;
+	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
+	nccl_net_ofi_sendrecv_domain_t *domain = NULL;
+
+	domain = (nccl_net_ofi_sendrecv_domain_t*)calloc(1, sizeof(nccl_net_ofi_sendrecv_domain_t));
+	if (domain == NULL) {
+		return NULL;
+	}
+
+	domain->base.free = nccl_net_ofi_sendrecv_domain_free;
+	domain->base.create_endpoint = nccl_net_ofi_sendrecv_domain_create_endpoint;
+
+	ret = nccl_net_ofi_domain_init(base_device, &domain->base);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Creating domain failed: %d", ret);
+		goto exit;
+	}
+
+	ret = fi_domain(device->fabric, device->info,
+			&domain->domain, NULL);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		goto exit;
+	}
+
+exit:
+	if (ret != 0) {
+		domain->base.free(&domain->base);
+		domain = NULL;
+	}
+
+	return (nccl_net_ofi_domain_t*)domain;
+}
+
+
 /*
  * @brief	Allocates and initialises various libfabric resources like
  *		fabric and domain to make sendrecv device ready for endpoint creation.
@@ -2241,10 +2317,6 @@ static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t
 {
 	int ret = 0;
 	int ofi_tag_leading_zeroes = 0, ofi_tag_bits_for_ring_id = 64;
-	nccl_net_ofi_sendrecv_plugin_t *plugin;
-
-	plugin = sendrecv_device_get_plugin(device);
-	assert(plugin != NULL);
 
 	/* Determine if any tag bits are used by provider */
 	while (!((device->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
@@ -2258,45 +2330,12 @@ static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t
 			      device->info->fabric_attr->prov_name,
 			      ofi_tag_bits_for_ring_id,
 			      MIN_TAG_BITS_FOR_RING_ID);
-		ret = -EINVAL;
-		goto exit;
+		return -EINVAL;
 	}
 
 	/* Set maximum tag information; Reserving 1 bit for control information */
 	device->max_tag = (uint64_t)((1ULL << (ofi_tag_bits_for_ring_id - 1)) - 1);
 
-	/* Create fabric */
-	ret = fi_fabric(device->info->fabric_attr, &device->fabric, NULL);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
-	}
-
-	/*
-	 * In the domain-per-thread case, create the domain in the endpoint structure.  In the
-	 * domain-per-process case, keep it in the device structure.  This is because, on some
-	 * platforms, libfabric locks when accessing the domain, so retaining separate domains
-	 * per thread and per endpoint reduces contention for that lock.
-	 */
-	if (!plugin->base.domain_per_thread) {
-		/* Create domain */
-		ret = fi_domain(device->fabric, device->info,
-				&device->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			goto error;
-		}
-	}
-
-	return ret;
- error:
-	if (device->domain)
-		fi_close((fid_t)device->domain);
-	if (device->fabric)
-		fi_close((fid_t)device->fabric);
- exit:
 	return ret;
 }
 
@@ -2314,9 +2353,13 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_endpoints = HASH_COUNT(device->base.endpoint_table);
-	if (num_endpoints > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u endpoints still active at close", num_endpoints);
+	unsigned num_domains = HASH_COUNT(device->base.domain_table);
+	if (num_domains > 0) {
+		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
+	}
+
+	if (device->fabric) {
+		fi_close((fid_t)device->fabric);
 	}
 
 	if (device->info != NULL) {
@@ -2362,9 +2405,9 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 
 
 	device->base.get_properties = sendrecv_get_properties;
-	device->base.create_endpoint = nccl_net_ofi_sendrecv_device_create_endpoint;
 	device->base.release = nccl_net_ofi_sendrecv_device_release;
 	device->base.get_mr_key = NULL;
+	device->base.create_domain = nccl_net_ofi_sendrecv_device_create_domain;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -2376,6 +2419,14 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 		goto error;
 	}
 	device->prov_name = device->info->fabric_attr->prov_name;
+
+	/* Create fabric */
+	ret = fi_fabric(device->info->fabric_attr, &device->fabric, NULL);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		goto error;
+	}
 
 	ret = sendrecv_device_prepare_for_connection(device);
 	if (ret != 0) {

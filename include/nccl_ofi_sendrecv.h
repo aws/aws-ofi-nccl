@@ -111,15 +111,26 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	/* Endpoint handle to communicate to */
 	struct fid_ep *ofi_ep;
 
-	/* Access Domain handle */
-	struct fid_domain *domain;
-
 	/* Address vector handle */
 	struct fid_av *av;
 
 	/* Completion Queue handle */
 	struct fid_cq *cq;
 } nccl_net_ofi_sendrecv_ep_t;
+
+
+/*
+ * Domain - container for the libfabric domain, which is the threading
+ * boundary for most Libfabric providers, given how the util cq
+ * implementation works.
+ */
+typedef struct nccl_net_ofi_sendrecv_domain {
+	nccl_net_ofi_domain_t base;
+
+	/* Access Domain handle */
+	struct fid_domain *domain;
+} nccl_net_ofi_sendrecv_domain_t;
+
 
 /**
  * @brief	Sendrecv Device
@@ -163,9 +174,6 @@ typedef struct nccl_net_ofi_sendrecv_device {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-
-	/* Access Domain handle */
-	struct fid_domain *domain;
 } nccl_net_ofi_sendrecv_device_t;
 	
 typedef struct nccl_net_ofi_sendrecv_req {
