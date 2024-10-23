@@ -51,7 +51,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribut
  * @param info_list: pointer to list of `num_rails` info objects
  * @param num_rails: number of rails
  */
-void platform_sort_rails(struct fi_info **info_list, int num_rails, size_t num_groups) __attribute__((weak));
+void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) __attribute__((weak));
 
 
 /*
