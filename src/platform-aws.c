@@ -265,7 +265,7 @@ static int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optn
 			      optname_name, ret, fi_strerror(-ret));
 		return ret;
 	} else {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting %s have_ordering is true.", optname_name);
+		NCCL_OFI_TRACE(NCCL_INIT, "Setting %s have_ordering is true.", optname_name);
 		*have_ordering = true;
 	}
 
