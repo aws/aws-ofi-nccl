@@ -134,6 +134,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	nccl_net_ofi_plugin_t *plugin;
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	nccl_net_ofi_device_t *device = NULL;
+	nccl_ofi_properties_t properties;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -292,6 +293,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	if (ret != 0) {
 		goto exit;
 	}
+	ret = device->get_properties(device, &properties);
+	if (ret != 0) {
+		goto exit;
+	}
+	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for global registrations: %s",
+		      (properties.regIsGlobal == 0) ? "false" : "true");
+	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
+		      (properties.dmabuf_support == 0) ? "false" : "true");
 	ret = base_ep->release_ep(base_ep);
 	if (ret != 0) {
 		goto exit;
@@ -453,10 +462,10 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	 */
 	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || plugin->domain_per_thread) {
 		props->regIsGlobal = 0;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {
 		props->regIsGlobal = 1;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Global registrations supported");
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations supported");
 	}
 
 	/* Speed reported in Mbps */
@@ -543,7 +552,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 		nccl_ofi_dmabuf_viable()
 		;
 	if (props->dmabuf_support) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
 	}
 
 	goto exit;
