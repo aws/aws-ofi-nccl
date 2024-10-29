@@ -338,6 +338,16 @@ OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
  */
 OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
 
+/*
+ * Some versions of NCCL (in particular, we know NCCL 2.21-2.23) will
+ * not properly handle when the network plugin returns an error,
+ * meaning that jobs can end up hanging if an asynchronous request
+ * fails when calling test().  This is annoying for customers, so we
+ * provide an environment variable to cause the plugin to abort the
+ * job rather than returning an (ignored) error to NCCL.
+ */
+OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
