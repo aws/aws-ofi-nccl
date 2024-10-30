@@ -83,6 +83,8 @@ noinst_LTLIBRARIES += libinternal_tuner_plugin.la
 tuner_sources =  \
 	tuner/nccl_ofi_regions.c \
 	tuner/nccl_ofi_tuner.c \
+	tuner/nccl_ofi_model.c \
+	nccl_ofi_param.c \
 	nccl_ofi_system.c
 
 libinternal_tuner_plugin_la_SOURCES = $(tuner_sources)
