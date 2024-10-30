@@ -27,7 +27,10 @@ noinst_HEADERS = \
 	nccl_ofi_scheduler.h \
 	nccl_ofi_system.h \
 	nccl_ofi_topo.h \
-	nccl_ofi_tuner.h \
+	tuner/nccl_ofi_tuner.h \
+	tuner/nccl_ofi_tuner_common.h \
+	tuner/nccl_ofi_tuner_region.h \
+	tuner/nccl_ofi_tuner_model.h \
 	nccl_ofi_ofiutils.h \
 	nccl_ofi_dmabuf.h \
 	nccl_ofi_tracepoint.h \

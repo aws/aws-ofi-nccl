@@ -348,6 +348,37 @@ OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
  */
 OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
 
+/*
+ * Force using a specific tuner type.
+ * "Internal" for NCCL internal tuner.
+ * "Region" for NCCL OFI Region base tuner.
+ * "Model" for NCCL OFI Model base tuner.
+ */
+OFI_NCCL_PARAM_STR(tuner_force_type, "TUNER_TYPE", NULL);
+
+/*
+ * The plugin interface lets us tune the number of channels as well, but that
+ * can come later (once a proto+algo combination is chosen, we can compute the
+ * cost with different channel count and optimize for it.
+ */
+OFI_NCCL_PARAM_INT(tuner_num_channels, "TUNER_NUM_CHANNELS", 8);
+
+/*
+ * Latency in µsecs. Note, this is currently different from the network plugin's param for
+ * net latency by design. When we merge with the platform_data values, we will
+ * need to do some additional testing on the base case where a tuner is not
+ * loaded to make sure the same defaykts make sense across both paths, and
+ * combine the parameters. This parameter is meant for internal testing only and
+ * is not meant to be documented for users.
+ */
+OFI_NCCL_PARAM_INT(tuner_net_latency, "TUNER_NET_LATENCY", 20);
+
+/*
+ * With EFA, we expect a ~2µsec cost in the device and ~1µsec cost to write that
+ * completion up to the host stack.
+ */
+OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
