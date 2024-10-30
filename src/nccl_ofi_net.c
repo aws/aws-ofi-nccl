@@ -28,6 +28,7 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_system.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
@@ -422,6 +423,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 {
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
+	const char *platform_type = NULL;
 
 	memset(props, 0, sizeof(*props));
 
@@ -470,6 +472,23 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 
 	/* Speed reported in Mbps */
 	props->port_speed = nic_info->link_attr->speed / (1e6);
+
+	/*
+	 * When running on AWS, newer platforms might return incorrect link
+	 * speeds when running a version of the driver that does not contain
+	 * this change to query the device:
+	 * https://github.com/amzn/amzn-drivers/commit/c4c7926561741c97f78e27836f5687bf16c54b23
+	 * AND running a version of libfabric that does not contain this change:
+	 * https://github.com/ofiwg/libfabric/pull/10496/commits/fd0c5f0b0abe91fc062ad57834a93f35278d2392
+	 *
+	 * Until these updates are more widely deployed, the following override
+	 * fixes port_speed for impacted platforms.
+	 */
+	platform_type = nccl_net_ofi_get_product_name();
+	if (platform_type != NULL && strcmp(platform_type, "p5en.48xlarge") == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT, "Overriding OFI link_attr speed to 200Gbps/link for P5en platform");
+		props->port_speed = 200 * (1e3);
+	}
 
 	ret = get_device_pci_path(nic_info, &props->pci_path);
 	if (ret != 0) {
