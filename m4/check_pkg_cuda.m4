@@ -15,16 +15,31 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AC_ARG_WITH([cuda],
      [AS_HELP_STRING([--with-cuda=PATH], [Path to non-standard CUDA installation])])
 
+  AC_MSG_CHECKING([if dynamically linking cuda is requested])
+  AC_ARG_ENABLE([cudart-dynamic],
+    [AS_HELP_STRING([--enable-cudart-dynamic],
+                    [link cudart dynamically (default=link statically)])],,
+    [enable_cudart_dynamic=no])
+  enable_cudart_dynamic=`echo $enable_cudart_dynamic`
+  case $enable_cudart_dynamic in
+    yes | no) ;; # only acceptable options.
+    *) AC_MSG_ERROR([unknown option '$enable_cudart_dynamic' for --enable-cudart-dynamic]) ;;
+  esac
+  AC_MSG_RESULT([${enable_cudart_dynamic}])
+  cudart_lib="cudart"
+  test "x${enable_cudart_dynamic}" = "xno" && cudart_lib="${cudart_lib}_static"
+
   AS_IF([test -n "${with_cuda}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-cuda=${with_cuda}"])
 
   AS_IF([test -z "${with_cuda}" -o "${with_cuda}" = "yes"],
         [],
         [test "${with_cuda}" = "no"],
         [check_pkg_found=no],
-        [AS_IF([test -d $(realpath ${with_cuda})/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
-         CUDA_LDFLAGS="-L$(realpath ${with_cuda})/${check_pkg_libdir}"
-         CUDA_CPPFLAGS="-isystem $(realpath $(realpath ${with_cuda})/include)"
-         CUDA_LIBS="-lcudart_static -lrt -ldl"
+        [cuda_realpath="$(realpath ${with_cuda})"
+         cuda_ldpath="${cuda_realpath}/lib64"
+         CUDA_LDFLAGS="-L${cuda_ldpath}"
+         CUDA_CPPFLAGS="-isystem ${cuda_realpath}/include"
+         CUDA_LIBS="-l${cudart_lib} -lrt -ldl"
          LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
          LIBS="${CUDA_LIBS} ${LIBS}"
          CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"
@@ -33,7 +48,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_SEARCH_LIBS(
          [cudaGetDriverEntryPoint],
-         [cudart_static],
+         [${cudartlib}],
          [],
          [check_pkg_found=no],
          [-ldl -lrt])])
