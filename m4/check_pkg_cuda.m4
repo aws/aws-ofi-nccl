@@ -60,9 +60,9 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
         #include <cuda.h>
         _Static_assert(CUDA_VERSION >= 11030, "cudart>=11030 required for cuFlushGPUDirectRDMAWrites");
-        ])],[ check_cuda_gdr_flush_define=1 ],
-            [ check_cuda_gdr_flush_define=0 ])
-        AC_MSG_RESULT(${check_cuda_gdr_flush_define})
+        ])],[ check_cuda_gdr_flush_define=1 chk_result=yes ],
+            [ check_cuda_gdr_flush_define=0 chk_result=no ])
+        AC_MSG_RESULT(${chk_result})
         ])
 
   check_cuda_dmabuf_define=0
@@ -72,9 +72,9 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
         #include <cuda.h>
         _Static_assert(CUDA_VERSION >= 11070, "cudart>=11070 required for DMABUF");
-        ])],[ check_cuda_dmabuf_define=1 ],
-            [ check_cuda_dmabuf_define=0 ])
-        AC_MSG_RESULT(${check_cuda_dmabuf_define})
+        ])],[ check_cuda_dmabuf_define=1 chk_result=yes ],
+            [ check_cuda_dmabuf_define=0 chk_result=no ])
+        AC_MSG_RESULT(${chk_result})
         ])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
