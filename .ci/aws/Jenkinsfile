@@ -166,8 +166,8 @@ pipeline {
                 script {
                     def stages = [:]
 
+                    def timeout = "--timeout 40"
                     def nccl_version = "--test-nccl-version v2.22.3-1"
-                    def timeout = "--timeout 120"
                     def cluster_type = "--cluster-type manual_cluster"
                     def test_target = "--test-target aws-ofi-nccl"
                     def test_type = "--test-type pr"
