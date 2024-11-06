@@ -6783,10 +6783,12 @@ static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *r
 static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 			int dev_id, int rail_id,
 			nccl_net_ofi_rdma_device_rail_t *dev_rail,
-			nccl_net_ofi_ep_rail_t *ep_rail)
+			nccl_net_ofi_ep_rail_t *ep_rail,
+			uint32_t tclass)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_plugin_t *plugin = rdma_endpoint_get_plugin(ep);
+	struct fi_info *rail_info = dev_rail->info;
 
 	if (plugin->base.domain_per_thread) {
 		ret = fi_domain(dev_rail->fabric, dev_rail->info,
@@ -6811,11 +6813,24 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	}
 #endif
 
+	if (tclass != FI_TC_UNSPEC) {
+		rail_info = fi_dupinfo(rail_info);
+		if (rail_info == NULL) {
+			NCCL_OFI_WARN("Could not allocate new fi_info struct");
+			return -ENOMEM;
+		}
+
+		rail_info->tx_attr->tclass = tclass;
+	}
+
 	ret = nccl_ofi_ofiutils_init_connection(dev_rail->info,
 						ep_rail->domain,
 						&ep_rail->ofi_ep,
 						&ep_rail->av,
 						&ep_rail->cq);
+	if (tclass != FI_TC_UNSPEC) {
+		fi_freeinfo(rail_info);
+	}
 	if (ret != 0) {
 		return ret;
 	}
@@ -6843,13 +6858,14 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	nccl_net_ofi_rdma_device_rail_t *rail_dev;
 	nccl_net_ofi_ep_rail_t *rail;
 	nccl_net_ofi_ep_rail_t *control_rail;
+	uint32_t tc = (ofi_nccl_use_low_lat_tc() == 0) ? FI_TC_UNSPEC : FI_TC_LOW_LATENCY;
 
 	/* Initialize libfabric resources of endpoint rails */
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail);
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail, FI_TC_UNSPEC);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing rail %d failed", rail_id);
 			goto exit;
@@ -6863,7 +6879,7 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 		control_rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
 		control_rail->cq = rail->cq;
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, control_rail);
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, control_rail, tc);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing control rail %d failed", rail_id);
 			goto exit;
