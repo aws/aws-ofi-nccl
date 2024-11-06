@@ -6783,26 +6783,15 @@ static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *r
 static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 			int dev_id, int rail_id,
 			nccl_net_ofi_rdma_device_rail_t *dev_rail,
-			nccl_net_ofi_ep_rail_t *ep_rail)
+			nccl_net_ofi_ep_rail_t *ep_rail,
+			struct fid_domain *domain,
+			struct fid_cq *cq)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_plugin_t *plugin = rdma_endpoint_get_plugin(ep);
 
-	if (plugin->base.domain_per_thread) {
-		ret = fi_domain(dev_rail->fabric, dev_rail->info,
-			&ep_rail->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				ret, fi_strerror(-ret));
-			return ret;
-		}
-	} else {
-		ep_rail->domain = dev_rail->domain;
-	}
-
-	if (dev_rail->cq != NULL) {
-		ep_rail->cq = dev_rail->cq;
-	}
+	assert(domain != NULL);
+	ep_rail->domain = domain;
+	ep_rail->cq = cq;
 
 #ifndef NDEBUG
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
@@ -6830,6 +6819,45 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	return 0;
 }
 
+static int get_domain_and_cq_for_endpoint_rail(nccl_net_ofi_rdma_ep_t *ep,
+					       nccl_net_ofi_rdma_device_rail_t *dev_rail,
+					       nccl_net_ofi_ep_rail_t *ep_rail,
+					       struct fid_domain **domain,
+					       struct fid_cq **cq)
+{
+	int ret = 0;
+
+	if (ep_rail->domain != NULL) {
+		*domain = ep_rail->domain;
+		*cq = ep_rail->cq;
+		return 0;
+	}
+	nccl_net_ofi_rdma_plugin_t *plugin = rdma_endpoint_get_plugin(ep);
+
+	if (plugin->base.domain_per_thread) {
+		assert(ep_rail->cq == NULL);
+		*cq = NULL;
+
+		ret = fi_domain(dev_rail->fabric, dev_rail->info,
+			domain, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+				ret, fi_strerror(-ret));
+			return ret;
+		}
+	} else {
+		*domain = dev_rail->domain;
+
+		*cq = NULL;
+		if (ep_rail->cq) {
+			*cq = ep_rail->cq;
+		} else if (dev_rail->cq != NULL) {
+			*cq = dev_rail->cq;
+		}
+	}
+
+	return ret;
+}
 
 /*
  * @brief	Initialize libfabric resources of endpoint rails
@@ -6842,13 +6870,20 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 	nccl_net_ofi_rdma_device_rail_t *rail_dev;
 	nccl_net_ofi_ep_rail_t *rail;
 	nccl_net_ofi_ep_rail_t *control_rail;
+	struct fid_domain *domain;
+	struct fid_cq *cq;
 
 	/* Initialize libfabric resources of endpoint rails */
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail);
+		ret = get_domain_and_cq_for_endpoint_rail(ep, rail_dev, rail, &domain, &cq);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Fetching domain and cq of endpoint rail %d failed", rail_id);
+			goto exit;
+		}
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, rail, domain, cq);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing rail %d failed", rail_id);
 			goto exit;
@@ -6861,8 +6896,13 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 		control_rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
-		control_rail->cq = rail->cq;
-		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, control_rail);
+		ret = get_domain_and_cq_for_endpoint_rail(ep, rail_dev, rail, &domain, &cq);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Fetching domain and cq of endpoint rail %d for control rail failed", rail_id);
+			goto exit;
+		}
+
+		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, control_rail, domain, cq);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing control rail %d failed", rail_id);
 			goto exit;
@@ -7149,6 +7189,7 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *dev
 	}
 
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
+		assert(!plugin->base.domain_per_thread);
 		/* Create device-shared completion queue */
 		struct fi_cq_attr cq_attr = {};
 		cq_attr.format = FI_CQ_FORMAT_DATA;
