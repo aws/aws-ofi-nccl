@@ -380,6 +380,13 @@ OFI_NCCL_PARAM_INT(tuner_net_latency, "TUNER_NET_LATENCY", 20);
  */
 OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
 
+/*
+ * Do we want to set the LOW_LATENCY traffic class for control
+ * messages?  This generally improves performance for platforms that
+ * support TCs, unless the prioritization over-reacts on the given network.
+ */
+OFI_NCCL_PARAM_INT(use_low_lat_tc, "USE_LOW_LATENCY_TC", 1);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
