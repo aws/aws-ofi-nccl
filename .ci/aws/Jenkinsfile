@@ -140,17 +140,6 @@ pipeline {
         REGION="us-west-2"
     }
     stages {
-        // Cleanup workspace before job start.
-        stage("Clean up workspace") {
-            steps{
-                deleteDir()
-            }
-        }
-        stage("Checkout SCM repo") {
-            steps {
-                checkout scm
-            }
-        }
         stage("Download and extract PortaFiducia") {
             steps {
                 script {
