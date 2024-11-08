@@ -272,15 +272,14 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
  * Unfortunately, the plugin needs to signal DMABUF support or lack thereof back
  * to NCCL prior to having an opportuntiy to make any any memory registrations.
  * This ultimately means that the plugin will opimistically assume DMA-BUF is
- * viable on all FI_HMEM providers beyond libfabric 1.20, if not for this param.
+ * viable on all FI_HMEM providers beyond libfabric 1.20.
  *
  * If dmabuf registrations fail, (ie: if ibv_reg_dmabuf_mr cannot be resolved),
  * the plugin has no freedom to renegotiate DMABUF support with NCCL, and so it
- * is fatal. Under those conditions, users should ensure that they have set this
- * environment variable to '1' to force NCCL to avoid providing dmabuf file
- * desciptors. This is the default, pending perf investigations.
+ * is fatal. Under those conditions, users should set this environment variable
+ * to force NCCL to avoid providing dmabuf file desciptors.
  */
-OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
+OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
