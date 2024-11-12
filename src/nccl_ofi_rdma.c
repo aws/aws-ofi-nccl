@@ -119,6 +119,10 @@ static int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep
 static inline int repost_bounce_buff(nccl_net_ofi_rdma_ep_t *ep,
 					 nccl_net_ofi_rdma_req_t *bounce_req);
 
+static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
+			      nccl_net_ofi_ep_rail_t *ep_rail,
+			      bool set_fi_more);
+
 static nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl);
 
 static inline int free_base_req(uint64_t *num_inflight_reqs,
@@ -2309,13 +2313,20 @@ static inline int post_bounce_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
 
 	/* Post all the bounce buffers we need */
 	for (size_t i = 0; i < buffers_needed; ++i) {
+		bool is_last_req = (i == (buffers_needed - 1));
 		nccl_net_ofi_rdma_req_t *req =
 			alloc_bounce_req(ep, rail);
 		if (!req) {
 			NCCL_OFI_WARN("Failed to allocate bounce req");
 			return -ENOMEM;
 		}
-		ret = send_progress(req);
+
+		/* Only set FI_MORE on reqs that aren't the last
+		 * requ.  Note that any reqs reposted through
+		 * handle_bounce_eagain() are posted without FI_MORE,
+		 * so we don't have to handle that case.
+		 */
+		ret = post_bounce_buffer(req, rail, !is_last_req);
 		if (ret == -FI_EAGAIN) {
 			/* Update posted count */
 			/* We failed to post num_buffs_failed buffers that we promised above */
@@ -5380,13 +5391,21 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 }
 
 static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
-			      nccl_net_ofi_ep_rail_t *ep_rail)
+			      nccl_net_ofi_ep_rail_t *ep_rail,
+			      bool set_fi_more)
 {
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(req);
 	nccl_net_ofi_rdma_bounce_fl_item_t *bounce_fl_item = bounce_data->bounce_fl_item;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
 		(freelist_regmr_fn_handle_t *)bounce_fl_item->fl_reginfo.mr_handle;
 	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[bounce_data->rail->rail_id]);
+	struct iovec iov;
+	struct fi_msg msg;
+	uint64_t flags = 0;
+
+	if (set_fi_more) {
+		flags |= FI_MORE;
+	}
 
 	/* Reset memcheck guards of bounce buffer freelist entry to
 	 * accessible but undefined to cover cases where the buffer
@@ -5395,9 +5414,17 @@ static int post_bounce_buffer(nccl_net_ofi_rdma_req_t *req,
 	nccl_ofi_freelist_entry_set_undefined(ep->bounce_buff_fl,
 					      bounce_fl_item);
 
+	iov.iov_base = &bounce_fl_item->bounce_msg;
+	iov.iov_len = bounce_data->buff_len;
+
+	msg.msg_iov = &iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = FI_ADDR_UNSPEC;
+	msg.context = req;
+
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
-	ssize_t rc =
-		fi_recv(ep_rail->ofi_ep, &bounce_fl_item->bounce_msg, bounce_data->buff_len, desc, FI_ADDR_UNSPEC, req);
+	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep, &msg, flags);
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting bounce buffer. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
@@ -5474,7 +5501,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 		/* Get ep rail information to xfer the req */
 		assert(bounce_data->rail != NULL);
 
-		ret = post_bounce_buffer(req, bounce_data->rail);
+		ret = post_bounce_buffer(req, bounce_data->rail, false);
 	} else {
 		NCCL_OFI_WARN("Unexpected request type. Request type: %d", req->type);
 		ret = -EINVAL;
