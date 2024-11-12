@@ -30,7 +30,7 @@ int main(int argc, const char **argv)
 				return 1;
 			}
 
-			for (size_t nmibytes = 1; nmibytes <= 32 * 1024; nmibytes <<= 1) {
+			for (size_t nkibytes = 1; nkibytes <= 32 * 1024 * 1024; nkibytes <<= 1) {
 				int algorithm = NCCL_ALGO_UNDEF;
 				int protocol = NCCL_ALGO_UNDEF;
 
@@ -48,7 +48,7 @@ int main(int argc, const char **argv)
 
 				if (ncclTunerPlugin_v3.getCollInfo(context,
 								   ncclFuncAllReduce,
-								   nmibytes * 1024 * 1024,
+								   nkibytes * 1024,
 								   1,
 								   (float **)collCostTable,
 								   NCCL_NUM_ALGORITHMS,
@@ -72,10 +72,10 @@ int main(int argc, const char **argv)
 					}
 				}
 
-				printf("%lu,%lu,%luMiB,%d,%s,%s\n",
+				printf("%lu,%lu,%luKiB,%d,%s,%s\n",
 				       nodes,
 				       nodes * ranks_per_node,
-				       nmibytes,
+				       nkibytes,
 				       nChannels,
 				       algorithm >= 0 && algorithm <= NCCL_NUM_ALGORITHMS ? algo_names[algorithm]
 											  : "none",
