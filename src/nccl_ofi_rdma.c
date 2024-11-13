@@ -6719,7 +6719,7 @@ static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id, struct fid
 		(instead of a cq per endpoint), set the rail->cq pointer to NULL
 		here so	that the cq isn't actually released in ep_release().
 		The cq will be released when the domain is cleaned up */
-		rail->cq = NULL;
+		cq = NULL;
 	}
 	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
 				     cq, dev_id);
@@ -6807,6 +6807,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 #ifndef NDEBUG
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		assert(ep_rail->cq != NULL);
+		assert(dev_rail->cq != NULL);
 	}
 #endif
 
