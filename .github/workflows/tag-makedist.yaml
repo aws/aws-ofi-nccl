@@ -1,0 +1,72 @@
+name: make `make dist` tarball
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - release/**
+      - v**
+
+jobs:
+  amazonlinux:
+    strategy:
+      matrix:
+        container:
+          - public.ecr.aws/amazonlinux/amazonlinux:2023
+        efainstaller:
+          - latest
+        displayname:
+          - al2023
+        efainstallerdir:
+          - ALINUX2023
+        nvidiadistro:
+          - amzn2023
+        configmanager:
+          - dnf config-manager
+        cudapackages:
+          - cuda-cudart-devel-12-6 cuda-crt-12-6
+
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    name: make dist for tag ${{ github.ref_name }}
+    steps:
+      - run: |
+          yum -y update && yum -y install git tar util-linux findutils yum-utils
+      - uses: actions/checkout@v4
+      - name: Fetch and Install EFA Installer Dependencies
+        run: |
+          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz
+          tar -xf aws-efa-installer-*.tar.gz
+          ( cd aws-efa-installer/RPMS/${{ matrix.efainstallerdir }}/x86_64 ; find . | grep rpm$ | xargs yum -y localinstall )
+          rm -rf aws-efa-installer*
+
+      - name: Install hwloc, utilities.
+        run: |
+          yum -y install hwloc-devel autoconf automake libtool gcc gcc-c++ git make
+
+      - name: Install CUDA
+        run: |
+          ${{ matrix.configmanager }} --add-repo \
+             http://developer.download.nvidia.com/compute/cuda/repos/${{ matrix.nvidiadistro }}/x86_64/cuda-${{ matrix.nvidiadistro }}.repo \
+             --save
+          yum -y clean expire-cache
+          yum -y install ${{ matrix.cudapackages }}
+
+      - name: Call `autoreconf -ivf`
+        run: |
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      --with-cuda=/usr/local/cuda/
+
+      - name: Call `make distcheck`
+        run: make distcheck V=1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "${{ github.ref_name }} make dist output"
+          path: "*.tar*"
+          if-no-files-found: error
