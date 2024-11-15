@@ -19,7 +19,10 @@ extern "C" {
 #include <sys/uio.h>
 
 #include <rdma/fi_domain.h>
+#include "nccl_ofi_math.h"
+#include "nccl_ofi_log.h"
 
+#define NCCL_OFI_CACHE_PAGE_SIZE (4096)
 enum nccl_ofi_mr_ckey_type {
 	NCCL_OFI_MR_CKEY_INVALID = 0,
 	NCCL_OFI_MR_CKEY_IOVEC,
@@ -46,6 +49,9 @@ static_assert(offsetof(struct nccl_ofi_mr_ckey, iovec) == 0, "Cache keys must be
 static_assert(offsetof(struct nccl_ofi_mr_ckey, fi_mr_dmabuf) == 0,
               "Cache keys must be safe to cast to 'struct fi_mr_dmabuf'");
 #endif
+
+/* Alignement of MR cache and key creation */
+extern size_t mr_cache_alignment;
 
 static inline const char *nccl_ofi_mr_ckey_type_str(nccl_ofi_mr_ckey_ref ckey)
 {
@@ -98,6 +104,17 @@ static inline uintptr_t nccl_ofi_mr_ckey_len(nccl_ofi_mr_ckey_ref ckey)
 	}
 }
 
+static inline void nccl_ofi_mr_ckey_round(size_t *len, void **base_addr, const char *type)
+{
+	uintptr_t page_base = NCCL_OFI_ROUND_DOWN((uintptr_t)*base_addr, mr_cache_alignment);
+	size_t aligned_size = NCCL_OFI_ROUND_UP(((uintptr_t)*base_addr + *len), mr_cache_alignment) - page_base;
+	NCCL_OFI_TRACE_WHEN(((uintptr_t)*base_addr != page_base || aligned_size != *len),
+			    NCCL_NET, "Going to register mr %s %p size %ld as %p size %ld",
+			    type, *base_addr, *len, (void *)page_base, aligned_size);
+	*base_addr = (void *)page_base;
+	*len = aligned_size;
+}
+
 #if HAVE_DECL_FI_MR_DMABUF
 static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t offset, size_t len, void *base_addr)
 {
@@ -116,6 +133,7 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t off
 
 static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len)
 {
+	nccl_ofi_mr_ckey_round(&iov_len, &iov_base, "iovec");
 	return (nccl_ofi_mr_ckey_t){
 		.iovec =
 			{
@@ -169,7 +187,7 @@ typedef struct nccl_ofi_mr_cache {
  * @return a new mr cache, or NULL if an allocation error occurred
  */
 nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
-					    size_t system_page_size);
+					    size_t mr_cache_page_size);
 
 /**
  * Finalize mr cache

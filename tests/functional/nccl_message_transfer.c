@@ -51,11 +51,11 @@ int main(int argc, char* argv[])
 	/* Data sizes. We want to check send size greater, equal
 	   and smaller than recv size. And check values 1. below
 	   the eager threshold, 2. between eager and rr threshold,
-	   and 3. above the rr threshold. */
-	size_t send_sizes[] = {4 * 1024, 16 * 1024, 1024 * 1024,
+	   3. above the rr threshold, and 4. fraction of page size. */
+	size_t send_sizes[] = {512, 4 * 1024, 16 * 1024, 1024 * 1024,
 	                       5 * 1024, 17 * 1024, 2 * 1024 * 1024,
 	                       4 * 1024, 16 * 1024, 1024 * 1024};
-	size_t recv_sizes[] = {4 * 1024, 16 * 1024, 1024 * 1024,
+	size_t recv_sizes[] = {512, 4 * 1024, 16 * 1024, 1024 * 1024,
 	                       4 * 1024, 16 * 1024, 1024 * 1024,
 	                       5 * 1024, 17 * 1024, 2 * 1024 * 1024};
 

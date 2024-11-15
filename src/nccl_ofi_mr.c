@@ -11,7 +11,7 @@
 #include "nccl_ofi_pthread.h"
 
 nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
-					    size_t system_page_size)
+					    size_t mr_cache_page_size)
 {
 	nccl_ofi_mr_cache_t *ret_cache = NULL;
 
@@ -20,7 +20,7 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
 		goto error;
 	}
 
-	if (system_page_size == 0) {
+	if (mr_cache_page_size == 0) {
 		NCCL_OFI_WARN("MR cache: system page size must be positive");
 		goto error;
 	}
@@ -40,8 +40,11 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
 	if (nccl_net_ofi_mutex_init(&ret_cache->lock, NULL)) {
 		goto error;
 	}
-
-	ret_cache->system_page_size = system_page_size;
+	/*
+	 * System page size isn't reflective of the GDR mappings. We're not trying to map a
+	 * whole page, but just to find an interval that makes an array-based cache manageable.
+	 */
+	ret_cache->system_page_size = mr_cache_page_size;
 	ret_cache->size = init_num_entries;
 	ret_cache->used = 0;
 	ret_cache->hit_count = 0;

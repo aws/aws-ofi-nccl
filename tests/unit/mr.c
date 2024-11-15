@@ -61,6 +61,25 @@ static inline bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, in
 		exit(1);                                      \
 	}
 
+static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintptr_t expected_base, size_t expected_size)
+{
+	/* iovec only */
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec((void*)addr, size);
+	uintptr_t page_base = nccl_ofi_mr_ckey_baseaddr(&ckey);
+	size_t aligned_size = nccl_ofi_mr_ckey_len(&ckey);
+	if (page_base != expected_base || aligned_size != expected_size) {
+		NCCL_OFI_WARN("nccl_ofi_mr_ckey_mk_aligned returned unexpected result. Expected: [%ld, %ld]. Actual: [%ld, %ld]",
+			expected_base, expected_size, page_base, aligned_size);
+		return false;
+	}
+	return true;
+}
+#define test_make_aligned_key(addr, size, expected_base, expected_size)              \
+	if (!test_make_aligned_key_impl(addr, size, expected_base, expected_size)) { \
+		NCCL_OFI_WARN("test_make_aligned_key fail");            \
+		exit(1);                                      \
+	}
+
 int main(int argc, char *argv[])
 {
 	ofi_log_function = logger;
@@ -68,6 +87,7 @@ int main(int argc, char *argv[])
 
 	/* Doesn't have to be correct -- for functionality test only */
 	const size_t fake_page_size = 1024;
+	mr_cache_alignment = fake_page_size;
 
 	nccl_ofi_mr_cache_t *cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
 	if (!cache) {
@@ -128,6 +148,11 @@ int main(int argc, char *argv[])
 		/* Lookup miss after removal */
 		test_lookup(cache, (void *)(i * fake_page_size), 1, NULL);
 	}
+
+	/* Test of nccl_ofi_mr_ckey_mk_[vec|dmabuf] to build aligned keys */
+	test_make_aligned_key(fake_page_size / 2, 16, 0, fake_page_size);
+	test_make_aligned_key(fake_page_size / 2, fake_page_size, 0, fake_page_size * 2);
+	test_make_aligned_key(fake_page_size - 16, 17, 0, fake_page_size * 2);
 
 	nccl_ofi_mr_cache_finalize(cache);
 
