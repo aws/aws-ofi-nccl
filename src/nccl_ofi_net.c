@@ -67,6 +67,9 @@ float net_latency = .0;
 /* Size of a memory page */
 size_t system_page_size = 0;
 
+/* Alignment used for MR cache and key creation */
+size_t mr_cache_alignment = 0;
+
 /*
  * @brief	Allocate memory region for memory registration
  *
@@ -153,6 +156,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	system_page_size = (size_t)system_page_size_sysconf;
 	assert(NCCL_OFI_IS_POWER_OF_TWO(system_page_size));
 	assert(system_page_size > 0);
+	/*
+	 * System page size isn't reflective of the GDR mappings. We're not trying to map a
+	 * whole page, but just to find an interval that makes an array-based cache manageable.
+	 */
+	mr_cache_alignment = NCCL_OFI_MIN(system_page_size, NCCL_OFI_CACHE_PAGE_SIZE);
 
 #if HAVE_CUDA
 	ret = nccl_net_ofi_cuda_init();
@@ -772,7 +780,7 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	if (!ofi_nccl_mr_cache_disable()) {
 		device->mr_cache =
 			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
-					       system_page_size);
+					       mr_cache_alignment);
 		if (!device->mr_cache) {
 			ret = -ENOMEM;
 			goto exit;
