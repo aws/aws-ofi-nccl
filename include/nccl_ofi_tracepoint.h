@@ -39,12 +39,12 @@
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_SEND_START(dev, rail_id, size, comm, msg_seq_num, request) do { \
-	/* TODO: use a better (LTTNG) trace for eager send? */ \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send_write_segment_start, dev, rail_id, size, comm, msg_seq_num, request); \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_eager_start, dev, rail_id, size, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_EAGER_SEND_START_NVTX(dev, rail_id, size, comm, msg_seq_num, request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(dev, rail_id, comm, msg_seq_num, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_eager_complete, dev, rail_id, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while (0)
 
@@ -54,10 +54,12 @@
 } while (0)
 
 #define NCCL_OFI_TRACE_SEND_CTRL_START(dev, rail_id, comm, req, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_start, dev, rail_id, comm, req, msg_seq_num); \
 	NCCL_OFI_TRACE_SEND_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num); \
 } while (0);
 
 #define NCCL_OFI_TRACE_SEND_CTRL_END(dev, rail_id, comm, req, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_end, dev, rail_id, comm, req, msg_seq_num); \
 	NCCL_OFI_TRACE_SEND_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num); \
 } while (0);
 
@@ -80,13 +82,9 @@
 	NCCL_OFI_TRACE_RECV_END_NVTX(request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(request) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_ctrl_send_complete, request); \
-} while(0)
-
-#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, size, request) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, size, request); \
-	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request); \
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, size, request, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, size, request, msg_seq_num); \
+	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request, msg_seq_num); \
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_RECV(dev, rail_id, comm, msg_seq_num) do { \

@@ -816,8 +816,6 @@ static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 	req->ncompls = 1;
 	req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
-	NCCL_OFI_TRACE_RECV_CTRL_SEND_COMPLETE(recv_req);
-
 	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
@@ -1038,6 +1036,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	}
 
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t *)elem;
+	assert(req->msg_seq_num == msg_seq_num);
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	rdma_req_bounce_data_t *bounce_data = get_bounce_data(bounce_req);
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_bounce_ctrl_msg(bounce_data->bounce_fl_item);
@@ -1426,7 +1425,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 		return ret;
 	}
 
-	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, cq_entry->len, req);
+	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, cq_entry->len, req, req->msg_seq_num);
 
 	return 0;
 }
@@ -5541,7 +5540,6 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
 	assert(rail_id < mr_handle->num_control_rails);
 	desc = fi_mr_desc(mr_handle->control_mr[rail_id]);
-	NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
 
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
 
@@ -5553,6 +5551,8 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
+	} else if (rc != -FI_EAGAIN) {
+		NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
 	}
 
 	return rc;
