@@ -151,10 +151,19 @@ static inline void nccl_ofi_mr_ckey_fill_mr_attrs(nccl_ofi_mr_ckey_ref ckey, str
 #if HAVE_DECL_FI_MR_DMABUF
 	if (ckey->type == NCCL_OFI_MR_CKEY_DMABUF) {
 		*flags |= FI_MR_DMABUF;
+		// note: because ckey's first member is layout-compatible with
+		// fi_mr_attr's first member, both sides of this branch are the
+		// same as
+		// `memcpy(attrs, ckey, max(sizeof(struct iovec),
+		//                          sizeof(struct fi_mr_dmabuf)))'
+		attrs->dmabuf = (const struct fi_mr_dmabuf *)ckey;
+	} else {
+		// see comment above
+		attrs->mr_iov = (const struct iovec *)ckey;
 	}
-	attrs->dmabuf = (const struct fi_mr_dmabuf *)ckey;
-#endif
+#else
 	attrs->mr_iov = (const struct iovec *)ckey;
+#endif
 	attrs->iov_count = 1;
 }
 
