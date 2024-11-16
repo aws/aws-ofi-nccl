@@ -168,10 +168,10 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request) do { \
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request, msg_seq_num) do { \
 	nvtxDomainHandle_t handle; \
 	if (NCCL_OFI_NVTX_TRACE_PER_COMM) { \
-		handle = ((nccl_net_ofi_rdma_recv_comm_t *)request->comm)->nvtx_domain[request->msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		handle = ((nccl_net_ofi_rdma_recv_comm_t *)request->comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
 		nvtx_mark_domain(handle, "Recv_segment_complete", 0xff0000); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
