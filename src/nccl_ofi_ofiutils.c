@@ -353,8 +353,16 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 	}
 #endif
 
-	/* Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if
-	 * using the Libfabric 1.18 API with HMEM support.
+	/*
+	 * Set Libfabric endpoint option FI_OPT_CUDA_API_PERMITTED to false if using
+	 * the Libfabric 1.18 API with HMEM support, and the device supports GDR.
+	 *
+	 * Prior to Libfabric 1.18.0, there was no way to disable
+	 * Libfabric from making CUDA calls.  While the EFA path was
+	 * CUDA clean, it could use the shm provider, which did make
+	 * CUDA calls.  Rather than muck with side channel ways of
+	 * disabling CUDA in old Libfabric, just require newer
+	 * Libfabric.
 	 */
 	if (FI_VERSION_GE(info->fabric_attr->api_version,
 			  FI_VERSION(1, 18)) && support_gdr != GDR_UNSUPPORTED) {

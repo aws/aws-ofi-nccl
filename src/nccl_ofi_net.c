@@ -608,15 +608,9 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
 		      selected_provider->fabric_attr->prov_name, num_providers);
 
-	/* Prior to Libfabric 1.18.0, there was no way to disable
-	 * Libfabric from making CUDA calls.  While the EFA path was
-	 * CUDA clean, it could use the shm provider, which did make
-	 * CUDA calls.  Rather than muck with side channel ways of
-	 * disabling CUDA in old Libfabric, just require newer
-	 * Libfabric. */
 	if (strncmp("efa", selected_provider->fabric_attr->prov_name, strlen("efa")) == 0) {
-		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 18))) {
-			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.18.0.");
+		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 22))) {
+			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.22.0.");
 			return -ENOTSUP;
 		}
 	}
