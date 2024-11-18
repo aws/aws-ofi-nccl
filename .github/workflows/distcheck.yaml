@@ -56,6 +56,12 @@ jobs:
           - latest
           - 1.25.0
         include:
+          - efainstaller: latest
+            platform-aws: enable
+
+          - efainstaller: 1.25.0
+            platform-aws: disable
+
           - container: public.ecr.aws/amazonlinux/amazonlinux:2023
             displayname: al2023
             efainstallerdir: ALINUX2023
@@ -110,7 +116,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
-                        --enable-platform-aws \
+                        --${{ matrix.platform-aws }}-platform-aws \
                         --enable-neuron
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
@@ -118,7 +124,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
-                        --enable-platform-aws \
+                        --${{ matrix.platform-aws }}-platform-aws \
                         --with-cuda=/usr/local/cuda/
           fi
 

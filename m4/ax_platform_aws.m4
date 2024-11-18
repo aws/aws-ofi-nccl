@@ -21,17 +21,17 @@ AC_DEFUN([AX_CHECK_PLATFORM_AWS],[
   AM_CONDITIONAL([WANT_PLATFORM_AWS], [test "${want_platform_aws}" = "yes"])
   AS_IF([test "${want_platform_aws}" = "yes"],
         [NCCL_OFI_PLATFORM="AWS"
-         AC_MSG_CHECKING([for Libfabric 1.18.0 or later])
+         AC_MSG_CHECKING([for Libfabric 1.22.0 or greater])
          AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 [[#include <rdma/fabric.h>
 ]],
 [[#if !defined(FI_MAJOR_VERSION)
 #error "we cannot check the version -- sad panda"
-#elif FI_VERSION_LT(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), FI_VERSION(1,18))
+#elif FI_VERSION_LT(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), FI_VERSION(1,22))
 #error "version is too low -- nopes"
 #endif
 ]])],
              [AC_MSG_RESULT([yes])],
              [AC_MSG_RESULT([no])
-	      AC_MSG_ERROR([On AWS platforms, Libfabric 1.18.0 or later is required])])
+	      AC_MSG_ERROR([On AWS platforms, Libfabric 1.22.0 or later is required])])
         NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --enable-platform-aws=${enable_platform_aws}"])])
