@@ -892,6 +892,10 @@ ncclResult_t region_get_coll_info_internal_v2(nccl_ofi_tuner_context_t *ctx,
 
 	/* Check all regions */
 	for (size_t i = 0; i < region_ctx->num_regions[collType] && in_out < 0; i++) {
+		/* PAT is not supported in V2 tuner, in this case revert to nccl internal tuner */
+		if (region_ctx->regions[collType][i].algorithm == NCCL_ALGO_PAT) {
+			continue;
+		}
 		if (region_ctx->regions[collType][i].algorithm == NCCL_ALGO_NVLS_TREE && nvlsSupport == 0) {
 			continue;
 		}
