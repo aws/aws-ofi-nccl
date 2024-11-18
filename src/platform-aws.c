@@ -24,6 +24,7 @@
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
+#include "nccl_ofi_ncclver.h"
 #include "nccl_ofi_system.h"
 
 struct ec2_platform_data {
@@ -318,9 +319,6 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 	return ret;
 }
 
-
-typedef ncclResult_t (*nccl_get_version_fn_t)(int *version);
-
 static int configure_nvls_option(void)
 {
 	/* Disable NVLS topology discovery for older NCCL versions. There's a
@@ -328,37 +326,21 @@ static int configure_nvls_option(void)
 	 * NVLink Switch support.  We selectively disable NVLS support
 	 * to avoid the bug, which was fixed in 2.18.5.
 	 */
-	nccl_get_version_fn_t nccl_get_version = NULL;
-	int version = 0;
-	ncclResult_t nccl_ret;
 	int ret;
 
 	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
-		nccl_get_version = (nccl_get_version_fn_t)dlsym(RTLD_DEFAULT, "ncclGetVersion");
-		if (nccl_get_version == NULL) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			    "Could not find ncclGetVersion symbol; skipping NVLS NCCL version check");
-			return 0;
-		} else {
-			nccl_ret = nccl_get_version(&version);
-			if (nccl_ret != ncclSuccess) {
-				NCCL_OFI_WARN("ncclGetVersion returned %d", nccl_ret);
-				return -ENOTSUP;
-			}
-
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "ncclGetVersion results = %d", version);
-		}
-
 		/* 2.18.5 */
-		if (version < 21805) {
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %d", version);
+		if (NCCL_VBEFORE(nccl_ofi_ncclver_get(), NCCL_V(2,18,5))) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %d",
+						  nccl_ofi_ncclver_get());
 			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
 				return -errno;
 			}
 		} else {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %d", version);
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %d",
+						   nccl_ofi_ncclver_get());
 		}
 	}
 
@@ -450,24 +432,29 @@ int platform_init(const char **provider_filter)
 		goto exit;
 	}
 
-	if ((platform_data && !platform_data->net_flush_required) &&
-	    NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
-
-		/* Hopper GPUs do not require a network flush, but NCCL versions <2.19.1
-		* still enable flush by default on any GPU type.
-		* For GPU generations earlier than Hopper, NCCL always enables flush, while
-		* for Hopper GPUs flush is enabled or disabled depending on the value of
-		* the NCCL_NET_FORCE_FLUSH environment variable. The default value for this
-		* variable is 1 for NCCL versions <2.19.1, which forces flush when it is not
-		* needed, so it is safe to set it to 0 if it is not explicitly set.
+	if (NCCL_VBEFORE(nccl_ofi_ncclver_get(), NCCL_V(2,19,1))) {
+		/*
+		* Hopper GPUs do not require a network flush, but NCCL versions <2.19.1
+		* still enable flush by default on any GPU type [1]. For GPU generations
+		* earlier than Hopper, NCCL always enables flush, while for Hopper GPUs
+		* flush is enabled or disabled depending on the value of the
+		* NCCL_NET_FORCE_FLUSH environment variable. The default value for this
+		* variable is 1 for NCCL versions <2.19.1, which forces flush when it is
+		* not needed, so it is safe to set it to 0 if it is not explicitly set.
+		*
+		* [1]: https://github.com/NVIDIA/nccl/blame/v2.23.4-1/src/graph/paths.cc#L417
 		*/
-
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 for Hopper GPUs");
-		ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
-			ret = -errno;
-			goto exit;
+		if (platform_data && !platform_data->net_flush_required) {
+			if (NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
+				NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+							  "Setting NCCL_NET_FORCE_FLUSH=0 for platform.");
+			}
+			ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
+				ret = -errno;
+				goto exit;
+			}
 		}
 	}
 
