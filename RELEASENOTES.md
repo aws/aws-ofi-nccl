@@ -12,6 +12,10 @@ have unified the code into a single branch, and made the AWS-specific parts a
 compile-time option.  When a feature (or entire release) only supports one of
 the two variants, we note that in the release notes.
 
+# v1.13.1-aws (UNRELEASED)
+
+Placeholder
+
 # v1.13.0-aws (2024-11-18)
 
 This release is intended only for use on AWS P\* instances. A general release
