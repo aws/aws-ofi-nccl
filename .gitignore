@@ -24,7 +24,6 @@ tests/unit/freelist
 tests/unit/deque
 tests/unit/scheduler
 tests/unit/idpool
-tests/unit/show_tuner_decisions
 tests/unit/show_tuner_costs
 tests/unit/ep_addr_list
 tests/unit/mr
