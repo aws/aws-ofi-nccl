@@ -279,10 +279,10 @@ static nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_t
 
 	double m = (a.y - b.y) / (a.x - b.x);
 	double c = b.y - m * b.x;
-	double projected_zx = m * z.x + c;
+	double projected_zy = m * z.x + c;
 
-	if (projected_zx > z.y) {
-		ret = (nccl_ofi_tuner_point_t){.x = z.x, .y = projected_zx};
+	if (projected_zy < z.y) {
+		ret = (nccl_ofi_tuner_point_t){.x = z.x, .y = projected_zy};
 	} else {
 		ret = (nccl_ofi_tuner_point_t){.x = (z.y - c) / m, .y = z.y};
 	}
