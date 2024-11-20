@@ -20,17 +20,6 @@ noinst_PROGRAMS = \
 	ep_addr_list \
 	mr
 
-if !ENABLE_NEURON
-if WANT_PLATFORM_AWS
-  AM_LDFLAGS = $(CUDA_LDFLAGS)
-  AM_CPPFLAGS += $(CUDA_CPPFLAGS)
-  LDADD += $(CUDA_LIBS)
-  noinst_PROGRAMS += show_tuner_decisions
-  show_tuner_decisions_SOURCES = show_tuner_decisions.c
-  show_tuner_decisions_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
-endif
-endif
-
 idpool_SOURCES = idpool.c
 deque_SOURCES = deque.c
 freelist_SOURCES = freelist.c
