@@ -25,9 +25,6 @@ if WANT_PLATFORM_AWS
   AM_LDFLAGS = $(CUDA_LDFLAGS)
   AM_CPPFLAGS += $(CUDA_CPPFLAGS)
   LDADD += $(CUDA_LIBS)
-  noinst_PROGRAMS += show_tuner_decisions
-  show_tuner_decisions_SOURCES = show_tuner_decisions.c
-  show_tuner_decisions_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
   noinst_PROGRAMS += region_based_tuner
   region_based_tuner_SOURCES = region_based_tuner.c
   region_based_tuner_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
