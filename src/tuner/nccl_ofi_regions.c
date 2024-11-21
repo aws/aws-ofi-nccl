@@ -9,23 +9,6 @@
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "nccl_ofi_param.h"
 
-/* Maximum number of vertices per region */
-#define TUNER_MAX_NUM_VERTICES 20
-
-/* Maximum number of ranks with which the tuner can deal.
- * Above this value, it will fall back to NCCL's tuner.
- */
-#define TUNER_MAX_RANKS        1024.0 * 1024
-
-/* Maximum message size with which the tuner can deal.
- * Above this value, it will fall back to NCCL's tuner.
- */
-#define TUNER_MAX_SIZE         100.0 * 1024 * 1024 * 1024
-
-typedef struct nccl_ofi_tuner_point {
-	double x;
-	double y;
-} nccl_ofi_tuner_point_t;
 
 typedef struct nccl_ofi_tuner_region {
 	int algorithm;
@@ -261,7 +244,7 @@ static ncclResult_t set_regions(nccl_ofi_tuner_region_context_t *region_ctx,
  * Then find the farthest point on that line with either the same x or same y coordinate
  * of the third point z.
  */
-static nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b, nccl_ofi_tuner_point_t z)
+nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b, nccl_ofi_tuner_point_t z)
 {
 	nccl_ofi_tuner_point_t ret;
 

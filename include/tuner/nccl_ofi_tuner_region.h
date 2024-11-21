@@ -41,4 +41,27 @@ ncclResult_t region_get_coll_info_internal_v2(nccl_ofi_tuner_context_t *ctx,
 
 ncclResult_t region_destroy_internal(nccl_ofi_tuner_context_t *ctx);
 
+/* Maximum number of vertices per region */
+#define TUNER_MAX_NUM_VERTICES 20
+
+/* Maximum number of ranks with which the tuner can deal.
+ * Above this value, it will fall back to NCCL's tuner.
+ */
+#define TUNER_MAX_RANKS        1024.0 * 1024
+
+/* Maximum message size with which the tuner can deal.
+ * Above this value, it will fall back to NCCL's tuner.
+ */
+#define TUNER_MAX_SIZE         100.0 * 1024 * 1024 * 1024
+
+typedef struct nccl_ofi_tuner_point
+{
+	double x;
+	double y;
+} nccl_ofi_tuner_point_t;
+
+nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a,
+									 nccl_ofi_tuner_point_t b,
+									 nccl_ofi_tuner_point_t z);
+
 #endif /* NCCL_OFI_TUNER_REGION_H_ */
