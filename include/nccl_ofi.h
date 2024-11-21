@@ -349,10 +349,12 @@ struct nccl_net_ofi_domain {
 	int (*create_endpoint)(nccl_net_ofi_domain_t *domain,
 			       nccl_net_ofi_ep_t **ep);
 
-	/* hash table of active endpoints.  We reuse endpoints based
-	 * on the thread that calls get_ep().
-	 */
-	nccl_net_ofi_ep_t *endpoint_table;
+	/* endpoint used for (at a minimum) receiving connection
+	   messages.  Send/Recv protocol uses this for all
+	   communication.  The rdma protocol uses this for all tx
+	   requests and all connection-establishment requests, but may
+	   have additional endpoints for the rx side of rdma writes. */
+	nccl_net_ofi_ep_t *endpoint;
 
 	/* thread id of the thread that called get_domain().  Used as
 	   the hash key for the domain hash */
