@@ -862,14 +862,11 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 				      nccl_net_ofi_ep_t **ep_p)
 {
 	int ret = 0;
-	long thread_id;
 	nccl_net_ofi_ep_t *ep = NULL;
 
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
-	thread_id = nccl_net_ofi_gettid();
-	HASH_FIND(hh, domain->endpoint_table, &thread_id,
-		  sizeof(ep->creating_thread_id), ep);
+	ep = domain->endpoint;
 
 	if (ep == NULL) {
 		ret = domain->create_endpoint(domain, &ep);
@@ -879,10 +876,7 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 			goto unlock;
 		}
 
-		ep->creating_thread_id = thread_id;
-
-		HASH_ADD(hh, domain->endpoint_table, creating_thread_id,
-			 sizeof(ep->creating_thread_id), ep);
+		domain->endpoint = ep;
 
 		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for domain %p is created",
 			       ep, domain);
@@ -908,7 +902,7 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
 
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
-	if (HASH_COUNT(domain->endpoint_table) == 0) {
+	if (domain->endpoint == NULL) {
 		nccl_net_ofi_mutex_lock(&device->device_lock);
 		HASH_DEL(device->domain_table, domain);
 
@@ -947,7 +941,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 
 	domain->get_ep = nccl_net_ofi_domain_get_ep;
 	domain->release = nccl_net_ofi_domain_release;
-	domain->endpoint_table = NULL;
+	domain->endpoint = NULL;
 	domain->creating_thread_id = 0;
 
 	domain->mr_cache = NULL;
@@ -1015,7 +1009,7 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 	ep->ref_cnt--;
 
 	if (ep->ref_cnt == 0) {
-		HASH_DEL(domain->endpoint_table, ep);
+		domain->endpoint = NULL;
 
 		ret = ep->free_ep(ep);
 		if (ret != 0) {
