@@ -60,8 +60,18 @@ typedef struct nccl_ofi_tuner_point
 	double y;
 } nccl_ofi_tuner_point_t;
 
+typedef struct nccl_ofi_tuner_region {
+	int algorithm;
+	int protocol;
+	size_t num_vertices;
+	nccl_ofi_tuner_point_t vertices[TUNER_MAX_NUM_VERTICES];
+} nccl_ofi_tuner_region_t;
+
 nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a,
 									 nccl_ofi_tuner_point_t b,
 									 nccl_ofi_tuner_point_t z);
+
+int is_inside_region(nccl_ofi_tuner_point_t point,
+					 nccl_ofi_tuner_region_t *region);
 
 #endif /* NCCL_OFI_TUNER_REGION_H_ */
