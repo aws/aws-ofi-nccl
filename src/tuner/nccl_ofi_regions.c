@@ -10,13 +10,6 @@
 #include "nccl_ofi_param.h"
 
 
-typedef struct nccl_ofi_tuner_region {
-	int algorithm;
-	int protocol;
-	size_t num_vertices;
-	nccl_ofi_tuner_point_t vertices[TUNER_MAX_NUM_VERTICES];
-} nccl_ofi_tuner_region_t;
-
 typedef struct nccl_ofi_tuner_region_dims {
 	/* communicator size */
 	size_t num_ranks;
@@ -158,7 +151,7 @@ static inline double distance(nccl_ofi_tuner_point_t x,
  * 		-1 for outside
  * 		0 for on edge.
  */
-static int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *region)
+int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *region)
 {
 	assert(region->num_vertices > 1);
 
