@@ -49,7 +49,7 @@ static inline double vcross(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_point_t b)
 }
 
 /* Returns a + s * b */
-static inline nccl_ofi_tuner_point_t vmadd(nccl_ofi_tuner_point_t a, double s, nccl_ofi_tuner_point_t b)
+static inline nccl_ofi_tuner_point_t vmadd(nccl_ofi_tuner_point_t a, long double s, nccl_ofi_tuner_point_t b)
 {
 	nccl_ofi_tuner_point_t c;
 	c.x = a.x + s * b.x;
@@ -90,7 +90,7 @@ static int intersect(nccl_ofi_tuner_point_t x0,
 		return 0; /* Edges are parallel */
 	}
 
-	double a = (vcross(x0, dx) - vcross(y0, dx)) / d;
+	long double a = (long double) (vcross(x0, dx) - vcross(y0, dx))/d;
 	if (sect) {
 		*sect = vmadd(y0, a, dy);
 	}
