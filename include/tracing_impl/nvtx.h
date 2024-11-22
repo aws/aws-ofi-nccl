@@ -181,7 +181,15 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_RECV_NVTX(dev, rail_id, comm, msg_seq_num) do { \
-	nvtx_mark_domain(NULL, "Eager_recv", 0x0000FF); \
+	nvtxDomainHandle_t handle; \
+	if (NCCL_OFI_NVTX_TRACE_PER_COMM) { \
+		handle = comm->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
+	} \
+	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
+		handle = ((nccl_net_ofi_rdma_device_t*)(r_comm->base.base.ep->device))->nvtx_domain[rail_id]; \
+		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
+	} \
 } while(0)
 
 #define NCCL_OFI_TRACE_FLUSH_NVTX(request, nccl_req) do { \
