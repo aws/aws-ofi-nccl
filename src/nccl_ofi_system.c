@@ -27,6 +27,11 @@ const char *nccl_net_ofi_get_product_name(void)
 	static char *product_name = NULL;
 	static pthread_mutex_t product_name_mutex = PTHREAD_MUTEX_INITIALIZER;
 
+	char* forced_pn = getenv("OFI_NCCL_FORCE_PRODUCT_NAME");
+	if (forced_pn != NULL) {
+		return forced_pn;
+	}
+
 	nccl_net_ofi_mutex_lock(&product_name_mutex);
 
 	if (init) {
