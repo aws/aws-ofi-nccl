@@ -12,9 +12,25 @@ have unified the code into a single branch, and made the AWS-specific parts a
 compile-time option.  When a feature (or entire release) only supports one of
 the two variants, we note that in the release notes.
 
-# v1.13.1-aws (UNRELEASED)
+# v1.13.1-aws (2024-11-25)
 
-Placeholder
+This release is intended only for use on AWS P\* instances. A general release
+that supports other libfabric networks may be made in the near future.
+
+With this release, building with platform-aws requires
+[1.22.0amzn4.0](https://github.com/aws/libfabric/commits/1.22.0amzn4.0/)
+or greater. AWS customers are generally recommended to track
+[the latest-available EFA Installer](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-verify.html)
+for performance improvements and bug fixes.
+
+The 1.13.x release series supports
+[NCCL 2.23.4-1](https://github.com/NVIDIA/nccl/releases/tag/v2.23.4-1)
+while maintaining backward compatibility with older NCCL versions
+([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+This release contains no functional changes compared to v1.13.0-aws. This release merely
+updates the `version` set in `AC_INIT` to include the `-aws` suffix to match the tag
+name and ensure generated artifacts are named correctly.
 
 # v1.13.0-aws (2024-11-18)
 
