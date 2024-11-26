@@ -187,7 +187,8 @@ pipeline {
                     def p3_p4_p5_base_os = "alinux2"
                     def p3_p4_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test test_ofi_nccl_functional"
                     def p5_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test"
-                    def g4dn_addl_args = "${base_args} --test-list test_nccl_test test_ofi_nccl_functional"
+                    // pinning last working AMI until a working new AMI is built. tt: https://t.corp.amazon.com/V1592173276
+                    def g4dn_addl_args = "${base_args} --test-list test_nccl_test test_ofi_nccl_functional --ami-id ami-0153428d85e2f9dfb"
                     def neuron_addl_args = "${base_args} --test-list test_nccom_test"
 
                     // p3dn tests
