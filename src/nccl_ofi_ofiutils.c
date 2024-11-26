@@ -4,22 +4,23 @@
  */
 
 #include "config.h"
-
+#include <ctype.h>
+#include <inttypes.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <unistd.h>
-#include <inttypes.h>
 #include <sys/mman.h>
-#include <ctype.h>
+#include <unistd.h>
 
 #include "nccl_ofi.h"
-#include "nccl_ofi_param.h"
-#include "nccl_ofi_tracepoint.h"
+
+#include "nccl_ofi_cuda.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
+#include "nccl_ofi_tracepoint.h"
 
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
@@ -364,53 +365,20 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 	 * disabling CUDA in old Libfabric, just require newer
 	 * Libfabric.
 	 */
-	if (FI_VERSION_GE(info->fabric_attr->api_version,
-			  FI_VERSION(1, 18)) && support_gdr != GDR_UNSUPPORTED) {
 #if (HAVE_CUDA && HAVE_DECL_FI_OPT_CUDA_API_PERMITTED)
+	if (FI_VERSION_GE(info->fabric_attr->api_version, FI_VERSION(1, 18)) && nccl_net_ofi_cuda_have_gdr_support_attr()) {
 		bool optval = false;
 		ret = fi_setopt(&(*ep)->fid, FI_OPT_ENDPOINT,
 				FI_OPT_CUDA_API_PERMITTED, &optval,
 				sizeof(optval));
-		if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
-			if (support_gdr == GDR_SUPPORTED) {
-				/* If we got here, that means we previously said
-				 * we definitely had GDR support, but now don't.
-				 * Since we may have already told NCCL that we
-				 * support GDR, we should just abort.
-				 */
-				NCCL_OFI_WARN("GDR support reported to NCCL but then couldn't be configured on an endpoint.  Cannot continue.");
-				goto error;
-			} else {
-				NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Could not disable CUDA API usage for HMEM, disabling GDR");
-				/* If we can't disable CUDA, then we don't really
-				 * have GDR, so disable GDR  support from the NCCL
-				 * point of view.
-				 */
-				support_gdr = GDR_UNSUPPORTED;
-			}
-		} else if (ret == 0) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Set endpoint option FI_OPT_CUDA_API_PERMITTED. GDR Supported");
-			/* we were able to disable CUDA, so we can do GDR */
-			support_gdr = GDR_SUPPORTED;
-		} else {
+		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to set FI_OPT_CUDA_API_PERMITTED. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
 			goto error;
 		}
-#elif HAVE_NEURON
-		/*
-		 * Provider discovery for Neuron will have been successful only
-		 * if HMEM capabilities were guaranteed by the libfabric
-		 * provider. Unlike CUDA, we do not need to handle the
-		 * runtime/endpoint deadlock with fi_setopt(), so move the flag
-		 * to supported.
-		 */
-		support_gdr = GDR_SUPPORTED;
-#else
-		NCCL_OFI_WARN("Using Libfabric 1.18 API with GPUDirect RDMA support, and FI_OPT_CUDA_API_PERMITTED is not declared.");
-		goto error;
-#endif
 	}
+#endif
+
 	/* Run platform-specific endpoint configuration hook if declared */
 	if (platform_config_endpoint) {
 		ret = platform_config_endpoint(info, *ep);

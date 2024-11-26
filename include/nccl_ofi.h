@@ -81,15 +81,11 @@ extern "C" {
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
-/* Indicates if GPUDirect is supported by libfabric provider */
-enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
-extern enum gdr_support_level_t support_gdr;
-
-
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 extern bool cuda_flush;
+extern bool gdr_flush_disabled;
 
 /* number of duplicate providers to create for each discovered
  * provider, including renaming to cause NCCL to create additional

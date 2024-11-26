@@ -26,6 +26,10 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
 
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
+
 struct ec2_platform_data {
 	const char* name;
 	const char* topology;
@@ -582,16 +586,6 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		goto exit;
 	}
 
-	if (ofi_nccl_disable_gdr_required_check() == 0) {
-		/* Ensure GDR is enabled on GDR-supported instances */
-		struct ec2_platform_data *platform_data = get_platform_data();
-		if (platform_data && platform_data->gdr_required && support_gdr != GDR_SUPPORTED) {
-			NCCL_OFI_WARN("GDR disabled on GDR-supported instance type %s", platform_data->name);
-			ret = -EINVAL;
-			goto exit;
-		}
-	}
-
 	/* If the selected communication protocol is RDMA write and the user did
 	 * not disable the native RDMA support check, validate that the
 	 * FI_OPT_EFA_EMULATED_WRITE endpoint option can be accessed, and that
@@ -610,6 +604,16 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	static bool nccl_proto_configured = false;
 	static bool need_ordering = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+	/* Ensure GDR support via cuda attr on GDR-supported instances */
+	if (ofi_nccl_disable_gdr_required_check() == 0) {
+		struct ec2_platform_data *platform_data = get_platform_data();
+		if (platform_data && platform_data->gdr_required && !nccl_net_ofi_cuda_have_gdr_support_attr()) {
+			NCCL_OFI_WARN("GDR disabled on GDR-supported instance type %s", platform_data->name);
+			ret = -EINVAL;
+			goto exit;
+		}
+	}
 
 	/* During initialization, try to set
 	 * FI_OPT_EFA_{SENDRECV,WRTIE}_IN_ORDER_ALIGNED_128_BYTES to

@@ -3620,7 +3620,8 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 static inline bool is_flush_buff_enabled(void)
 {
-	return !ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush;
+	static __thread const bool gdr_flush_disabled = (bool)ofi_nccl_gdr_flush_disable();
+	return !cuda_flush && !gdr_flush_disabled;
 }
 
 /*
@@ -4161,6 +4162,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 				   int *sizes, nccl_net_ofi_mr_handle_t **mhandles,
 				   nccl_net_ofi_req_t **base_req)
 {
+	static __thread const bool gdr_flush_disabled = (bool)ofi_nccl_gdr_flush_disable();
 	int ret = 0;
 	int flush_n = 0;
 	bool network_busy = false;
@@ -4193,8 +4195,9 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto error;
 	}
 
-	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
+	if (gdr_flush_disabled) {
 		goto exit;
+	}
 
 #if HAVE_CUDA
 	if (cuda_flush) {
@@ -7719,20 +7722,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
-			       FI_MAJOR(api_version),
-			       FI_MINOR(api_version),
-			       FI_VERSION_GE(api_version, FI_VERSION(1, 20)) ? "DMA-BUF" : "GPUDirect RDMA");
-		/* The 1.18 API allows providers to use CUDA to
-		 * support HMEM pointers, so just having HMEM doesn't
-		 * tell us anything about the usability of CUDA
-		 * pointers with NCCL.  So leave the state unknown
-		 * until we create an endpoint and try to disable
-		 * CUDA
-		 */
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
-		support_gdr = GDR_UNKNOWN;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API", FI_MAJOR(api_version), FI_MINOR(api_version));
 	} else {
 		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
 		goto error;

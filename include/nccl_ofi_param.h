@@ -281,6 +281,9 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
  */
 OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 
+/* Largely exists for parity with DISABLE_DMABUF, but usage of this is discouraged. */
+OFI_NCCL_PARAM_INT(disable_gdrcopy, "DISABLE_GDRCOPY", 0);
+
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
  */

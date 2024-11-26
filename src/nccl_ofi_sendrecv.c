@@ -1032,7 +1032,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		goto exit;
 	}
 
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
+	if (!ofi_nccl_gdr_flush_disable() && !cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = (struct fid_mr *)r_comm->flush_buff.mr_handle;
@@ -1078,8 +1078,9 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	int flush_n = -1;
 	struct fid_mr **mr_handles = (struct fid_mr **)mhandles;
 
-	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
+	if (gdr_flush_disabled) {
 		goto exit;
+	}
 
 #if HAVE_CUDA
 	if (cuda_flush) {
@@ -1347,7 +1348,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
 	 * flush operations
 	 */
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
+	if (!ofi_nccl_gdr_flush_disable() && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep->ofi_ep, key_pool,
 								  &r_comm->flush_buff, dev_id);
@@ -2519,6 +2520,32 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 }
 
 
+static uint32_t sendrecv_get_required_api(void)
+{
+	const uint32_t lib_api = fi_version();
+	if (nccl_ofi_dmabuf_viable()) {
+		return NCCL_OFI_MIN(lib_api, FI_VERSION(1, 20));
+	}
+#if HAVE_NEURON
+	else {
+		/* XXX: neuron will not request libfabric<1.18, not because I know of any
+		 * specific 1.18 behavior neuron relies on relative to 1.6, but because it's
+		 * what the previous code did.
+		 */
+		return NCCL_OFI_MIN(lib_api, FI_VERSION(1, 18));
+	}
+#elif HAVE_CUDA
+	else if (nccl_net_ofi_cuda_gdr_viable()) {
+		/* need at least 1.18 for gdrcopy */
+		return NCCL_OFI_MIN(lib_api, FI_VERSION(1, 18));
+	} else {
+		/* 1.6 otherwise. */
+		return NCCL_OFI_MIN(lib_api, FI_VERSION(1, 6));
+	}
+#endif
+}
+
+
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p)
 {
@@ -2526,75 +2553,37 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	struct fi_info *provider_list = NULL;
 	unsigned int num_providers;
 	nccl_net_ofi_sendrecv_plugin_t *plugin = NULL;
-	struct fi_info *hints;
 
-	hints = fi_allocinfo();
+	uint32_t required_api = sendrecv_get_required_api();
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Selected libfabric %u.%u API", FI_MAJOR(required_api), FI_MINOR(required_api));
+
+	struct fi_info *hints = fi_allocinfo();
 	if (hints == NULL) {
 		NCCL_OFI_WARN("Allocation of fi_info failed");
 		ret = -FI_ENOMEM;
 		goto error;
 	}
-
-	if (nccl_ofi_dmabuf_viable()) {
-		sendrecv_get_hints(hints, true);
-		ret = nccl_ofi_ofiutils_get_providers(provider_filter,
-						      FI_VERSION(1, 20),
-						      hints,
-						      &provider_list,
-						      &num_providers);
-		if (ret == 0) {
-			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric 1.20 API, with DMA-BUF support");
-			support_gdr = GDR_UNKNOWN;
-			goto found;
-		}
-	}
-
 	sendrecv_get_hints(hints, true);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 18), hints,
-					      &provider_list, &num_providers);
-	if (ret == 0) {
-		/* The 1.18 API allows providers to use CUDA to
-		 * support HMEM pointers, so just having HMEM doesn't
-		 * tell us anything about the usability of CUDA
-		 * pointers with NCCL.  So leave the state unknown
-		 * until we create an endpoint and try to disable
-		 * CUDA
-		 */
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
-		support_gdr = GDR_UNKNOWN;
-		goto found;
-	}
-
-	sendrecv_get_hints(hints, true);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 6), hints,
-					      &provider_list, &num_providers);
-	if (ret == 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.6 API, with GPUDirect RDMA support");
-		support_gdr = GDR_SUPPORTED;
-		goto found;
-	}
-
-	sendrecv_get_hints(hints, false);
-	ret = nccl_ofi_ofiutils_get_providers(provider_filter, FI_VERSION(1, 6), hints,
-					      &provider_list, &num_providers);
-	if (ret == 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Using Libfabric 1.6 API, without GPUDirect RDMA support");
-		support_gdr = GDR_UNSUPPORTED;
-		goto found;
-	}
-
-	ret = -FI_ENODATA;
-found:
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, required_api, hints, &provider_list, &num_providers);
 	fi_freeinfo(hints);
-	if (ret != 0 && ret != -FI_ENODATA) {
-		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
+	if (ret == 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		               "Successfully found providers at libfabric %u.%u API",
+		               FI_MAJOR(required_api),
+		               FI_MINOR(required_api));
+	} else if (ret == -FI_ENODATA) {
+		NCCL_OFI_WARN("OFI fi_getinfo() @ libfabric %u.%u api failed to resolve any providers",
+		              FI_MAJOR(required_api),
+		              FI_MINOR(required_api));
+		assert(provider_list == NULL);
 		goto error;
-	}
-	if (provider_list == NULL) {
+	} else {
+		NCCL_OFI_WARN("OFI fi_getinfo() @ libfabric %u.%u api failed unexpectedly: %s",
+		              FI_MAJOR(required_api),
+		              FI_MINOR(required_api),
+		              fi_strerror(ret));
 		ret = -FI_ENODATA;
+		assert(provider_list == NULL);
 		goto error;
 	}
 

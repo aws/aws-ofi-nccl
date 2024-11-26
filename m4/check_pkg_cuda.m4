@@ -53,15 +53,15 @@ AC_DEFUN([CHECK_PKG_CUDA], [
          [check_pkg_found=no],
          [-ldl -lrt])])
 
-  check_cuda_gdr_flush_define=0
+  check_cuda_gdr_define=0
   AS_IF([test "${check_pkg_found}" = "yes"],
         [
-        AC_MSG_CHECKING([if CUDA 11.3+ is available for GDR Write Flush support])
+        AC_MSG_CHECKING([if CUDA 11.3+ is available for GDR + GDR Write Flush support])
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
         #include <cuda.h>
         _Static_assert(CUDA_VERSION >= 11030, "cudart>=11030 required for cuFlushGPUDirectRDMAWrites");
-        ])],[ check_cuda_gdr_flush_define=1 chk_result=yes ],
-            [ check_cuda_gdr_flush_define=0 chk_result=no ])
+        ])],[ check_cuda_gdr_define=1 chk_result=yes ],
+            [ check_cuda_gdr_define=0 chk_result=no ])
         AC_MSG_RESULT(${chk_result})
         ])
 
@@ -85,7 +85,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
 
   AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
   AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_SUPPORT], [${check_cuda_dmabuf_define}], [Defined to 1 if CUDA DMA-BUF support is available])
-  AC_DEFINE_UNQUOTED([HAVE_CUDA_GDRFLUSH_SUPPORT], [${check_cuda_gdr_flush_define}], [Defined to 1 if CUDA cuFlushGPUDirectRDMAWrites support is available])
+  AC_DEFINE_UNQUOTED([HAVE_CUDA_GDR_SUPPORT], [${check_cuda_gdr_define}], [Defined to 1 if CUDA cuFlushGPUDirectRDMAWrites support is available])
   AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
 
   AC_SUBST([CUDA_LDFLAGS])

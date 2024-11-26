@@ -12,7 +12,7 @@ int main(int argc, char *argv[])
 {
 	ncclResult_t res = ncclSuccess;
 	int rank, size, next, prev, proc_name_len, local_rank = 0;
-	int buffer_type = NCCL_PTR_HOST;
+	int buffer_type = NCCL_PTR_CUDA;
 
 	/* Plugin defines */
 	int ndev;
@@ -40,9 +40,6 @@ int main(int argc, char *argv[])
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	char *expected_buf = NULL;
 	int done, received_size;
-
-	/* Indicates if NICs support GPUDirect */
-	int *test_support_gdr = NULL;
 
 	/* All processors IDs, used to find out the local rank */
 	char *all_proc_name = NULL;
@@ -96,7 +93,7 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	/* Set CUDA device for subsequent device memory allocation, in case GDR is used */
+	/* Set CUDA device for subsequent device memory allocation */
 	NCCL_OFI_TRACE(NCCL_NET, "Using CUDA device %d for memory allocation", local_rank);
 
 	/* Allocate and populate expected buffer */
@@ -127,22 +124,11 @@ int main(int argc, char *argv[])
 	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Received %d network devices", ndev);
 
-	/* Indicates if NICs support GPUDirect */
-	test_support_gdr = (int *)malloc(sizeof(int) * ndev);
-	if (test_support_gdr == NULL) {
-		NCCL_OFI_WARN("Failed to allocate memory");
-		res = ncclInternalError;
-		goto exit;
-	}
-
 	/* Get Properties for the device */
 	for (int dev = 0; dev < ndev; dev++) {
 		test_nccl_properties_t props = {};
 		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
-
-		/* Set CUDA support */
-		test_support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 
 	/* Test all devices */
@@ -151,12 +137,6 @@ int main(int argc, char *argv[])
 		int dev = (local_rank + dev_idx) % ndev;
 
 		NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
-
-		if (test_support_gdr[dev] == 1) {
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-					"Network supports communication using CUDA buffers. Dev: %d", dev);
-			buffer_type = NCCL_PTR_CUDA;
-		}
 
 		/* Listen API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device %d", dev);
@@ -251,28 +231,28 @@ int main(int argc, char *argv[])
 				if (done) {
 					inflight_reqs--;
 					req_completed_recv[idx] = 1;
-
-					/* Invoke flush operations unless user has explicitly disabled it */
-					if (buffer_type == NCCL_PTR_CUDA) {
-						NCCL_OFI_TRACE(NCCL_NET,
-							"Issue flush for data consistency. Request idx: %d",
-							idx);
-						nccl_net_ofi_req_t *iflush_req = NULL;
-						OFINCCLCHECKGOTO(extNet->iflush((void *)rComm, nrecv,
-										(void **)&recv_buf[idx], sizes,
-										&recv_mhandle[idx], (void **)&iflush_req), res, exit);
-						done = 0;
-						if (iflush_req) {
-							while (!done) {
-								OFINCCLCHECKGOTO(extNet->test((void *)iflush_req, &done, NULL), res, exit);
-							}
+					NCCL_OFI_TRACE(NCCL_NET, "Issue flush for data consistency. Request idx: %d", idx);
+					nccl_net_ofi_req_t *iflush_req = NULL;
+					OFINCCLCHECKGOTO(extNet->iflush((void *)rComm,
+					                                nrecv,
+					                                (void **)&recv_buf[idx],
+					                                sizes,
+					                                &recv_mhandle[idx],
+					                                (void **)&iflush_req),
+					                 res,
+					                 exit);
+					done = 0;
+					if (iflush_req) {
+						while (!done) {
+							OFINCCLCHECKGOTO(extNet->test((void *)iflush_req, &done, NULL),
+							                 res,
+							                 exit);
 						}
 					}
 
-					if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
-						/* Data validation may fail if flush operations are disabled */
-					} else
-						OFINCCLCHECKGOTO(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type), res, exit);
+					OFINCCLCHECKGOTO(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type),
+					                 res,
+					                 exit);
 
 					/* Deregister memory handle */
 					OFINCCLCHECKGOTO(extNet->deregMr((void *)rComm, recv_mhandle[idx]), res, exit);
@@ -338,11 +318,6 @@ exit:;
 			res = res ? res : close_res;
 		}
 		expected_buf = NULL;
-	}
-
-	if (test_support_gdr) {
-		free(test_support_gdr);
-		test_support_gdr = NULL;
 	}
 
 	if (all_proc_name) {

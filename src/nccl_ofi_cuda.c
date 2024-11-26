@@ -69,19 +69,23 @@ int nccl_net_ofi_cuda_init(void)
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute);
 
-	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
-		NCCL_OFI_WARN("CUDA flush enabled");
-		cuda_flush = true;
-	} else {
+	cuda_flush = ofi_nccl_cuda_flush_enable();
+	gdr_flush_disabled = ofi_nccl_gdr_flush_disable();
+
+#if HAVE_CUDA_GDR_SUPPORT
+	if (!(nccl_net_ofi_cuda_gdr_viable() &&
+		  nccl_net_ofi_cuda_have_gdr_flush_support_attr())) {
+		gdr_flush_disabled = true;
 		cuda_flush = false;
 	}
+#endif
 
 	return 0;
 }
 
 int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
 {
-#if HAVE_CUDA_GDRFLUSH_SUPPORT
+#if HAVE_CUDA_GDR_SUPPORT
 	static_assert(CUDA_VERSION >= 11030, "Requires cudart>=11.3");
 	cudaError_t ret = cudaDeviceFlushGPUDirectRDMAWrites(cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
 	                                                     cudaFlushGPUDirectRDMAWritesToOwner);
@@ -129,9 +133,30 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
 	};
 }
 
+bool nccl_net_ofi_cuda_have_gdr_flush_support_attr(void)
+{
+#if HAVE_CUDA_GDR_SUPPORT
+	if (pfn_cuCtxGetDevice == NULL || pfn_cuDeviceGetAttribute == NULL) {
+		return false;
+	}
+
+	CUdevice dev;
+	CUresult result = pfn_cuCtxGetDevice(&dev);
+	if (result != CUDA_SUCCESS) {
+		return false;
+	}
+
+	int supported;
+	result = pfn_cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS, dev);
+	return result == CUDA_SUCCESS && ((supported & CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST) != 0);
+#else
+	return false;
+#endif
+}
+
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void)
 {
-#if HAVE_CUDA_GDRFLUSH_SUPPORT
+#if HAVE_CUDA_GDR_SUPPORT
 	if (pfn_cuCtxGetDevice == NULL || pfn_cuDeviceGetAttribute == NULL) {
 		return false;
 	}
@@ -144,12 +169,7 @@ bool nccl_net_ofi_cuda_have_gdr_support_attr(void)
 
 	int supported;
 	result = pfn_cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED, dev);
-	if (result != CUDA_SUCCESS || !((bool)supported)) {
-		return false;
-	}
-
-	result = pfn_cuDeviceGetAttribute(&supported, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS, dev);
-	return result == CUDA_SUCCESS && ((supported & CU_FLUSH_GPU_DIRECT_RDMA_WRITES_OPTION_HOST) != 0);
+	return result == CUDA_SUCCESS && (bool)supported;
 #else
 	return false;
 #endif
@@ -178,4 +198,28 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void)
 #else
 	return false;
 #endif
+}
+
+bool nccl_net_ofi_cuda_gdr_viable(void)
+{
+	/* Disable GDR if building against too-old libfabric. */
+	if (FI_VERSION_LT(FI_VERSION(FI_MAJOR_VERSION, FI_MINOR_VERSION), FI_VERSION(1, 18))) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Will not use GDR, requires Libfabric 1.18 or greater.");
+		return false;
+	}
+
+	/* Disable GDR if explicitly disabled by user. */
+	if (ofi_nccl_disable_gdrcopy()) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Will not attempt to use GDRCopy, explicitly disabled by user.");
+		return false;
+	}
+
+	/* Disable GDR if CUDA does not report GDR support in device attributes. */
+	if (!nccl_net_ofi_cuda_have_gdr_support_attr()) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		               "Will not attempt to use GDRCopy, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED was false.");
+		return false;
+	}
+
+	return true;
 }
