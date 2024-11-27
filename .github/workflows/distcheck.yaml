@@ -51,7 +51,6 @@ jobs:
           - neuron
         container:
           - public.ecr.aws/amazonlinux/amazonlinux:2023
-          - public.ecr.aws/amazonlinux/amazonlinux:2
         efainstaller:
           - latest
           - 1.25.0
@@ -68,13 +67,6 @@ jobs:
             nvidiadistro: amzn2023
             configmanager: dnf config-manager
             cudapackages: cuda-cudart-devel-12-6 cuda-crt-12-6
-
-          - container: public.ecr.aws/amazonlinux/amazonlinux:2
-            displayname: al2
-            efainstallerdir: ALINUX2
-            nvidiadistro: rhel7
-            configmanager: yum-config-manager
-            cudapackages: cuda-cudart-devel-12-4 cuda-crt-12-4
 
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
