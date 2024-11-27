@@ -15,6 +15,7 @@
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
+#include <regex.h>
 #include <dlfcn.h>
 
 #include "nccl_ofi.h"
@@ -37,9 +38,15 @@ struct ec2_platform_data {
 	int domain_per_thread;
 };
 
+/*
+ * platform_data_map is an ordered list of platform entries.  The
+ * name is evaluated as a POSIX regex, so entries like "p5.*" is
+ * valid.  First match found wins, even if there is a more specific
+ * match later in the array.
+ */
 static struct ec2_platform_data platform_data_map[] = {
 	{
-		.name = "p4d.24xlarge",
+		.name = "^p4d.24xlarge$",
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -49,7 +56,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "p4de.24xlarge",
+		.name = "^p4de.24xlarge$",
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -59,7 +66,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "p3dn.24xlarge",
+		.name = "^p3dn.24xlarge$",
 		.topology = NULL,
 		.default_dup_conns = 4,
 		.latency = 150.0,
@@ -69,7 +76,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "p5.48xlarge",
+		.name = "^p5.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -79,27 +86,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "p5e.48xlarge",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.latency = 75.0,
-		.gdr_required = true,
-		.net_flush_required = false,
-		.default_protocol = "RDMA",
-		.domain_per_thread = 0,
-	},
-	{
-		.name = "p5en.48xlarge",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.latency = 75.0,
-		.gdr_required = true,
-		.net_flush_required = false,
-		.default_protocol = "RDMA",
-		.domain_per_thread = 0,
-	},
-	{
-		.name = "g5.48xlarge",
+		.name = "^g5.48xlarge$",
 		.topology = "g5.48xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -109,7 +96,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "trn1.32xlarge",
+		.name = "^trn1.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -119,17 +106,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 1,
 	},
 	{
-		.name = "trn1n.32xlarge",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.latency = 75.0,
-		.gdr_required = true,
-		.net_flush_required = true,
-		.default_protocol = "SENDRECV",
-		.domain_per_thread = 1,
-	},
-	{
-		.name = "trn2.48xlarge",
+		.name = "^trn2.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -138,17 +115,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
 	},
-	{
-		.name = "trn2n.48xlarge",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.latency = 75.0,
-		.gdr_required = true,
-		.net_flush_required = true,
-		.default_protocol = "RDMA",
-		.domain_per_thread = 1,
-	}
 };
+
 
 /*
  * @brief	Returns platform data for current platform type, if found
@@ -158,37 +126,57 @@ static struct ec2_platform_data platform_data_map[] = {
  * @return	NULL, if no topology found
  * 		platform data, if match found
  */
-static struct ec2_platform_data *get_platform_data()
+static struct ec2_platform_data *get_platform_data(void)
 {
 	static bool init = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	static struct ec2_platform_data *platform_data = NULL;
 	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
 	const char* platform_type = NULL;
+	regex_t regex;
+	int ret;
 
 	nccl_net_ofi_mutex_lock(&mutex);
 
 	if (init) {
-		nccl_net_ofi_mutex_unlock(&mutex);
-		return platform_data;
+		goto done;
 	}
 	init = true;
 
 	platform_type = nccl_net_ofi_get_product_name();
 	if (platform_type == NULL) {
-		nccl_net_ofi_mutex_unlock(&mutex);
-		return NULL;
+		goto done;
 	}
 
 	for (size_t idx = 0; idx < platform_n; idx++) {
-		if (strcmp(platform_type, platform_data_map[idx].name) == 0)
+		ret = regcomp(&regex, platform_data_map[idx].name, 0);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Could not compile platform_type regex for %s",
+				      platform_data_map[idx].name);
+			goto done;
+		}
+
+		ret = regexec(&regex, platform_type, 0, NULL, 0);
+
+		regfree(&regex);
+
+		if (ret == 0) {
 			platform_data = &platform_data_map[idx];
+			break;
+		} else if (ret != REG_NOMATCH) {
+			NCCL_OFI_WARN("Regex match failed");
+			goto done;
+		}
 	}
 
+	NCCL_OFI_TRACE(NCCL_NET | NCCL_INIT, "Using platform block %s for instance type %s",
+		      (platform_data == NULL) ? "none" : platform_data->name, platform_type);
+done:
 	nccl_net_ofi_mutex_unlock(&mutex);
 
 	return platform_data;
 }
+
 
 /*
  * validate that EFA is using RDMA write natively and not in an
