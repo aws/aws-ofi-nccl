@@ -117,6 +117,7 @@ static void nccl_net_ofi_fini(void)
 		if (ret != 0) {
 			NCCL_OFI_INFO(NCCL_NET, "Failure in plugin cleanup");
 		}
+		plugin = NULL;
 	}
 }
 
@@ -124,6 +125,10 @@ static void nccl_net_ofi_fini(void)
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	int ret;
+
+	if (plugin != NULL) {
+		return check_return(ncclSystemError);
+	}
 
 	ofi_log_function = logFunction;
 
@@ -367,6 +372,12 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm =
 		(nccl_net_ofi_comm_t *)comm;
+
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
+		return check_return(ncclInvalidArgument);
+	}
+
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return check_return(ncclInternalError);
@@ -427,6 +438,12 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm =
 		(nccl_net_ofi_comm_t *)comm;
+
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
+		return check_return(ncclInvalidArgument);
+	}
+
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return check_return(ncclInternalError);
@@ -475,6 +492,11 @@ ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
  */
 ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 {
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
+		return check_return(ncclInvalidArgument);
+	}
+
 	/* Verify communicator */
 	if (lComm == NULL) {
 		NCCL_OFI_WARN("Invalid listen communicator provided");
@@ -812,6 +834,15 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
 	nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)sComm;
 
+	/* neuron has a cleanup race between the atexit handler and *
+	 * calling close on all the communicators, so be more silent
+	 * on calling after shutdown for close, as well as don't abort
+	 * on error for this error. */
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_TRACE(NCCL_NET, "Error accessing plugin. Plugin has not been initialized yet.");
+		return ncclInvalidArgument;
+	}
+
 	if (OFI_UNLIKELY(send_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
 		return check_return(ncclInternalError);
@@ -830,6 +861,15 @@ ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 
+	/* neuron has a cleanup race between the atexit handler and *
+	 * calling close on all the communicators, so be more silent
+	 * on calling after shutdown for close, as well as don't abort
+	 * on error for this error. */
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_TRACE(NCCL_NET, "Error accessing plugin. Plugin has not been initialized yet.");
+		return ncclInvalidArgument;
+	}
+
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
 		return check_return(ncclInternalError);
@@ -845,6 +885,15 @@ ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
 	nccl_net_ofi_listen_comm_t *listen_comm =
 		(nccl_net_ofi_listen_comm_t *)lComm;
+
+	/* neuron has a cleanup race between the atexit handler and *
+	 * calling close on all the communicators, so be more silent
+	 * on calling after shutdown for close, as well as don't abort
+	 * on error for this error. */
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_TRACE(NCCL_NET, "Error accessing plugin. Plugin has not been initialized yet.");
+		return ncclInvalidArgument;
+	}
 
 	if (OFI_UNLIKELY(listen_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
