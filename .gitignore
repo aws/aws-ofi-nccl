@@ -26,7 +26,6 @@ tests/unit/scheduler
 tests/unit/idpool
 tests/unit/show_tuner_decisions
 tests/unit/show_tuner_costs
-tests/unit/ep_addr_list
 tests/unit/mr
 tests/unit/region_based_tuner
 

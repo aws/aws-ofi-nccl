@@ -17,7 +17,6 @@ noinst_PROGRAMS = \
 	msgbuff \
 	scheduler \
 	idpool \
-	ep_addr_list \
 	mr
 
 if !ENABLE_NEURON
@@ -39,7 +38,6 @@ deque_SOURCES = deque.cc
 freelist_SOURCES = freelist.cc
 msgbuff_SOURCES = msgbuff.cc
 scheduler_SOURCES = scheduler.cc
-ep_addr_list_SOURCES = ep_addr_list.cc
 mr_SOURCES = mr.cc
 
 TESTS = $(noinst_PROGRAMS)

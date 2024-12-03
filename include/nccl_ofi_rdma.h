@@ -15,7 +15,6 @@ extern "C" {
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_deque.h"
-#include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_log.h"
