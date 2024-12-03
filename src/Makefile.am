@@ -13,7 +13,7 @@ sources = \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
 	nccl_ofi_system.c \
-	nccl_ofi_rdma.c \
+	nccl_ofi_rdma.cc \
 	nccl_ofi_kvstore.cc \
 	nccl_ofi_scheduler.c \
 	nccl_ofi_topo.c \

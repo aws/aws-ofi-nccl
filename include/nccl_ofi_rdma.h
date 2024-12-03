@@ -663,47 +663,6 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 } nccl_net_ofi_rdma_listen_comm_t;
 
 /*
- * @brief	Endpoint rail
- *
- * Endpoint rail encapsulates data of an endpoint for a
- * specific rail.
- */
-struct nccl_net_ofi_ep_rail {
-	int rail_id;
-
-	/* Local libfabric endpoint handle */
-	struct fid_ep *ofi_ep;
-
-	/* Name of local libfabric endpoint */
-	char local_ep_name[MAX_EP_ADDR];
-
-	/* Length of local_ep_name */
-	size_t local_ep_name_len;
-
-	/* Address vector handle */
-	struct fid_av *av;
-
-	/* Completion Queue handle */
-	struct fid_cq *cq;
-
-	/* Access domain handles */
-	struct fid_domain *domain;
-
-	/*
-	 * Bounce buffer management
-	 */
-
-	/* Number of bounce buffers posted */
-	size_t num_bounce_posted;
-	/* Minimum posted bounce buffers (see RDMA_MIN_POSTED_BOUNCE_BUFFERS) */
-	size_t min_bounce_posted;
-	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
-	size_t max_bounce_posted;
-	/* Mutex for bounce buffer operations */
-	pthread_mutex_t bounce_mutex;
-};
-
-/*
  * @brief	RDMA Endpoint
  *
  * RDMA endpoint implements the nccl_net_ofi_ep_t interface
@@ -821,26 +780,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 } nccl_net_ofi_rdma_device_t;
-
-
-typedef struct nccl_net_ofi_rdma_domain_rail {
-	/* Access domain handles */
-	struct fid_domain *domain;
-
-	struct fid_cq *cq;
-} nccl_net_ofi_rdma_domain_rail_t;
-
-
-typedef struct nccl_net_ofi_rdma_domain {
-	nccl_net_ofi_domain_t base;
-
-	int num_rails;
-	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
-
-	/* List of endpoints and set of addresses they have connections to */
-	nccl_ofi_ep_addr_list_t *ep_addr_list;
-} nccl_net_ofi_rdma_domain_t;
-
 
 struct nccl_net_ofi_rdma_plugin {
 	nccl_net_ofi_plugin_t base;

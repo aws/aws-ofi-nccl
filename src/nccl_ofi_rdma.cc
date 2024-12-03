@@ -3,19 +3,27 @@
  */
 #include "config.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <inttypes.h>
+#include <memory>
+#include <optional>
+#include <string>
 #include <stdio.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <array>
+#include <mutex>
+#include <unordered_map>
+#include <unordered_set>
+#include <string_view>
 
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
-#include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_math.h"
@@ -23,11 +31,121 @@
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_kvstore.h"
-#include "nccl_ofi_memcheck.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
+
+/*
+ * @brief	Endpoint rail
+ *
+ * Endpoint rail encapsulates data of an endpoint for a
+ * specific rail.
+ */
+struct nccl_net_ofi_ep_rail {
+	int rail_id;
+
+	/* Local libfabric endpoint handle */
+	struct fid_ep *ofi_ep;
+
+	/* Name of local libfabric endpoint */
+	std::unique_ptr<std::string> local_ep_name{nullptr};
+
+	/* Address vector handle */
+	struct fid_av *av;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
+
+	/* Access domain handles */
+	struct fid_domain *domain;
+
+	/*
+	 * Bounce buffer management
+	 */
+
+	/* Number of bounce buffers posted */
+	size_t num_bounce_posted;
+	/* Minimum posted bounce buffers (see RDMA_MIN_POSTED_BOUNCE_BUFFERS) */
+	size_t min_bounce_posted;
+	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
+	size_t max_bounce_posted;
+	/* Mutex for bounce buffer operations */
+	pthread_mutex_t bounce_mutex;
+};
+
+struct nccl_net_ofi_rdma_domain_rail_t {
+	/* Access domain handles */
+	struct fid_domain *domain;
+
+	struct fid_cq *cq;
+};
+
+/* List of endpoints and set of addresses they have connections to */
+class address_endpoint_mapping
+{
+	using address_type = std::string_view;
+	using endpoint_ptr = nccl_net_ofi_ep_t *;
+	using endpoint_set = std::unordered_set<endpoint_ptr>;
+	using address_map = std::unordered_map<address_type, endpoint_set>;
+
+	std::mutex lock{};
+	endpoint_set known_endpoints{};
+	address_map map{};
+
+public:
+	auto make_association(address_type addr, endpoint_ptr endpoint)
+	{
+		std::lock_guard l(lock);
+		if (map.count(addr) > 0) {
+			map[addr].insert(endpoint);
+		} else {
+			map.emplace(addr, endpoint_set{endpoint});
+		}
+		if (known_endpoints.count(endpoint) == 0) {
+			known_endpoints.insert(endpoint);
+		}
+	};
+
+	auto invalidate_endpoint(endpoint_ptr endpoint)
+	{
+		std::lock_guard l(lock);
+		known_endpoints.erase(endpoint);
+		std::for_each(map.begin(), map.end(), [&](auto &pair) {
+			auto &[address, endpoints] = pair;
+			if (endpoints.count(endpoint) > 0) {
+				endpoints.erase(endpoint);
+			}
+		});
+	}
+
+	std::optional<endpoint_ptr> find_not_connected(address_type addr) const
+	{
+		if (map.count(addr) > 0) {
+			auto const registered = map.at(addr);
+			auto const num_unregistered = known_endpoints.size() - registered.size();
+			if (num_unregistered == 0) {
+				return {};
+			}
+			auto unregistered = std::find_if(known_endpoints.begin(), known_endpoints.end(), [&](auto *ep) {
+				return registered.count(ep) == 0;
+			});
+
+			std::advance(unregistered, rand() % num_unregistered);
+			return *unregistered;
+		}
+		return {};
+	};
+};
+
+struct nccl_net_ofi_rdma_domain_t {
+	nccl_net_ofi_domain_t base;
+
+	int num_rails;
+	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
+
+	std::unique_ptr<address_endpoint_mapping> address_associations{nullptr};
+};
 
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
@@ -4543,37 +4661,23 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	r_comm->next_msg_seq_num = 0;
 
 	/* Find a comm to use, given the remote EP name */
-	if (ofi_nccl_endpoint_per_communicator() != 0)
-	{
-		nccl_ofi_rdma_ep_name_t *remote_rail0_ep_name = &conn_msg->ep_names[0];
-		nccl_net_ofi_ep_t *ep_for_addr = NULL;
-		ret = nccl_ofi_ep_addr_list_get(domain->ep_addr_list, remote_rail0_ep_name->ep_name,
-			remote_rail0_ep_name->ep_name_len, &ep_for_addr);
-		if (ret != 0) {
+	if (ofi_nccl_endpoint_per_communicator() != 0) {
+		auto const make_new_ep = [&domain]() -> std::optional<nccl_net_ofi_ep_t *> {
+			nccl_net_ofi_ep_t *new_ep{nullptr};
+			if (auto rc = domain->base.create_endpoint(&domain->base, &new_ep); rc == 0) {
+				return new_ep;
+			}
+			return std::nullopt;
+		};
+		auto const addr = std::string_view{conn_msg->ep_names[0].ep_name, conn_msg->ep_names[0].ep_name_len};
+		auto endpoint_query = domain->address_associations->find_not_connected(addr);
+		auto endpoint = endpoint_query.value_or(make_new_ep().value_or(nullptr));
+		if (endpoint == nullptr) {
 			goto error;
 		}
-
-		if (ep_for_addr == NULL) {
-			nccl_net_ofi_ep_t *new_base_ep;
-			ret = domain->base.create_endpoint(&domain->base, &new_base_ep);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Failed to allocate new ep: %s", strerror(-ret));
-				goto error;
-			}
-
-			nccl_net_ofi_rdma_ep_t *new_ep = (nccl_net_ofi_rdma_ep_t *)new_base_ep;
-			new_ep->is_endpoint_per_communicator_ep = true;
-
-			ep_for_addr = &new_ep->base;
-
-			ret = nccl_ofi_ep_addr_list_insert(domain->ep_addr_list, ep_for_addr,
-				remote_rail0_ep_name->ep_name, remote_rail0_ep_name->ep_name_len);
-			if (ret != 0) {
-				goto error;
-			}
-		}
-
-		r_comm->base.base.ep = ep_for_addr;
+		r_comm->base.base.ep = endpoint;
+		((nccl_net_ofi_rdma_ep_t*)endpoint)->is_endpoint_per_communicator_ep = true;
+		domain->address_associations->make_association(addr, r_comm->base.base.ep);
 	} else {
 		/* Use the base l_comm ep */
 		r_comm->base.base.ep = &l_comm_ep->base;
@@ -4605,7 +4709,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			goto error;
 		}
 
-		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name, 1,
+		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name->data(), 1,
 				   &comm_rail->local_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert local address into address vector "
@@ -4636,7 +4740,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			goto error;
 		}
 
-		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name, 1,
+		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name->data(), 1,
 				   &comm_rail->local_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert local address into address vector "
@@ -4755,9 +4859,9 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 		ep_rail = rdma_endpoint_get_rail(ep, rail_id);
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
-		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
-		       ep_rail->local_ep_name_len);
-		rdma_ep_name->ep_name_len = ep_rail->local_ep_name_len;
+		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name->data(),
+		       ep_rail->local_ep_name->size());
+		rdma_ep_name->ep_name_len = ep_rail->local_ep_name->size();
 	}
 
 	/* Set libfabric endpoint names for each control rail */
@@ -4766,9 +4870,9 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 		ep_rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
-		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
-		       ep_rail->local_ep_name_len);
-		rdma_ep_name->ep_name_len = ep_rail->local_ep_name_len;
+		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name->data(),
+		       ep_rail->local_ep_name->size());
+		rdma_ep_name->ep_name_len = ep_rail->local_ep_name->size();
 	}
 
 	return 0;
@@ -5124,14 +5228,14 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	/* Build handle */
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
-	assert(sizeof(handle->ep_name) == sizeof(first_control_rail->local_ep_name));
-	memcpy(handle->ep_name, first_control_rail->local_ep_name,
-	       first_control_rail->local_ep_name_len);
+	assert(sizeof(handle->ep_name) <= first_control_rail->local_ep_name->size());
+	memcpy(handle->ep_name, first_control_rail->local_ep_name->data(),
+	       first_control_rail->local_ep_name->size());
 	/* We don't copy the size here since the handle doesn't have a size field.
 	   The size will be distributed later by the connect response message.
 	   Instead, zero the unused bytes here. */
-	memset(handle->ep_name + first_control_rail->local_ep_name_len, 0,
-		sizeof(handle->ep_name) - first_control_rail->local_ep_name_len);
+	memset(handle->ep_name + first_control_rail->local_ep_name->size(), 0,
+		sizeof(handle->ep_name) - first_control_rail->local_ep_name->size());
 
 	/* Build listen_comm */
 	l_comm = (nccl_net_ofi_rdma_listen_comm_t *)calloc(1,
@@ -6037,19 +6141,19 @@ static void prepare_send_connect_message(nccl_net_ofi_rdma_ep_t *ep, int dev_id,
 	/* Set libfabric endpoint names for each control rail */
 	for (int rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		memcpy(conn_msg->control_ep_names[rail_id].ep_name,
-		       ep->control_rails[rail_id].local_ep_name,
-		       ep->control_rails[rail_id].local_ep_name_len);
+		       ep->control_rails[rail_id].local_ep_name->data(),
+		       ep->control_rails[rail_id].local_ep_name->size());
 		conn_msg->control_ep_names[rail_id].ep_name_len =
-			ep->control_rails[rail_id].local_ep_name_len;
+			ep->control_rails[rail_id].local_ep_name->size();
 	}
 
 	/* Set libfabric endpoint names for each rail */
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		memcpy(conn_msg->ep_names[rail_id].ep_name,
-		       ep->rails[rail_id].local_ep_name,
-		       ep->rails[rail_id].local_ep_name_len);
+		       ep->rails[rail_id].local_ep_name->data(),
+		       ep->rails[rail_id].local_ep_name->size());
 		conn_msg->ep_names[rail_id].ep_name_len =
-			ep->rails[rail_id].local_ep_name_len;
+			ep->rails[rail_id].local_ep_name->size();
 	}
 }
 
@@ -6812,20 +6916,19 @@ static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 static inline int set_local_address(struct fid_ep *ep, nccl_net_ofi_ep_rail_t *rail)
 {
 	int res = 0;
-	rail->local_ep_name_len = sizeof(rail->local_ep_name);
 
-	res = fi_getname(&ep->fid,
-			 (void *)rail->local_ep_name,
-			 &rail->local_ep_name_len);
+	auto [buf, size] = std::make_pair(std::array<char, MAX_EP_ADDR + 1>{}, std::size_t{MAX_EP_ADDR});
+	res = fi_getname(&ep->fid, buf.data(), std::addressof(size));
+
 	if (res == -FI_ETOOSMALL) {
-		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length (%d)",
-			      rail->local_ep_name_len, MAX_EP_ADDR);
+		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length (%d)", size, MAX_EP_ADDR);
 		return -EINVAL;
 	} else if (res != 0) {
-		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s",
-			      res, fi_strerror(-res));
+		NCCL_OFI_WARN("Call to fi_getname() failed with RC: %d, ERROR: %s", res, fi_strerror(-res));
 		return -EINVAL;
 	}
+
+	rail->local_ep_name = std::make_unique<std::string>(buf.begin(), buf.begin() + size);
 
 	return 0;
 }
@@ -6976,12 +7079,7 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 		nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 
 		if ((--ep->base.ref_cnt) == 0) {
-			ret = nccl_ofi_ep_addr_list_delete(domain->ep_addr_list, &ep->base);
-			if (ret != 0) {
-				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
-				goto unlock;
-			}
-
+			domain->address_associations->invalidate_endpoint(&ep->base);
 			ret = ep->base.free_ep(&ep->base);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Freeing ep failed");
@@ -7198,9 +7296,8 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	}
 	free(domain->domain_rails);
 
-	if (domain->ep_addr_list) {
-		nccl_ofi_ep_addr_list_fini(domain->ep_addr_list);
-		domain->ep_addr_list = NULL;
+	if (domain->address_associations != nullptr) {
+		domain->address_associations = nullptr;
 	}
 
 	ret = nccl_net_ofi_domain_fini(&domain->base);
@@ -7246,14 +7343,9 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	domain->num_rails = device->num_rails;
 
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		domain->ep_addr_list = nccl_ofi_ep_addr_list_init(MAX_EP_ADDR);
-		if (domain->ep_addr_list == NULL) {
-			NCCL_OFI_WARN("Failed to init ep addr list");
-			ret = -ENOMEM;
-			goto error;
-		}
+		domain->address_associations = std::make_unique<address_endpoint_mapping>();
 	} else {
-		domain->ep_addr_list = NULL;
+		domain->address_associations = nullptr;
 	}
 
 	domain->domain_rails = (nccl_net_ofi_rdma_domain_rail_t *)calloc(domain->num_rails,
