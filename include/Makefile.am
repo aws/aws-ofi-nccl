@@ -22,6 +22,7 @@ noinst_HEADERS = \
 	nccl_ofi_msgbuff.h \
 	nccl_ofi_param.h \
 	nccl_ofi_pthread.h \
+	nccl_ofi_kvstore.h \
 	nccl_ofi_rdma.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_scheduler.h \
@@ -37,5 +38,4 @@ noinst_HEADERS = \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
 	internal/tuner/nccl_defaults.h \
-	nccl_ofi_platform.h \
-	nccl_ofi_ep_addr_list.h
+	nccl_ofi_platform.h

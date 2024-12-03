@@ -20,10 +20,10 @@ extern "C" {
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
-#include <uthash/uthash.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_kvstore.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
 
@@ -293,7 +293,7 @@ struct nccl_net_ofi_device {
 	/*
 	 * hash table indexed by thread id of active domains.
 	 */
-	nccl_net_ofi_domain_t *domain_table;
+	nccl_ofi_kvstore_t *domain_table;
 };
 
 
@@ -352,14 +352,11 @@ struct nccl_net_ofi_domain {
 	/* hash table of active endpoints.  We reuse endpoints based
 	 * on the thread that calls get_ep().
 	 */
-	nccl_net_ofi_ep_t *endpoint_table;
+	nccl_ofi_kvstore_t *endpoint_table;
 
 	/* thread id of the thread that called get_domain().  Used as
 	   the hash key for the domain hash */
 	long creating_thread_id;
-
-	/* hash table handle */
-	UT_hash_handle hh;
 };
 
 
@@ -434,9 +431,6 @@ struct nccl_net_ofi_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
-
-	/* hash table handle */
-	UT_hash_handle hh;
 
 	/* Endpoint reference counter for resource management.
 	 * sendrecv_get_ep()/sendrecv_release_ep() must be called in

@@ -16,6 +16,7 @@
 #include <rdma/fabric.h>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_kvstore.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
@@ -2352,7 +2353,7 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_domains = HASH_COUNT(device->base.domain_table);
+	unsigned num_domains = nccl_ofi_kvstore_count(device->base.domain_table);
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
 	}

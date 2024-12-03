@@ -13,7 +13,8 @@ sources = \
 	nccl_ofi_net.c \
 	nccl_ofi_sendrecv.c \
 	nccl_ofi_system.c \
-	nccl_ofi_rdma.c \
+	nccl_ofi_rdma.cc \
+	nccl_ofi_kvstore.cc \
 	nccl_ofi_scheduler.c \
 	nccl_ofi_topo.c \
 	nccl_ofi_mr.c \
@@ -24,7 +25,6 @@ sources = \
 	nccl_ofi_ofiutils.c \
 	nccl_ofi_pthread.c \
 	nccl_ofi_dmabuf.c \
-	nccl_ofi_ep_addr_list.c \
 	nccl_ofi_param.c \
 	tracepoint.c
 

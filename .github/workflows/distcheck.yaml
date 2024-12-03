@@ -85,7 +85,7 @@ jobs:
 
       - name: Install hwloc, utilities.
         run: |
-          yum -y install hwloc-devel autoconf automake libtool gcc g++ git make
+          yum -y install hwloc-devel autoconf automake libtool gcc gcc-c++ git make
 
       - name: Install CUDA
         if: matrix.sdk == 'cuda'
