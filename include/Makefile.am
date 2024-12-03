@@ -22,6 +22,7 @@ noinst_HEADERS = \
 	nccl_ofi_msgbuff.h \
 	nccl_ofi_param.h \
 	nccl_ofi_pthread.h \
+	nccl_ofi_kvstore.h \
 	nccl_ofi_rdma.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_scheduler.h \

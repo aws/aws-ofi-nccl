@@ -10,21 +10,18 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <inttypes.h>
 #include <sys/mman.h>
-#include <ctype.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
-#include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
-#include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_kvstore.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_ofiutils.h"
@@ -743,9 +740,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 		lookup_key = nccl_net_ofi_gettid();
 	}
 
-	HASH_FIND(hh, device->domain_table, &lookup_key,
-		  sizeof(domain->creating_thread_id), domain);
-
+	domain = (nccl_net_ofi_domain_t *)nccl_ofi_kvstore_find(device->domain_table, lookup_key);
 	if (domain == NULL) {
 		domain = device->create_domain(device);
 		if (domain == NULL) {
@@ -756,8 +751,10 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 
 		domain->creating_thread_id = lookup_key;
 
-		HASH_ADD(hh, device->domain_table, creating_thread_id,
-			 sizeof(domain->creating_thread_id), domain);
+		int ret = nccl_ofi_kvstore_insert(device->domain_table, lookup_key, domain);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Inserting a new domain with key %ld on device %s failed", lookup_key, device->name);
+		}
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
@@ -842,7 +839,7 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	}
 
 	device->create_domain = NULL;
-	device->domain_table = NULL;
+	device->domain_table = (nccl_ofi_kvstore_t *)nccl_ofi_kvstore_init();
 
 exit:
 
@@ -861,6 +858,8 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 		free(device->name);
 	}
 
+	nccl_ofi_kvstore_fini(device->domain_table);
+
 	return 0;
 }
 
@@ -875,8 +874,7 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
 	thread_id = nccl_net_ofi_gettid();
-	HASH_FIND(hh, domain->endpoint_table, &thread_id,
-		  sizeof(ep->creating_thread_id), ep);
+	ep = (nccl_net_ofi_ep_t *)nccl_ofi_kvstore_find(domain->endpoint_table, thread_id);
 
 	if (ep == NULL) {
 		ret = domain->create_endpoint(domain, &ep);
@@ -886,11 +884,10 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 			goto unlock;
 		}
 
-		ep->creating_thread_id = thread_id;
-
-		HASH_ADD(hh, domain->endpoint_table, creating_thread_id,
-			 sizeof(ep->creating_thread_id), ep);
-
+		ret = nccl_ofi_kvstore_insert(domain->endpoint_table, thread_id, ep);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Inserting a new endpoint with key %ld failed", thread_id);
+		}
 		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for domain %p is created",
 			       ep, domain);
 	}
@@ -915,9 +912,9 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
 
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
-	if (HASH_COUNT(domain->endpoint_table) == 0) {
+	if (nccl_ofi_kvstore_count(domain->endpoint_table) == 0) {
 		nccl_net_ofi_mutex_lock(&device->device_lock);
-		HASH_DEL(device->domain_table, domain);
+		nccl_ofi_kvstore_remove(device->domain_table, domain->creating_thread_id);
 
 		// domain->free below is going to free the domain lock
 		// and we've removed the domain from the hash table,
@@ -954,7 +951,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 
 	domain->get_ep = nccl_net_ofi_domain_get_ep;
 	domain->release = nccl_net_ofi_domain_release;
-	domain->endpoint_table = NULL;
+	domain->endpoint_table = nccl_ofi_kvstore_init();
 	domain->creating_thread_id = 0;
 
 	domain->mr_cache = NULL;
@@ -1004,6 +1001,7 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 	}
 
 	nccl_ofi_idpool_fini(&domain->mr_rkey_pool);
+	nccl_ofi_kvstore_fini(domain->endpoint_table);
 
 	return 0;
 }
@@ -1022,7 +1020,7 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 	ep->ref_cnt--;
 
 	if (ep->ref_cnt == 0) {
-		HASH_DEL(domain->endpoint_table, ep);
+		nccl_ofi_kvstore_remove(domain->endpoint_table, ep->creating_thread_id);
 
 		ret = ep->free_ep(ep);
 		if (ret != 0) {

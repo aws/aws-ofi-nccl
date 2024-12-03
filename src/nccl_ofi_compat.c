@@ -2,6 +2,7 @@
 
 #ifdef HAVE_GETTID
 #include <sys/types.h>
+#include <unistd.h>
 #else
 #include <sys/syscall.h>
 #include <stdlib.h>
