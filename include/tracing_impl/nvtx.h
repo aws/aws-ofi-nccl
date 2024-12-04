@@ -75,7 +75,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		get_send_data(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		get_send_data(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
 	} \
 } while (0)
@@ -87,7 +87,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_end_domain(handle, get_send_data(request)->seg_trace_id[rail_id]); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		nvtx_end_domain(handle, get_send_data(request)->seg_trace_id[rail_id]); \
 	} \
 } while(0)
@@ -99,7 +99,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Send_ctrl_recv", 0x00ffff); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->base.base.ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep))->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Send_ctrl_recv", 0x00ffff); \
 	} \
 } while (0)
@@ -111,7 +111,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		get_send_ctrl_data(req)->trace_id = nvtx_start_domain(true, handle, "Send_ctrl_start", 0x00ffff); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		get_send_ctrl_data(req)->trace_id = nvtx_start_domain(true, handle, "Send_ctrl_start", 0x00ffff); \
 	} \
 } while (0)
@@ -123,7 +123,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_end_domain(handle, get_send_ctrl_data(req)->trace_id); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		nvtx_end_domain(handle, get_send_ctrl_data(req)->trace_id);\
 	} \
 } while (0)
@@ -135,7 +135,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		get_send_data(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		get_send_data(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
 	} \
 } while(0)
@@ -147,7 +147,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_end_domain(handle, get_send_data(request)->seg_trace_id[rail_id]); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)comm->ep))->nvtx_domain[rail_id]; \
 		nvtx_end_domain(handle, get_send_data(request)->seg_trace_id[rail_id]); \
 	} \
 } while(0)
@@ -175,7 +175,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Recv_segment_complete", 0xff0000); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(request->comm->ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)request->comm->ep))->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Recv_segment_complete", 0xff0000); \
 	} \
 } while(0)
@@ -187,7 +187,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
-		handle = ((nccl_net_ofi_rdma_device_t*)(r_comm->base.base.ep->device))->nvtx_domain[rail_id]; \
+		handle = (rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep))->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
 	} \
 } while(0)
