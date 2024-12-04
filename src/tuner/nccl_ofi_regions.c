@@ -356,8 +356,8 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 			const nccl_ofi_tuner_region_t regions[] = {
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL,
-				 .num_vertices = 6,
-				 .vertices = {{0, 16}, {131072, 16}, {262144, 32}, {8388608, 256}, {33554432, 1024}, extended_ring_ll}},
+				 .num_vertices = 7,
+				 .vertices = {{0, 16}, {131072, 16}, {262144, 32}, {8388608, 256}, {33554432, 1024}, extended_ring_ll, {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
 				 .num_vertices = 10,
@@ -399,8 +399,8 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 			const nccl_ofi_tuner_region_t regions[] = {
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL,
-				 .num_vertices = 6,
-				 .vertices = {{0, 16}, {131072, 16}, {262144, 32}, {8388608, 256}, {33554432, 1024}, extended_ring_ll}},
+				 .num_vertices = 7,
+				 .vertices = {{0, 16}, {131072, 16}, {262144, 32}, {8388608, 256}, {33554432, 1024}, extended_ring_ll, {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
 				 .num_vertices = 10,
