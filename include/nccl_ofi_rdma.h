@@ -498,6 +498,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nccl_net_ofi_send_comm_t base;
 
 	uint64_t num_inflight_reqs;
+	uint64_t num_inflight_writes;
+
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
