@@ -2089,6 +2089,18 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 
 	send_data = get_send_data(req);
 
+	if (!send_data->eager) {
+		/* free is going to be called inside of test(), which will
+		   happen in a time when NCCL guarantees no other thread will
+		   be accessing the communicator.  So no mutex protections are
+		   required if we do it here.  Better would be to do this as
+		   soon as we get the CQE for this request, but that would
+		   require atomics or locks, which isn't worth it today.  But
+		   if we ever refactor the locking strategy, we should revisit
+		   this. */
+		(s_comm->num_inflight_writes)--;
+	}
+
 	if (send_data->schedule) {
 		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
 		nccl_net_ofi_release_schedule(device->scheduler, send_data->schedule);
@@ -5880,7 +5892,7 @@ retry:
 
 	/* Determine if this should be sent eagerly. */
 	eager = false;
-	if ((!have_ctrl && (size_t)size <= eager_max_size) || (size == 0)) {
+	if ((!have_ctrl && (size_t)size <= eager_max_size && s_comm->num_inflight_writes == 0) || (size == 0)) {
 		eager = true;
 	}
 
@@ -5919,6 +5931,10 @@ retry:
 	 * so update the num inflight
 	 */
 	(s_comm->num_inflight_reqs)++;
+
+	if (!eager) {
+		(s_comm->num_inflight_writes)++;
+	}
 
 	NCCL_OFI_TRACE_SEND(req->dev_id, size, s_comm, msg_seq_num, req, base_req);
 
@@ -5981,6 +5997,7 @@ static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
 		ret = -EINVAL;
 		goto exit;
 	}
+	assert (s_comm->num_inflight_writes == 0);
 
 	s_comm->comm_active = false;
 
