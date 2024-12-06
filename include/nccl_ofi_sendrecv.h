@@ -108,6 +108,9 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	/* Current available tag ID */
 	uint64_t tag;
 
+	/* copy of device's max_tag to reading device information */
+	uint64_t max_tag;
+
 	/* Endpoint handle to communicate to */
 	struct fid_ep *ofi_ep;
 
