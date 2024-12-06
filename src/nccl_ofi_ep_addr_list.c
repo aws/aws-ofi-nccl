@@ -30,12 +30,11 @@ typedef struct ep_pair_list_elem {
 } ep_pair_list_elem_t;
 
 /**
- * Outer structure storing the ep list and a mutex to protect access
+ * Outer structure storing the ep list
  */
 struct nccl_ofi_ep_addr_list {
 	ep_pair_list_elem_t *ep_pair_list;
 	size_t max_addr_size;
-	pthread_mutex_t mutex;
 };
 
 nccl_ofi_ep_addr_list_t *nccl_ofi_ep_addr_list_init(size_t max_addr_size)
@@ -49,11 +48,6 @@ nccl_ofi_ep_addr_list_t *nccl_ofi_ep_addr_list_init(size_t max_addr_size)
 
 	ret_list->ep_pair_list = NULL;
 	ret_list->max_addr_size = max_addr_size;
-
-	if (nccl_net_ofi_mutex_init(&ret_list->mutex, NULL) != 0) {
-		NCCL_OFI_WARN("Failed to init mutex");
-		goto error;
-	}
 
 	goto exit;
 
@@ -85,8 +79,6 @@ int nccl_ofi_ep_addr_list_get(nccl_ofi_ep_addr_list_t *ep_list, void *addr_in,
 		ret = -EINVAL;
 		return ret;
 	}
-
-	nccl_net_ofi_mutex_lock(&ep_list->mutex);
 
 	char addr_padded[ep_list->max_addr_size];
 	memcpy(&addr_padded, addr_in, addr_size);
@@ -122,8 +114,6 @@ int nccl_ofi_ep_addr_list_get(nccl_ofi_ep_addr_list_t *ep_list, void *addr_in,
 	}
 
 exit:
-	nccl_net_ofi_mutex_unlock(&ep_list->mutex);
-
 	*ep = ret_ep;
 	return ret;
 }
@@ -141,8 +131,6 @@ int nccl_ofi_ep_addr_list_insert(nccl_ofi_ep_addr_list_t *ep_list,
 		ret = -EINVAL;
 		return ret;
 	}
-
-	nccl_net_ofi_mutex_lock(&ep_list->mutex);
 
 	hashed_addr_t *new_addr = (hashed_addr_t *)malloc(sizeof(hashed_addr_t)
 		+ ep_list->max_addr_size);
@@ -170,7 +158,6 @@ int nccl_ofi_ep_addr_list_insert(nccl_ofi_ep_addr_list_t *ep_list,
 	DL_APPEND(ep_list->ep_pair_list, new_pair);
 
 unlock:
-	nccl_net_ofi_mutex_unlock(&ep_list->mutex);
 	return ret;
 }
 
@@ -189,7 +176,6 @@ static void delete_ep_list_entry(nccl_ofi_ep_addr_list_t *ep_list, ep_pair_list_
 int nccl_ofi_ep_addr_list_delete(nccl_ofi_ep_addr_list_t *ep_list, nccl_net_ofi_ep_t *ep)
 {
 	int ret = 0;
-	nccl_net_ofi_mutex_lock(&ep_list->mutex);
 
 	ep_pair_list_elem_t *ep_pair, *ep_pair_tmp;
 	DL_FOREACH_SAFE(ep_list->ep_pair_list, ep_pair, ep_pair_tmp) {
@@ -203,7 +189,6 @@ int nccl_ofi_ep_addr_list_delete(nccl_ofi_ep_addr_list_t *ep_list, nccl_net_ofi_
 	ret = -ENOENT;
 
 exit:
-	nccl_net_ofi_mutex_unlock(&ep_list->mutex);
 	return ret;
 }
 
@@ -219,6 +204,5 @@ void nccl_ofi_ep_addr_list_fini(nccl_ofi_ep_addr_list_t *ep_list)
 	/* After this, the ep list should be NULL */
 	assert(ep_list->ep_pair_list == NULL);
 
-	nccl_net_ofi_mutex_destroy(&ep_list->mutex);
 	free(ep_list);
 }
