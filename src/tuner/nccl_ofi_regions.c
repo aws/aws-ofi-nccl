@@ -495,10 +495,6 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 		}
 		{
 			collType = ncclFuncAllGather;
-			nccl_ofi_tuner_point_t extended_ring_ll =
-				extend_region((nccl_ofi_tuner_point_t){65536, 2},
-							  (nccl_ofi_tuner_point_t){65536, 64},
-							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 			nccl_ofi_tuner_point_t extended_pat_simple =
 				extend_region((nccl_ofi_tuner_point_t){50331648, 64},
 							  (nccl_ofi_tuner_point_t){117440512, 128},
@@ -509,21 +505,19 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
-				{.algorithm = NCCL_ALGO_RING,
-				 .protocol = NCCL_PROTO_LL,
-				 .num_vertices = 4,
-				 .vertices = {{0, 2}, {65536, 2}, {65536, 64}, extended_ring_ll}},
 				{.algorithm = NCCL_ALGO_PAT,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 8,
-				 .vertices = {extended_ring_ll,
-							  {65536, 64},
+				 .num_vertices = 10,
+				 .vertices = {{0, 2},
 							  {65536, 2},
 							  {1048576, 2},
 							  {16777216, 32},
 							  {50331648, 64},
 							  {117440512, 128},
-							  extended_pat_simple}},
+							  extended_pat_simple,
+							  {TUNER_MAX_SIZE, TUNER_MAX_RANKS},
+							  {65536, TUNER_MAX_RANKS},
+							  {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
 				 .num_vertices = 9,
@@ -551,10 +545,6 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 		}
 		{
 			collType = ncclFuncReduceScatter;
-			nccl_ofi_tuner_point_t extended_ring_ll =
-				extend_region((nccl_ofi_tuner_point_t){65536, 2},
-							  (nccl_ofi_tuner_point_t){65536, 64},
-							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 			nccl_ofi_tuner_point_t extended_pat_simple =
 				extend_region((nccl_ofi_tuner_point_t){50331648, 64},
 							  (nccl_ofi_tuner_point_t){117440512, 128},
@@ -564,21 +554,19 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 							  (nccl_ofi_tuner_point_t){301989888, 128},
 							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 			const nccl_ofi_tuner_region_t regions[] = {
-				{.algorithm = NCCL_ALGO_RING,
-				 .protocol = NCCL_PROTO_LL,
-				 .num_vertices = 4,
-				 .vertices = {{0, 2}, {65536, 2}, {65536, 64}, extended_ring_ll}},
 				{.algorithm = NCCL_ALGO_PAT,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 8,
-				 .vertices = {extended_ring_ll,
-							  {65536, 64},
+				 .num_vertices = 10,
+				 .vertices = {{0, 2},
 							  {65536, 2},
 							  {1048576, 2},
 							  {16777216, 32},
 							  {50331648, 64},
 							  {117440512, 128},
-							  extended_pat_simple}},
+							  extended_pat_simple,
+							  {TUNER_MAX_SIZE, TUNER_MAX_RANKS},
+							  {65536, TUNER_MAX_RANKS},
+							  {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
 				 .num_vertices = 9,
