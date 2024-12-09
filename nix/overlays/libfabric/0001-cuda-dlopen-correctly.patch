@@ -1,0 +1,82 @@
+From 1c37266a3654e8ea5468ae1b5bef567c5c7753af Mon Sep 17 00:00:00 2001
+From: Nicholas Sielicki <nslick@amazon.com>
+Date: Tue, 26 Nov 2024 11:16:35 -0800
+Subject: [PATCH] cuda-dlopen-correctly
+
+Signed-off-by: Nicholas Sielicki <nslick@amazon.com>
+---
+ fabtests/common/hmem_cuda.c | 8 ++++----
+ prov/psm3/psm3/psm.c        | 4 ++--
+ src/hmem_cuda.c             | 8 ++++----
+ 3 files changed, 10 insertions(+), 10 deletions(-)
+
+diff --git a/fabtests/common/hmem_cuda.c b/fabtests/common/hmem_cuda.c
+index 2f02b6f47..435c896fa 100644
+--- a/fabtests/common/hmem_cuda.c
++++ b/fabtests/common/hmem_cuda.c
+@@ -151,15 +151,15 @@ int ft_cuda_init(void)
+ 	cudaError_t cuda_ret;
+ 	int ret;
+ 
+-	cudart_handle = dlopen("libcudart.so", RTLD_NOW);
++	cudart_handle = dlopen("libcudart.so.12", RTLD_NOW);
+ 	if (!cudart_handle) {
+-		FT_ERR("Failed to dlopen libcudart.so");
++		FT_ERR("Failed to dlopen libcudart.so.12");
+ 		goto err;
+ 	}
+ 
+-	cuda_handle = dlopen("libcuda.so", RTLD_NOW);
++	cuda_handle = dlopen("libcuda.so.1", RTLD_NOW);
+ 	if (!cuda_handle) {
+-		FT_ERR("Failed to dlopen libcuda.so\n");
++		FT_ERR("Failed to dlopen libcuda.so.1\n");
+ 		goto err_dlclose_cudart;
+ 	}
+ 
+diff --git a/prov/psm3/psm3/psm.c b/prov/psm3/psm3/psm.c
+index e46f868f0..9dc1467dc 100644
+--- a/prov/psm3/psm3/psm.c
++++ b/prov/psm3/psm3/psm.c
+@@ -295,10 +295,10 @@ int psmi_cuda_lib_load()
+ 	PSMI_CUDA_DLSYM(psmi_cuda_lib, cuCtxGetDevice);
+ 
+ 	/* CUDA Runtime */
+-	psmi_cudart_lib = dlopen("libcudart.so", RTLD_LAZY);
++	psmi_cudart_lib = dlopen("libcudart.so.12", RTLD_LAZY);
+ 	if (!psmi_cudart_lib) {
+ 		dlerr = dlerror();
+-		_HFI_ERROR("Unable to open libcudart.so.  Error %s\n",
++		_HFI_ERROR("Unable to open libcudart.so.12.  Error %s\n",
+ 				dlerr ? dlerr : "no dlerror()");
+ 		goto fail;
+ 	}
+diff --git a/src/hmem_cuda.c b/src/hmem_cuda.c
+index 213030411..fb448047a 100644
+--- a/src/hmem_cuda.c
++++ b/src/hmem_cuda.c
+@@ -480,17 +480,17 @@ static int cuda_hmem_dl_init(void)
+ 	/* Assume failure to dlopen CUDA runtime is caused by the library not
+ 	 * being found. Thus, CUDA is not supported.
+ 	 */
+-	cuda_attr.runtime_handle = dlopen("libcudart.so", RTLD_NOW);
++	cuda_attr.runtime_handle = dlopen("libcudart.so.12", RTLD_NOW);
+ 	if (!cuda_attr.runtime_handle) {
+ 		FI_INFO(&core_prov, FI_LOG_CORE,
+-			"Failed to dlopen libcudart.so\n");
++			"Failed to dlopen libcudart.so.12\n");
+ 		return -FI_ENOSYS;
+ 	}
+ 
+-	cuda_attr.driver_handle = dlopen("libcuda.so", RTLD_NOW);
++	cuda_attr.driver_handle = dlopen("libcuda.so.1", RTLD_NOW);
+ 	if (!cuda_attr.driver_handle) {
+ 		FI_WARN(&core_prov, FI_LOG_CORE,
+-			"Failed to dlopen libcuda.so\n");
++			"Failed to dlopen libcuda.so.1\n");
+ 		goto err_dlclose_cuda_runtime;
+ 	}
+ 
+-- 
+2.47.0
+
