@@ -25,6 +25,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
+#include "nccl_ofi_ncclver.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_ofiutils.h"
@@ -146,6 +147,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	uint32_t fab_version = fi_version();
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using Libfabric version %u.%u", FI_MAJOR(fab_version),
 			FI_MINOR(fab_version));
+
+	/* Print NCCL version */
+	int nccl_version = nccl_ofi_ncclver_get();
+	if (!NCCL_VUNKNOWN(nccl_version)) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Resolved current NCCL version to %d", nccl_version);
+	} else {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Unable to resolve NCCL version (ok).");
+	}
 
 	long int system_page_size_sysconf = sysconf(_SC_PAGESIZE);
 	if (OFI_UNLIKELY(system_page_size_sysconf == -1)) {

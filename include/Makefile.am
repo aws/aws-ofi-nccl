@@ -33,6 +33,7 @@ noinst_HEADERS = \
 	tuner/nccl_ofi_tuner_model.h \
 	nccl_ofi_ofiutils.h \
 	nccl_ofi_dmabuf.h \
+	nccl_ofi_ncclver.h \
 	nccl_ofi_tracepoint.h \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
