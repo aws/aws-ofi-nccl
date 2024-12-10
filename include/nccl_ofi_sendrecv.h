@@ -199,6 +199,9 @@ typedef struct nccl_net_ofi_sendrecv_req {
 
 	/* Direction of request */
 	nccl_net_ofi_sendrecv_req_direction_t direction;
+
+	/* Backpointer to freelist elem (for cleanup) */
+	nccl_ofi_freelist_elem_t *elem;
 } nccl_net_ofi_sendrecv_req_t;
 
 

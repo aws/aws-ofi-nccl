@@ -126,7 +126,7 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
 	assert(scheduler_p != NULL);
 	assert(scheduler_p->schedule_fl != NULL);
 
-	nccl_ofi_freelist_entry_free(scheduler_p->schedule_fl, schedule);
+	nccl_ofi_freelist_entry_free(scheduler_p->schedule_fl, schedule->elem);
 }
 
 /*
@@ -160,12 +160,16 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
 
 	assert(scheduler != NULL);
 
-	schedule =
-		(nccl_net_ofi_schedule_t *)nccl_ofi_freelist_entry_alloc(scheduler_p->schedule_fl);
-	if (OFI_UNLIKELY(!schedule)) {
+	nccl_ofi_freelist_elem_t *elem = nccl_ofi_freelist_entry_alloc(scheduler_p->schedule_fl);
+	if (OFI_UNLIKELY(!elem)) {
 		NCCL_OFI_WARN("Failed to allocate schedule");
 		return NULL;
 	}
+
+	schedule = (nccl_net_ofi_schedule_t *)elem->ptr;
+	assert(schedule);
+	schedule->elem = elem;
+
 	ret = set_schedule_by_threshold(scheduler, size, num_rails, align,
 					schedule);
 	if (OFI_UNLIKELY(ret)) {
