@@ -23,9 +23,6 @@ typedef struct nccl_ofi_idpool {
 	/* ID pool bit array. A bit set in the array indicates
 	   that the ID corresponding to its index is available.*/
 	uint64_t *ids;
-
-	/* Lock for concurrency */
-	pthread_mutex_t lock;
 } nccl_ofi_idpool_t;
 
 /*
