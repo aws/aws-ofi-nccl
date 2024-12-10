@@ -66,6 +66,23 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
  */
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
 
+/*
+ * @brief	query CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_FLUSH_WRITES_OPTIONS
+
+ * @return	true if attr is fetched successfully and true.
+ *		    false otherwise
+ */
+bool nccl_net_ofi_cuda_have_gdr_flush_support_attr(void);
+
+/*
+ * @brief test whether gdrcopy can possibly be supported, depending on the
+ * linked libfabric version and the properties exposed by cuda.
+ *
+ * @return	true if attr is fetched successfully and true.
+ *		    false otherwise
+ */
+bool nccl_net_ofi_cuda_gdr_viable(void);
+
 #ifdef __cplusplus
 }  // End extern "C"
 #endif
