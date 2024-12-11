@@ -23,5 +23,9 @@ override_dh_auto_configure:
 		--disable-tests \
 		--disable-werror
 
+#%:
+#	dh $@
+# this is a hack to work around efa-installer diamond dependency with
+# efa-config/libfabric-aws and should be removed.
 %:
-	dh $@
+	LD_LIBRARY_PATH=/opt/amazon/efa/lib:${LD_LIBRARY_PATH} dh $@
