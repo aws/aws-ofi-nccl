@@ -9,8 +9,6 @@
 extern "C" {
 #endif
 
-#include "config.h"
-
 #include <rdma/fabric.h>
 
 #include "nccl_ofi.h"

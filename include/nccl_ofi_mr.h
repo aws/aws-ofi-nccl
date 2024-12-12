@@ -9,8 +9,6 @@
 extern "C" {
 #endif
 
-#include "config.h"
-
 #include <assert.h>
 #include <pthread.h>
 #include <stdbool.h>

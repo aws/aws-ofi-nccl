@@ -5,8 +5,6 @@
 #ifndef NCCL_OFI_TUNER_COMMON_H_
 #define NCCL_OFI_TUNER_COMMON_H_
 
-#include "config.h"
-
 #include <linux/limits.h>
 #include <nccl/tuner.h>
 
