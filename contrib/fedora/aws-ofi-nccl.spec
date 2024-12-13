@@ -2,6 +2,16 @@
 
 %global _prefix /opt/amazon/ofi-nccl
 
+# If CUDA dependency tracking is not explicitly enabled, exclude libcudart.so
+%{!?enable_cudart_dep_tracking: %global enable_cudart_dep_tracking 0}
+%if %{enable_cudart_dep_tracking} == 0
+%if %{?__requires_exclude:1}%{!?__requires_exclude:0}
+%global __requires_exclude %{?__requires_exclude}|^libcudart.so.12
+%else
+%global __requires_exclude ^libcudart.so.12
+%endif
+%endif
+
 Version:         @VERSION@
 Release:         1%{?dist}
 Source0:         @TARBALL@
