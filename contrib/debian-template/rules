@@ -21,6 +21,8 @@ override_dh_auto_configure:
 		--with-cuda=/usr/local/cuda \
 		--enable-cudart-dynamic \
 		--disable-tests \
+		--without-lttng \
+		--without-valgrind \
 		--disable-werror
 
 #%:
