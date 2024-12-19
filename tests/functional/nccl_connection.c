@@ -28,9 +28,6 @@ int main(int argc, char* argv[])
 
 	ofi_log_function = logger;
 
-	/* Indicates if NICs support GPUDirect */
-	int *test_support_gdr = NULL;
-
 	MPI_Init(&argc, &argv);
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
@@ -67,21 +64,11 @@ int main(int argc, char* argv[])
 	OFINCCLCHECKGOTO(extNet->devices(&ndev), res, exit);
 	NCCL_OFI_INFO(NCCL_INIT, "Received %d network devices", ndev);
 
-	test_support_gdr = (int *)malloc(sizeof(int) * ndev);
-	if (test_support_gdr == NULL) {
-		NCCL_OFI_WARN("Failed to allocate memory");
-		res = ncclInternalError;
-		goto exit;
-	}
-
 	/* Get Properties for the device */
 	for (int dev = 0; dev < ndev; dev++) {
 		test_nccl_properties_t props = {};
 		OFINCCLCHECKGOTO(extNet->getProperties(dev, &props), res, exit);
 		print_dev_props(dev, &props);
-
-		/* Set CUDA support */
-		test_support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 
 	/* Test all devices */
@@ -94,11 +81,6 @@ int main(int argc, char* argv[])
 		}
 
 		NCCL_OFI_TRACE(NCCL_INIT, "Rank %d uses %d device for communication", rank, dev);
-
-		if (test_support_gdr[dev] == 1) {
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-					"Network supports communication using CUDA buffers. Dev: %d", dev);
-		}
 
 		/* Listen API */
 		NCCL_OFI_INFO(NCCL_INIT, "Server: Listening on dev %d", dev);
@@ -173,10 +155,5 @@ int main(int argc, char* argv[])
 	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 
 exit:
-	if (test_support_gdr) {
-		free(test_support_gdr);
-		test_support_gdr = NULL;
-	}
-
 	return res;
 }

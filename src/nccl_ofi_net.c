@@ -30,13 +30,11 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
 
-/* Indicates if GPUDirect is supported by libfabric provider */
-enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
-
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
 bool cuda_flush = false;
+bool gdr_flush_disabled = true;
 
 /* number of duplicate providers to create for each discovered
  * provider, including renaming to cause NCCL to create additional
@@ -136,9 +134,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	int ret = 0;
 	const char *provider_filter = NULL;
 	nccl_net_ofi_plugin_t *plugin;
-	nccl_net_ofi_ep_t *base_ep = NULL;
-	nccl_net_ofi_device_t *device = NULL;
-	nccl_ofi_properties_t properties;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -162,6 +157,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	mr_cache_alignment = NCCL_OFI_MIN(system_page_size, NCCL_OFI_CACHE_PAGE_SIZE);
 
+	/* configuration parameters */
+	nic_dup_conns = ofi_nccl_nic_dup_conns();
+	net_latency = (float)ofi_nccl_net_latency();
+	cq_read_count = ofi_nccl_cq_read_count();
+
 #if HAVE_CUDA
 	ret = nccl_net_ofi_cuda_init();
 	if (ret != 0) {
@@ -170,16 +170,21 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	}
 #endif
 
-	/* configuration parameters */
-	nic_dup_conns = ofi_nccl_nic_dup_conns();
-	net_latency = (float)ofi_nccl_net_latency();
-	cq_read_count = ofi_nccl_cq_read_count();
-
 	if (platform_init) {
 		ret = platform_init(&provider_filter);
 		if (ret != 0)
 			goto exit;
 	}
+
+#if HAVE_CUDA
+	if (nic_dup_conns > 0 && nccl_net_ofi_cuda_have_gdr_support_attr()) {
+		NCCL_OFI_WARN(
+			"NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not "
+		        "supported.");
+		ret = -ENOTSUP;
+		goto exit;
+	}
+#endif
 
 	/* This is ugly, but here's the basic protocol selection
 	 * logic:
@@ -285,55 +290,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		goto exit;
 	}
 
-	/* In order to set endpoint options and potentially NCCL configuration
-	 * options (such as NCCL_PROTO) during the plugin initialization
-	 * process, we need to create an endpoint and call the platform hook
-	 * "platform_config_endpoint" using "get_ep". This code makes the
-	 * assumption that the thread calling "nccl_net_ofi_init" will make
-	 * communication calls. As well, since without this code the endpoint
-	 * would be created the first time "get_ep" in called during a listen or
-	 * connect call, creating the endpoint earlier would not be a waste of
-	 * resources. This initialization happens once per process, and thus it
-	 * does not matter which device is used to create the endpoint.
-	 */
-	device = plugin->get_device(plugin, 0);
-
-	ret = device->get_ep(device, &base_ep);
-	if (ret != 0) {
-		goto exit;
-	}
-	ret = device->get_properties(device, &properties);
-	if (ret != 0) {
-		goto exit;
-	}
-	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for global registrations: %s",
-		      (properties.regIsGlobal == 0) ? "false" : "true");
-	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
-		      (properties.dmabuf_support == 0) ? "false" : "true");
-	/* Cause release to not actually free the resources, to speed
-	 * up initialization, since the very same resources will be
-	 * recreated by NCCL soon after initialization to do real
-	 * communication.
-	 */
-	base_ep->ref_cnt++;
-	ret = base_ep->release_ep(base_ep);
-	base_ep->ref_cnt--;
-	if (ret != 0) {
-		goto exit;
-	}
-
-	assert(support_gdr != GDR_UNKNOWN);
-
-	/* we don't actually know if GDR is supported until we've
-	 * created the first endpoint, so this check needs to be way
-	 * down here
-	 */
-	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
-		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
-		ret = -ENOTSUP;
-		goto exit;
-	}
-
 	*plugin_p = plugin;
 
  exit:
@@ -416,12 +372,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 */
 	props->max_group_receives = NCCL_OFI_MAX_RECVS;
 
-	if (support_gdr == GDR_SUPPORTED) {
-		props->hmem_support = true;
-	} else {
-		props->hmem_support = false;
-	}
-
+	props->hmem_support = false;
 	props->dmabuf_support = false;
 
 	/* Should be successful for ptrSupport invocation */
@@ -580,14 +531,19 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 
 	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
 
+	props->hmem_support = ((nic_prov->caps & FI_HMEM) != 0) &&
+	                      FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 18)) &&
+	                      (HAVE_NEURON || nccl_net_ofi_cuda_have_gdr_support_attr());
 
 	props->dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
 		FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
 		nccl_ofi_dmabuf_viable()
 		;
-	if (props->dmabuf_support) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
-	}
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+	               "NCCL properties: dmabuf=%s hmem=%s",
+	               props->dmabuf_support ? "yes" : "no",
+	               props->hmem_support ? "yes" : "no");
 
 	goto exit;
 error:
