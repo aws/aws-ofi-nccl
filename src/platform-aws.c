@@ -71,7 +71,12 @@ static struct ec2_platform_data platform_data_map[] = {
 	},
 	{
 		.name = "p-series",
-		.regex = "^p5.*",
+		/*
+		 * we only want to match P5 and later, as earlier
+		 * platforms all either need to be ignored or special
+		 * cased.
+		 */
+		.regex = "^p([5-9]|[0-9]{2,}).*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -145,7 +150,7 @@ struct ec2_platform_data *platform_aws_get_platform_entry(const char *platform_t
 				break;
 			}
 		} else {
-			ret = regcomp(&regex, platform_data_list[idx].regex, 0);
+			ret = regcomp(&regex, platform_data_list[idx].regex, REG_EXTENDED);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Could not compile platform_type regex for %s",
 					      platform_data_list[idx].regex);
