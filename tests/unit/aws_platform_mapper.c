@@ -61,6 +61,9 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
 
+	// obviously future platforms
+	ret += check_value(platform_data_list, len, "p100.2048xlarge", "p-series");
+
 	return ret;
 }
 
