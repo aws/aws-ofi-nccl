@@ -20,6 +20,7 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_platform.h"
+#include "platform-aws.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_rdma.h"
@@ -27,16 +28,6 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
 
-struct ec2_platform_data {
-	const char* name;
-	const char* topology;
-	int default_dup_conns;
-	float latency;
-	bool gdr_required;
-	bool net_flush_required;
-	const char *default_protocol;
-	int domain_per_thread;
-};
 
 /*
  * platform_data_map is an ordered list of platform entries.  The
@@ -118,12 +109,62 @@ static struct ec2_platform_data platform_data_map[] = {
 };
 
 
+struct ec2_platform_data *platform_aws_get_platform_map(size_t *len)
+{
+	*len = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
+	return platform_data_map;
+}
+
+
+/*
+ * internal function (exported for unit test purposes) for finding the
+ * correct platform data entry.  You should use
+ * platform_Aws_get_platform_data() so that you get caching and all
+ * that niceness.
+ */
+struct ec2_platform_data *platform_aws_get_platform_entry(const char *platform_type,
+							  struct ec2_platform_data *platform_data_list,
+							  size_t platform_data_len)
+{
+	struct ec2_platform_data *response = NULL;
+	regex_t regex;
+	int ret;
+
+	for (size_t idx = 0; idx < platform_data_len; idx++) {
+		ret = regcomp(&regex, platform_data_list[idx].name, 0);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Could not compile platform_type regex for %s",
+				      platform_data_list[idx].name);
+			goto done;
+		}
+
+		ret = regexec(&regex, platform_type, 0, NULL, 0);
+
+		regfree(&regex);
+
+		if (ret == 0) {
+			response = &platform_data_list[idx];
+			break;
+		} else if (ret != REG_NOMATCH) {
+			NCCL_OFI_WARN("Regex match failed");
+			goto done;
+		}
+	}
+
+done:
+	NCCL_OFI_TRACE(NCCL_NET | NCCL_INIT, "Using platform block %s for instance type %s",
+		      (response == NULL) ? "none" : response->name, platform_type);
+
+	return response;
+}
+
+
 /*
  * @brief	Returns platform data for current platform type, if found
  *
- * @input	Platform type
+ * @input	none
  *
- * @return	NULL, if no topology found
+ * @return	NULL, if no entry found
  * 		platform data, if match found
  */
 static struct ec2_platform_data *get_platform_data(void)
@@ -131,10 +172,9 @@ static struct ec2_platform_data *get_platform_data(void)
 	static bool init = false;
 	static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 	static struct ec2_platform_data *platform_data = NULL;
-	const size_t platform_n = sizeof(platform_data_map)/sizeof(platform_data_map[0]);
 	const char* platform_type = NULL;
-	regex_t regex;
-	int ret;
+	struct ec2_platform_data *platform_data_list;
+	size_t platform_data_len;
 
 	nccl_net_ofi_mutex_lock(&mutex);
 
@@ -148,29 +188,14 @@ static struct ec2_platform_data *get_platform_data(void)
 		goto done;
 	}
 
-	for (size_t idx = 0; idx < platform_n; idx++) {
-		ret = regcomp(&regex, platform_data_map[idx].name, 0);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Could not compile platform_type regex for %s",
-				      platform_data_map[idx].name);
-			goto done;
-		}
-
-		ret = regexec(&regex, platform_type, 0, NULL, 0);
-
-		regfree(&regex);
-
-		if (ret == 0) {
-			platform_data = &platform_data_map[idx];
-			break;
-		} else if (ret != REG_NOMATCH) {
-			NCCL_OFI_WARN("Regex match failed");
-			goto done;
-		}
+	platform_data_list = platform_aws_get_platform_map(&platform_data_len);
+	if (platform_data_list == NULL) {
+		goto done;
 	}
 
-	NCCL_OFI_TRACE(NCCL_NET | NCCL_INIT, "Using platform block %s for instance type %s",
-		      (platform_data == NULL) ? "none" : platform_data->name, platform_type);
+	platform_data = platform_aws_get_platform_entry(platform_type, platform_data_list,
+							platform_data_len);
+
 done:
 	nccl_net_ofi_mutex_unlock(&mutex);
 
