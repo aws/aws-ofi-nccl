@@ -37,7 +37,8 @@
  */
 static struct ec2_platform_data platform_data_map[] = {
 	{
-		.name = "^p4d.24xlarge$",
+		.name = "p4d.24xlarge",
+		.regex = NULL,
 		.topology = "p4d-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -47,7 +48,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^p4de.24xlarge$",
+		.name = "p4de.24xlarge",
+		.regex = NULL,
 		.topology = "p4de-24xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -57,7 +59,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^p3dn.24xlarge$",
+		.name = "p3dn.24xlarge",
+		.regex = NULL,
 		.topology = NULL,
 		.default_dup_conns = 4,
 		.latency = 150.0,
@@ -67,7 +70,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^p5.*",
+		.name = "p-series",
+		.regex = "^p5.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -77,7 +81,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^g5.48xlarge$",
+		.name = "g5.48xlarge",
+		.regex = NULL,
 		.topology = "g5.48xl-topo.xml",
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -87,7 +92,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^trn1.*",
+		.name = "trn1",
+		.regex = "^trn1.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -97,7 +103,8 @@ static struct ec2_platform_data platform_data_map[] = {
 		.domain_per_thread = 1,
 	},
 	{
-		.name = "^trn2.*",
+		.name = "trn2",
+		.regex = "^trn2.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
@@ -131,23 +138,31 @@ struct ec2_platform_data *platform_aws_get_platform_entry(const char *platform_t
 	int ret;
 
 	for (size_t idx = 0; idx < platform_data_len; idx++) {
-		ret = regcomp(&regex, platform_data_list[idx].name, 0);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Could not compile platform_type regex for %s",
-				      platform_data_list[idx].name);
-			goto done;
-		}
+		if (platform_data_list[idx].regex == NULL) {
+			if (0 == strcmp(platform_type,
+					platform_data_list[idx].name)) {
+				response = &platform_data_list[idx];
+				break;
+			}
+		} else {
+			ret = regcomp(&regex, platform_data_list[idx].regex, 0);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Could not compile platform_type regex for %s",
+					      platform_data_list[idx].regex);
+				goto done;
+			}
 
-		ret = regexec(&regex, platform_type, 0, NULL, 0);
+			ret = regexec(&regex, platform_type, 0, NULL, 0);
 
-		regfree(&regex);
+			regfree(&regex);
 
-		if (ret == 0) {
-			response = &platform_data_list[idx];
-			break;
-		} else if (ret != REG_NOMATCH) {
-			NCCL_OFI_WARN("Regex match failed");
-			goto done;
+			if (ret == 0) {
+				response = &platform_data_list[idx];
+				break;
+			} else if (ret != REG_NOMATCH) {
+				NCCL_OFI_WARN("Regex match failed");
+				goto done;
+			}
 		}
 	}
 
