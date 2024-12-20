@@ -29,6 +29,7 @@ tests/unit/ep_addr_list
 tests/unit/mr
 tests/unit/region_based_tuner
 tests/unit/show_tuner_decisions
+tests/unit/aws_platform_mapper
 
 # http://www.gnu.org/software/automake
 .deps/

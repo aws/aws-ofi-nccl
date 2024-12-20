@@ -20,6 +20,10 @@ noinst_PROGRAMS = \
 	ep_addr_list \
 	mr
 
+if WANT_PLATFORM_AWS
+noinst_PROGRAMS += aws_platform_mapper
+endif
+
 if !ENABLE_NEURON
 if WANT_PLATFORM_AWS
   AM_LDFLAGS = $(CUDA_LDFLAGS)
@@ -38,6 +42,7 @@ msgbuff_SOURCES = msgbuff.c
 scheduler_SOURCES = scheduler.c
 ep_addr_list_SOURCES = ep_addr_list.c
 mr_SOURCES = mr.c
+aws_platform_mapper_SOURCES = aws_platform_mapper.c
 
 TESTS = $(noinst_PROGRAMS)
 endif
