@@ -19,6 +19,7 @@ extern "C" {
 
 struct ec2_platform_data {
 	const char* name;
+	const char* regex;
 	const char* topology;
 	int default_dup_conns;
 	float latency;

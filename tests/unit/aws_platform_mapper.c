@@ -43,22 +43,22 @@ static int check_known_platforms(void)
 
 	platform_data_list = platform_aws_get_platform_map(&len);
 
-	ret += check_value(platform_data_list, len, "trn1.32xlarge", "^trn1.*");
-	ret += check_value(platform_data_list, len, "trn1n.32xlarge", "^trn1.*");
-	ret += check_value(platform_data_list, len, "trn1.2xlarge", "^trn1.*");
-	ret += check_value(platform_data_list, len, "trn2.48xlarge", "^trn2.*");
-	ret += check_value(platform_data_list, len, "trn2u.48xlarge", "^trn2.*");
+	ret += check_value(platform_data_list, len, "trn1.32xlarge", "trn1");
+	ret += check_value(platform_data_list, len, "trn1n.32xlarge", "trn1");
+	ret += check_value(platform_data_list, len, "trn1.2xlarge", "trn1");
+	ret += check_value(platform_data_list, len, "trn2.48xlarge", "trn2");
+	ret += check_value(platform_data_list, len, "trn2u.48xlarge", "trn2");
 	ret += check_value(platform_data_list, len, "inf2.48xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.2xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.8xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.16xlarge", NULL);
-	ret += check_value(platform_data_list, len, "p3dn.24xlarge", "^p3dn.24xlarge$");
-	ret += check_value(platform_data_list, len, "p4d.24xlarge", "^p4d.24xlarge$");
-	ret += check_value(platform_data_list, len, "p4de.24xlarge", "^p4de.24xlarge$");
-	ret += check_value(platform_data_list, len, "p5.48xlarge", "^p5.*");
-	ret += check_value(platform_data_list, len, "p5e.48xlarge", "^p5.*");
-	ret += check_value(platform_data_list, len, "p5en.48xlarge", "^p5.*");
-	ret += check_value(platform_data_list, len, "g5.48xlarge", "^g5.48xlarge$");
+	ret += check_value(platform_data_list, len, "p3dn.24xlarge", "p3dn.24xlarge");
+	ret += check_value(platform_data_list, len, "p4d.24xlarge", "p4d.24xlarge");
+	ret += check_value(platform_data_list, len, "p4de.24xlarge", "p4de.24xlarge");
+	ret += check_value(platform_data_list, len, "p5.48xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p5e.48xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
 
 	return ret;
@@ -67,7 +67,8 @@ static int check_known_platforms(void)
 
 static struct ec2_platform_data test_map_1[] = {
 	{
-		.name = "^platform-x$",
+		.name = "first",
+		.regex = "^platform-x$",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 0.0,
@@ -77,7 +78,8 @@ static struct ec2_platform_data test_map_1[] = {
 		.domain_per_thread = 0,
 	},
 	{
-		.name = "^platform.*",
+		.name = "second",
+		.regex = "^platform.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 0.0,
@@ -95,8 +97,8 @@ int main(int argc, char *argv[]) {
 	ret += check_known_platforms();
 
 	/* make sure we maintain ordering */
-	ret += check_value(test_map_1, 2, "platform-x", "^platform-x$");
-	ret += check_value(test_map_1, 2, "platform-xy", "^platform.*");
+	ret += check_value(test_map_1, 2, "platform-x", "first");
+	ret += check_value(test_map_1, 2, "platform-xy", "second");
 
 	return ret;
 }
