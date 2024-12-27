@@ -132,7 +132,7 @@ pipeline {
         }
     }
     options {
-        buildDiscarder(logRotator(daysToKeepStr: "90"))
+        buildDiscarder(logRotator(daysToKeepStr: "365"))
         timeout(time: 8, unit: 'HOURS')
     }
     environment {
