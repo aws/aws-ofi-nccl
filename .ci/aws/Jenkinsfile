@@ -133,7 +133,7 @@ pipeline {
     }
     options {
         buildDiscarder(logRotator(daysToKeepStr: "90"))
-        timeout(time: 24, unit: 'HOURS')
+        timeout(time: 8, unit: 'HOURS')
     }
     environment {
         // AWS region where the cluster is created
