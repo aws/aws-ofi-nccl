@@ -80,8 +80,8 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_RECV_SEGMS,
 	/* Eager local copy request. Subrequest of NCCL_OFI_RDMA_RECV */
 	NCCL_OFI_RDMA_EAGER_COPY,
-	/* Bounce request */
-	NCCL_OFI_RDMA_BOUNCE,
+	/* Rx buff post request */
+	NCCL_OFI_RDMA_RX_BUFF,
 	/* Flush request */
 	NCCL_OFI_RDMA_FLUSH,
 	/* Connect message send request */
@@ -184,8 +184,9 @@ typedef struct nccl_net_ofi_rdma_close_msg {
 	uint32_t send_comm_id;
 } nccl_net_ofi_rdma_close_msg_t;
 
-/* For LL/LL128 protocols, bounce buffers (source of RDMA read operations) need to be 128B aligned */
-#define BOUNCE_BUFFER_ALIGNMENT 128
+/* For LL/LL128 protocols, eager rx buffers (source of RDMA read operations)
+   need to be 128B aligned */
+#define EAGER_RX_BUFFER_ALIGNMENT 128
 
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_rdma_ep;
@@ -195,16 +196,16 @@ typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
-	/* Bounce buffer freelist item */
-	nccl_ofi_freelist_elem_t *bounce_fl_elem;
-	/* Length of bounce buffer */
+	/* Rx buffer freelist item */
+	nccl_ofi_freelist_elem_t *rx_buff_fl_elem;
+	/* Length of rx buffer */
 	size_t buff_len;
 	/* Length of received data */
 	size_t recv_len;
 
 	/*
-	 * Keeps tracks of Rail ID which is used to post the bounce buffer.
-	 * This is useful for re-posting the bounce buffer on the same rail
+	 * Keeps tracks of Rail ID which is used to post the rx buffer.
+	 * This is useful for re-posting the buffer on the same rail
 	 * when it gets completed.
 	 */
 	nccl_net_ofi_ep_rail_t *rail;
@@ -212,7 +213,7 @@ typedef struct {
 	 * Back-pointer to associated endpoint
 	 */
 	nccl_net_ofi_rdma_ep_t *ep;
-} rdma_req_bounce_data_t;
+} rdma_req_rx_buff_data_t;
 
 typedef struct {
 	/* Remote destination buffer address */
@@ -297,8 +298,8 @@ typedef struct {
 } rdma_req_send_close_data_t;
 
 typedef struct {
-	/* Pointer to bounce buffer containing eager data */
-	nccl_net_ofi_rdma_req_t *eager_bounce_req;
+	/* Pointer to rx buffer containing eager data */
+	nccl_net_ofi_rdma_req_t *eager_rx_buff_req;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req_t *recv_req;
 } rdma_req_eager_copy_data_t;
@@ -385,7 +386,7 @@ typedef struct nccl_net_ofi_rdma_req {
 		rdma_req_eager_copy_data_t eager_copy_data;
 		rdma_req_recv_segms_data_t recv_segms_data;
 		rdma_req_flush_data_t flush_data;
-		rdma_req_bounce_data_t bounce_data;
+		rdma_req_rx_buff_data_t rx_buff_data;
 	};
 
 	/* Size of completed request */
@@ -678,17 +679,17 @@ struct nccl_net_ofi_ep_rail {
 	struct fid_domain *domain;
 
 	/*
-	 * Bounce buffer management
+	 * Rx buffer management
 	 */
 
-	/* Number of bounce buffers posted */
-	size_t num_bounce_posted;
-	/* Minimum posted bounce buffers (see RDMA_MIN_POSTED_BOUNCE_BUFFERS) */
-	size_t min_bounce_posted;
-	/* Maximum posted bounce buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
-	size_t max_bounce_posted;
-	/* Mutex for bounce buffer operations */
-	pthread_mutex_t bounce_mutex;
+	/* Number of rx buffers posted */
+	size_t num_rx_buff_posted;
+	/* Minimum posted rx buffers (see RDMA_MIN_POSTED_BOUNCE_BUFFERS) */
+	size_t min_rx_buff_posted;
+	/* Maximum posted rx buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
+	size_t max_rx_buff_posted;
+	/* Mutex for rx buffer operations */
+	pthread_mutex_t rx_buff_mutex;
 };
 
 /*
@@ -727,12 +728,12 @@ struct nccl_net_ofi_rdma_ep {
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
 
-	/* Free list of bounce buffers */
-	nccl_ofi_freelist_t *bounce_buff_fl;
-	/* Free list of bounce buffer requests */
-	nccl_ofi_freelist_t *bounce_buff_reqs_fl;
-	/* Size of bounce buffers */
-	size_t bounce_buff_size;
+	/* Free list of rx buffers */
+	nccl_ofi_freelist_t *rx_buff_fl;
+	/* Free list of rx buffer requests */
+	nccl_ofi_freelist_t *rx_buff_reqs_fl;
+	/* Size of rx buffers */
+	size_t rx_buff_size;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */

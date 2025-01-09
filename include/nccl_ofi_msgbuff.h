@@ -64,11 +64,11 @@ typedef enum {
 } nccl_ofi_msgbuff_result_t;
 
 /* Type of element stored in msg buffer. This is used to distinguish between
-   reqs and bounce buffers (when we don't have req) stored in the message buffer */
+   reqs and rx buffers (when we don't have req) stored in the message buffer */
 typedef enum {
 	/* Request */
 	NCCL_OFI_MSGBUFF_REQ,
-	/* Bounce buffer */
+	/* Rx buffer */
 	NCCL_OFI_MSGBUFF_BUFF
 } nccl_ofi_msgbuff_elemtype_t;
 

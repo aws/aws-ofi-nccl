@@ -288,15 +288,17 @@ OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
 OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
 
 /*
- * Minimum bounce buffers posted per endpoint. The plugin will attempt to post
- * more bounce buffers if we dip below this threshold, allocating new bounce
+ * Minimum rx buffers (ctrl/eager) posted per endpoint. The plugin will attempt
+ * to post more rx buffers if we dip below this threshold, allocating new rx
  * buffers if needed.
+ *
+ * Note: the parameter is called "bounce buffer" for backward compatibility.
  */
 OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64);
 
 /*
- * Maximum bounce buffers posted per endpoint. The plugin will not attempt to
- * post more bounce buffers if we reach this threshold, returning available
+ * Maximum rx buffers posted per endpoint. The plugin will not attempt to
+ * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
 OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
