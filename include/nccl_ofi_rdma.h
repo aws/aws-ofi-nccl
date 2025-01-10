@@ -734,12 +734,16 @@ struct nccl_net_ofi_rdma_ep {
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
 
-	/* Free list of rx buffers */
-	nccl_ofi_freelist_t *rx_buff_fl;
+	/* Free list of ctrl rx buffers */
+	nccl_ofi_freelist_t *ctrl_rx_buff_fl;
+	/* Free list of eager rx buffers */
+	nccl_ofi_freelist_t *eager_rx_buff_fl;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl;
-	/* Size of rx buffers */
-	size_t rx_buff_size;
+	/* Size of ctrl rx buffers */
+	size_t ctrl_rx_buff_size;
+	/* Size of eager rx buffers */
+	size_t eager_rx_buff_size;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
