@@ -1297,6 +1297,17 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 
+	/* Make sure the rx message is coming from the right place */
+#ifndef NDEBUG
+	if (eager) {
+		/* Eager messages should be received on data rails */
+		assert(rx_buff_data->rail == &ep->rails[rail_id]);
+	} else {
+		/* Non-eager messages should be received on the control rail */
+		assert(rx_buff_data->rail == &ep->control_rails[rail_id]);
+	}
+#endif
+
 	/* The first 4 bits are the type, but we don't have a base
 	 * header type.  So cast to a control message and lookup the
 	 * type from there. */
@@ -3867,9 +3878,6 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
  */
 static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_req_t *send_close_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_close_req == NULL)) {
 		return -ENOMEM;
@@ -3883,19 +3891,9 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(send_close_req);
 
-	send_close_data->ctrl_schedule = scheduler->get_schedule
-		(scheduler, sizeof(nccl_net_ofi_rdma_close_msg_t),
-		 device->num_rails);
-	if (OFI_UNLIKELY(!(send_close_data->ctrl_schedule))) {
-		send_close_req->free(send_close_req, false);
-		return -ENOMEM;
-	} else if (OFI_UNLIKELY(send_close_data->ctrl_schedule->num_xfer_infos != 1)) {
-		NCCL_OFI_WARN("Invalid schedule for outgoing close message (%zu bytes). Expected one rail, but got %zu",
-			      sizeof(nccl_net_ofi_rdma_close_msg_t),
-			      send_close_data->ctrl_schedule->num_xfer_infos);
-		send_close_req->free(send_close_req, false);
-		return -EINVAL;
-	}
+	/* For simplicity (since close messages aren't perf-critical), set
+	   schedule to NULL. All close messages will be sent over rail 0. */
+	send_close_data->ctrl_schedule = NULL;
 
 	/*
 	 * Set up send close message
@@ -5567,6 +5565,32 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	return ret;
 }
 
+static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+			  nccl_ofi_freelist_elem_t *ctrl_fl_elem,
+			  int rail_id,
+			  size_t size,
+			  nccl_net_ofi_rdma_req_t *req)
+{
+	freelist_regmr_fn_handle_t *fl_handle =
+		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
+
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+
+	assert(rail_id < mr_handle->num_control_rails);
+	void *desc = fi_mr_desc(mr_handle->control_mr[rail_id]);
+
+	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
+			size,
+			desc,
+			comm_rail->remote_addr, req);
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("Error posting RDMA %s request. RC: %zd, Error: %s",
+			      nccl_net_ofi_req_str(req), rc, fi_strerror(-rc));
+	}
+	return rc;
+}
+
 static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
@@ -5575,16 +5599,9 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	nccl_net_ofi_schedule_t *schedule = send_ctrl_data->ctrl_schedule;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	void *desc;
-	int rail_id;
-
 	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_ctrl_data->ctrl_fl_elem;
 
-	/* Unpack mr_handle */
-	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
+	int rail_id;
 
 	if (schedule != NULL) {
 		/* Use round robin schedule for ctrl message */
@@ -5595,24 +5612,14 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 		rail_id = 0;
 	}
 
-	comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
-	assert(rail_id < mr_handle->num_control_rails);
-	desc = fi_mr_desc(mr_handle->control_mr[rail_id]);
-
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
 
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = rdma_send_ctrl_get_msg(send_ctrl_data);
+	ssize_t rc = send_ctrl_post(r_comm, ctrl_fl_elem, rail_id, ctrl_msg_len, req);
 
-	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_msg,
-			     ctrl_msg_len,
-			     desc,
-			     comm_rail->remote_addr, req);
-
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
-			      rc, fi_strerror(-rc));
-	} else if (rc != -FI_EAGAIN) {
-		NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
+	if (rc == 0) {
+		NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id,
+			rail_id,
+			req->comm, req, req->msg_seq_num);
 	}
 
 	return rc;
@@ -5623,39 +5630,19 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
-	nccl_net_ofi_schedule_t *schedule = send_close_data->ctrl_schedule;
 
-	assert(schedule != NULL);
+	int rail_id;
 
-	// Should be using a single rail for posting the control message
-	nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
-
-	// Get communicator rail information to xfer the req
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
-	comm_rail = rdma_recv_comm_get_rail(r_comm, xfer_info->rail_id);
+	assert(send_close_data->ctrl_schedule == NULL);
+	/* Always use control rail 0 for close message */
+	rail_id = 0;
 
 	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_close_data->ctrl_fl_elem;
 
-	/* Unpack mr_handle */
-	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
-
-	assert(xfer_info->rail_id < mr_handle->num_rails);
-	void *desc = fi_mr_desc(mr_handle->mr[xfer_info->rail_id]);
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 
-	nccl_net_ofi_rdma_close_msg_t *close_msg = rdma_send_close_get_msg(send_close_data);
-
-	ssize_t rc = fi_send(comm_rail->local_ep, close_msg,
-			     sizeof(nccl_net_ofi_rdma_close_msg_t),
-			     desc,
-			     comm_rail->remote_addr, req);
-
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Error posting RDMA close request. RC: %zd, Error: %s",
-			      rc, fi_strerror(-rc));
-	}
+	ssize_t rc = send_ctrl_post(r_comm, ctrl_fl_elem, rail_id,
+				    sizeof(nccl_net_ofi_rdma_close_msg_t), req);
 
 	return rc;
 }
