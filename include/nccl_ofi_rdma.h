@@ -80,8 +80,10 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_RECV_SEGMS,
 	/* Eager local copy request. Subrequest of NCCL_OFI_RDMA_RECV */
 	NCCL_OFI_RDMA_EAGER_COPY,
-	/* Rx buff post request */
-	NCCL_OFI_RDMA_RX_BUFF,
+	/* Ctrl rx buff post request */
+	NCCL_OFI_RDMA_CTRL_RX_BUFF,
+	/* Eager rx buff post request */
+	NCCL_OFI_RDMA_EAGER_RX_BUFF,
 	/* Flush request */
 	NCCL_OFI_RDMA_FLUSH,
 	/* Connect message send request */
@@ -690,6 +692,10 @@ struct nccl_net_ofi_ep_rail {
 	size_t max_rx_buff_posted;
 	/* Mutex for rx buffer operations */
 	pthread_mutex_t rx_buff_mutex;
+
+	/* Allocate a receive buffer request for this rail (eager or ctrl) */
+	nccl_net_ofi_rdma_req_t* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
+						      nccl_net_ofi_ep_rail_t *rail);
 };
 
 /*
@@ -728,12 +734,16 @@ struct nccl_net_ofi_rdma_ep {
 	/* Pending requests queue */
 	nccl_ofi_deque_t *pending_reqs_queue;
 
-	/* Free list of rx buffers */
-	nccl_ofi_freelist_t *rx_buff_fl;
+	/* Free list of ctrl rx buffers */
+	nccl_ofi_freelist_t *ctrl_rx_buff_fl;
+	/* Free list of eager rx buffers */
+	nccl_ofi_freelist_t *eager_rx_buff_fl;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl;
-	/* Size of rx buffers */
-	size_t rx_buff_size;
+	/* Size of ctrl rx buffers */
+	size_t ctrl_rx_buff_size;
+	/* Size of eager rx buffers */
+	size_t eager_rx_buff_size;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
