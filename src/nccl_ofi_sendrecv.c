@@ -395,7 +395,6 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_req_t *req = (nccl_net_ofi_sendrecv_req_t *)base_req;
-	nccl_net_ofi_sendrecv_device_t *device = NULL;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate comm */
@@ -414,17 +413,9 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		goto exit;
 	}
 
-	/* Retrieve and validate device */
-	device = sendrecv_endpoint_get_device(ep);
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
-	}
-
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-		ret = sendrecv_cq_process(ep->cq, device->max_tag);
+		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -491,7 +482,6 @@ static nccl_net_ofi_sendrecv_req_t *sendrecv_recv_req_prepare(nccl_net_ofi_sendr
  * 		error, others
  */
 static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
-				   nccl_net_ofi_sendrecv_device_t *device,
 				   nccl_net_ofi_sendrecv_ep_t *ep,
 				   void *buffer,
 				   size_t size,
@@ -500,18 +490,17 @@ static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 	ssize_t rc = 0;
 	int ret = 0;
 	int dev_id = l_comm->base.base.dev_id;
-	uint64_t max_tag = device->max_tag;
 
 	/* Post a buffer for receiving connection requests */
 	rc = fi_trecv(l_comm->local_ep, buffer, size,
-		      NULL, FI_ADDR_UNSPEC, l_comm->tag | (max_tag + 1),
+		      NULL, FI_ADDR_UNSPEC, l_comm->tag | (ep->max_tag + 1),
 		      0, &req->ctx);
 	if (rc == -FI_EAGAIN) {
 		/*
 		 * Process completions so that you have enough
 		 * resources for posting receive buffer
 		 */
-		ret = sendrecv_cq_process(ep->cq, device->max_tag);
+		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0))
 			return ret;
 	}
@@ -945,7 +934,6 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
-	nccl_net_ofi_sendrecv_device_t *device = NULL;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
 		(nccl_net_ofi_sendrecv_recv_comm_t *)recv_comm;
 	int dev_id = r_comm->base.base.dev_id;
@@ -957,14 +945,6 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto error;
-	}
-
-	/* Retrieve and validate device */
-	device = sendrecv_endpoint_get_device(ep);
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
 	}
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
@@ -985,7 +965,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	}
 
 	/* Progress NCCL OFI */
-	ret = sendrecv_cq_process(ep->cq, device->max_tag);
+	ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -1209,19 +1189,11 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 				goto error;
 			}
 
-			/* Retrieve and validate device */
-			nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
-			if (OFI_UNLIKELY(device == NULL)) {
-				ret = -EINVAL;
-				NCCL_OFI_WARN("Invalid device provided");
-				goto exit;
-			}
-
 			/*
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = sendrecv_cq_process(ep->cq, device->max_tag);
+			ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		} else {
@@ -1480,7 +1452,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		}
 
 		/* Post a receive message to receive peer connections */
-		ret = sendrecv_recv_conn_post(l_comm, device, ep, conn_info,
+		ret = sendrecv_recv_conn_post(l_comm, ep, conn_info,
 					      sizeof(nccl_ofi_connection_info_t), req);
 		if (ret == -FI_EAGAIN) {
 			/* Save recv request and buffer address for retry */
@@ -1500,7 +1472,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
-		ret = sendrecv_cq_process(ep->cq, device->max_tag);
+		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(req);
 			return ret;
@@ -1718,7 +1690,6 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
 	void *desc = NULL;
-	nccl_net_ofi_sendrecv_device_t *device = NULL;
 	int dev_id = s_comm->base.base.dev_id;
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
 
@@ -1729,14 +1700,6 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto error;
-	}
-
-	/* Retrieve and validate device */
-	device = sendrecv_endpoint_get_device(ep);
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
 	}
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
@@ -1768,7 +1731,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 			               self_req,
 			               sendrecv_req_state_get_string(self_req->state));
 
-			ret = sendrecv_cq_process(ep->cq, device->max_tag);
+			ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 
 			*base_req = NULL;
 			goto exit;
@@ -1806,7 +1769,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		      s_comm->remote_ep, s_comm->tag, &req->ctx);
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = sendrecv_cq_process(ep->cq, device->max_tag);
+		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		/* Return NULL request */
 		*base_req = NULL;
 		goto error;
@@ -2036,7 +1999,7 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 		 * Process completions so that you have enough
 		 * resources for sending connect message
 		 */
-		int res = sendrecv_cq_process(ep->cq, device->max_tag);
+		int res = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (res != 0)
 			return res;
 	} else if (rc != 0) {
@@ -2130,7 +2093,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Progress our engine to get completions */
-		ret = sendrecv_cq_process(ep->cq, device->max_tag);
+		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
 		if (OFI_UNLIKELY(ret != 0)) {
 			assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
@@ -2244,6 +2207,7 @@ static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *b
 
 	/* Initialize endpoint tag */
 	ep->tag = 0;
+	ep->max_tag = device->max_tag;
 
 	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
