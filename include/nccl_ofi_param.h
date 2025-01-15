@@ -389,6 +389,11 @@ OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
  */
 OFI_NCCL_PARAM_INT(use_low_lat_tc, "USE_LOW_LATENCY_TC", 1);
 
+/**
+ * Allocate eager rx buffers in GPU memory instead of CPU memory
+ */
+OFI_NCCL_PARAM_INT(alloc_eager_rx_buff_gpu, "ALLOC_EAGER_RX_BUFF_GPU", 1);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif

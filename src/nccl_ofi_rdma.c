@@ -3240,7 +3240,6 @@ static int freelist_regmr_host_fn(void *ep_void_ptr, void *data, size_t size, vo
  * @param	size
  *		Size of memory region. Must be a multiple of page size.
  */
-__attribute__((unused))
 static int freelist_regmr_gpu_fn(void *ep_void_ptr, void *data, size_t size, void **handle)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)ep_void_ptr;
@@ -3267,11 +3266,11 @@ static int freelist_regmr_gpu_fn(void *ep_void_ptr, void *data, size_t size, voi
 }
 
 /**
- * Deregister host memory registered with freelist_regmr_host_fn
+ * Deregister memory registered with freelist_regmr_{host,gpu}_fn
  *
  * This interface is suitable for use with a freelist.
  */
-static int freelist_deregmr_host_fn(void *handle)
+static int freelist_deregmr_fn(void *handle)
 {
 	freelist_regmr_fn_handle_t *freelist_handle = (freelist_regmr_fn_handle_t *)handle;
 	assert(freelist_handle);
@@ -4789,7 +4788,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
 			     sizeof(nccl_net_ofi_rdma_close_msg_t)),
 		8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-		freelist_deregmr_host_fn, ep, false, 1,
+		freelist_deregmr_fn, ep, false, 1,
 		&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
@@ -6227,7 +6226,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	ret = nccl_ofi_freelist_init_mr(ep->ctrl_rx_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
-					freelist_regmr_host_fn, freelist_deregmr_host_fn,
+					freelist_regmr_host_fn, freelist_deregmr_fn,
 					ep, false, 1, &ep->ctrl_rx_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init ctrl_rx_buff_fl");
@@ -6236,18 +6235,28 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
-	/* This FL cannot be increased during the run, so max size has
-	   to be equal to min size */
-	ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
-					ofi_nccl_rdma_max_posted_bounce_buffers(), 16,
-					ofi_nccl_rdma_max_posted_bounce_buffers(),
-					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, false, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
-		nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
-		nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
-		return ret;
+	{
+		bool alloc_gpu = false;
+		nccl_ofi_freelist_regmr_fn regfn = freelist_regmr_host_fn;
+
+		if (ofi_nccl_alloc_eager_rx_buff_gpu())
+		{
+			alloc_gpu = true;
+			regfn = freelist_regmr_gpu_fn;
+		}
+		/* This FL cannot be increased during the run, so max size has
+		   to be equal to min size */
+		ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
+						ofi_nccl_rdma_max_posted_bounce_buffers(), 16,
+						ofi_nccl_rdma_max_posted_bounce_buffers(),
+						regfn, freelist_deregmr_fn,
+						ep, alloc_gpu, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
+			nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
+			nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
+			return ret;
+		}
 	}
 
 	/*
