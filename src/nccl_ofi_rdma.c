@@ -807,9 +807,9 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 	size_t size = rx_buff_data->recv_len;
 
 	/* Check posted count and re-post rx buffer if needed */
-	ret = check_post_rx_buff_req(eager_copy_data->eager_rx_buff_req);
+	ret = repost_rx_buff(rx_buff_data->ep, eager_copy_data->eager_rx_buff_req);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
+		NCCL_OFI_WARN("Failed call to repost_rx_buff");
 		return ret;
 	}
 
@@ -1175,12 +1175,6 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	int ret;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
-	/* Decrease rx buffer count. It will be incremented again when reposting */
-	ret = decrease_rx_buff_cnt(ep, get_rx_buff_data(rx_buff_req)->rail);
-	if (ret != 0) {
-		return ret;
-	}
-
 	nccl_ofi_msgbuff_status_t stat;
 	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, msg_seq_num,
 		rx_buff_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
@@ -1215,9 +1209,9 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	if (rx_buff_data->recv_len == 0) {
 		/* Special case: for zero-sized messages, we can skip the local read */
 		/* Re-post rx buffer */
-		ret = check_post_rx_buff_req(rx_buff_req);
+		ret = repost_rx_buff(ep, rx_buff_req);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
+			NCCL_OFI_WARN("Failed call to repost_rx_buff");
 			return ret;
 		}
 		ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
@@ -3692,9 +3686,9 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
 		if (rx_buff_data->recv_len == 0) {
 			/* Special case for zero-sized messages */
-			ret = check_post_rx_buff_req(rx_buff_req);
+			ret = repost_rx_buff(ep, rx_buff_req);
 			if (ret != 0) {
-				NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
+				NCCL_OFI_WARN("Failed call to repost_rx_buff");
 				return ret;
 			}
 			recv_data->eager_copy_req = NULL;
@@ -6242,8 +6236,11 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
+	/* This FL cannot be increased during the run, so max size has
+	   to be equal to min size */
 	ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
-					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+					ofi_nccl_rdma_max_posted_bounce_buffers(), 16,
+					ofi_nccl_rdma_max_posted_bounce_buffers(),
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					ep, false, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
 	if (ret != 0) {
