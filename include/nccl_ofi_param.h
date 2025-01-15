@@ -389,6 +389,13 @@ OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
  */
 OFI_NCCL_PARAM_INT(use_low_lat_tc, "USE_LOW_LATENCY_TC", 1);
 
+/*
+ * Number of rails that the rdma transport should build.  If the
+ * number of rails is more than the number of NICs, then the number of
+ * rails must be a multiple of the number of NICs.
+ */
+OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
+
 #ifdef __cplusplus
 } // End extern "C"
 #endif
