@@ -3611,10 +3611,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	ret = insert_rdma_recv_req_into_msgbuff(r_comm, eager, &req);
-	if (ret != 0) {
-		goto free_req;
-	} else if (req == NULL) {
-		ret = -ENOMEM;
+	if (ret != 0 || req == NULL) {
 		goto free_req;
 	}
 
