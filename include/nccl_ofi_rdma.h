@@ -690,6 +690,10 @@ struct nccl_net_ofi_ep_rail {
 	size_t max_rx_buff_posted;
 	/* Mutex for rx buffer operations */
 	pthread_mutex_t rx_buff_mutex;
+
+	/* Allocate a receive buffer request for this rail (eager or ctrl) */
+	nccl_net_ofi_rdma_req_t* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
+						      nccl_net_ofi_ep_rail_t *rail);
 };
 
 /*
