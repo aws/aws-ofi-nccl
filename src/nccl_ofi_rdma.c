@@ -2371,7 +2371,7 @@ static inline int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
 	for (size_t i = 0; i < buffers_needed; ++i) {
 		bool is_last_req = (i == (buffers_needed - 1));
 		nccl_net_ofi_rdma_req_t *req =
-			alloc_rx_buff_req(ep, rail);
+			rail->rx_buff_req_alloc(ep, rail);
 		if (!req) {
 			NCCL_OFI_WARN("Failed to allocate rx_buff req");
 			return -ENOMEM;
@@ -6167,6 +6167,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		);
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
+		rail->rx_buff_req_alloc = alloc_rx_buff_req;
 	}
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
@@ -6179,6 +6180,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		);
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
+		rail->rx_buff_req_alloc = alloc_rx_buff_req;
 	}
 
 	return ret;
