@@ -66,6 +66,26 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
  */
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
 
+/**
+ * Allocate a GPU buffer for registration with EFA
+ *
+ * @param ptr: returned pointer to the newly allocated buffer
+ * @param size: the size of the buffer to return
+ *
+ * @return 0 on success
+ *         negative on error
+ */
+int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size);
+
+/**
+ * Free a buffer registered using nccl_net_ofi_cuda_mem_alloc
+ *
+ * @param ptr the buffer to free
+ * @return 0 on success
+ *         negative on error
+ */
+int nccl_net_ofi_cuda_mem_free(void *ptr);
+
 #ifdef __cplusplus
 }  // End extern "C"
 #endif

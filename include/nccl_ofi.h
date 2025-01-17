@@ -703,6 +703,36 @@ int nccl_net_ofi_alloc_mr_buffer(size_t size, void **ptr);
  */
 int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
 
+/*
+ * @brief	Allocate memory region for GPU memory registration
+ *
+ * This function allocates memory that covers full page aligned.
+ *
+ * Internally allocated memory that is registered is required to cover
+ * full memory pages. For more information, see functions
+ * `register_internal_mr_buffers()` and `reg_internal_mr_ep()`.
+ *
+ * To free deallocate the memory region, function
+ * nccl_net_ofi_dealloc_gpu_mr_buffer() must be used.
+ *
+ * @param	size
+ *		Size of the memory region. Must be a multiple of system memory page size.
+ * @return	Pointer to memory region. Memory region is aligned to system memory page size.
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_alloc_gpu_mr_buffer(size_t size, void **ptr);
+
+/*
+ * @brief	Deallocate memory region allocated by function nccl_net_ofi_alloc_gpu_mr_buffer()
+ *
+ * @return	Pointer to memory region
+ * @param	size
+ *		Size of the memory region
+ * @return	0, on success
+ *		error, on others
+ */
+int nccl_net_ofi_dealloc_gpu_mr_buffer(void *ptr, size_t size);
 
 /*
  * @brief       Parse selected provider for required behavior flags
