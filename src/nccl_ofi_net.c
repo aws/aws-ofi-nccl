@@ -1009,6 +1009,61 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 }
 
 
+int nccl_net_ofi_domain_release_all(nccl_net_ofi_device_t *device)
+{
+	int ret, first_error = 0, domain_num;
+
+	assert(device != NULL);
+	nccl_net_ofi_domain_t *domain, *domain_tmp;
+	nccl_net_ofi_ep_t *ep, *ep_tmp;
+
+	domain_num = HASH_COUNT(device->domain_table);
+	assert(domain_num > 0);
+	HASH_ITER(hh, device->domain_table, domain, domain_tmp) {
+		/* For each domain, clean up its endpoints. */
+		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+		if (HASH_COUNT(domain->endpoint_table) > 0) {
+			/* Ignore ref_cnt of endpoints, since only called during plugin fini. */
+			HASH_ITER(hh, domain->endpoint_table, ep, ep_tmp) {
+				HASH_DEL(domain->endpoint_table, ep);
+
+				if (OFI_UNLIKELY(ep->ref_cnt > 0)) {
+					NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
+						      ep, ep->ref_cnt);
+				}
+				ret = ep->free_ep(ep);
+				if (ret != 0) {
+					NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
+					if (first_error != 0) {
+						first_error = ret;
+					}
+				}
+			}
+		}
+		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+		/* domain->release takes the domain and device locks,
+		 * and removes the domain from domain_table. */
+		ret = domain->release(domain);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
+			if (first_error != 0) {
+				first_error = ret;
+			}
+		}
+	}
+	domain_num = HASH_COUNT(device->domain_table);
+	if (OFI_UNLIKELY(domain_num > 0)) {
+		NCCL_OFI_WARN("%u domains still active after cleanup", domain_num);
+		if (first_error != 0) {
+			first_error = -FI_EBUSY; // Anything else than above
+		}
+	}
+
+	return first_error;
+}
+
+
 int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 {
 	int ret = 0;

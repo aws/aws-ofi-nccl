@@ -2363,7 +2363,14 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 
 	unsigned num_domains = HASH_COUNT(device->base.domain_table);
 	if (num_domains > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
+		ret = nccl_net_ofi_domain_release_all(base_device);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			if (first_error == 0) {
+				first_error = ret;
+			}
+		}
 	}
 
 	if (device->fabric) {
