@@ -1067,7 +1067,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
 
-	ret = base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep, false, false);
  exit:
 	return ret;
 }
@@ -1538,7 +1538,7 @@ static int sendrecv_listen_comm_close(nccl_net_ofi_listen_comm_t *listen_comm)
 		goto exit;
 	}
 
-	ret = base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep, false, false);
 	free(listen_comm);
  exit:
 	return ret;
@@ -1816,7 +1816,7 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 	free(s_comm->conn_info);
 	free(send_comm);
 
-	ret = base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep, false, false);
  exit:
 	return ret;
 }
@@ -2328,6 +2328,14 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 	unsigned num_domains = HASH_COUNT(device->base.domain_table);
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
+		ret = base_device->release_all_domain_and_ep(base_device);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			if (first_error == 0) {
+				first_error = ret;
+			}
+		}
 	}
 
 	if (device->fabric) {

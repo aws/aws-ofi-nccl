@@ -226,7 +226,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 						  listen_comm);
 
 	if (ret != 0) {
-		base_ep->release_ep(base_ep);
+		base_ep->release_ep(base_ep, false, false);
 	}
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -318,7 +318,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 	int ret = base_ep->connect(base_ep, (nccl_net_ofi_conn_handle_t *)handle, send_comm);
 
 	if (ret != 0) {
-		base_ep->release_ep(base_ep);
+		base_ep->release_ep(base_ep, false, false);
 	}
 
 	return nccl_net_ofi_retval_translate(ret);
@@ -520,7 +520,7 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 			ret = -EINVAL;
 			goto error;
 		}
-		ep->release_ep(ep);
+		ep->release_ep(ep, false, false);
 	}
 
 error:

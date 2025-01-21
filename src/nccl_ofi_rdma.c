@@ -3914,7 +3914,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 
 	free_rdma_recv_comm(r_comm);
 
-	ret = ep->base.release_ep(&ep->base);
+	ret = ep->base.release_ep(&ep->base, false, false);
 
 	return ret;
 }
@@ -4094,7 +4094,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 	free_rdma_send_comm(s_comm);
 
-	ret = ep->base.release_ep(&ep->base);
+	ret = ep->base.release_ep(&ep->base, false, false);
 
 	return ret;
 }
@@ -5178,7 +5178,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	free(l_comm);
-	ret = base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep, false, false);
 
 	return ret;
 }
@@ -7057,7 +7057,7 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 }
 
 
-static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
+static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep, bool skip_lock, bool force_cleanup)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
@@ -7083,9 +7083,15 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+		if (!skip_lock) {
+			nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+		}
 
-		if ((--ep->base.ref_cnt) == 0) {
+		if ((--ep->base.ref_cnt) == 0 || force_cleanup) {
+			if (force_cleanup && ep->base.ref_cnt != 0 ) {
+				NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
+					      ep, ep->base.ref_cnt);
+			}
 			ret = nccl_ofi_ep_addr_list_delete(domain->ep_addr_list, &ep->base);
 			if (ret != 0) {
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
@@ -7100,9 +7106,11 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep)
 		}
 
  unlock:
-		nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+		if (!skip_lock) {
+			nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+		}
 	} else {
-		ret = nccl_net_ofi_endpoint_release(&ep->base);
+		ret = nccl_net_ofi_endpoint_release(&ep->base, skip_lock, force_cleanup);
 	}
 
 	return ret;
@@ -7282,7 +7290,7 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 
 error:
 	if (ret != 0) {
-		ep->base.release_ep(&(ep->base));
+		ep->base.release_ep(&(ep->base), false, false);
 	}
 
 	return ret;
@@ -7402,7 +7410,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 
 error:
 	if (ret != 0) {
-		domain->base.release(&(domain->base));
+		domain->base.release(&(domain->base), false, false);
 		domain = NULL;
 	}
 
@@ -7546,6 +7554,14 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 	unsigned num_domains = HASH_COUNT(device->base.domain_table);
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
+		ret = base_device->release_all_domain_and_ep(base_device);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			if (first_error == 0) {
+				first_error = ret;
+			}
+		}
 	}
 
 	if (device->device_rails != NULL) {
