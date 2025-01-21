@@ -310,7 +310,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		      (properties.regIsGlobal == 0) ? "false" : "true");
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
 		      (properties.dmabuf_support == 0) ? "false" : "true");
-	ret = base_ep->release_ep(base_ep);
+	ret = base_ep->release_ep(base_ep, false, false);
 	if (ret != 0) {
 		goto exit;
 	}
@@ -816,6 +816,7 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	device->get_ep = nccl_net_ofi_device_get_ep;
 	device->get_mr_key = NULL;
 	device->release = nccl_net_ofi_device_fini;
+	device->release_all_domain_and_ep = nccl_net_ofi_device_release_all_domain_and_ep;
 
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&device->device_lock, NULL);
@@ -858,6 +859,58 @@ int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 }
 
 
+int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
+{
+	int ret, first_error = 0, domain_num;
+
+	assert(device != NULL);
+	nccl_net_ofi_domain_t *domain, *domain_tmp;
+	nccl_net_ofi_ep_t *ep;
+
+	nccl_net_ofi_mutex_lock(&device->device_lock);
+
+	domain_num = HASH_COUNT(device->domain_table);
+	assert(domain_num > 0);
+	HASH_ITER(hh, device->domain_table, domain, domain_tmp) {
+		/* For each domain, clean up its endpoints. */
+		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+		if (domain->endpoint) {
+			ep = domain->endpoint;
+			domain->endpoint = NULL;
+
+			ret = ep->release_ep(ep, true, true);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
+				if (first_error != 0) {
+					first_error = ret;
+				}
+			}
+			ep = NULL;
+		}
+		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+		/* domain->release takes the domain lock, and removes itself
+		 * from domain_table. Skipping device lock here.*/
+		ret = domain->release(domain, true, true);
+		if (ret != 0 && first_error != 0) {
+			first_error = ret;
+		}
+
+	}
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
+
+	domain_num = HASH_COUNT(device->domain_table);
+	if (OFI_UNLIKELY(domain_num > 0)) {
+		NCCL_OFI_WARN("%u domains still active after cleanup", domain_num);
+		if (first_error != 0) {
+			first_error = -FI_EBUSY; // Anything else than above
+		}
+	}
+
+	return first_error;
+}
+
+
 static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 				      nccl_net_ofi_ep_t **ep_p)
 {
@@ -892,7 +945,7 @@ unlock:
 }
 
 
-static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
+static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_device_lock, bool force_cleanup)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device;
@@ -902,8 +955,11 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
 
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
-	if (domain->endpoint == NULL) {
-		nccl_net_ofi_mutex_lock(&device->device_lock);
+	if (domain->endpoint == NULL || force_cleanup) {
+		// The caller takes device_lock when force_cleanup.
+		if (!skip_device_lock) {
+			nccl_net_ofi_mutex_lock(&device->device_lock);
+		}
 		HASH_DEL(device->domain_table, domain);
 
 		// domain->free below is going to free the domain lock
@@ -913,7 +969,9 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain)
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 
 		ret = domain->free(domain);
-		nccl_net_ofi_mutex_unlock(&device->device_lock);
+		if (!skip_device_lock) {
+			nccl_net_ofi_mutex_unlock(&device->device_lock);
+		}
 		if (ret != 0) {
 			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
 			return ret;
@@ -996,7 +1054,7 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 }
 
 
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
+int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup)
 {
 	int ret = 0;
 	nccl_net_ofi_domain_t *domain;
@@ -1004,12 +1062,19 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 	assert(ep != NULL);
 	domain = ep->domain;
 
-	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+	if (!skip_lock) {
+		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+	}
 
 	ep->ref_cnt--;
 
-	if (ep->ref_cnt == 0) {
+	if (ep->ref_cnt == 0 || force_cleanup) {
 		domain->endpoint = NULL;
+
+		if (force_cleanup && ep->ref_cnt != 0) {
+			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
+			      ep, ep->ref_cnt);
+		}
 
 		ret = ep->free_ep(ep);
 		if (ret != 0) {
@@ -1019,10 +1084,15 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep)
 	}
 
 cleanup:
-	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 
-	if (ret == 0) {
-		ret = domain->release(domain);
+	if (!skip_lock) {
+		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+	}
+
+	/* Skip domain->release when handled by device->release_all_domain_and_ep()
+	 * to avoid domain lock issue after the domain freed */
+	if (!force_cleanup && ret == 0) {
+		ret = domain->release(domain, skip_lock, false);
 	}
 
 	return ret;

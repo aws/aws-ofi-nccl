@@ -291,6 +291,13 @@ struct nccl_net_ofi_device {
 	nccl_net_ofi_domain_t *(*create_domain)(nccl_net_ofi_device_t *dev);
 
 	/*
+	 * release all domains and endpoints. This function is a private
+	 * function, which is called only during release() to free allocated
+	 * domains and endpoints.
+	 */
+	int (*release_all_domain_and_ep)(nccl_net_ofi_device_t *dev);
+
+	/*
 	 * hash table indexed by thread id of active domains.
 	 */
 	nccl_net_ofi_domain_t *domain_table;
@@ -322,8 +329,16 @@ struct nccl_net_ofi_domain {
 
 	/*
 	 * Destructor - release resources associated with the domain
+	 * @param	domain
+	 * 		The domain (itself) to be released.
+	 * @param 	skip_device_lock
+	 * 		false, taking device lock by default.
+	 * 		ture, not taking device lock when caller takes it.
+	 * @param	force_cleanup
+	 * 		false, not release when endpoint exists.
+	 * 		true, release no matter endpoint exists nor not.
 	 */
-	int (*release)(nccl_net_ofi_domain_t *domain);
+	int (*release)(nccl_net_ofi_domain_t *domain, bool skip_device_lock, bool force_cleanup);
 
 	/*
 	 * Protocol-agnostic MR cache for this device.
@@ -423,8 +438,17 @@ struct nccl_net_ofi_ep {
 	 * Decrease reference counter. Release resources and free
 	 * endpoint if reference counter becomes zero. Must be
 	 * protected by lock stored in base_dev.
+	 *
+	 * @param	ep
+	 * 		The endpoint (itself) to be released.
+	 * @param 	skip_lock
+	 * 		false, taking domain lock by default.
+	 * 		ture, not taking domain lock when caller takes it.
+	 * @param	force_cleanup
+	 * 		false, not release when endpoint has ref count.
+	 * 		true, release no matter endpoint has ref count or not.
 	 */
-	int (*release_ep)(nccl_net_ofi_ep_t *ep);
+	int (*release_ep)(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup);
 
 /* private */
 	/* pure virtual function called when resources associated with
@@ -616,7 +640,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
  * override that function pointer and later call this function
  * directly.
  */
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep);
+int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup);
 
 /* initialize resources associated with the endpoint base class.
  * Expectation is that this will be called by a transport's endpoint
@@ -648,6 +672,12 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
  * Destructor for a device object
  */
 int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device);
+
+/* release all domains and their enpoints of a device. This is called
+ * only by device->release() during plugin release to free all fabric
+ * domain and QPs.
+ */
+int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device);
 
 /*
  * Constructor for the nccl_net_ofi_plugin class
