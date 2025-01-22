@@ -2108,7 +2108,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 
 	send_data = get_send_data(req);
 
-	if (!send_data->eager) {
+	if (!send_data->eager && dec_inflight_reqs) {
 		/* free is going to be called inside of test(), which will
 		   happen in a time when NCCL guarantees no other thread will
 		   be accessing the communicator.  So no mutex protections are
