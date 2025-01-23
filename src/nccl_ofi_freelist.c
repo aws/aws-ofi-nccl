@@ -52,6 +52,7 @@ static int freelist_init_internal(size_t entry_size,
 				  nccl_ofi_freelist_regmr_fn regmr_fn,
 				  nccl_ofi_freelist_deregmr_fn deregmr_fn,
 				  void *regmr_opaque,
+				  bool gpu_alloc,
 				  size_t entry_alignment,
 				  nccl_ofi_freelist_t **freelist_p)
 {
@@ -92,6 +93,10 @@ static int freelist_init_internal(size_t entry_size,
 	freelist->deregmr_fn = deregmr_fn;
 	freelist->regmr_opaque = regmr_opaque;
 
+	freelist->gpu_alloc = gpu_alloc;
+
+	assert(!gpu_alloc || have_reginfo);
+
 	ret = pthread_mutex_init(&freelist->lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
@@ -126,6 +131,7 @@ int nccl_ofi_freelist_init(size_t entry_size,
 				      NULL,
 				      NULL,
 				      NULL,
+				      false,
 				      1,
 				      freelist_p);
 }
@@ -137,6 +143,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
+			      bool gpu_alloc,
 			      size_t entry_alignment,
 			      nccl_ofi_freelist_t **freelist_p)
 {
@@ -148,6 +155,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 				      regmr_fn,
 				      deregmr_fn,
 				      regmr_opaque,
+				      gpu_alloc,
 				      entry_alignment,
 				      freelist_p);
 }
@@ -202,6 +210,26 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 	return 0;
 }
 
+static inline int freelist_buffer_alloc(nccl_ofi_freelist_t *freelist, size_t size,
+				 void **buffer)
+{
+	if (freelist->gpu_alloc) {
+		return nccl_net_ofi_alloc_gpu_mr_buffer(size, buffer);
+	} else {
+		return nccl_net_ofi_alloc_mr_buffer(size, buffer);
+	}
+}
+
+static inline int freelist_buffer_dealloc(nccl_ofi_freelist_t *freelist, size_t size,
+				 void *buffer)
+{
+	if (freelist->gpu_alloc) {
+		return nccl_net_ofi_dealloc_gpu_mr_buffer(buffer, size);
+	} else {
+		return nccl_net_ofi_dealloc_mr_buffer(buffer, size);
+	}
+}
+
 /* note: it is assumed that the lock is either held or not needed when
  * this function is called */
 int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
@@ -232,7 +260,9 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 	   buffers are more likely to be page aligned (or aligned to
 	   their size, as the case may be). */
 	block_mem_size = freelist_buffer_mem_size_full_pages(freelist->entry_size, allocation_count);
-	ret = nccl_net_ofi_alloc_mr_buffer(block_mem_size, (void **)&buffer);
+
+	ret = freelist_buffer_alloc(freelist, block_mem_size, (void **)&buffer);
+
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("freelist extension allocation failed (%d)", ret);
 		return ret;
@@ -319,7 +349,7 @@ error:
 		 * of the same memory via mmap() is invisible to
 		 * ASAN. */
 		nccl_net_ofi_mem_undefined(buffer, block_mem_size);
-		nccl_net_ofi_dealloc_mr_buffer(buffer, block_mem_size);
+		freelist_buffer_dealloc(freelist, block_mem_size, buffer);
 		buffer = NULL;
 	}
 	return ret;

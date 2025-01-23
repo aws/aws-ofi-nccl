@@ -94,6 +94,8 @@ struct nccl_ofi_freelist_t {
 	nccl_ofi_freelist_deregmr_fn deregmr_fn;
 	void *regmr_opaque;
 
+	bool gpu_alloc;
+
 	size_t memcheck_redzone_size;
 
 	pthread_mutex_t lock;
@@ -139,6 +141,7 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
+			      bool gpu_alloc,
 			      size_t entry_alignment,
 			      nccl_ofi_freelist_t **freelist_p);
 

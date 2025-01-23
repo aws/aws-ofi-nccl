@@ -182,6 +182,7 @@ int main(int argc, char *argv[])
 					regmr_simple,
 					deregmr_simple,
 					(void *)0xdeadbeaf,
+					false,
 					1,
 					&freelist);
 	if (ret != ncclSuccess) {
