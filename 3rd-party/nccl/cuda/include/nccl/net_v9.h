@@ -2,10 +2,18 @@
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
  */
 
-#ifndef NCCL_NET_V8_H_
-#define NCCL_NET_V8_H_
+#ifndef NCCL_NET_V9_H_
+#define NCCL_NET_V9_H_
 
 #include "net_device.h"
+
+#define NCCL_NET_MAX_DEVS_PER_NIC_V9 4
+#define NCCL_NET_MAX_DEVS_PER_NIC NCCL_NET_MAX_DEVS_PER_NIC_V9
+typedef struct {
+  int ndevs;
+  int devs[NCCL_NET_MAX_DEVS_PER_NIC_V9];
+} ncclNetVDeviceProps_v9_t;
+typedef ncclNetVDeviceProps_v9_t ncclNetVDeviceProps_t;
 
 typedef struct {
   char* name;                      // Used mostly for logging.
@@ -14,6 +22,7 @@ typedef struct {
                                    // cards with multiple PCI functions (Physical or virtual).
   int ptrSupport;                  // [NCCL_PTR_HOST|NCCL_PTR_CUDA|NCCL_PTR_DMABUF]
   int regIsGlobal;                 // regMr is not tied to a particular comm
+  int forceFlush;                  // Force a flush on receives
   int speed;                       // Port speed in Mbps.
   int port;                        // Port number.
   float latency;                   // Network latency
@@ -21,7 +30,12 @@ typedef struct {
   int maxRecvs;                    // Maximum number of grouped receives.
   ncclNetDeviceType netDeviceType; // Network offload type
   int netDeviceVersion;            // Version number for network offload
-} ncclNetProperties_v8_t;
+  ncclNetVDeviceProps_v9_t vProps;
+  size_t maxP2pBytes;              // Max transfer size for point-to-point operations
+  size_t maxCollBytes;             // Max transfer size for collective operations
+} ncclNetProperties_v9_t;
+
+typedef ncclNetProperties_v9_t ncclNetProperties_t;
 
 typedef struct {
   // Name of the network (mainly for logs)
@@ -31,7 +45,7 @@ typedef struct {
   // Return the number of adapters.
   ncclResult_t (*devices)(int* ndev);
   // Get various device properties.
-  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v8_t* props);
+  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v9_t* props);
   // Create a receiving object and provide a handle to connect to it. The
   // handle can be up to NCCL_NET_HANDLE_MAXSIZE bytes and will be exchanged
   // between ranks to create a connection.
@@ -41,13 +55,13 @@ typedef struct {
   // should return successfully with sendComm == NULL with the expectation that
   // it will be called again until sendComm != NULL.
   // If *sendDevComm points to a valid object, then NCCL is requesting device offload for this connection
-  ncclResult_t (*connect)(int dev, void* handle, void** sendComm, ncclNetDeviceHandle_v8_t** sendDevComm);
+  ncclResult_t (*connect)(int dev, void* handle, void** sendComm, ncclNetDeviceHandle_v9_t** sendDevComm);
   // Finalize connection establishment after remote peer has called connect.
   // This call must not block for the connection to be established, and instead
   // should return successfully with recvComm == NULL with the expectation that
   // it will be called again until recvComm != NULL.
   // If *recvDevComm points to a valid object, then NCCL is requesting device offload for this connection
-  ncclResult_t (*accept)(void* listenComm, void** recvComm, ncclNetDeviceHandle_v8_t** recvDevComm);
+  ncclResult_t (*accept)(void* listenComm, void** recvComm, ncclNetDeviceHandle_v9_t** recvDevComm);
   // Register/Deregister memory. Comm can be either a sendComm or a recvComm.
   // Type is either NCCL_PTR_HOST or NCCL_PTR_CUDA.
   ncclResult_t (*regMr)(void* comm, void* data, size_t size, int type, void** mhandle);
@@ -56,10 +70,10 @@ typedef struct {
   ncclResult_t (*deregMr)(void* comm, void* mhandle);
   // Asynchronous send to a peer.
   // May return request == NULL if the call cannot be performed (or would block)
-  ncclResult_t (*isend)(void* sendComm, void* data, int size, int tag, void* mhandle, void** request);
+  ncclResult_t (*isend)(void* sendComm, void* data, size_t size, int tag, void* mhandle, void** request);
   // Asynchronous recv from a peer.
   // May return request == NULL if the call cannot be performed (or would block)
-  ncclResult_t (*irecv)(void* recvComm, int n, void** data, int* sizes, int* tags, void** mhandles, void** request);
+  ncclResult_t (*irecv)(void* recvComm, int n, void** data, size_t* sizes, int* tags, void** mhandles, void** request);
   // Perform a flush/fence to make sure all data received with NCCL_PTR_CUDA is
   // visible to the GPU
   ncclResult_t (*iflush)(void* recvComm, int n, void** data, int* sizes, void** mhandles, void** request);
@@ -76,6 +90,10 @@ typedef struct {
 
   // Notify the plugin that a recv has completed by the device
   ncclResult_t (*irecvConsumed)(void* recvComm, int n, void* request);
-} ncclNet_v8_t;
+
+  // Virtual NIC APIs. makeVDevice will create a virtual NIC given the specified properties, and tell the caller
+  // what index this new vNIC exists at
+  ncclResult_t (*makeVDevice)(int* d, ncclNetVDeviceProps_t* props);
+} ncclNet_v9_t;
 
 #endif // end include guard
