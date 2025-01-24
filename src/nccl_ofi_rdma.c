@@ -12,6 +12,7 @@
 #include <stdlib.h>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_log.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
@@ -600,13 +601,13 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 {
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)base_dev;
+	nccl_net_ofi_rdma_plugin_t *plugin = rdma_device_get_plugin(device);
 	int dev_id = device->base.dev_id;
 	int ret;
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = device->device_rails[0].info;
-	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
-	nccl_net_ofi_rdma_plugin_t *plugin = rdma_device_get_plugin(device);
+	size_t num_devices = plugin->base.get_num_devices(base_dev->plugin);
 	assert(plugin != NULL);
 
 	ret =  nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
@@ -614,7 +615,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
-		props->port_speed *= device->num_rails;
+		props->port_speed *= plugin->topo->max_group_size;
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
@@ -7595,7 +7596,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo, size_t min_strip_size)
 {
 	int ret = 0;
-	int length = 0;
+	int length = 0, target_length;
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
 	if (device == NULL) {
@@ -7624,6 +7625,60 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 		NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
 			      dev_id, topo->max_group_size, length);
 		goto error;
+	}
+
+	/* allow the user to force the number of rails used by the
+	 * device.  If the target number is smaller than the number of
+	 * rails, just pick the first target_length rails.  If the
+	 * target number is larger than the number of rails, require
+	 * the target number to be a multiple of the actual, so that
+	 * we don't have to make crazy complicated load balancing
+	 * code.  We intentionally order the expanded list of infos
+	 * (ie rails) to be A, B, C, A, B, C rather than A, A, B, B,
+	 * C, C so that the round-robin scheduling mode alternates
+	 * between NICs, rather than sending target_length/length
+	 * messages on the same NIC before moving to the next NIC.
+	 */
+	target_length = ofi_nccl_force_num_rails();
+	if (target_length != 0) {
+		int original_length = length;
+		if (length > target_length) {
+			length = target_length;
+		} else if (target_length % length != 0) {
+			NCCL_OFI_WARN("Number of forced rails (%d) not a multiple of numer of rails (%d)",
+				      (int)target_length, length);
+			goto error;
+		} else if (target_length > length) {
+			struct fi_info *iter = info_list;
+			struct fi_info *new_list = NULL;
+			struct fi_info *prev = NULL;
+			for (int i = 0 ; i < target_length ; i++) {
+				struct fi_info *tmp = fi_dupinfo(iter);
+				if (tmp == NULL) {
+					NCCL_OFI_WARN("Error creating duplicate info");
+					goto error;
+				}
+
+				if (new_list == NULL) {
+					new_list = tmp;
+				} else {
+					prev->next = tmp;
+				}
+				prev = tmp;
+
+                                iter = iter->next;
+				if (iter == NULL) {
+					iter = info_list;
+				}
+			}
+
+                        length = target_length;
+			info_list = new_list;
+		}
+		NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails (originally found %d rails)",
+			      length, original_length);
+	} else {
+		NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails", length);
 	}
 
 	/* Create scheduler */
