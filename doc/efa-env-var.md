@@ -75,6 +75,11 @@ versions of your libfabric.
       can break things.</td>
    </tr>
    <tr>
+      <td><code>`NCCL_SHM_USE_CUDA_MEMCPY=1</code></td>
+      <td>Setting this when you run NCCL on g6/g5. It gives x2 performance in comparison to default memcpy.</td>
+   </tr>
+
+   <tr>
       <td><code>RDMAV_*</code></td>
       <td>Do not use.</td>
    </tr>
