@@ -636,6 +636,12 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
  * function. */
 int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain);
 
+/* wrapper to release all domains and their enpoints of a device.
+ * This is called only during plugin release prior to free all fabric
+ * domain and QPs.
+ */
+int nccl_net_ofi_domain_release_all(nccl_net_ofi_device_t *device);
+
 /**
  * Constructor for a device object
  */
