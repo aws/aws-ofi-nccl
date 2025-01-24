@@ -91,6 +91,8 @@ static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
 	 */
 	props->regIsGlobal = 0;
 
+	props->max_p2p_bytes = NCCL_OFI_MAX_NET_SIZE;
+	props->max_coll_bytes = NCCL_OFI_MAX_NET_SIZE;
 	return ret;
 }
 

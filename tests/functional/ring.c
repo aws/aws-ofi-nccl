@@ -23,7 +23,7 @@ int main(int argc, char *argv[])
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {};
-	ncclNetDeviceHandle_v8_t *s_ignore, *r_ignore;
+	test_nccl_net_device_handle_t *s_ignore, *r_ignore;
 	test_nccl_net_t *extNet = NULL;
 
 	ofi_log_function = logger;
@@ -50,7 +50,8 @@ int main(int argc, char *argv[])
 	/* For grouped receives */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
-	int *sizes = (int *)malloc(sizeof(int)*nrecv);
+	size_t *sizes = (size_t *)malloc(sizeof(size_t) * nrecv);
+	int sizesInt[NCCL_OFI_MAX_RECVS];
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
 	if (sizes == NULL || tags == NULL) {
 		NCCL_OFI_WARN("Failed to allocate memory");
@@ -61,6 +62,7 @@ int main(int argc, char *argv[])
 	for (int recv_n = 0; recv_n < nrecv; recv_n++) {
 		sizes[recv_n] = RECV_SIZE;
 		tags[recv_n] = tag;
+		sizesInt[recv_n] = sizes[recv_n];
 	}
 
 	/* Start up MPI */
@@ -259,7 +261,7 @@ int main(int argc, char *argv[])
 							idx);
 						nccl_net_ofi_req_t *iflush_req = NULL;
 						OFINCCLCHECKGOTO(extNet->iflush((void *)rComm, nrecv,
-										(void **)&recv_buf[idx], sizes,
+										(void **)&recv_buf[idx], sizesInt,
 										&recv_mhandle[idx], (void **)&iflush_req), res, exit);
 						done = 0;
 						if (iflush_req) {
