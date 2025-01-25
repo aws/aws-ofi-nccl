@@ -85,6 +85,8 @@ extern "C" {
  * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in the
  * actual plugin implementations are using int type, thus the max should use
  * INT_MAX
+ * TODO: Update the plugin implementations to use size_t type for sizes.
+ * https://sim.amazon.com/issues/NCCLOFI-1095
  */
 #define NCCL_OFI_MAX_NET_SIZE INT_MAX
 

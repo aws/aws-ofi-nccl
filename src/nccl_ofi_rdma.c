@@ -626,8 +626,12 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	assert(is_max_write_inline_size_initialized);
 	props->max_write_inline_size = max_write_inline_size;
 
-	props->max_p2p_bytes = NCCL_OFI_MAX_NET_SIZE;
-	props->max_coll_bytes = NCCL_OFI_MAX_NET_SIZE;
+    /* 
+     * Actual max tansfer size is the min size between the interface and
+     * libfabric's data transfer layer 
+     */
+	props->max_p2p_bytes = NCCL_OFI_MIN(NCCL_OFI_MAX_NET_SIZE,props->max_p2p_bytes);
+	props->max_coll_bytes = NCCL_OFI_MIN(NCCL_OFI_MAX_NET_SIZE,  props->max_coll_bytes);
 	return ret;
 }
 
