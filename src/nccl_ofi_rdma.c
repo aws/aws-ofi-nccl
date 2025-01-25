@@ -497,7 +497,7 @@ exit:
  * @return	Populated I/O vector, on success
  * @return	0 on success
  *		non-zero on error
- */ 
+ */
 static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
 			   int type, struct fi_mr_attr *mr_attr)
@@ -505,7 +505,7 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 	int ret = 0;
 	mr_attr->access = FI_SEND | FI_RECV;
 
-	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
+	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write)
 	   for RDMA send/recv buffers */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, mr_attr, flags);
@@ -612,7 +612,7 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	ret =  nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
-	 * reails have the same speed. */
+	 * rails have the same speed. */
 	if (ret == 0) {
 		props->port_speed *= device->num_rails;
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
@@ -626,6 +626,12 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	assert(is_max_write_inline_size_initialized);
 	props->max_write_inline_size = max_write_inline_size;
 
+    /* 
+     * Actual max tansfer size is the min size between the interface and
+     * libfabric's data transfer layer 
+     */
+	props->max_p2p_bytes = NCCL_OFI_MIN(NCCL_OFI_MAX_NET_SIZE,props->max_p2p_bytes);
+	props->max_coll_bytes = NCCL_OFI_MIN(NCCL_OFI_MAX_NET_SIZE,  props->max_coll_bytes);
 	return ret;
 }
 
@@ -887,7 +893,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 	int ret = 0;
 	bool segms_received;
-	
+
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Sum up segment sizes */
@@ -898,7 +904,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	/* The arrival of the last segment is treated as a single
 	 * request completion of the parent request */
 	segms_received = req->ncompls == total_nsegms;
-	
+
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
 		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
@@ -913,7 +919,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 		 * unlocking receive segment request after it has been
 		 * freed in `test()` */
 		nccl_net_ofi_mutex_unlock(&req->req_lock);
-		
+
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
 	} else {
@@ -1417,7 +1423,7 @@ exit:
 
 /**
  * @brief	Get request associated with RDMA write immediate data
- * 
+ *
  * @param	ep, to look up r_comm from ID encoded in data
  * @param	data, the immediate data
  */
@@ -2056,7 +2062,7 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 {
 	int ret = 0;
 	nccl_ofi_freelist_elem_t *elem = NULL;
-	
+
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Provided null request for cleanup");

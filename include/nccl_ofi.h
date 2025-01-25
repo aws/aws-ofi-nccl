@@ -81,6 +81,15 @@ extern "C" {
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
+/*
+ * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in the
+ * actual plugin implementations are using int type, thus the max should use
+ * INT_MAX
+ * TODO: Update the plugin implementations to use size_t type for sizes.
+ * https://sim.amazon.com/issues/NCCLOFI-1095
+ */
+#define NCCL_OFI_MAX_NET_SIZE INT_MAX
+
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
 extern enum gdr_support_level_t support_gdr;
@@ -228,6 +237,10 @@ typedef struct nccl_ofi_properties {
 	size_t max_mr_key_size;
 	/** Indicator whether RMA operations of NCCL Net API are supported **/
 	int rma_supported;
+    /**  Max transfer size for point-to-point operations **/
+	size_t max_p2p_bytes;
+    /**  Max transfer size for collective operations **/
+	size_t max_coll_bytes;
 } nccl_ofi_properties_t;
 
 /**
