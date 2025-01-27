@@ -57,10 +57,11 @@
 } while(false);
 
 // Can be changed when porting new versions to the plugin
-#define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v8
+#define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v9
 
-typedef ncclNet_v8_t test_nccl_net_t;
-typedef ncclNetProperties_v8_t test_nccl_properties_t;
+typedef ncclNet_v9_t test_nccl_net_t;
+typedef ncclNetProperties_v9_t test_nccl_properties_t;
+typedef ncclNetDeviceHandle_v9_t test_nccl_net_device_handle_t;
 
 static void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 		   int line, const char *fmt, ...)
