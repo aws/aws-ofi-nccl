@@ -627,6 +627,18 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	assert(is_max_write_inline_size_initialized);
 	props->max_write_inline_size = max_write_inline_size;
 
+	/* 
+	 * Actual max tansfer size is the min size between the interface and
+	 * libfabric's data transfer layer
+	 * 
+	 * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in
+	 * the actual plugin implementations are using int type, thus the max
+	 * max for interface is INT_MAX
+	 * TODO: Update the plugin implementations to use size_t type for sizes and
+	 * use more accurate max value here
+	 */
+	props->max_p2p_bytes = NCCL_OFI_MIN(INT_MAX, props->max_p2p_bytes);
+	props->max_coll_bytes = NCCL_OFI_MIN(INT_MAX, props->max_coll_bytes);
 	return ret;
 }
 
