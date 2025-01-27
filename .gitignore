@@ -78,3 +78,6 @@ m4/lt~obsolete.m4
 .idea/
 .devenv/
 .direnv
+
+.vscode
+install/
