@@ -228,6 +228,10 @@ typedef struct nccl_ofi_properties {
 	size_t max_mr_key_size;
 	/** Indicator whether RMA operations of NCCL Net API are supported **/
 	int rma_supported;
+	/** Max transfer size for point-to-point operations **/
+	size_t max_p2p_bytes;
+	/** Max transfer size for collective operations **/
+	size_t max_coll_bytes;
 } nccl_ofi_properties_t;
 
 /**

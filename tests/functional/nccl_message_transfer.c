@@ -26,7 +26,7 @@ int main(int argc, char* argv[])
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
 	nccl_net_ofi_recv_comm_t *rComm = NULL;
 	test_nccl_net_t *extNet = NULL;
-	ncclNetDeviceHandle_v8_t *s_ignore, *r_ignore;
+	test_nccl_net_device_handle_t *s_ignore, *r_ignore;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 
 	ofi_log_function = logger;
@@ -62,7 +62,8 @@ int main(int argc, char* argv[])
 	/* For grouped recvs */
 	int tag = 1;
 	int nrecv = NCCL_OFI_MAX_RECVS;
-	int *sizes = (int *)malloc(sizeof(int)*nrecv);
+	size_t *sizes = (size_t *)malloc(sizeof(size_t) * nrecv);
+	int sizesInt[nrecv];
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
 	if (sizes == NULL || tags == NULL) {
 		NCCL_OFI_WARN("Failed to allocate memory");
@@ -233,6 +234,7 @@ int main(int argc, char* argv[])
 			for (int recv_n = 0; recv_n < nrecv; recv_n++) {
 				sizes[recv_n] = recv_sizes[szidx];
 				tags[recv_n] = tag;
+				sizesInt[recv_n] = sizes[recv_n];
 			}
 
 			/* Allocate and populate expected buffer */
@@ -317,7 +319,7 @@ int main(int argc, char* argv[])
 							nccl_net_ofi_req_t *iflush_req = NULL;
 							OFINCCLCHECKGOTO(
 								extNet->iflush((void *)rComm, nrecv,
-										(void **)&recv_buf[idx], sizes,
+										(void **)&recv_buf[idx], sizesInt,
 										&mhandle[idx], (void **)&iflush_req),
 								res, exit);
 							done = 0;

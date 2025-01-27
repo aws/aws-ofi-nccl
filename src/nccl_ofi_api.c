@@ -110,6 +110,29 @@ static ncclResult_t nccl_net_ofi_retval_translate_impl(int retval)
 	})
 
 
+/**
+ * @brief Verifies if a message length is within the maximum allowed size
+ *
+ * @return ncclSuccess, if size is valid
+ *         ncclInternalError, if exceeded
+ */
+
+static inline ncclResult_t msg_length_verify_max_size(const size_t *sizes, const size_t len) {
+	if (OFI_UNLIKELY(sizes == NULL)) {
+		NCCL_OFI_WARN("Invalid argument: NULL pointer provided for sizes array");
+		return ncclInvalidArgument;
+	}
+
+	for (size_t i = 0; i < len; i++) {
+		if (OFI_UNLIKELY(sizes[i] > INT_MAX)) {
+			NCCL_OFI_WARN("Message size %zu exceeds maximum allowed size %d at index %zu", sizes[i], INT_MAX, i);
+			return ncclInternalError;
+		}
+	}
+	return ncclSuccess;
+	}
+
+
 static void nccl_net_ofi_fini(void)
 {
 	if (plugin != NULL) {
@@ -689,10 +712,23 @@ ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhan
 	return nccl_net_ofi_retval_translate(ret);
 }
 
+
 ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
 			  void* mhandle, void** request)
 {
 	return nccl_net_ofi_isend(sendComm, data, size, 0, mhandle, request);
+}
+
+
+ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
+				int tag, void* mhandle, void** request)
+{
+	ncclResult_t validation_result = msg_length_verify_max_size(&size, 1);
+	if (validation_result != ncclSuccess) {
+		return check_return(validation_result);
+	}
+
+	return nccl_net_ofi_isend(sendComm, data, (int)size, tag, mhandle, request);
 }
 
 
@@ -742,6 +778,43 @@ ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
 	int tag = 0;
 
 	return nccl_net_ofi_irecv(recvComm, 1, &data, &size, &tag, &mhandle, request);
+}
+
+
+ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
+				size_t* sizes, int* tags, void** mhandles, void** request)
+{
+	if (OFI_UNLIKELY(recvComm == NULL || data == NULL ||
+					sizes == NULL || tags == NULL ||
+					mhandles == NULL || request == NULL)) {
+		NCCL_OFI_WARN("Invalid argument: NULL pointer detected");
+		return check_return(ncclInvalidArgument);
+	}
+
+	if (OFI_UNLIKELY(n <= 0 || n > NCCL_OFI_MAX_RECVS)) {
+		NCCL_OFI_WARN("Invalid number of receives: %d (max: %d)", n, NCCL_OFI_MAX_RECVS);
+		return check_return(ncclInvalidArgument);
+	}
+
+	/* 
+	 * Reset to NULL for now until optional receive completion logic is
+	 * implemented
+	 */
+	if (*request == (void *)NCCL_NET_OPTIONAL_RECV_COMPLETION) {
+		*request = NULL;
+	}
+
+	ncclResult_t validation_result = msg_length_verify_max_size(sizes, n);
+	if (validation_result != ncclSuccess) {
+		return check_return(validation_result);
+	}
+
+	int sizesInt[NCCL_OFI_MAX_RECVS] = {0};
+	for (int i = 0; i < n; i++) {
+		sizesInt[i] = (int)sizes[i];
+	}
+
+	return nccl_net_ofi_irecv(recvComm, n, data, sizesInt, tags, mhandles, request);
 }
 
 
