@@ -78,3 +78,8 @@ m4/lt~obsolete.m4
 .idea/
 .devenv/
 .direnv
+
+result-bin
+result
+.ctags.d
+.tags
