@@ -1,24 +1,33 @@
-*~
+# This project does not keep ignore commands for editor droppings
+# (such as *~ backup files), but instead recommends that you configure
+# your global ignore to suit your editor.  Most recent versions of
+# git will automatically apply $HOME/.config/git/ignore to the list
+# of files to ignore.  If yours doesn't, or you have an odd 
+# XDG_CONFIG_HOME value, you can also override the per-user ignore
+# file with a command like:
+#
+#    git config --global core.excludesFile '~/.config/git/global_ignore'
 
 src/*.o
-src/tuner/*.o
 src/*.lo
 src/*.la
 libnccl-net.so
 tags
+TAGS
 
 src/tuner/.dirstamp
+src/tuner/*.o
 src/tuner/*.lo
 src/tuner/*.la
 
 tests/functional/*.o
-tests/unit/*.o
-tests/unit/*.log
-tests/unit/*.trs
 tests/functional/nccl_connection
 tests/functional/nccl_message_transfer
 tests/functional/ring
 tests/functional/cuda_check
+tests/unit/*.o
+tests/unit/*.log
+tests/unit/*.trs
 tests/unit/msgbuff
 tests/unit/freelist
 tests/unit/deque
@@ -75,6 +84,8 @@ m4/ltsugar.m4
 m4/ltversion.m4
 m4/lt~obsolete.m4
 
+# These pre-date removing editor droppings from our ignore and we're
+# too chicken to remove them.
 .idea/
 .devenv/
 .direnv
