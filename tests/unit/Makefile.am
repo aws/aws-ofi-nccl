@@ -4,6 +4,8 @@
 # See LICENSE.txt for license information
 #
 
+# Please remember to update .gitignore in this directory.
+
 if ENABLE_UNIT_TESTS
 AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
