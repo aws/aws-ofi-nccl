@@ -417,6 +417,9 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 
 	props->dmabuf_support = false;
 
+	props->max_p2p_bytes = nic_prov->ep_attr->max_msg_size;
+	props->max_coll_bytes = nic_prov->ep_attr->max_msg_size;
+
 	/* Should be successful for ptrSupport invocation */
 	return 0;
 }
