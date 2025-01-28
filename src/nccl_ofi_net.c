@@ -310,14 +310,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		      (properties.regIsGlobal == 0) ? "false" : "true");
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
 		      (properties.dmabuf_support == 0) ? "false" : "true");
-	/* Cause release to not actually free the resources, to speed
-	 * up initialization, since the very same resources will be
-	 * recreated by NCCL soon after initialization to do real
-	 * communication.
-	 */
-	base_ep->ref_cnt++;
 	ret = base_ep->release_ep(base_ep);
-	base_ep->ref_cnt--;
 	if (ret != 0) {
 		goto exit;
 	}
