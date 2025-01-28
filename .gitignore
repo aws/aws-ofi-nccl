@@ -1,80 +1,80 @@
-*~
+# As a general rule, unless an ignore rule is relevant to everyone, it does not
+# belong here. If a file in your specific development workflow is not covered,
+# it should be ignored through other means.
+#
+## Globally ignoring (in any repo, not sync'd with others):
+#    $ git config --global core.excludesFile '~/.config/git/ignore'
+#    $ echo "ignore-this-file-in-all-repos" >> ~/.config/git/ignore
+#
+## Per-repository (this repository only, not sync'd with others):
+#    $ echo "ignore-this-file-in-only-this-project" >> .git/info/exclude
+#
+# See https://git-scm.com/docs/gitignore for more info.
 
-src/*.o
-src/tuner/*.o
-src/*.lo
-src/*.la
-libnccl-net.so
-tags
+**/*.la
+**/*.lo
+**/*.log
+**/*.o
+**/*.trs
+**/.dirstamp
+**/stamp-h*
+/build-aux
+/libtool
+**/.libs
+include/config.h*
 
-src/tuner/.dirstamp
-src/tuner/*.lo
-src/tuner/*.la
-
-tests/functional/*.o
-tests/unit/*.o
-tests/unit/*.log
-tests/unit/*.trs
-tests/functional/nccl_connection
-tests/functional/nccl_message_transfer
-tests/functional/ring
-tests/functional/cuda_check
-tests/unit/msgbuff
-tests/unit/freelist
-tests/unit/deque
-tests/unit/scheduler
-tests/unit/idpool
-tests/unit/show_tuner_costs
-tests/unit/ep_addr_list
-tests/unit/mr
-tests/unit/region_based_tuner
-tests/unit/show_tuner_decisions
-tests/unit/aws_platform_mapper
+# Below this line is an unmodified copy of
+# https://github.com/github/gitignore/blob/main/Autotools.gitignore
 
 # http://www.gnu.org/software/automake
-.deps/
+
 Makefile.in
-Makefile
 /ar-lib
 /mdate-sh
 /py-compile
 /test-driver
 /ylwrap
+.deps/
+.dirstamp
 
 # http://www.gnu.org/software/autoconf
-build-aux/
+
 autom4te.cache
 /autoscan.log
 /autoscan-*.log
 /aclocal.m4
 /compile
+/config.cache
 /config.guess
+/config.h.in
 /config.log
 /config.status
 /config.sub
-/config.cache
 /configure
 /configure.scan
 /depcomp
 /install-sh
 /missing
 /stamp-h1
-/include/stamp-h1
-/include/config.h
-/include/config.h.in
 
 # https://www.gnu.org/software/libtool/
+
 /ltmain.sh
-.libs/
-libtool
+
+# http://www.gnu.org/software/texinfo
+
+/texinfo.tex
 
 # http://www.gnu.org/software/m4/
+
 m4/libtool.m4
 m4/ltoptions.m4
 m4/ltsugar.m4
 m4/ltversion.m4
 m4/lt~obsolete.m4
 
-.idea/
-.devenv/
-.direnv
+# Generated Makefile
+# (meta build system like autotools,
+# can automatically generate from config.status script
+# (which is called by configure script))
+Makefile
