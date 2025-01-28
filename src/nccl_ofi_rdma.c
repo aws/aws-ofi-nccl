@@ -5200,6 +5200,12 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 	int dev_id = device->base.dev_id;
 
+	ret = post_rx_buffs(ep);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Error posting rx buffers: %d", ret);
+		return ret;
+	}
+
 	/* Build handle */
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
 	assert(sizeof(handle->ep_name) == sizeof(first_control_rail->local_ep_name));
@@ -6721,6 +6727,12 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		return -EINVAL;
 	}
 
+	ret = post_rx_buffs(ep);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Error posting rx buffers: %d", ret);
+		return ret;
+	}
+
 	/*
 	 * Take appropriate actions based on connection stage of communicator.
 	 *
@@ -7249,13 +7261,6 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 	ret = init_rx_buffers(ep);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Preparation of rx buffers failed");
-		goto error;
-	}
-
-	/* Post all rx buffers */
-	ret = post_rx_buffs(ep);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Posting of rx buffers failed!");
 		goto error;
 	}
 
