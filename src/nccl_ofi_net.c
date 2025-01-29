@@ -878,7 +878,7 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 
 		domain->endpoint = ep;
 
-		NCCL_OFI_TRACE(NCCL_NET, "Eendpoint %p for domain %p is created",
+		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created",
 			       ep, domain);
 	}
 
