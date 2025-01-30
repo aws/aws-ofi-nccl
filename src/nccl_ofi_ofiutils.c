@@ -54,33 +54,22 @@ static int in_list(const char *item, const char *list)
 }
 
 
-/*
- * @brief	Returns true if the given provider matches IPv6 addressing format,
- *		interfaces from tcp_if_exclude_list or multiple memory tag formats.
- *
- * @return 	true, if success
- *		false, otherwise
- */
-static bool match_prov_info(char *name, uint32_t addr_format,
-			    uint64_t mem_tag_format, uint64_t expected_mem_tag_format)
+static bool prov_filter_by_name(struct fi_info *provider, const void *data)
 {
-	const char *tcp_if_exclude_list = ofi_nccl_exclude_tcp_if();
+	const char *list = (const char *)data;
 
-	if (in_list(name, tcp_if_exclude_list)) {
+	return (in_list(provider->fabric_attr->prov_name, list));
+}
+
+
+static bool prov_filter_tcp_interfaces(struct fi_info *provider, const void *data)
+{
+	/* ok if either not TCP or not in the ignored list */
+	/* use strncmp to catch both tcp and tcp;ofi_rxm stacked
+	   providers */
+        if (0 != strncmp(provider->fabric_attr->prov_name, "tcp", strlen("tcp"))) {
 		return true;
-	} else if (!ofi_nccl_use_ipv6_tcp() && (addr_format == FI_SOCKADDR_IN6)) {
-		return true;
-	} else if (mem_tag_format != expected_mem_tag_format) {
-		/* TODO: Remove after https://github.com/ofiwg/libfabric/issues/6126 is fixed */
-		/* RxM utility provider adds `FI_COLLECTIVE` capability
-		 * which ends up duplicating the fi_info structures. That
-		 * is because the size of the supported tag changes when
-		 * `FI_COLLECTIVE` is enabled.
-		 * This happens even when applications do not request for
-		 * this capability in hints.
-		 * For now, we choose one tag format and use that to filter all
-		 * info objects.
-		 */
+	} else if (in_list(provider->domain_attr->name, ofi_nccl_exclude_tcp_if()) == 0) {
 		return true;
 	}
 
@@ -88,70 +77,73 @@ static bool match_prov_info(char *name, uint32_t addr_format,
 }
 
 
-/*
- * @brief	Removes info objects from `info_list` matching
- *		certain criteria for TCP provider.
- *
- * @param	info_list
- *		List of libfabric NIC info
- * @param	num_infos
- *		Number of NICs represented in info_list
- */
-static void filter_tcp_info_list(struct fi_info **info_list, unsigned int *num_infos)
+static bool prov_filter_tcp_addr_type(struct fi_info *provider, const void *data)
 {
-	struct fi_info *prev = NULL, *curr = NULL;
-	struct fi_info *delete_info = NULL;
-	bool delete_prov = false;
-	uint64_t expected_mem_tag_format = 0;
+	/* ok if either not TCP or not in the ignored list */
+	/* use strncmp to catch both tcp and tcp;ofi_rxm stacked
+	   providers */
+	if (0 != strncmp(provider->fabric_attr->prov_name, "tcp", strlen("tcp"))) {
+		return true;
+	} else if (ofi_nccl_use_ipv6_tcp() != 0 || provider->addr_format == FI_SOCKADDR_IN) {
+		return true;
+	}
 
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Removing unnecessary interfaces and address formats for TCP provider");
+	return false;
+}
 
-	assert(info_list != NULL);
-	curr = *info_list;
+
+static bool prov_filter_by_match(struct fi_info *a, const void *data)
+{
+	const struct fi_info *b = (const struct fi_info *)data;
+
+	return (a->caps == b->caps &&
+		a->mode == b->mode &&
+		a->addr_format == b->addr_format &&
+		a->ep_attr->type == b->ep_attr->type &&
+		a->ep_attr->protocol == b->ep_attr->protocol &&
+		a->ep_attr->protocol_version == b->ep_attr->protocol_version &&
+		0 == strcmp(a->fabric_attr->prov_name, b->fabric_attr->prov_name) &&
+		0 == strcmp(a->fabric_attr->name, b->fabric_attr->name));
+}
+
+
+/*
+ * Filter out providers from a provider list based on a specified
+ * criteria operator.  If the operator returns true, the provider is
+ * kept in the list.  Otherwise, it is remove from the list.
+ */
+static int filter_provider_list(struct fi_info **providers,
+				bool (*filter_func)(struct fi_info *provider, const void *data),
+				const void *data)
+{
+	struct fi_info *curr, *last;
+
+	curr = *providers;
+	last = NULL;
 
 	while (curr != NULL) {
-		expected_mem_tag_format = curr->ep_attr->mem_tag_format;
-
-		/* Check if interface name and format matches deletion criteria */
-		delete_prov = match_prov_info(curr->domain_attr->name,
-					      curr->addr_format,
-					      curr->ep_attr->mem_tag_format,
-					      expected_mem_tag_format);
-		if (delete_prov) {
-
-			if (prev != NULL) {
-				prev->next = curr->next;
+		if (filter_func(curr, data)) {
+			last = curr;
+		} else {
+			/* need to filter this one out */
+			if (last == NULL) {
+				*providers = curr->next;
+			} else {
+				/* don't update last in this case,
+				 * because the last one we kept is
+				 * still the last one we kept */
+				last->next = curr->next;
 			}
-			(*num_infos)--;
-
-			delete_info = curr;
-			curr = curr->next;
-
-			/* Delete node matching criteria */
-			delete_info->next = NULL;
-			fi_freeinfo(delete_info);
 		}
-		else {
-			if (prev == NULL) {
-				/*
-				 * Update HEAD of prov_info_list to point to first endpoint which
-				 * can be used for communication.
-				 */
-				*info_list = curr;
-			}
 
-			prev = curr;
-			curr = curr->next;
-		}
+                curr = curr->next;
 	}
 
-	/*
-	 * In case all info objects match the filter criteria,
-	 * update HEAD of prov_info_list to point to NULL.
-	 */
-	if (prev == NULL) {
-		*info_list = prev;
+	if (*providers == NULL) {
+		return -FI_ENODATA;
 	}
+
+	return 	0;
 }
 
 
@@ -162,105 +154,70 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    unsigned int *num_prov_infos)
 {
 	int rc = 0;
-	struct fi_info *providers = NULL, *prov = NULL, *last_prov;
-	char *selected_prov_name = NULL;
+	struct fi_info *providers = NULL, *prov = NULL;
 	assert(num_prov_infos != NULL);
 	*num_prov_infos = 0;
 
 	rc = fi_getinfo(required_version, NULL, NULL, 0ULL, hints, &providers);
-	if (rc != 0)
+	if (rc != 0) {
 		goto error;
-
+	}
 	if (providers == NULL) {
-		goto error;
-	}
-
-	/* Pick a provider name to use.  If there is a prov_include
-	 * provided, use the first provider which matches the list,
-	 * otherwise use the first provider in the list.
-	 */
-	if (prov_include) {
-		prov = providers;
-		while (prov) {
-			if (in_list(prov->fabric_attr->prov_name, prov_include)) {
-				selected_prov_name = prov->fabric_attr->prov_name;
-				break;
-			}
-			prov = prov->next;
-		}
-	} else {
-		selected_prov_name = providers->fabric_attr->prov_name;
-	}
-	if (!selected_prov_name) {
 		rc = -FI_ENODATA;
 		goto error;
 	}
 
-	/* Now remove all providers in the providers list that do not
-	 * match the selected name, and count the ones that do.
+        /* Filter out any providers not in prov_include (if
+         * prov_include is non-NULL).  For example, this is used by
+         * AWS to filter out any non-EFA providers.
 	 */
-	prov = providers;
-	providers = NULL;
-	last_prov = NULL;
-	while (prov != NULL) {
-		struct fi_info *prov_next = prov->next;
-		prov->next = NULL;
-
-		if (strcmp(selected_prov_name, prov->fabric_attr->prov_name) != 0) {
-			/* Not a match. */
-			fi_freeinfo(prov);
-			prov = prov_next;
-			continue;
-		}
-		/* if this is the first matching info, save-off the start of the
-		 * filtered list. */
-		if (providers == NULL) {
-			providers = prov;
-		}
-
-		/* If this is not the first matching info, update previous tail
-		 * of list to point at new tail of list. */
-		if (last_prov != NULL) {
-			last_prov->next = prov;
-		}
-
-		/* update tail of list */
-		last_prov = prov;
-
-		(*num_prov_infos)++;
-		prov = prov_next;
-	}
-
-	/* Potentially, we filtered all providers and never restored `providers`
-	 * to a non-NULL value, so we must check here that providers is non-NULL
-	 * before deref'ing providers->fabric_attr */
-	if (providers == NULL || *num_prov_infos == 0) {
-		return -FI_ENODATA;
-	}
-
-	/* If TCP provider is selected, filter out unnecessary interfaces and address formats */
-	if (strncmp("tcp", providers->fabric_attr->prov_name, strlen("tcp")) == 0) {
-		filter_tcp_info_list(&providers, num_prov_infos);
-		if (providers == NULL) {
-			NCCL_OFI_WARN("No viable endpoint found for TCP provider. Try and relax the filters using OFI_NCCL_USE_IPV6_TCP or OFI_NCCL_EXCLUDE_TCP_IF environment variables");
-			rc = -ENOTSUP;
+	if (prov_include != NULL) {
+		rc = filter_provider_list(&providers, prov_filter_by_name, prov_include);
+		if (rc != 0) {
 			goto error;
 		}
 	}
 
-	*prov_info_list = providers;
-	if (*num_prov_infos == 0) {
-		rc = -FI_ENODATA;
+        /* The TCP provider requires a bit of extra filtering.  Filter
+         * out any devices we should ignore and (if required) also
+         * filter out IPv6 if it is disbaled.
+	 */
+	rc = filter_provider_list(&providers, prov_filter_tcp_interfaces, NULL);
+	if (rc != 0) {
 		goto error;
 	}
 
-	return 0;
+	rc = filter_provider_list(&providers, prov_filter_tcp_addr_type, NULL);
+	if (rc != 0) {
+		goto error;
+	}
+
+	/* Selected provider type is the first one in the list.  Now
+	 * filter to only match those.  This will filter when there
+	 * are multiple info objects for each provider, such as a
+	 * fast path / slow path with an RDMA network. */
+	rc = filter_provider_list(&providers, prov_filter_by_match, providers);
+	if (rc != 0) {
+		goto error;
+	}
+
+	*prov_info_list = providers;
+
+        *num_prov_infos = 0;
+	prov = providers;
+	while (prov != NULL) {
+		(*num_prov_infos)++;
+		prov = prov->next;
+	}
+
+        return 0;
 
  error:
 	if (providers)
 		fi_freeinfo(providers);
 	return rc;
 }
+
 
 int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
