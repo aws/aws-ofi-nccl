@@ -37,9 +37,6 @@ nccl_ofi_mr_cache_t *nccl_ofi_mr_cache_init(size_t init_num_entries,
 		goto error;
 	}
 
-	if (nccl_net_ofi_mutex_init(&ret_cache->lock, NULL)) {
-		goto error;
-	}
 	/*
 	 * System page size isn't reflective of the GDR mappings. We're not trying to map a
 	 * whole page, but just to find an interval that makes an array-based cache manageable.
@@ -70,8 +67,6 @@ void nccl_ofi_mr_cache_finalize(nccl_ofi_mr_cache_t *cache)
 		      "MR cache %d hits %d misses",
 		      cache->hit_count,
 		      cache->miss_count);
-
-	nccl_net_ofi_mutex_destroy(&cache->lock);
 
 	free(cache->slots);
 

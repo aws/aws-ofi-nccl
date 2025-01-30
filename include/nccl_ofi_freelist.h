@@ -95,8 +95,6 @@ struct nccl_ofi_freelist_t {
 	void *regmr_opaque;
 
 	size_t memcheck_redzone_size;
-
-	pthread_mutex_t lock;
 };
 typedef struct nccl_ofi_freelist_t nccl_ofi_freelist_t;
 
@@ -194,13 +192,11 @@ static inline nccl_ofi_freelist_elem_t *nccl_ofi_freelist_entry_alloc
 
 	assert(freelist);
 
-	nccl_net_ofi_mutex_lock(&freelist->lock);
-
 	if (!freelist->entries) {
 		ret = nccl_ofi_freelist_add(freelist, freelist->increase_entry_count);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Could not extend freelist: %d", ret);
-			goto cleanup;
+			return NULL;
 		}
 	}
 
@@ -209,9 +205,6 @@ static inline nccl_ofi_freelist_elem_t *nccl_ofi_freelist_entry_alloc
 
 	freelist->entries = entry->next;
 	nccl_ofi_freelist_entry_set_undefined(freelist, entry->ptr);
-
-cleanup:
-	nccl_net_ofi_mutex_unlock(&freelist->lock);
 
 	return entry;
 }
@@ -231,14 +224,10 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist,
 	assert(freelist);
 	assert(entry);
 
-	nccl_net_ofi_mutex_lock(&freelist->lock);
-
 	entry->next = freelist->entries;
 	freelist->entries = entry;
 
 	nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
-
-	nccl_net_ofi_mutex_unlock(&freelist->lock);
 }
 
 #ifdef __cplusplus
