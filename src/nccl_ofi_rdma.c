@@ -6993,7 +6993,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 		rail_info->tx_attr->tclass = tclass;
 	}
 
-	ret = nccl_ofi_ofiutils_init_connection(dev_rail->info,
+	ret = nccl_ofi_ofiutils_init_connection(rail_info,
 						ep_rail->domain,
 						&ep_rail->ofi_ep,
 						&ep_rail->av,
