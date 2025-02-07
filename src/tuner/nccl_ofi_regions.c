@@ -936,6 +936,13 @@ ncclResult_t region_get_coll_info_internal_v2(nccl_ofi_tuner_context_t *ctx,
 		goto exit;
 	}
 
+	/* Skip when two nodes or lesser because the regions are not well defined and fallback
+	 * to NCCL's internal tunings */
+	if (region_ctx->dims.num_nodes <= 2) {
+		ret = ncclSuccess;
+		goto exit;
+	}
+
 	p.x = (double)nBytes;
 	p.y = (double)region_ctx->dims.num_ranks;
 
@@ -996,6 +1003,13 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 		goto exit;
 	}
 
+	/* Skip when two nodes or lesser because the regions are not well defined and fallback
+	 * to NCCL's internal tunings */
+	if (region_ctx->dims.num_nodes <= 2) {
+		ret = ncclSuccess;
+		goto exit;
+	}
+	
 	p.x = (double)nBytes;
 	p.y = (double)region_ctx->dims.num_ranks;
 
