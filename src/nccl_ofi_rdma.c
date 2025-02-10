@@ -1603,9 +1603,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
 		/* The context for these operations is req.
 		 * except in the FI_REMOTE_WRITE case where is NULL */
-		req = (nccl_net_ofi_rdma_req_t *)cq_entry[comp_idx].op_context;
 		comp_flags = cq_entry[comp_idx].flags;
-		assert(NULL != req || (comp_flags & FI_REMOTE_WRITE));
 
 		/**
 		 * Types of completions:
@@ -1616,113 +1614,120 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 		 * 5. Local-initiated write: send operation, RMA write, or RMA write inline
 		 * 6. READ: flush, eager copy, or RMA read
 		 */
-		if (comp_flags & FI_SEND) {
-			/* Send completions */
-
-			if (req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP) {
-				/* CONN or CONN_RESP send completion */
-				ret = inc_req_completion(req, sizeof(nccl_ofi_rdma_connection_info_t), 1);
-
-			} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
-				/* CTRL message send completion */
-				NCCL_OFI_TRACE_SEND_CTRL_END(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
-				ret = set_send_ctrl_completed(req);
-
-			} else if (req->type == NCCL_OFI_RDMA_SEND) {
-				/* Eager message send completion */
-				NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
-				send_data = get_send_data(req);
-				assert(send_data->eager);
-				ret = inc_req_completion(req, 0, send_data->total_num_compls);
-			} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
-				ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
-			} else {
-				NCCL_OFI_WARN("Send completion from unexpected request type");
-				ret = -EINVAL;
-			}
-		} else if (comp_flags & FI_RECV) {
-			/* Receive completions */
-			ret = handle_rx_buff_recv(device, rail_id, &cq_entry[comp_idx], req,
-						 comp_flags & FI_REMOTE_CQ_DATA);
-
-		} else if (comp_flags & FI_REMOTE_WRITE) {
+		if (comp_flags & FI_REMOTE_WRITE) {
 			/* Remote-initiated write is complete */
 			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
-
-		} else if (comp_flags & FI_WRITE) {
-			switch (req->type) {
-			case NCCL_OFI_RDMA_SEND: {
-				/* Local-initiated write of send operation is complete */
-				NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
-								       req);
-
-				send_data = get_send_data(req);
-				ret = inc_req_completion(req, 0, send_data->total_num_compls);
-				break;
-			}
-			case NCCL_OFI_RDMA_WRITE: {
-				/* Local-initiated RMA write is complete */
-
-				rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
-				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-				break;
-			}
-			case NCCL_OFI_RDMA_READ:
-			case NCCL_OFI_RDMA_RECV:
-			case NCCL_OFI_RDMA_SEND_CTRL:
-			case NCCL_OFI_RDMA_SEND_CLOSE:
-			case NCCL_OFI_RDMA_RECV_SEGMS:
-			case NCCL_OFI_RDMA_EAGER_COPY:
-			case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-			case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-			case NCCL_OFI_RDMA_FLUSH:
-			case NCCL_OFI_RDMA_SEND_CONN:
-			case NCCL_OFI_RDMA_RECV_CONN:
-			case NCCL_OFI_RDMA_RECV_CONN_RESP:
-			case NCCL_OFI_RDMA_SEND_CONN_RESP:
-			case NCCL_OFI_RDMA_INVALID_TYPE:
-			default:
-				NCCL_OFI_WARN("Write complete from unexpected request type!");
-				ret = -EINVAL;
-			}
-		} else if (comp_flags & FI_READ) {
-			switch (req->type) {
-			case NCCL_OFI_RDMA_FLUSH: {
-				/* fi_read flush is complete */
-				ret = handle_flush_comp(req);
-				break;
-			}
-			case NCCL_OFI_RDMA_EAGER_COPY: {
-				ret = set_eager_copy_completed(req);
-				break;
-			}
-			case NCCL_OFI_RDMA_READ: {
-				/* Local-initiated RMA read is complete */
-
-				rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
-				ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-				break;
-			}
-			case NCCL_OFI_RDMA_SEND:
-			case NCCL_OFI_RDMA_WRITE:
-			case NCCL_OFI_RDMA_RECV:
-			case NCCL_OFI_RDMA_SEND_CTRL:
-			case NCCL_OFI_RDMA_SEND_CLOSE:
-			case NCCL_OFI_RDMA_RECV_SEGMS:
-			case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-			case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-			case NCCL_OFI_RDMA_SEND_CONN:
-			case NCCL_OFI_RDMA_RECV_CONN:
-			case NCCL_OFI_RDMA_RECV_CONN_RESP:
-			case NCCL_OFI_RDMA_SEND_CONN_RESP:
-			case NCCL_OFI_RDMA_INVALID_TYPE:
-			default:
-				NCCL_OFI_WARN("Read complete from unexpected request type!");
-				ret = -EINVAL;
-			}
 		} else {
-			NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
-			ret = -EINVAL;
+			req = (nccl_net_ofi_rdma_req_t *)cq_entry[comp_idx].op_context;
+			if (OFI_UNLIKELY(req == NULL)) {
+				NCCL_OFI_WARN("Completion with unexpected NULL op_context");
+				return -EINVAL;
+			}
+
+			if (comp_flags & FI_SEND) {
+				/* Send completions */
+
+				if (req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP) {
+					/* CONN or CONN_RESP send completion */
+					ret = inc_req_completion(req, sizeof(nccl_ofi_rdma_connection_info_t), 1);
+
+				} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
+					/* CTRL message send completion */
+					NCCL_OFI_TRACE_SEND_CTRL_END(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
+					ret = set_send_ctrl_completed(req);
+
+				} else if (req->type == NCCL_OFI_RDMA_SEND) {
+					/* Eager message send completion */
+					NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
+					send_data = get_send_data(req);
+					assert(send_data->eager);
+					ret = inc_req_completion(req, 0, send_data->total_num_compls);
+				} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
+					ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
+				} else {
+					NCCL_OFI_WARN("Send completion from unexpected request type");
+					ret = -EINVAL;
+				}
+			} else if (comp_flags & FI_RECV) {
+				/* Receive completions */
+				ret = handle_rx_buff_recv(device, rail_id, &cq_entry[comp_idx], req,
+							  comp_flags & FI_REMOTE_CQ_DATA);
+
+			} else if (comp_flags & FI_WRITE) {
+				switch (req->type) {
+				case NCCL_OFI_RDMA_SEND: {
+					/* Local-initiated write of send operation is complete */
+					NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
+									       req);
+
+					send_data = get_send_data(req);
+					ret = inc_req_completion(req, 0, send_data->total_num_compls);
+					break;
+				}
+				case NCCL_OFI_RDMA_WRITE: {
+					/* Local-initiated RMA write is complete */
+
+					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
+					break;
+				}
+				case NCCL_OFI_RDMA_READ:
+				case NCCL_OFI_RDMA_RECV:
+				case NCCL_OFI_RDMA_SEND_CTRL:
+				case NCCL_OFI_RDMA_SEND_CLOSE:
+				case NCCL_OFI_RDMA_RECV_SEGMS:
+				case NCCL_OFI_RDMA_EAGER_COPY:
+				case NCCL_OFI_RDMA_CTRL_RX_BUFF:
+				case NCCL_OFI_RDMA_EAGER_RX_BUFF:
+				case NCCL_OFI_RDMA_FLUSH:
+				case NCCL_OFI_RDMA_SEND_CONN:
+				case NCCL_OFI_RDMA_RECV_CONN:
+				case NCCL_OFI_RDMA_RECV_CONN_RESP:
+				case NCCL_OFI_RDMA_SEND_CONN_RESP:
+				case NCCL_OFI_RDMA_INVALID_TYPE:
+				default:
+					NCCL_OFI_WARN("Write complete from unexpected request type!");
+					ret = -EINVAL;
+				}
+			} else if (comp_flags & FI_READ) {
+				switch (req->type) {
+				case NCCL_OFI_RDMA_FLUSH: {
+					/* fi_read flush is complete */
+					ret = handle_flush_comp(req);
+					break;
+				}
+				case NCCL_OFI_RDMA_EAGER_COPY: {
+					ret = set_eager_copy_completed(req);
+					break;
+				}
+				case NCCL_OFI_RDMA_READ: {
+					/* Local-initiated RMA read is complete */
+
+					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
+					break;
+				}
+				case NCCL_OFI_RDMA_SEND:
+				case NCCL_OFI_RDMA_WRITE:
+				case NCCL_OFI_RDMA_RECV:
+				case NCCL_OFI_RDMA_SEND_CTRL:
+				case NCCL_OFI_RDMA_SEND_CLOSE:
+				case NCCL_OFI_RDMA_RECV_SEGMS:
+				case NCCL_OFI_RDMA_CTRL_RX_BUFF:
+				case NCCL_OFI_RDMA_EAGER_RX_BUFF:
+				case NCCL_OFI_RDMA_SEND_CONN:
+				case NCCL_OFI_RDMA_RECV_CONN:
+				case NCCL_OFI_RDMA_RECV_CONN_RESP:
+				case NCCL_OFI_RDMA_SEND_CONN_RESP:
+				case NCCL_OFI_RDMA_INVALID_TYPE:
+				default:
+					NCCL_OFI_WARN("Read complete from unexpected request type!");
+					ret = -EINVAL;
+				}
+			} else {
+				NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
+				ret = -EINVAL;
+			}
 		}
 
 		if (OFI_UNLIKELY(ret != 0)) {
