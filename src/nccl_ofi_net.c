@@ -601,8 +601,10 @@ exit:
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers)
 {
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected Provider is %s (found %d nics)",
-		      selected_provider->fabric_attr->prov_name, num_providers);
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Selected provider is %s, fabric is %s (found %d nics)",
+		      selected_provider->fabric_attr->prov_name,
+		      selected_provider->fabric_attr->name,
+		      num_providers);
 
 	if (strncmp("efa", selected_provider->fabric_attr->prov_name, strlen("efa")) == 0) {
 		if (FI_VERSION_LT(fi_version(), FI_VERSION(1, 22))) {
