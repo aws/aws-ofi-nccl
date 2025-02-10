@@ -361,6 +361,8 @@ typedef struct {
 typedef struct nccl_net_ofi_rdma_req {
 	nccl_net_ofi_req_t base;
 
+	struct fi_context2 ctx[MAX_NUM_RAILS];
+
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
 
