@@ -505,9 +505,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	 * connection establishment */
 	nccl_net_ofi_rdma_req_t *conn_resp_req;
 
-	/* Message struct send connect message and receive connect
-	 * response message */
-	nccl_ofi_rdma_connection_info_t conn_msg;
+	/* free list item containing a nccl_ofi_rdma_connection_info_t */
+	nccl_ofi_freelist_elem_t *conn_msg;
 
 	uint16_t next_msg_seq_num;
 
@@ -624,6 +623,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	bool comm_active;
 
+	/* free list item containing a nccl_ofi_rdma_connection_info_t */
+	nccl_ofi_freelist_elem_t *conn_msg;
+
 	/* Array of `num_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
@@ -649,7 +651,11 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 	nccl_ofi_comm_stage_t stage;
 
 	/* Message struct send connect message and receive connect
-	 * response message */
+	 * response message
+	 *
+	 * TODO: This should really be a list of outstanding connect
+	 * messages to allow multiple connects per listen communicator.
+	 */
 	nccl_ofi_rdma_connection_info_t conn_msg;
 } nccl_net_ofi_rdma_listen_comm_t;
 
@@ -740,6 +746,8 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_ofi_freelist_t *eager_rx_buff_fl;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl;
+	/* Free list for connection messages */
+	nccl_ofi_freelist_t *conn_msg_fl;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers */
