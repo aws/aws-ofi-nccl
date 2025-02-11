@@ -1367,7 +1367,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 		assert((nccl_net_ofi_comm_t *)s_comm == s_comm->conn_resp_req->comm);
 
 		/* Copy connection response message in the communicator */
-		s_comm->conn_msg = *conn_resp_msg;
+		memcpy(s_comm->conn_msg->ptr, conn_resp_msg, sizeof(nccl_ofi_rdma_connection_info_t));
 
 		ret = inc_req_completion(s_comm->conn_resp_req, cq_entry->len, 1);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -2604,7 +2604,7 @@ static int init_send_comm_rails(nccl_net_ofi_rdma_send_comm_t *s_comm,
 static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
 	int ret = 0;
-	nccl_ofi_rdma_connection_info_t *conn_resp = &s_comm->conn_msg;
+	nccl_ofi_rdma_connection_info_t *conn_resp = (nccl_ofi_rdma_connection_info_t *)s_comm->conn_msg->ptr;
 	int dev_id = -1;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
@@ -2667,6 +2667,9 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 	s_comm->conn_resp_req->free(s_comm->conn_resp_req, false);
 	s_comm->conn_resp_req = NULL;
+
+	nccl_ofi_freelist_entry_free(ep->conn_msg_fl, s_comm->conn_msg);
+	s_comm->conn_msg = NULL;
 
 	return ret;
 }
@@ -4761,6 +4764,14 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		}
 	}
 
+	/* Allocate connect message, will be returned after the
+	   connect response send completion */
+	r_comm->conn_msg = nccl_ofi_freelist_entry_alloc(ep->conn_msg_fl);
+	if (r_comm->conn_msg == NULL) {
+		NCCL_OFI_WARN("Failed to allocate conn_msg buffer");
+		return NULL;
+	}
+
 	/* Allocate message buffer */
 	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS);
 	if (!r_comm->msgbuff) {
@@ -4826,12 +4837,12 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
  *		-EiNVAL, on others
  */
 static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
-				      nccl_net_ofi_rdma_listen_comm_t *l_comm,
+			     nccl_net_ofi_rdma_recv_comm_t *r_comm,
 				      int dev_id)
 {
 	int num_rails = ep->num_rails;
 	int num_control_rails = ep->num_control_rails;
-	nccl_ofi_rdma_connection_info_t *conn_resp = &l_comm->conn_msg;
+	nccl_ofi_rdma_connection_info_t *conn_resp = (nccl_ofi_rdma_connection_info_t *)r_comm->conn_msg->ptr;
 	nccl_ofi_rdma_ep_name_t *rdma_ep_name;
 	nccl_net_ofi_ep_rail_t *ep_rail;
 
@@ -4839,6 +4850,12 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
 	assert(num_control_rails <= MAX_NUM_RAILS);
 
 	conn_resp->type = NCCL_OFI_RDMA_MSG_CONN_RESP;
+
+	/* Set r_comm's (local) comm ID to be sent back to remote */
+	conn_resp->local_comm_id = r_comm->local_comm_id;
+
+	/* Send r_comm's remote comm ID */
+	conn_resp->remote_comm_id = r_comm->remote_comm_id;
 
 	/* Set number of rails to be sent back to remote for verification */
 	conn_resp->num_rails = num_rails;
@@ -4889,16 +4906,18 @@ static int prepare_conn_resp(nccl_net_ofi_rdma_ep_t *ep,
  * 		others, on error
  */
 static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-			       nccl_ofi_rdma_connection_info_t *conn_resp,
 			       nccl_net_ofi_rdma_device_t *device,
 			       nccl_net_ofi_rdma_ep_t *ep,
 			       nccl_net_ofi_rdma_req_t *req)
 {
 	ssize_t rc = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, 0);
+	size_t rail_id = 0;
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+	freelist_regmr_fn_handle_t *fl_mr_handle = (freelist_regmr_fn_handle_t *)r_comm->conn_msg->mr_handle;
+	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rail_id]);
 
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
-	rc = fi_send(comm_rail->local_ep, (void *)conn_resp, sizeof(nccl_ofi_rdma_connection_info_t), NULL,
+	rc = fi_send(comm_rail->local_ep, (void *)r_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
 		     comm_rail->remote_addr, req);
 
 	if (rc == -FI_EAGAIN) {
@@ -5077,16 +5096,10 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		prepare_send_conn_resp_req(l_comm);
 
 		/* Initialize connect response message */
-		ret = prepare_conn_resp(ep, l_comm, dev_id);
+		ret = prepare_conn_resp(ep, r_comm, dev_id);
 		if (ret != 0) {
 			goto exit;
 		}
-
-		/* Set r_comm's (local) comm ID to be sent back to remote */
-		conn_msg->local_comm_id = r_comm->local_comm_id;
-
-		/* Send r_comm's remote comm ID */
-		conn_msg->remote_comm_id = r_comm->remote_comm_id;
 
 		l_comm->stage = COMM_SEND_CONN;
 
@@ -5094,7 +5107,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_SEND_CONN:
 
 		/* COMM_SEND_CONN: Send connect response message to remote */
-		ret = post_send_conn_resp(r_comm, conn_msg, device, ep, req);
+		ret = post_send_conn_resp(r_comm, device, ep, req);
 		if (ret == -FI_EAGAIN) {
 			return 0;
 		}
@@ -5125,6 +5138,14 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		if (req_state != NCCL_OFI_RDMA_REQ_COMPLETED) {
 			return 0;
 		}
+
+		/* The free list item was allocated on the ep
+		 * associated with the r_comm (as opposed to the
+		 * l_comm).  ep should point to the recv comm ep at
+		 * this point.
+		 */
+		nccl_ofi_freelist_entry_free(ep->conn_msg_fl, r_comm->conn_msg);
+		r_comm->conn_msg = NULL;
 
 		*recv_comm = &r_comm->base;
 
@@ -6237,6 +6258,18 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
+        ret = nccl_ofi_freelist_init_mr(sizeof(nccl_ofi_rdma_connection_info_t),
+					4, 4, 0,
+					freelist_regmr_host_fn, freelist_deregmr_host_fn,
+					ep, sizeof(void *), &ep->conn_msg_fl);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to init conn_msg freelist");
+		nccl_ofi_freelist_fini(ep->eager_rx_buff_fl);
+		nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
+		nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
+		return ret;
+	}
+
 	/*
 	 * The *_rx_buff_posted limits are used in the progress engine to
 	 * determine if the receive queue is hydrated with sufficient buffers.
@@ -6301,6 +6334,12 @@ static inline int fini_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	ret = nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to fini rx_buff_reqs_fl");
+		return ret;
+	}
+
+	ret = nccl_ofi_freelist_fini(ep->conn_msg_fl);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to fini conn_msg_fl");
 		return ret;
 	}
 
@@ -6566,9 +6605,15 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		goto error;
 	}
 
-	/* Allocate and initialize connect message */
+	/* Allocate connect message, will be returned after send completion */
+	ret_s_comm->conn_msg = nccl_ofi_freelist_entry_alloc(ep->conn_msg_fl);
+	if (ret_s_comm->conn_msg == NULL) {
+		NCCL_OFI_WARN("Failed to allocate conn_msg buffer");
+		return -ENOMEM;
+	}
+
 	prepare_send_connect_message(ep, dev_id, ret_s_comm->local_comm_id, ret_s_comm->remote_comm_id, handle,
-				     &ret_s_comm->conn_msg);
+				     (nccl_ofi_rdma_connection_info_t *)ret_s_comm->conn_msg->ptr);
 
 	/* Allocate message buffer */
 	ret_s_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS);
@@ -6676,14 +6721,17 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 			      nccl_net_ofi_rdma_req_t *req)
 {
 	ssize_t rc = 0;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_control_rail(s_comm, 0);
+	size_t rail_id = 0;
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_control_rail(s_comm, rail_id);
+	freelist_regmr_fn_handle_t *fl_mr_handle = (freelist_regmr_fn_handle_t *)s_comm->conn_msg->mr_handle;
+	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rail_id]);
 
 	/*
 	 * TODO: replace it with API of FI_INJECT type when most of
 	 * providers can support it, so that need for completion check
 	 * can be lifted.
 	 */
-	rc = fi_send(comm_rail->local_ep, (void *)&s_comm->conn_msg, sizeof(nccl_ofi_rdma_connection_info_t), NULL,
+	rc = fi_send(comm_rail->local_ep, (void *)s_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
 		     comm_rail->remote_addr, req);
 
 	if (rc == -FI_EAGAIN) {
