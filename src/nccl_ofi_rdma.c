@@ -7809,7 +7809,7 @@ static void get_hints(struct fi_info *hints)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
-	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
+	hints->domain_attr->mr_mode = FI_MR_HMEM | FI_MR_VIRT_ADDR |
 		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	hints->domain_attr->threading = FI_THREAD_SAFE;

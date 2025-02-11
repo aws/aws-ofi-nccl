@@ -2438,7 +2438,7 @@ error:
 static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 {
 	hints->caps = FI_LOCAL_COMM | FI_REMOTE_COMM | FI_TAGGED | FI_MSG;
-	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_ENDPOINT;
+	hints->domain_attr->mr_mode = FI_MR_ENDPOINT;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 
 	if (req_gdr) {
