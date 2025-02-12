@@ -40,8 +40,9 @@ typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	bool accepted;
 	/* Saves temporary state when creating receive communicator object */
 	save_comm_state_t state;
-	/* Saves peer address information */
-	nccl_ofi_connection_info_t *conn_info;
+
+	/* connecting peer information (nccl_ofi_connection_info_t) */
+	nccl_ofi_freelist_elem_t *conn_info;
 } nccl_net_ofi_sendrecv_listen_comm_t;
 
 typedef struct nccl_net_ofi_sendrecv_send_comm {
@@ -58,7 +59,8 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 	fi_addr_t local_ep_addr;
 	struct fid_ep *local_ep;
 
-	nccl_ofi_connection_info_t *conn_info;
+	/* connecting peer information (nccl_ofi_connection_info_t) */
+	nccl_ofi_freelist_elem_t *conn_info;
 } nccl_net_ofi_sendrecv_send_comm_t;
 
 /* Metadata about dummy flush buffer */
@@ -119,6 +121,9 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 
 	/* Completion Queue handle */
 	struct fid_cq *cq;
+
+	/* free list for control messages */
+	nccl_ofi_freelist_t *conn_msg_fl;
 } nccl_net_ofi_sendrecv_ep_t;
 
 
