@@ -46,14 +46,7 @@ static ncclResult_t nccl_net_ofi_retval_translate_impl(int retval)
 		return ncclInternalError;
 		break;
 	case -EMSGSIZE:
-		/*
-		 * TODO: Per ext-net docs, this aligns with ncclInvalidUsage,
-		 * which is also defined in NCCL source, but for some reason
-		 * that error type is not available in err.h that we pull from
-		 * ext-net headers upstream. This needs to be fixed once the
-		 * ext-net header gets fixed to include ncclInvalidUsage.
-		 */
-		return ncclInvalidArgument;
+		return ncclInvalidUsage;
 		break;
 	case -ECONNABORTED:
 	case -ECONNRESET:
