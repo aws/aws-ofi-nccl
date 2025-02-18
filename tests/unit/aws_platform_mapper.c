@@ -49,7 +49,7 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "trn1.2xlarge", "trn1");
 	ret += check_value(platform_data_list, len, "trn2.48xlarge", "trn2");
 	ret += check_value(platform_data_list, len, "trn2u.48xlarge", "trn2");
-	ret += check_value(platform_data_list, len, "inf2.48xlarge", NULL);
+	ret += check_value(platform_data_list, len, "inf2.48xlarge", "inf");
 	ret += check_value(platform_data_list, len, "p3.2xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.8xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.16xlarge", NULL);
