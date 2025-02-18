@@ -1618,20 +1618,11 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 			/* Remote-initiated write is complete */
 			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
 		} else {
-			struct fi_context2 *ctx = (struct fi_context2 *)cq_entry[comp_idx].op_context;
-			if (OFI_UNLIKELY(ctx == NULL)) {
+			req = (nccl_net_ofi_rdma_req_t *)cq_entry[comp_idx].op_context;
+			if (OFI_UNLIKELY(req == NULL)) {
 				NCCL_OFI_WARN("Completion with unexpected NULL op_context");
 				return -EINVAL;
 			}
-                        /* To find the request, we need to find the
-			 * start of the context array.  Since the
-			 * sender will always use its rail_id for the
-			 * ctx array index, we can do the same.
-			 */
-			ctx -= rail_id;
-			req = container_of(ctx,
-					   nccl_net_ofi_rdma_req_t,
-					   ctx);
 
 			if (comp_flags & FI_SEND) {
 				/* Send completions */
@@ -1831,8 +1822,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 {
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	int rail_id = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, 0);
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -1840,7 +1830,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 		      rma_op_data->buff_len, rma_op_data->desc,
 		      comm_rail->remote_addr,
 		      rma_op_data->remote_buff,
-		     rma_op_data->remote_mr_key, (void *)&req->ctx[rail_id]);
+		      rma_op_data->remote_mr_key, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_read failed; RC: %zd, Error: %s",
@@ -4928,7 +4918,7 @@ static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 	rc = fi_send(comm_rail->local_ep, (void *)r_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
-		     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+		     comm_rail->remote_addr, req);
 
 	if (rc == -FI_EAGAIN) {
 		req->state = NCCL_OFI_RDMA_REQ_CREATED;
@@ -5456,8 +5446,7 @@ static int insert_rdma_send_req_into_msgbuff(nccl_net_ofi_rdma_send_comm_t *s_co
 static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
-	size_t rail_id = 0;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, rail_id);
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, 0);
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -5481,7 +5470,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 	msg.addr = comm_rail->remote_addr;
 	msg.rma_iov = &rma_iov;
 	msg.rma_iov_count = 1;
-	msg.context = (void *)&req->ctx[rail_id];
+	msg.context = req;
 	msg.data = 0;
 
 	/* Post the message using fi_writemsg with FI_INJECT */
@@ -5511,7 +5500,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 				xfer_info->msg_size, desc, send_data->wdata,
 				comm_rail->remote_addr,
 				send_data->remote_buff + xfer_info->offset,
-			  send_data->remote_mr_key[rail_id], (void *)&req->ctx[rail_id]);
+				send_data->remote_mr_key[rail_id], req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_writedata failed; RC: %zd, Error: %s",
@@ -5536,7 +5525,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	ssize_t rc;
 	/* Post eager send */
 	rc = fi_senddata(comm_rail->local_ep, (void*)(((uintptr_t)send_data->buff) + xfer_info->offset), xfer_info->msg_size, desc,
-			 send_data->wdata, comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+			 send_data->wdata, comm_rail->remote_addr, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_senddata failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
@@ -5579,7 +5568,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 	msg.desc = &desc;
 	msg.iov_count = 1;
 	msg.addr = FI_ADDR_UNSPEC;
-	msg.context = (void *)&req->ctx[ep_rail->rail_id];
+	msg.context = req;
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep, &msg, flags);
@@ -5687,7 +5676,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
 			desc,
-			     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+			comm_rail->remote_addr, req);
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA %s request. RC: %zd, Error: %s",
 			      nccl_net_ofi_req_str(req), rc, fi_strerror(-rc));
@@ -5789,7 +5778,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->dst_buff,
 			     rx_buff_data->recv_len, desc, comm_rail->local_addr,
-			     (uint64_t)rx_buff, rx_key, (void *)&req->ctx[rx_rail_id]);
+			     (uint64_t)rx_buff, rx_key, req);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
@@ -5834,7 +5823,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 			     (void *)host_buff_addr,
 			     f_buff->size, desc, comm_rail->local_addr,
 			     (uint64_t)(virt_addr_mr ? flush_data->data : 0),
-			     cuda_key, (void *)&req->ctx[rail_id]);
+			     cuda_key, req);
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
 			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
 				      rc, fi_strerror(-rc));
@@ -6743,7 +6732,7 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	 * can be lifted.
 	 */
 	rc = fi_send(comm_rail->local_ep, (void *)s_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
-		     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+		     comm_rail->remote_addr, req);
 
 	if (rc == -FI_EAGAIN) {
 		/*
@@ -7869,7 +7858,7 @@ static void get_hints(struct fi_info *hints)
 	 * the NCCL level.  */
 	hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
 
-	hints->mode = FI_CONTEXT | FI_CONTEXT2;
+	hints->mode = 0;
 
 	hints->ep_attr->type = FI_EP_RDM;
 
