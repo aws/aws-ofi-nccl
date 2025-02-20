@@ -6258,7 +6258,11 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
+	/* Set the eager freelist buffer size to at least the maximum of EAGER_RX_BUFFER_ALIGNMENT
+	* and eager_rx_buff_size. This ensures the freelist maintains a minimum size equal to
+	* EAGER_RX_BUFFER_ALIGNMENT even when OFI_NCCL_EAGER_MAX_SIZE is set to 0.
+	*/
+	ret = nccl_ofi_freelist_init_mr(NCCL_OFI_MAX(EAGER_RX_BUFFER_ALIGNMENT, ep->eager_rx_buff_size),
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					ep, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
