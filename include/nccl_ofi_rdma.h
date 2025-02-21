@@ -752,8 +752,19 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_ofi_freelist_t *conn_msg_fl;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
-	/* Size of eager rx buffers */
-	size_t eager_rx_buff_size;
+	/* Size of eager rx buffers.  Will be -1 if eager is entirely
+	 * disabled. */
+	ssize_t eager_rx_buff_size;
+	/* max size of eager messages.  This is only separate from
+	 * eager_rx_buff_size because the EFA provider incorrectly throws an
+	 * EINVAL when posting 0 byte rx buffers.  To work around that,
+	 * eager_rx_buff_size will either be -1 or positive (but not zero) and
+	 * eager_send_size is the comparison that should be used for deciding
+	 * whether a message is eligible for eager.  eager_send_size will never
+	 * be larger than eager_rx_buff_size.  Will be -1 if eager is entirely
+	 * disabled.
+	 */
+	ssize_t eager_send_size;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
