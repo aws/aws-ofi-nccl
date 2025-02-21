@@ -68,6 +68,15 @@ static int freelist_init_internal(size_t entry_size,
 
 	freelist->memcheck_redzone_size = NCCL_OFI_ROUND_UP(MEMCHECK_REDZONE_SIZE, entry_alignment);
 
+        /* The rest of the freelist code doesn't deal well with a 0 byte entry
+         * so increase to 8 bytes in that case rather than adding a bunch of
+	 * special cases for size == 0 in the rest of the code.  This happens
+         * before the bump-up for entry alignment and redzone checking, which
+         * may further increase the size.
+	 */
+        if (entry_size == 0) {
+		entry_size = 8;
+	}
 	freelist->entry_size = NCCL_OFI_ROUND_UP(entry_size,
 		NCCL_OFI_MAX(entry_alignment, NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY)));
 	freelist->entry_size += freelist->memcheck_redzone_size;
