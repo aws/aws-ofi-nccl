@@ -319,7 +319,7 @@ OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
  * Eager message size limit when using RDMA protocol. Message sizes greater than
  * this limit will always be sent using RDMA write instead of eagerly.
  */
-OFI_NCCL_PARAM_UINT(eager_max_size, "EAGER_MAX_SIZE", 8192);
+OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
 
 /*
  * Decide whether or not mutexes should default to errorcheck mode.
