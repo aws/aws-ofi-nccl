@@ -93,9 +93,6 @@
 
 /** Global variables **/
 
-/* Maximum size of an eager message (see OFI_NCCL_EAGER_MAX_SIZE) */
-static size_t eager_max_size = 0;
-
 /* List of comms undergoing deferred cleanup */
 static nccl_ofi_deque_t *s_comm_cleanup_list = NULL;
 static nccl_ofi_deque_t *r_comm_cleanup_list = NULL;
@@ -2322,6 +2319,9 @@ static inline int eager_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
 	assert(!dec_inflight_reqs);
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+
+	assert(ep->eager_rx_buff_size > 0);
+
 	/* Free buffer */
 	if (rx_buff_data->rx_buff_fl_elem) {
 		nccl_ofi_freelist_entry_free(ep->eager_rx_buff_fl, rx_buff_data->rx_buff_fl_elem);
@@ -2334,6 +2334,8 @@ static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma
 {
 	nccl_net_ofi_rdma_req_t *req = allocate_req(ep->rx_buff_reqs_fl);
 	if (!req) return NULL;
+
+	assert(ep->eager_rx_buff_size > 0);
 
 	req->comm = NULL;
 	req->type = NCCL_OFI_RDMA_EAGER_RX_BUFF;
@@ -5556,7 +5558,9 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 	/* Reset memcheck guards of rx buffer freelist entry to
 	 * accessible but undefined to cover cases where the buffer
 	 * gets re-posted */
- 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+	assert(req->type != NCCL_OFI_RDMA_EAGER_RX_BUFF || ep->eager_rx_buff_size > 0);
+
 	nccl_ofi_freelist_t *fl = (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF ?
 		ep->eager_rx_buff_fl : ep->ctrl_rx_buff_fl);
 	nccl_ofi_freelist_entry_set_undefined(fl, rx_buff_fl_elem->ptr);
@@ -5999,7 +6003,7 @@ retry:
 
 	/* Determine if this should be sent eagerly. */
 	eager = false;
-	if ((!have_ctrl && (size_t)size <= eager_max_size && s_comm->num_inflight_writes == 0) || (size == 0)) {
+	if (!have_ctrl && (ssize_t)size <= ep->eager_send_size && s_comm->num_inflight_writes == 0) {
 		eager = true;
 	}
 
@@ -6247,19 +6251,19 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
-	/* Set the eager freelist buffer size to at least the maximum of EAGER_RX_BUFFER_ALIGNMENT
-	* and eager_rx_buff_size. This ensures the freelist maintains a minimum size equal to
-	* EAGER_RX_BUFFER_ALIGNMENT even when OFI_NCCL_EAGER_MAX_SIZE is set to 0.
-	*/
-	ret = nccl_ofi_freelist_init_mr(NCCL_OFI_MAX(EAGER_RX_BUFFER_ALIGNMENT, ep->eager_rx_buff_size),
-					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
-					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					ep, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
-		nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
-		nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
-		return ret;
+	if (ep->eager_rx_buff_size > 0) {
+		ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
+						ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+						freelist_regmr_host_fn, freelist_deregmr_host_fn,
+						ep, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
+			nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
+			nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
+			return ret;
+		}
+	} else {
+		ep->eager_rx_buff_fl = NULL;
 	}
 
         ret = nccl_ofi_freelist_init_mr(sizeof(nccl_ofi_rdma_connection_info_t),
@@ -6268,7 +6272,9 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 					ep, sizeof(void *), &ep->conn_msg_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init conn_msg freelist");
-		nccl_ofi_freelist_fini(ep->eager_rx_buff_fl);
+		if (ep->eager_rx_buff_fl != NULL) {
+			nccl_ofi_freelist_fini(ep->eager_rx_buff_fl);
+		}
 		nccl_ofi_freelist_fini(ep->ctrl_rx_buff_fl);
 		nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
 		return ret;
@@ -6295,12 +6301,17 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	for (int rail_id = 0; rail_id < ep->num_rails; ++rail_id) {
 		rail = rdma_endpoint_get_rail(ep, rail_id);
-		rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
-		);
-		rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
-		);
+		if (ep->eager_rx_buff_size >= 0) {
+			rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
+				ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
+				);
+			rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
+				ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
+				);
+		} else {
+			rail->min_rx_buff_posted = 0;
+			rail->max_rx_buff_posted = 0;
+		}
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = eager_rx_buff_req_alloc;
@@ -6329,10 +6340,12 @@ static inline int fini_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		return ret;
 	}
 
-	ret = nccl_ofi_freelist_fini(ep->eager_rx_buff_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to fini eager_rx_buff_fl");
-		return ret;
+	if (ep->eager_rx_buff_fl != NULL) {
+		ret = nccl_ofi_freelist_fini(ep->eager_rx_buff_fl);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to fini eager_rx_buff_fl");
+			return ret;
+		}
 	}
 
 	ret = nccl_ofi_freelist_fini(ep->rx_buff_reqs_fl);
@@ -7326,7 +7339,12 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
 			     NCCL_OFI_MAX(sizeof(nccl_ofi_rdma_connection_info_t),
 					  sizeof(nccl_net_ofi_rdma_close_msg_t)));
-	ep->eager_rx_buff_size = eager_max_size;
+	ep->eager_send_size = ofi_nccl_eager_max_size();
+	/* Work around EFA provider bug around posting 0 byte rx buffers by not
+	   posting 0 byte rx buffers.  Note that if eager_send_size is -1
+	   (disabled), eager_rx_buff_size will also be -1. */
+	ep->eager_rx_buff_size = (ep->eager_send_size == 0) ?
+		EAGER_RX_BUFFER_ALIGNMENT : ep->eager_send_size;
 
 	ep->is_endpoint_per_communicator_ep = false;
 
@@ -8080,12 +8098,11 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (ofi_nccl_eager_max_size() > ofi_nccl_min_stripe_size()) {
+	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
 		goto error;
 	}
-	eager_max_size = (size_t) ofi_nccl_eager_max_size();
 
 	/* Create NCCL OFI topology */
 	topo = nccl_ofi_topo_create(provider_list);
