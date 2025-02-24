@@ -3713,25 +3713,19 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_domain_t *domain, int dev_
 	/* make sure flush destination address does not overflow beyond host buffer */
 	assert(((cpu_cache_line_size * domain->num_rails) + flush_buff->size) <= system_page_size);
 
-	/* Check if provider requires registration of local buffers */
-	if (local_mr == true) {
-		/* Register flush dummy buffer for provider access */
-		ret = reg_internal_mr(domain, flush_buff->host_buffer, system_page_size,
-			  NCCL_PTR_HOST, &mr_handle);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-				      dev_id);
-			rc = nccl_net_ofi_dealloc_mr_buffer(flush_buff->host_buffer,
-							    system_page_size);
-			if (rc != 0) {
-				NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
-					      rc);
-			}
-			flush_buff->host_buffer = MAP_FAILED;
+	/* Register flush dummy buffer for provider access */
+	ret = reg_internal_mr(domain, flush_buff->host_buffer, system_page_size,
+			      NCCL_PTR_HOST, &mr_handle);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
+			      dev_id);
+		rc = nccl_net_ofi_dealloc_mr_buffer(flush_buff->host_buffer,
+						    system_page_size);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
+				      rc);
 		}
-	} else {
-		NCCL_OFI_TRACE(NCCL_NET,
-			       "Skip registering host buffer. local_mr: %d", local_mr);
+		flush_buff->host_buffer = MAP_FAILED;
 	}
 
 	flush_buff->mr_handle = mr_handle;
