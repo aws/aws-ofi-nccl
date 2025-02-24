@@ -539,17 +539,6 @@ static inline struct fid_domain* sendrecv_endpoint_get_ofi_domain(nccl_net_ofi_s
 }
 
 /*
- * @brief	Returns whether the registration of local buffers is not required by
- *		the provider.
- *
- * @return	true if registration is not required; otherwise, false
- */
-
-static bool sendrecv_mr_buffer_skip_local_registration(int type) {
-	return (local_mr != true) && (type == NCCL_PTR_HOST);
-}
-
-/*
  * @brief	Registers memory region (both HOST and CUDA)
  *
  * @return	OFI memory handle for data transfer operations
@@ -567,18 +556,6 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
-
-	/* Check if provider requires registration of local buffers */
-	if (sendrecv_mr_buffer_skip_local_registration(type)) {
-		NCCL_OFI_TRACE(NCCL_NET,
-			       "Skip registering host buffer. local_mr: %d", local_mr);
-		/* the mr handle will still be threaded through NCCL,
-		 * so we still need some sentinal to tell us not to try
-		 * and use the registration.  NULL is as good as any.
-		 */
-		*mr_handle = NULL;
-		goto exit;
-	}
 
 	mr_attr.access = FI_SEND | FI_RECV;
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, &mr_attr, &regattr_flags);
@@ -822,11 +799,6 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
 	void *ret_handle = NULL;
 
-	if (sendrecv_mr_buffer_skip_local_registration(type)) {
-		/* Registraton and caching are unnecessary */
-		goto exit;
-	}
-
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -870,7 +842,7 @@ unlock:
 	if (mr_cache) {
 		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 	}
-exit:
+
 	*mhandle = ret_handle;
 	return ret;
 }
