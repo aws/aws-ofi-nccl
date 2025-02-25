@@ -503,7 +503,7 @@ static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 	ssize_t rc = 0;
 	int ret = 0;
 	int dev_id = l_comm->base.base.dev_id;
-	void *desc = fi_mr_desc(mr);
+	void *desc = mr ? fi_mr_desc(mr) : NULL;
 
 	/* Post a buffer for receiving connection requests */
 	rc = fi_trecv(l_comm->local_ep, buffer, size,
@@ -2086,7 +2086,8 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 	ssize_t rc = 0;
 	uint64_t max_tag = device->max_tag;
 	nccl_ofi_connection_info_t *conn_info = (nccl_ofi_connection_info_t *)s_comm->conn_info->ptr;
-	void *desc = fi_mr_desc(((sendrecv_freelist_regmr_handle_t *)s_comm->conn_info->mr_handle)->mr_handle);
+	struct fid_mr *mr_handle = ((sendrecv_freelist_regmr_handle_t *)s_comm->conn_info->mr_handle)->mr_handle;
+	void *desc = mr_handle ? fi_mr_desc(mr_handle) : NULL;
 
 	/* If connecting to self, pass along the send req so that the
 	   accept side can clean up the request */
