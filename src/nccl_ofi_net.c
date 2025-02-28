@@ -50,8 +50,6 @@ int nic_dup_conns = 0;
    read in the polling loop without protection of a lock. */
 size_t cq_read_count = 1;
 
-/* Indicates if memory registration of local buffers is required */
-bool local_mr = false;
 /* Indicates if endpoint memory registration is required */
 bool endpoint_mr = false;
 
@@ -611,17 +609,6 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 			NCCL_OFI_WARN("EFA provider requires at least libfabric version 1.22.0.");
 			return -ENOTSUP;
 		}
-	}
-
-	/* Check if provider requires local memory registration */
-	if (selected_provider->domain_attr->mr_mode & FI_MR_LOCAL) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s requires registration of local memory buffers",
-			       selected_provider->fabric_attr->prov_name);
-		local_mr = true;
-	} else {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require registration of local memory buffers",
-			       selected_provider->fabric_attr->prov_name);
-		local_mr = false;
 	}
 
 	/* Check if provider uses remote virtual addressing */

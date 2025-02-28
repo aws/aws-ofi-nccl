@@ -103,9 +103,6 @@ extern int nic_dup_conns;
    read in the polling loop without protection of a lock. */
 extern size_t cq_read_count;
 
-/* Indicates if memory registration of local buffers is required */
-extern bool local_mr;
-
 /* Indicates if endpoint memory registration is required */
 extern bool endpoint_mr;
 
@@ -745,7 +742,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
  * @return      0 (Success)
  *
  * Set required behavior flags (and print debugging information) for
- * local_mr, virt_addr_mr, and endpoint_mr.
+ * virt_addr_mr, and endpoint_mr.
  */
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
