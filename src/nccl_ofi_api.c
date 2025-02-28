@@ -789,14 +789,6 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 		return check_return(ncclInvalidArgument);
 	}
 
-	/* 
-	 * Reset to NULL for now until optional receive completion logic is
-	 * implemented
-	 */
-	if (*request == (void *)NCCL_NET_OPTIONAL_RECV_COMPLETION) {
-		*request = NULL;
-	}
-
 	ncclResult_t validation_result = msg_length_verify_max_size(sizes, n);
 	if (validation_result != ncclSuccess) {
 		return check_return(validation_result);
