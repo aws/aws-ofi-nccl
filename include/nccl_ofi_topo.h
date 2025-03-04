@@ -9,7 +9,6 @@
 extern "C" {
 #endif
 
-#include <stdbool.h>
 #include <hwloc.h>
 #include <rdma/fabric.h>
 

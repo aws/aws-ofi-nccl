@@ -13,7 +13,6 @@ extern "C" {
 #include <errno.h>
 #include <pthread.h>
 #include <string.h>
-#include <stdbool.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"

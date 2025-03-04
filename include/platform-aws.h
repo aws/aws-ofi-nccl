@@ -10,8 +10,6 @@
 #ifndef PLATFORM_AWS_H_
 #define PLATFORM_AWS_H_
 
-#include <stdbool.h>
-
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -10,8 +10,6 @@
 extern "C" {
 #endif
 
-#include <stdbool.h>
-
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>

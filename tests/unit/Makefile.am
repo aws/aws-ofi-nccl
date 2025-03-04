@@ -32,19 +32,19 @@ if WANT_PLATFORM_AWS
   AM_CPPFLAGS += $(CUDA_CPPFLAGS)
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += region_based_tuner
-  region_based_tuner_SOURCES = region_based_tuner.c
+  region_based_tuner_SOURCES = region_based_tuner.cpp
   region_based_tuner_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
 endif
 endif
 
-idpool_SOURCES = idpool.c
-deque_SOURCES = deque.c
-freelist_SOURCES = freelist.c
-msgbuff_SOURCES = msgbuff.c
-scheduler_SOURCES = scheduler.c
-ep_addr_list_SOURCES = ep_addr_list.c
-mr_SOURCES = mr.c
-aws_platform_mapper_SOURCES = aws_platform_mapper.c
+idpool_SOURCES = idpool.cpp
+deque_SOURCES = deque.cpp
+freelist_SOURCES = freelist.cpp
+msgbuff_SOURCES = msgbuff.cpp
+scheduler_SOURCES = scheduler.cpp
+ep_addr_list_SOURCES = ep_addr_list.cpp
+mr_SOURCES = mr.cpp
+aws_platform_mapper_SOURCES = aws_platform_mapper.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif

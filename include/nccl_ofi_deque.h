@@ -12,7 +12,6 @@ extern "C" {
 
 #include <assert.h>
 #include <pthread.h>
-#include <stdbool.h>
 
 #include "nccl_ofi_pthread.h"
 
