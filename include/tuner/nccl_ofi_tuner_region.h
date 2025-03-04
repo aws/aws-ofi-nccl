@@ -5,7 +5,6 @@
 #ifndef NCCL_OFI_TUNER_REGION_H_
 #define NCCL_OFI_TUNER_REGION_H_
 
-#include <stdbool.h>
 #include <stddef.h>
 #include "tuner/nccl_ofi_tuner_common.h"
 

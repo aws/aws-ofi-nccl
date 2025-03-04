@@ -10,7 +10,6 @@ extern "C" {
 #endif
 
 #include <pthread.h>
-#include <stdbool.h>
 #include <stdint.h>
 
 /**

@@ -13,7 +13,6 @@ extern "C" {
 
 #include <assert.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/uio.h>

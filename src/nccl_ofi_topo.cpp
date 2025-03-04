@@ -4,7 +4,6 @@
 
 #include "config.h"
 
-#include <stdbool.h>
 #include <string.h>
 #include <hwloc.h>
 #include <rdma/fabric.h>

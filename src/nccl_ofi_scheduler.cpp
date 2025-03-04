@@ -7,7 +7,6 @@
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
-#include <stdbool.h>
 
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_math.h"

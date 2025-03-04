@@ -5,7 +5,6 @@
 #include "config.h"
 
 #include <errno.h>
-#include <stdbool.h>
 #include <stdio.h>
 #include <sys/utsname.h>
 
