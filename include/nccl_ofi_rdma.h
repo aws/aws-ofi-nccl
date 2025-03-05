@@ -4,11 +4,6 @@
 
 #ifndef NCCL_OFI_RDMA_H_
 #define NCCL_OFI_RDMA_H_
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "config.h"
 
 #include <rdma/fabric.h>
@@ -132,6 +127,7 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
 	/* Array of size `num_rails' */
 	struct fid_mr **mr;
 } nccl_net_ofi_rdma_mr_handle_t;
+
 
 /* Contents of ctrl message sent from receiver to sender to advertise
    destination buffer */
@@ -876,9 +872,5 @@ typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
 int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
 			   bool *found_multi_rail);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_RDMA_H_

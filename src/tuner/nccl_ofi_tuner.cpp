@@ -172,7 +172,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 	return ret;
 }
 
-const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
+extern "C" const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info,
 					   .destroy = nccl_ofi_tuner_destroy};
@@ -202,7 +202,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	return ret;
 }
 
-const ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
+extern "C" const ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v2,
 					   .destroy = nccl_ofi_tuner_destroy};
@@ -274,7 +274,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(
 					    nChannels);
 }
 
-const ncclTuner_v1_t ncclTunerPlugin_v1 = {.name = "nccl_ofi_tuner",
+extern "C" const ncclTuner_v1_t ncclTunerPlugin_v1 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init_v1,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v1,
 					   .destroy = nccl_ofi_tuner_destroy_v1};

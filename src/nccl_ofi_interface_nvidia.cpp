@@ -7,6 +7,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
+
 static ncclResult_t getProperties_v9(int dev_id, ncclNetProperties_v9_t* props)
 {
 	nccl_ofi_properties_t ofi_properties;
@@ -233,6 +234,8 @@ static ncclResult_t accept_v7(void* listenComm, void** recvComm,
 }
 
 
+extern "C" {
+
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v2_t ncclNetPlugin_v2 = {
 	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
@@ -396,6 +399,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .irecvConsumed = NULL,
         .makeVDevice = NULL,
 };
+
+} /* extern "C" */
 
 
 /*

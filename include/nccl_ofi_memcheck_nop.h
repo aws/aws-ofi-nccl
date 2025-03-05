@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_MEMCHECK_NOP_H
 #define NCCL_OFI_MEMCHECK_NOP_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /**
  * @file This module provides empty implementations of the interface
  * for providing hints about the expected state of a memory region.
@@ -43,9 +39,5 @@ static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size
 static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_t size)
 {
 }
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_MEMCHECK_NOP_H

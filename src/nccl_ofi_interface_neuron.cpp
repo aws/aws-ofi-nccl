@@ -83,6 +83,9 @@ static ncclResult_t accept_v5(void* listenComm, void** recvComm)
 	return nccl_net_ofi_accept(listenComm, recvComm);
 }
 
+
+extern "C" {
+
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init,
@@ -147,3 +150,5 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
 	.closeRecv = nccl_net_ofi_closeRecv,
 	.closeListen = nccl_net_ofi_closeListen,
 };
+
+} /* extern "C" */

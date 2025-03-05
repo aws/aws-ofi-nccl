@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_MATH_H_
 #define NCCL_OFI_MATH_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <assert.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -64,9 +60,5 @@ extern "C" {
  *		Must be a power of two
  */
 #define NCCL_OFI_ROUND_UP(x, y) NCCL_OFI_ROUND_DOWN((x) + ((y) - 1), (y))
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_MATH_H_
