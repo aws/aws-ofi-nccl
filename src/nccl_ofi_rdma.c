@@ -368,7 +368,8 @@ static inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_control_rail(nccl_net_of
  */
 static inline struct fid_domain *rdma_endpoint_get_ofi_domain(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
 {
-	return rdma_endpoint_get_rail(ep, rail_id)->domain;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	return rdma_domain_get_rail(domain, rail_id)->domain;
 }
 
 /*
@@ -7007,7 +7008,6 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	int ret = 0;
 	struct fi_info *rail_info = dev_rail->info;
 
-	ep_rail->domain = domain_rail->domain;
 	if (ep_rail->cq == NULL) {
 		/* cq will be NULL most of the time, but there's a
 		   hack in init_rail_ofi_resources to have the control
@@ -7038,7 +7038,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	}
 
 	ret = nccl_ofi_ofiutils_init_connection(rail_info,
-						ep_rail->domain,
+						domain_rail->domain,
 						&ep_rail->ofi_ep,
 						&ep_rail->av,
 						&ep_rail->cq);

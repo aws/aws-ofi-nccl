@@ -678,9 +678,6 @@ struct nccl_net_ofi_ep_rail {
 	/* Completion Queue handle */
 	struct fid_cq *cq;
 
-	/* Access domain handles */
-	struct fid_domain *domain;
-
 	/*
 	 * Rx buffer management
 	 */
