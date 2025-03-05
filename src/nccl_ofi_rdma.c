@@ -372,14 +372,6 @@ static inline struct fid_domain *rdma_endpoint_get_ofi_domain(nccl_net_ofi_rdma_
 }
 
 /*
- * @brief return the domain for the control endpoint and rail.
- */
-static inline struct fid_domain *rdma_endpoint_get_ofi_control_domain(nccl_net_ofi_rdma_ep_t *ep, int rail_id)
-{
-	return rdma_endpoint_get_control_rail(ep, rail_id)->domain;
-}
-
-/*
  * @brief	Write topology to NCCL topology file
  *
  * This function writes a NCCL topology file to a memfd file, and
@@ -2841,19 +2833,6 @@ static int dereg_rails(nccl_net_ofi_rdma_mr_handle_t *handle)
 	int ret = 0;
 	int rc = 0;
 	int num_rails = handle->num_rails;
-	int num_control_rails = handle->num_control_rails;
-
-	/* Cleanup memory registration for control rails */
-	for (int rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		/* No memory registration available for this rail */
-		if (!handle->control_mr[rail_id]) continue;
-		rc = fi_close(&handle->control_mr[rail_id]->fid);
-		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Unable to de-register memory on control MR. RC: %d, Error: %s",
-				      rc, fi_strerror(-rc));
-			ret = rc;
-		}
-	}
 
 	/* Cleanup memory registration for data rails */
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
@@ -2872,9 +2851,6 @@ static int dereg_rails(nccl_net_ofi_rdma_mr_handle_t *handle)
 
 static inline void free_rdma_mr_handle(nccl_net_ofi_rdma_mr_handle_t *handle) {
 	if (handle) {
-		if (handle->control_mr) {
-			free(handle->control_mr);
-		}
 		if (handle->mr) {
 			free(handle->mr);
 		}
@@ -2892,7 +2868,7 @@ static inline void free_rdma_mr_handle(nccl_net_ofi_rdma_mr_handle_t *handle) {
  * @return	handle, on success
  *		NULL, on error
  */
-static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails, int num_control_rails)
+static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails)
 {
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)calloc(1, sizeof(nccl_net_ofi_rdma_mr_handle_t));
 
@@ -2904,12 +2880,6 @@ static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails
 	ret_handle->mr = (struct fid_mr **)calloc(num_rails, sizeof(struct fid_mr *));
 	if (OFI_UNLIKELY(!ret_handle->mr)) {
 		NCCL_OFI_WARN("Unable to allocate memory registration handles array");
-		goto error;
-	}
-
-	ret_handle->control_mr = (struct fid_mr **)calloc(num_control_rails, sizeof(struct fid_mr *));
-	if (OFI_UNLIKELY(!ret_handle->control_mr)) {
-		NCCL_OFI_WARN("Unable to allocate memory registration control handles array");
 		goto error;
 	}
 
@@ -3008,12 +2978,11 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 
 	int dev_id = device->base.dev_id;
 	int num_rails = ep->num_rails;
-	int num_control_rails = ep->num_control_rails;
 
 	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
 
 	/* Allocate rdma memory registration handle */
-	ret_handle = calloc_rdma_mr_handle(num_rails, num_control_rails);
+	ret_handle = calloc_rdma_mr_handle(num_rails);
 	if (OFI_UNLIKELY(!ret_handle)) {
 		NCCL_OFI_WARN("Unable to allocate memory registration handle");
 		ret = -ENOMEM;
@@ -3039,24 +3008,6 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_ep_t *ep,
 		ret = register_rail_mr_buffer(ofi_domain, rail->ofi_ep,
 					      dev_id, type, &mr_attr, regattr_flags,
 					      &ret_handle->mr[rail_id]);
-		if (OFI_UNLIKELY(ret != 0)) {
-			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
-				NCCL_OFI_WARN("Error de-registering MR");
-			}
-			ret_handle = NULL;
-			goto exit;
-		}
-	}
-
-	/* Register memory on each control rail */
-	ret_handle->num_control_rails = num_control_rails;
-	for (int rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
-		ofi_domain = rdma_endpoint_get_ofi_control_domain(ep, rail_id);
-
-		ret = register_rail_mr_buffer(ofi_domain, rail->ofi_ep,
-					      dev_id, type, &mr_attr, regattr_flags,
-					      &ret_handle->control_mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (dereg_mr_ep(ret_handle, key_pool, NULL) != 0) {
 				NCCL_OFI_WARN("Error de-registering MR");
@@ -5697,8 +5648,8 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
 
-	assert(rail_id < mr_handle->num_control_rails);
-	void *desc = fi_mr_desc(mr_handle->control_mr[rail_id]);
+	assert(rail_id < mr_handle->num_rails);
+	void *desc = fi_mr_desc(mr_handle->mr[rail_id]);
 
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
