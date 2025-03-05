@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_SCHEDULER_H_
 #define NCCL_OFI_SCHEDULER_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <stdint.h>
 #include <pthread.h>
 
@@ -120,9 +116,5 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
  *		non-zero, on error
  */
 int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_SCHEDULER_H_

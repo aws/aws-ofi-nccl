@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_MEMCHECK_VALGRIND_H
 #define NCCL_OFI_MEMCHECK_VALGRIND_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <valgrind/valgrind.h>
 #include <valgrind/memcheck.h>
 
@@ -47,9 +43,5 @@ static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_
 {
 	VALGRIND_MEMPOOL_FREE(handle, data);
 }
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_MEMCHECK_VALGRIND_H

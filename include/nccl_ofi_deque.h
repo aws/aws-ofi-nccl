@@ -5,11 +5,6 @@
 #ifndef NCCL_OFI_DEQUE_H
 #define NCCL_OFI_DEQUE_H
 
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <assert.h>
 #include <pthread.h>
 
@@ -251,9 +246,5 @@ static inline nccl_ofi_deque_elem_t *nccl_ofi_deque_get_next(nccl_ofi_deque_t *d
 	    ((elem) != NULL && (next = nccl_ofi_deque_get_next((deque), (elem)), 1)); \
 	    (elem) = next \
 	)
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_DEQUE_H

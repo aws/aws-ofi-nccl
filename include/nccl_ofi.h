@@ -5,11 +5,6 @@
 #ifndef NCCL_OFI_H_
 #define NCCL_OFI_H_
 
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -763,9 +758,5 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
  * return       thread id of the current thread (always succeeds)
  */
 long nccl_net_ofi_gettid(void);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_H_

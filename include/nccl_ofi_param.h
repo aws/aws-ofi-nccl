@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_PARAM_H_
 #define NCCL_OFI_PARAM_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -402,9 +398,5 @@ OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
  * i.e. enabled when FI_PROGRESS_AUTO, otherwise disabled
  */
 OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_PARAM_H_
