@@ -590,9 +590,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
-	/* The flush buffer */
-	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
-
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff_t *msgbuff;
@@ -847,6 +844,9 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	int num_rails;
 	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
+
+	/* The flush buffer */
+	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t *ep_addr_list;

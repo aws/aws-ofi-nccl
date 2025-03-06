@@ -3596,11 +3596,6 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	return ret;
 }
 
-static inline bool is_flush_buff_enabled(void)
-{
-	return !ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush;
-}
-
 /*
  * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
  *
@@ -3612,11 +3607,10 @@ static inline bool is_flush_buff_enabled(void)
  * @return	0, on success
  * 		error, on others
  */
-static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-							nccl_net_ofi_rdma_domain_t *domain)
+static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_domain_t *domain)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = r_comm->flush_buff.mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle = domain->flush_buff.mr_handle;
 
 	if (mr_handle) {
 		ret = dereg_mr(mr_handle, domain);
@@ -3625,13 +3619,13 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
 		goto exit;
 	}
-	ret = nccl_net_ofi_dealloc_mr_buffer(r_comm->flush_buff.host_buffer,
+	ret = nccl_net_ofi_dealloc_mr_buffer(domain->flush_buff.host_buffer,
 					    system_page_size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", ret);
 		goto exit;
 	}
-	r_comm->flush_buff.host_buffer = MAP_FAILED;
+	domain->flush_buff.host_buffer = MAP_FAILED;
 
  exit:
 	return ret;
@@ -3650,14 +3644,12 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_
  * @return	0, on success
  * 		error, on others
  */
-static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int dev_id)
+static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_domain_t *domain, int dev_id)
 {
 	int ret = 0;
 	int rc;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
-	nccl_net_ofi_rdma_flush_buffer_t *flush_buff = &r_comm->flush_buff;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	nccl_net_ofi_rdma_flush_buffer_t *flush_buff = &domain->flush_buff;
 
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
@@ -3670,7 +3662,7 @@ static int alloc_and_reg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_comm, int d
 	}
 
 	/* make sure flush destination address does not overflow beyond host buffer */
-	assert(((cpu_cache_line_size * ep->num_rails) + flush_buff->size) <= system_page_size);
+	assert(((cpu_cache_line_size * domain->num_rails) + flush_buff->size) <= system_page_size);
 
 	/* Check if provider requires registration of local buffers */
 	if (local_mr == true) {
@@ -3713,7 +3705,6 @@ static inline void free_rdma_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm) {
 static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
 	nccl_net_ofi_rdma_device_t *device = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
@@ -3724,23 +3715,12 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 		return ret;
 	}
 
-	domain = rdma_endpoint_get_domain(ep);
-	assert(domain != NULL);
-
 	device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
 	if (r_comm->send_close_req != NULL) {
 		ret = r_comm->send_close_req->free(r_comm->send_close_req, false);
 		if (ret != 0) {
-			return ret;
-		}
-	}
-
-	if (is_flush_buff_enabled()) {
-		ret = dealloc_and_dereg_flush_buff(r_comm, domain);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
 			return ret;
 		}
 	}
@@ -4176,9 +4156,6 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 #endif
 
-	assert(r_comm->flush_buff.host_buffer);
-	assert(r_comm->flush_buff.mr_handle);
-
 	/*
 	 * Find the non-zero request for which we will issue flush.
 	 * A single operation can flush all request at once.
@@ -4603,17 +4580,6 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 				  dev_id);
 		goto error;
-	}
-
-	/*
-	 * Setup flush resources if using GPUDirect RDMA unless user disables
-	 * flush operations
-	 */
-	if (is_flush_buff_enabled()) {
-		ret = alloc_and_reg_flush_buff(r_comm, dev_id);
-		if (OFI_UNLIKELY(ret != 0)) {
-			goto error;
-		}
 	}
 
 	/* Allocate connect message, will be returned after the
@@ -5646,7 +5612,8 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &r_comm->flush_buff;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -7240,6 +7207,12 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	int ret;
 	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
 
+	ret = dealloc_and_dereg_flush_buff(domain);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
+		return ret;
+	}
+
 	for (int i = 0 ; i < domain->num_rails ; ++i) {
 		if (domain->domain_rails[i].cq != NULL) {
 			fi_close(&domain->domain_rails[i].cq->fid);
@@ -7344,6 +7317,13 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 		}
 	}
 
+	/*
+	 * Setup flush resources.
+	 */
+	ret = alloc_and_reg_flush_buff(domain, device->base.dev_id);
+	if (OFI_UNLIKELY(ret != 0)) {
+		goto error;
+	}
 
 error:
 	if (ret != 0) {
