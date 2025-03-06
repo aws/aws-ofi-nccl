@@ -3462,11 +3462,13 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	rdma_req_recv_data_t *recv_data = NULL;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
 	int dev_id = 0;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
 	uint16_t msg_seq_num = 0;
 	bool eager = false;
+	int i;
 
 	assert(r_comm != NULL);
 
@@ -3487,6 +3489,9 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	assert(ep != NULL);
+
+	domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
@@ -3534,6 +3539,25 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		NCCL_OFI_WARN("Message %hu has invalid status.", msg_seq_num);
 		ret = -EINVAL;
 		goto error;
+	}
+
+	/* NCCL versions prior to 2.24 require special handling for 0 byte
+	 * messages when using user buffer registration.  NCCL passes the base
+	 * pointer from the user buffer, but passes the registration from the
+	 * channel buffer, to avoid an MR cache lookup.  This is fine with
+	 * InfiniBand, where the spec says the SGE is not used for a 0 byte
+	 * message, but is a problem for EFA, which validates the pointer / MR
+	 * even for a 0 byte transfer.
+	 *
+	 * To handle this case, we use the flush buffer (note we still move 0
+	 * bytes of data, we just need a valid SGE) instead of the provided base
+	 * pointer and MR
+	 */
+	for (i = 0 ; i < n ; i++) {
+		if (sizes[i] == 0) {
+			buffers[i] = domain->flush_buff.host_buffer;
+			mr_handles[i] = domain->flush_buff.mr_handle;
+		}
 	}
 
 	ret = allocate_rdma_recv_req(r_comm, device, dev_id, msg_seq_num,
@@ -5740,6 +5764,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)send_comm;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_req_t *req = NULL;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
 	bool polled_cq = false;
@@ -5767,6 +5792,9 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int t
 
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 	assert(ep != NULL);
+
+	domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
 
 	ret = process_cq_if_pending(ep);
 	if (ret == -EAGAIN) {
@@ -5842,6 +5870,23 @@ retry:
 		}
 		polled_cq = true;
 		goto retry;
+	}
+
+	/* NCCL versions prior to 2.24 require special handling for 0 byte
+	 * messages when using user buffer registration.  NCCL passes the base
+	 * pointer from the user buffer, but passes the registration from the
+	 * channel buffer, to avoid an MR cache lookup.  This is fine with
+	 * InfiniBand, where the spec says the SGE is not used for a 0 byte
+	 * message, but is a problem for EFA, which validates the pointer / MR
+	 * even for a 0 byte transfer.
+	 *
+	 * To handle this case, we use the flush buffer (note we still move 0
+	 * bytes of data, we just need a valid SGE) instead of the provided base
+	 * pointer and MR
+	 */
+	if (size == 0) {
+		data = domain->flush_buff.host_buffer;
+		mr_handle = domain->flush_buff.mr_handle;
 	}
 
 	/* Determine if this should be sent eagerly. */
