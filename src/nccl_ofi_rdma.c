@@ -3619,13 +3619,16 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_domain_t *domai
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
 		goto exit;
 	}
-	ret = nccl_net_ofi_dealloc_mr_buffer(domain->flush_buff.host_buffer,
-					    system_page_size);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", ret);
-		goto exit;
+
+	if (domain->flush_buff.host_buffer != MAP_FAILED) {
+		ret = nccl_net_ofi_dealloc_mr_buffer(domain->flush_buff.host_buffer,
+						     system_page_size);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", ret);
+			goto exit;
+		}
+		domain->flush_buff.host_buffer = MAP_FAILED;
 	}
-	domain->flush_buff.host_buffer = MAP_FAILED;
 
  exit:
 	return ret;
