@@ -466,8 +466,6 @@ exit:
  *
  * @param	key_pool
  *		Device key pool
- * @param	dev_id
- *		Device ID
  * @param	data
  *		Memory region to be registered
  * @param	size
@@ -480,7 +478,7 @@ exit:
  * @return	0 on success
  *		non-zero on error
  */ 
-static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
+static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
 			   int type, struct fi_mr_attr *mr_attr)
 {
@@ -530,37 +528,12 @@ static int set_mr_req_attr(nccl_ofi_idpool_t *key_pool, int dev_id,
 		goto exit;
 	}
 
-	if (nccl_ofi_idpool_active(key_pool)) {
-		int key = nccl_ofi_idpool_allocate_id(key_pool);
-		if (OFI_UNLIKELY(key < 0)) {
-			NCCL_OFI_WARN("MR key allocation failed");
-			goto exit;
-		}
-		mr_attr->requested_key = (uint64_t)key;
-	}
+	mr_attr->requested_key = mr_key;
 
  exit:
 	return ret;
 }
 
-static int register_rail_mr_buffer(struct fid_domain *domain,
-				   int dev_id,
-				   int type, struct fi_mr_attr *mr_attr,
-				   uint64_t flags, struct fid_mr **mr_handle)
-{
-	int ret = 0;
-
-	ret = fi_mr_regattr(domain, mr_attr, flags, mr_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
-			      type, dev_id, ret, fi_strerror(-ret));
-		ret = -EINVAL;
-		goto exit;
-	}
-
- exit:
-	return ret;
-}
 
 /*
  * @brief	Calculate length of libfabric NIC info list
@@ -2813,75 +2786,6 @@ static int prepare_recv_conn_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	return 0;
 }
 
-/*
- * @brief	Deregister libfabric memory registration of rails
- *
- * Deregister registered memory of all rails associated with
- * `handle'. Rails without registered memory (NULL pointers in
- * handle's libfabric memory registration array) are skipped.
- */
-static int dereg_rails(nccl_net_ofi_rdma_mr_handle_t *handle)
-{
-	int ret = 0;
-	int rc = 0;
-	int num_rails = handle->num_rails;
-
-	/* Cleanup memory registration for data rails */
-	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		/* No memory registration available for this rail */
-		if (!handle->mr[rail_id]) continue;
-		rc = fi_close(&handle->mr[rail_id]->fid);
-		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-				      rc, fi_strerror(-rc));
-			ret = rc;
-		}
-	}
-
-	return ret;
-}
-
-static inline void free_rdma_mr_handle(nccl_net_ofi_rdma_mr_handle_t *handle) {
-	if (handle) {
-		if (handle->mr) {
-			free(handle->mr);
-		}
-		free(handle);
-	}
-}
-
-/*
- * @brief	Allocate a rdma memory registration handle with `num_rails' rails using `calloc()'
- *
- * @param	num_rails
- *		The number of rails of the allocated receive communicator
- * @param	num_control_rails
- *		The number of control rails of the allocated receive communicator
- * @return	handle, on success
- *		NULL, on error
- */
-static inline nccl_net_ofi_rdma_mr_handle_t *calloc_rdma_mr_handle(int num_rails)
-{
-	nccl_net_ofi_rdma_mr_handle_t *ret_handle = (nccl_net_ofi_rdma_mr_handle_t *)calloc(1, sizeof(nccl_net_ofi_rdma_mr_handle_t));
-
-	if (OFI_UNLIKELY(!ret_handle)) {
-		NCCL_OFI_WARN("Unable to allocate memory registration handle");
-		goto error;
-	}
-
-	ret_handle->mr = (struct fid_mr **)calloc(num_rails, sizeof(struct fid_mr *));
-	if (OFI_UNLIKELY(!ret_handle->mr)) {
-		NCCL_OFI_WARN("Unable to allocate memory registration handles array");
-		goto error;
-	}
-
-	return ret_handle;
-
-error:
-
-	free_rdma_mr_handle(ret_handle);
-	return NULL;
-}
 
 /*
  * @brief	Deregister memory region
@@ -2902,13 +2806,7 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 	int ret = 0;
 
 	if (OFI_UNLIKELY(mr_handle == NULL)) {
-		NCCL_OFI_WARN("Null MR handle provided. This is an error.");
-		return -EINVAL;
-	}
-
-	if (OFI_UNLIKELY(mr_handle->num_rails < 0)) {
-		NCCL_OFI_WARN("Unexpected number of rails in rdma memory registration handle");
-		return -EINVAL;
+		return 0;
 	}
 
 	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
@@ -2931,24 +2829,35 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		}
 	}
 
-	if (nccl_ofi_idpool_active(key_pool)) {
-		uint64_t key = fi_mr_key(mr_handle->mr[0]);
-		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
-			ret = -ENOENT;
-			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
-		} else {
-			ret = nccl_ofi_idpool_free_id(key_pool, key);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Error freeing MR key %" PRIu64 ", leaking key", key);
-			}
+	if (nccl_ofi_idpool_active(key_pool) && mr_handle->mr_key >= 0) {
+		ret = nccl_ofi_idpool_free_id(key_pool, mr_handle->mr_key);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Error freeing MR key %d, leaking key",
+				      mr_handle->mr_key);
 		}
 	}
 
-	ret = dereg_rails(mr_handle);
+	for (int rail_id = 0; rail_id < domain->num_rails; ++rail_id) {
+		/* No memory registration available for this rail */
+		if (mr_handle->mr[rail_id] == NULL) {
+			continue;
+		}
 
-	free_rdma_mr_handle(mr_handle);
+		ret = fi_close(&mr_handle->mr[rail_id]->fid);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
+				      ret, fi_strerror(-ret));
+		}
+	}
+
+	if (mr_handle->mr != NULL) {
+		free(mr_handle->mr);
+	}
+	free(mr_handle);
+
 	return ret;
 }
+
 
 static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 				   nccl_ofi_mr_ckey_ref ckey,
@@ -2957,35 +2866,42 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
-	*mhandle = NULL;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
-
-	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain);
-	assert(device != NULL);
-
-	int dev_id = device->base.dev_id;
 	int num_rails = domain->num_rails;
-
 	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
 
+	*mhandle = NULL;
+
 	/* Allocate rdma memory registration handle */
-	ret_handle = calloc_rdma_mr_handle(num_rails);
+	ret_handle =  (nccl_net_ofi_rdma_mr_handle_t *)calloc(1, sizeof(nccl_net_ofi_rdma_mr_handle_t));
 	if (OFI_UNLIKELY(!ret_handle)) {
 		NCCL_OFI_WARN("Unable to allocate memory registration handle");
+		return -ENOMEM;
+	}
+
+	ret_handle->mr = (struct fid_mr **)calloc(num_rails, sizeof(struct fid_mr *));
+	if (OFI_UNLIKELY(!ret_handle->mr)) {
+		NCCL_OFI_WARN("Unable to allocate memory registration handles array");
 		ret = -ENOMEM;
-		goto exit;
+		goto error;
+	}
+
+        if (nccl_ofi_idpool_active(key_pool)) {
+		ret_handle->mr_key =nccl_ofi_idpool_allocate_id(key_pool);
+		if (OFI_UNLIKELY(ret_handle->mr_key < 0)) {
+			NCCL_OFI_WARN("MR key allocation failed");
+			ret = ret_handle->mr_key;
+			goto error;
+		}
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(key_pool, dev_id, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr((uint64_t)ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
-			dev_id);
-		free_rdma_mr_handle(ret_handle);
-		ret_handle = NULL;
-		goto exit;
+			      rdma_domain_get_device(domain)->base.dev_id);
+		goto error;
 	}
 
 	/* Register memory on each rail */
@@ -2993,20 +2909,18 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = rdma_domain_get_rail(domain, rail_id);
 
-		ret = register_rail_mr_buffer(domain_rail->domain,
-					      dev_id, type, &mr_attr, regattr_flags,
-					      &ret_handle->mr[rail_id]);
+		ret = fi_mr_regattr(domain_rail->domain, &mr_attr,
+				    regattr_flags, &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
-			if (dereg_mr(ret_handle, domain)) {
-				NCCL_OFI_WARN("Error de-registering MR");
-			}
-			ret_handle = NULL;
-			goto exit;
+			goto error;
 		}
 	}
 
-exit:
 	*mhandle = ret_handle;
+	return 0;
+
+error:
+	(void) dereg_mr(ret_handle, domain);
 	return ret;
 }
 /*

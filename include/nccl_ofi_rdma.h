@@ -125,6 +125,9 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
 typedef struct nccl_net_ofi_rdma_mr_handle {
 	int num_rails;
 
+	/* value of mr key id, if keys must be requested */
+	int mr_key;
+
 	/* Array of size `num_rails' */
 	struct fid_mr **mr;
 } nccl_net_ofi_rdma_mr_handle_t;
