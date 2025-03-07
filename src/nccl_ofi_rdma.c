@@ -2875,8 +2875,7 @@ error:
  *		non-zero on error
 */
 static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
-		    nccl_ofi_idpool_t *key_pool,
-		    nccl_ofi_mr_cache_t *mr_cache)
+		    nccl_net_ofi_rdma_domain_t *domain)
 {
 	int ret = 0;
 
@@ -2890,6 +2889,8 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		return -EINVAL;
 	}
 
+	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
 
 	if (mr_cache) {
 		/*
@@ -2974,7 +2975,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 					      dev_id, type, &mr_attr, regattr_flags,
 					      &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
-			if (dereg_mr(ret_handle, key_pool, NULL) != 0) {
+			if (dereg_mr(ret_handle, domain)) {
 				NCCL_OFI_WARN("Error de-registering MR");
 			}
 			ret_handle = NULL;
@@ -3003,10 +3004,9 @@ exit:
  * @return	Memory registration handle
 */
 static int reg_mr(nccl_net_ofi_rdma_domain_t *domain,
-		     nccl_ofi_mr_ckey_ref ckey,
-		     int type,
-		     nccl_ofi_mr_cache_t *mr_cache,
-		     nccl_net_ofi_rdma_mr_handle_t **mhandle)
+		  nccl_ofi_mr_ckey_ref ckey,
+		  int type,
+		  nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -3014,7 +3014,8 @@ static int reg_mr(nccl_net_ofi_rdma_domain_t *domain,
 
 	assert(domain);
 
-	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
+
 	if (mr_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
@@ -3041,7 +3042,7 @@ static int reg_mr(nccl_net_ofi_rdma_domain_t *domain,
 						     ckey,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
-			if (dereg_mr(ret_handle, key_pool, NULL) != 0) {
+			if (dereg_mr(ret_handle, domain) != 0) {
 				NCCL_OFI_WARN("Error de-registering MR");
 			}
 
@@ -3121,7 +3122,7 @@ static int reg_internal_mr(nccl_net_ofi_rdma_domain_t *domain, void *data,
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size);
-	return reg_mr(domain, &ckey, type, NULL, mhandle);
+	return reg_mr(domain, &ckey, type, mhandle);
 }
 
 static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
@@ -3135,7 +3136,6 @@ static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 	return reg_mr(domain,
 		      ckey,
 		      type,
-		      domain->base.mr_cache,
 		      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
@@ -3150,13 +3150,12 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	return reg_mr(domain,
 		      ckey,
 		      type,
-		      domain->base.mr_cache,
 		      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 typedef struct {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	nccl_ofi_idpool_t *key_pool;
+	nccl_net_ofi_rdma_domain_t *domain;
 } freelist_regmr_fn_handle_t;
 
 /**
@@ -3174,12 +3173,6 @@ static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size
 	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)domain_void_ptr;
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	int ret = reg_internal_mr(domain, data, size, NCCL_PTR_HOST, &mr_handle);
-
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
-		return -EIO;
-	}
 
 	freelist_regmr_fn_handle_t *freelist_handle =
 		(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
@@ -3188,8 +3181,15 @@ static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size
 		return -ENOMEM;
 	}
 
+        int ret = reg_internal_mr(domain, data, size, NCCL_PTR_HOST, &mr_handle);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
+		free(freelist_handle);
+		return -EIO;
+	}
+
 	freelist_handle->mr_handle = mr_handle;
-	freelist_handle->key_pool = &(domain)->base.mr_rkey_pool;
+	freelist_handle->domain = domain;
 	*handle = (void *)freelist_handle;
 	return 0;
 }
@@ -3203,7 +3203,7 @@ static int freelist_deregmr_host_fn(void *handle)
 {
 	freelist_regmr_fn_handle_t *freelist_handle = (freelist_regmr_fn_handle_t *)handle;
 	assert(freelist_handle);
-	int ret = dereg_mr(freelist_handle->mr_handle, freelist_handle->key_pool, NULL);
+	int ret = dereg_mr(freelist_handle->mr_handle, freelist_handle->domain);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Failed call to dereg_mr");
 		return -EIO;
@@ -3223,7 +3223,7 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(domain != NULL);
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
+	return dereg_mr(mr_handle, domain);
 }
 
 /*
@@ -3705,7 +3705,7 @@ static inline int dealloc_and_dereg_flush_buff(nccl_net_ofi_rdma_recv_comm_t *r_
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = r_comm->flush_buff.mr_handle;
 
 	if (mr_handle) {
-		ret = dereg_mr(mr_handle, &domain->base.mr_rkey_pool, NULL);
+		ret = dereg_mr(mr_handle, domain);
 	}
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
@@ -5254,7 +5254,7 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return dereg_mr(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
+	return dereg_mr(mr_handle, domain);
 }
 
 static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
