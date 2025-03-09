@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -43,8 +44,9 @@ static inline size_t sizeof_schedule(int num_rails)
 static int get_num_stripes(nccl_net_ofi_threshold_scheduler_t *scheduler_p, size_t size, int num_rails)
 {
 	/* Number of stripes is atleast 1 for zero-sized messages and at most equal to num of rails */
-	int num_stripes =
-		(int)NCCL_OFI_MAX(1, NCCL_OFI_MIN(NCCL_OFI_DIV_CEIL(size, scheduler_p->min_stripe_size), (unsigned)num_rails));
+	int num_stripes = (int)std::max(1UL, std::min(NCCL_OFI_DIV_CEIL(size,
+									scheduler_p->min_stripe_size),
+						      static_cast<long unsigned>(num_rails)));
 
 	/* Start the loop from num_stripes and skip 1, as num_rails % 1 is always true.
 	 * This avoids the overhead of the mod operation in latency-sensitive cases.
@@ -105,7 +107,7 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 
 	/* Compute stripes and assign to rails */
 	for (int stripe_idx = 0; stripe_idx < num_stripes; ++stripe_idx) {
-		size_t stripe_size = NCCL_OFI_MIN(left, max_stripe_size);
+		size_t stripe_size = std::min(left, max_stripe_size);
 
 		schedule->rail_xfer_infos[stripe_idx].rail_id = curr_rail_id;
 		schedule->rail_xfer_infos[stripe_idx].offset = offset;

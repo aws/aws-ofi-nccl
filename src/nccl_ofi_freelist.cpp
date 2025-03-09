@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
@@ -78,7 +79,7 @@ static int freelist_init_internal(size_t entry_size,
 		entry_size = 8;
 	}
 	freelist->entry_size = NCCL_OFI_ROUND_UP(entry_size,
-		NCCL_OFI_MAX(entry_alignment, NCCL_OFI_MAX(8, MEMCHECK_GRANULARITY)));
+						 std::max({entry_alignment, 8ul, MEMCHECK_GRANULARITY}));
 	freelist->entry_size += freelist->memcheck_redzone_size;
 
 	/* Use initial_entry_count and increase_entry_count as lower
