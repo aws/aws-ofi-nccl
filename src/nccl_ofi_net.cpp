@@ -748,10 +748,11 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 		lookup_key = nccl_net_ofi_gettid();
 	}
 
-	HASH_FIND(hh, device->domain_table, &lookup_key,
-		  sizeof(domain->creating_thread_id), domain);
+	auto domain_iter = device->domain_table->find(lookup_key);
 
-	if (domain == NULL) {
+	if (domain_iter != device->domain_table->end()) {
+		domain = domain_iter->second;
+	} else {
 		domain = device->create_domain(device);
 		if (domain == NULL) {
 			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
@@ -760,9 +761,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 		}
 
 		domain->creating_thread_id = lookup_key;
-
-		HASH_ADD(hh, device->domain_table, creating_thread_id,
-			 sizeof(domain->creating_thread_id), domain);
+		device->domain_table->insert(std::pair(lookup_key,  domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
@@ -848,7 +847,11 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	}
 
 	device->create_domain = NULL;
-	device->domain_table = NULL;
+	device->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
+	if (device->domain_table == NULL) {
+		NCCL_OFI_WARN("Could not allocate domain table");
+		return -ENOMEM;
+	}
 
 exit:
 
@@ -858,9 +861,12 @@ exit:
 
 int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
 {
-
 	if (device == NULL) {
 		return 0;
+	}
+
+        if (device->domain_table != NULL) {
+		delete device->domain_table;
 	}
 
 	if (device->name != NULL) {
@@ -876,14 +882,16 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 	int ret, first_error = 0, domain_num;
 
 	assert(device != NULL);
-	nccl_net_ofi_domain_t *domain, *domain_tmp;
 	nccl_net_ofi_ep_t *ep;
 
 	nccl_net_ofi_mutex_lock(&device->device_lock);
 
-	domain_num = HASH_COUNT(device->domain_table);
+	domain_num = device->domain_table->size();
 	assert(domain_num > 0);
-	HASH_ITER(hh, device->domain_table, domain, domain_tmp) {
+	for (auto domain_iter = device->domain_table->begin() ;
+	     domain_iter != device->domain_table->end() ;
+	     ++domain_iter) {
+		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
 		if (domain->endpoint) {
@@ -911,7 +919,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 	}
 	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
-	domain_num = HASH_COUNT(device->domain_table);
+	domain_num = device->domain_table->size();
 	if (OFI_UNLIKELY(domain_num > 0)) {
 		NCCL_OFI_WARN("%u domains still active after cleanup", domain_num);
 		if (first_error != 0) {
@@ -972,7 +980,7 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_
 		if (!skip_device_lock) {
 			nccl_net_ofi_mutex_lock(&device->device_lock);
 		}
-		HASH_DEL(device->domain_table, domain);
+		device->domain_table->erase(domain->creating_thread_id);
 
 		// domain->free below is going to free the domain lock
 		// and we've removed the domain from the hash table,

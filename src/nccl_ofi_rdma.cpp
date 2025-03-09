@@ -7554,7 +7554,7 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_domains = HASH_COUNT(device->base.domain_table);
+	unsigned num_domains = device->base.domain_table->size();
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
 		ret = base_device->release_all_domain_and_ep(base_device);
