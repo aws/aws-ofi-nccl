@@ -67,7 +67,8 @@ static int freelist_init_internal(size_t entry_size,
 
 	assert(NCCL_OFI_IS_POWER_OF_TWO(entry_alignment));
 
-	freelist->memcheck_redzone_size = NCCL_OFI_ROUND_UP(MEMCHECK_REDZONE_SIZE, entry_alignment);
+	freelist->memcheck_redzone_size = NCCL_OFI_ROUND_UP(static_cast<size_t>(MEMCHECK_REDZONE_SIZE),
+							    entry_alignment);
 
         /* The rest of the freelist code doesn't deal well with a 0 byte entry
          * so increase to 8 bytes in that case rather than adding a bunch of
