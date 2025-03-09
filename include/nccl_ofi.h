@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_H_
 #define NCCL_OFI_H_
 
+#include <unordered_map>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -13,7 +14,6 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
-#include <uthash/uthash.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
@@ -296,8 +296,13 @@ struct nccl_net_ofi_device {
 
 	/*
 	 * hash table indexed by thread id of active domains.
+	 *
+	 * TODO: When the device class is made a proper C++ class, this should
+	 * be changed from a pointer to a map to a map.  We can't do that right
+	 * now, because that leaves us with no good way to invoke the map
+	 * constructor.
 	 */
-	nccl_net_ofi_domain_t *domain_table;
+	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table;
 };
 
 
@@ -371,9 +376,6 @@ struct nccl_net_ofi_domain {
 	/* thread id of the thread that called get_domain().  Used as
 	   the hash key for the domain hash */
 	long creating_thread_id;
-
-	/* hash table handle */
-	UT_hash_handle hh;
 };
 
 
