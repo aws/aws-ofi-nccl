@@ -17,7 +17,7 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_log.h"
 
-#define NCCL_OFI_CACHE_PAGE_SIZE (4096)
+#define NCCL_OFI_CACHE_PAGE_SIZE (4096ul)
 enum nccl_ofi_mr_ckey_type {
 	NCCL_OFI_MR_CKEY_INVALID = 0,
 	NCCL_OFI_MR_CKEY_IOVEC,

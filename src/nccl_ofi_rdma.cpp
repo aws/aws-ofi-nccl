@@ -3,6 +3,7 @@
  */
 #include "config.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -593,8 +594,8 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	 * TODO: Update the plugin implementations to use size_t type for sizes and
 	 * use more accurate max value here
 	 */
-	props->max_p2p_bytes = NCCL_OFI_MIN(INT_MAX, props->max_p2p_bytes);
-	props->max_coll_bytes = NCCL_OFI_MIN(INT_MAX, props->max_coll_bytes);
+	props->max_p2p_bytes = std::min(static_cast<size_t>(INT_MAX), props->max_p2p_bytes);
+	props->max_coll_bytes = std::min(static_cast<size_t>(INT_MAX), props->max_coll_bytes);
 	return ret;
 }
 
@@ -4655,12 +4656,11 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		return NULL;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(
-		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
-			     sizeof(nccl_net_ofi_rdma_close_msg_t)),
-		8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
-		freelist_deregmr_host_fn, domain, 1,
-		&r_comm->ctrl_buff_fl);
+	ret = nccl_ofi_freelist_init_mr(std::max(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+						 sizeof(nccl_net_ofi_rdma_close_msg_t)),
+					8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
+					freelist_deregmr_host_fn, domain, 1,
+					&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
 		return NULL;
@@ -7239,10 +7239,9 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		goto error;
 	}
 
-	ep->ctrl_rx_buff_size =
-		NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
-			     NCCL_OFI_MAX(sizeof(nccl_ofi_rdma_connection_info_t),
-					  sizeof(nccl_net_ofi_rdma_close_msg_t)));
+	ep->ctrl_rx_buff_size = std::max({sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+	    sizeof(nccl_ofi_rdma_connection_info_t),
+	    sizeof(nccl_net_ofi_rdma_close_msg_t)});
 	ep->eager_send_size = ofi_nccl_eager_max_size();
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
 	   posting 0 byte rx buffers.  Note that if eager_send_size is -1

@@ -15,16 +15,6 @@
 #define NCCL_OFI_DIV_CEIL(x, y) ((x) == 0 ? 0 : 1 + (((x) - 1) / (y)))
 
 /*
- * @brief	Max of two int values
- */
-#define NCCL_OFI_MAX(x, y) ((x) < (y) ? (y) : (x))
-
-/*
- * @brief	Min of two int values
- */
-#define  NCCL_OFI_MIN(x, y) ((x) < (y) ? (x) : (y))
-
-/*
  * @brief	Returns true if and only if size_t value is a power of two
  */
 #define NCCL_OFI_IS_POWER_OF_TWO(x) ((x) && (((x) & ((x) - 1)) == 0))
