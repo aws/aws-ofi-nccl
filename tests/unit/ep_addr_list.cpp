@@ -9,14 +9,14 @@
 #include "test-common.h"
 #include "nccl_ofi_ep_addr_list.h"
 
-static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_addr, int ep_num)
+static void insert_addresses(nccl_ofi_ep_addr_list_t &ep_addr_list, size_t num_addr, int ep_num)
 {
 	for (size_t i = 0; i < num_addr; ++i) {
 		nccl_net_ofi_ep_t *ep = NULL;
-		int ret = nccl_ofi_ep_addr_list_get(ep_addr_list, &i, sizeof(i),
+		int ret = ep_addr_list.get(&i, sizeof(i),
 			&ep);
 		if (ret != 0) {
-			NCCL_OFI_WARN("nccl_ofi_ep_addr_list_get failed");
+			NCCL_OFI_WARN("ep_addr_list.get failed");
 			exit(1);
 		}
 
@@ -25,10 +25,9 @@ static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_a
 				NCCL_OFI_WARN("Ep unexpectedly returned");
 				exit(1);
 			}
-			ret = nccl_ofi_ep_addr_list_insert(ep_addr_list,
-				(nccl_net_ofi_ep_t *)(uintptr_t)(ep_num), &i, sizeof(i));
+			ret = ep_addr_list.insert((nccl_net_ofi_ep_t *)(uintptr_t)(ep_num), &i, sizeof(i));
 			if (ret != 0) {
-				NCCL_OFI_WARN("nccl_ofi_ep_addr_list_insert failed");
+				NCCL_OFI_WARN("ep_addr_list.insert failed");
 				exit(1);
 			}
 		} else {
@@ -43,13 +42,13 @@ static void insert_addresses(nccl_ofi_ep_addr_list_t *ep_addr_list, size_t num_a
 	}
 }
 
-static int get_ep_for_addr(nccl_ofi_ep_addr_list_t *ep_addr_list, int addr_val)
+static int get_ep_for_addr(nccl_ofi_ep_addr_list_t &ep_addr_list, int addr_val)
 {
 	nccl_net_ofi_ep_t *ep = NULL;
-	int ret = nccl_ofi_ep_addr_list_get(ep_addr_list, &addr_val,
-					    sizeof(addr_val), &ep);
+	int ret = ep_addr_list.get(&addr_val,
+				   sizeof(addr_val), &ep);
 	if (ret) {
-		NCCL_OFI_WARN("nccl_ofi_ep_addr_list_get failed");
+		NCCL_OFI_WARN("ep_addr_list.get failed");
 		exit(1);
 	}
 	return (int)(uintptr_t)ep;
@@ -61,12 +60,7 @@ int main(int argc, char *argv[])
 
 	const size_t num_addr = 10;
 
-	nccl_ofi_ep_addr_list_t *ep_addr_list =
-		nccl_ofi_ep_addr_list_init(128);
-	if (!ep_addr_list) {
-		NCCL_OFI_WARN("Init ep addr list failed");
-		exit(1);
-	}
+	nccl_ofi_ep_addr_list_t ep_addr_list;
 
 	/** Test insertion and retrieval **/
 	insert_addresses(ep_addr_list, num_addr, 1);
@@ -79,14 +73,14 @@ int main(int argc, char *argv[])
 
 	/** Test delete nonexistant **/
 	int r = 0;
-	r = nccl_ofi_ep_addr_list_delete(ep_addr_list, (nccl_net_ofi_ep_t *)4); // (Doesn't exist)
+	r = ep_addr_list.remove((nccl_net_ofi_ep_t *)4); // (Doesn't exist)
 	if (r != -ENOENT) {
 		NCCL_OFI_WARN("Delete non-existing ep succeeded unexpectedly");
 		exit(1);
 	}
 
 	/** Test delete middle **/
-	r = nccl_ofi_ep_addr_list_delete(ep_addr_list, (nccl_net_ofi_ep_t *)2);
+	r = ep_addr_list.remove((nccl_net_ofi_ep_t *)2);
 	if (r) {
 		NCCL_OFI_WARN("Delete ep failed unexpectedly");
 		exit(1);
@@ -114,7 +108,7 @@ int main(int argc, char *argv[])
 	}
 
 	/** Test delete front **/
-	r = nccl_ofi_ep_addr_list_delete(ep_addr_list, (nccl_net_ofi_ep_t *)1);
+	r = ep_addr_list.remove((nccl_net_ofi_ep_t *)1);
 	if (r) {
 		NCCL_OFI_WARN("Delete ep failed unexpectedly");
 		exit(1);
@@ -137,7 +131,7 @@ int main(int argc, char *argv[])
 	}
 
 	/** Test final delete **/
-	r = nccl_ofi_ep_addr_list_delete(ep_addr_list, (nccl_net_ofi_ep_t *)3);
+	r = ep_addr_list.remove((nccl_net_ofi_ep_t *)3);
 	if (r) {
 		NCCL_OFI_WARN("Delete ep failed unexpectedly");
 		exit(1);
@@ -152,8 +146,6 @@ int main(int argc, char *argv[])
 			exit(1);
 		}
 	}
-
-	nccl_ofi_ep_addr_list_fini(ep_addr_list);
 
 	printf("Test completed successfully!\n");
 

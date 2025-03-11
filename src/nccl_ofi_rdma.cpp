@@ -4530,8 +4530,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	{
 		nccl_ofi_rdma_ep_name_t *remote_rail0_ep_name = &conn_msg->ep_names[0];
 		nccl_net_ofi_ep_t *ep_for_addr = NULL;
-		ret = nccl_ofi_ep_addr_list_get(domain->ep_addr_list, remote_rail0_ep_name->ep_name,
-			remote_rail0_ep_name->ep_name_len, &ep_for_addr);
+		ret = domain->ep_addr_list->get(remote_rail0_ep_name->ep_name,
+						remote_rail0_ep_name->ep_name_len, &ep_for_addr);
 		if (ret != 0) {
 			goto error;
 		}
@@ -4549,8 +4549,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 			ep_for_addr = &new_ep->base;
 
-			ret = nccl_ofi_ep_addr_list_insert(domain->ep_addr_list, ep_for_addr,
-				remote_rail0_ep_name->ep_name, remote_rail0_ep_name->ep_name_len);
+			ret = domain->ep_addr_list->insert(ep_for_addr, remote_rail0_ep_name->ep_name,
+							   remote_rail0_ep_name->ep_name_len);
 			if (ret != 0) {
 				goto error;
 			}
@@ -7078,7 +7078,7 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep, bool s
 				NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
 					      ep, ep->base.ref_cnt);
 			}
-			ret = nccl_ofi_ep_addr_list_delete(domain->ep_addr_list, &ep->base);
+			ret = domain->ep_addr_list->remove(&ep->base);
 			if (ret != 0) {
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
 				goto unlock;
@@ -7309,7 +7309,7 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	free(domain->domain_rails);
 
 	if (domain->ep_addr_list) {
-		nccl_ofi_ep_addr_list_fini(domain->ep_addr_list);
+		delete domain->ep_addr_list;
 		domain->ep_addr_list = NULL;
 	}
 
@@ -7356,7 +7356,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	domain->num_rails = device->num_rails;
 
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		domain->ep_addr_list = nccl_ofi_ep_addr_list_init(MAX_EP_ADDR);
+		domain->ep_addr_list = new nccl_ofi_ep_addr_list_t;
 		if (domain->ep_addr_list == NULL) {
 			NCCL_OFI_WARN("Failed to init ep addr list");
 			ret = -ENOMEM;
