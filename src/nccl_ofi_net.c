@@ -56,6 +56,9 @@ bool endpoint_mr = false;
 /* Indicates if remote virtual addressing is used */
 bool virt_addr_mr = false;
 
+/* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
+bool data_progress_auto = false;
+
 /* Selected communication protocol. */
 const char *nccl_ofi_selected_protocol = NULL;
 
@@ -631,6 +634,22 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not require endpoint memory registration",
 			       selected_provider->fabric_attr->prov_name);
 		endpoint_mr = false;
+	}
+
+	/* Check provider's data progress model */
+	if (selected_provider->domain_attr->data_progress == FI_PROGRESS_AUTO) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses FI_PROGRESS_AUTO data progress model",
+					selected_provider->fabric_attr->prov_name);
+		data_progress_auto = true;
+	} else if (selected_provider->domain_attr->data_progress == FI_PROGRESS_MANUAL) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses FI_PROGRESS_MANUAL data progress model",
+					selected_provider->fabric_attr->prov_name);
+		data_progress_auto = false;
+	} else {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s uses data progress model: %d",
+					selected_provider->fabric_attr->prov_name,
+					selected_provider->domain_attr->data_progress);
+		data_progress_auto = false;
 	}
 
 	return 0;
