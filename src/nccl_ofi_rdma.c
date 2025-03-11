@@ -107,6 +107,8 @@ static bool is_max_write_inline_size_initialized = false;
 /* CPU cache line size */
 static ssize_t cpu_cache_line_size;
 
+static bool early_completion = false;
+
 /* Function prototypes */
 static int send_progress(nccl_net_ofi_rdma_req_t *req);
 
@@ -935,6 +937,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	send_data->wdata =
 		GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num, send_data->schedule->num_xfer_infos);
 
+	send_data->no_target_completion = (ctrl_msg->type == NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION);
 	return 0;
 }
 
@@ -1335,6 +1338,8 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 			goto exit;
 		}
 		break;
+	case NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION:
+		/* fall through to NCCL_OFI_RDMA_MSG_CTRL case */
 	case NCCL_OFI_RDMA_MSG_CTRL:
 		/* CTRL receive completion */
 		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
@@ -3183,7 +3188,8 @@ static inline int insert_send_ctrl_req(
 				int dev_id, uint16_t msg_seq_num, void *buff,
 				size_t size,
 				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
-				nccl_net_ofi_rdma_req_t *recv_req)
+				nccl_net_ofi_rdma_req_t *recv_req,
+				bool recv_completion_optional)
 {
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
@@ -3245,7 +3251,8 @@ static inline int insert_send_ctrl_req(
 
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = rdma_send_ctrl_get_msg(send_ctrl_data);
 
-	ctrl_msg->type = NCCL_OFI_RDMA_MSG_CTRL;
+	/* If early completion is turned on, CTRL msg type will be NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION to influence send() behavior */
+	ctrl_msg->type = recv_completion_optional ? NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION : NCCL_OFI_RDMA_MSG_CTRL;
 	ctrl_msg->remote_comm_id = r_comm->remote_comm_id;
 	ctrl_msg->msg_seq_num = msg_seq_num;
 	ctrl_msg->buff_addr = (uint64_t)buff;
@@ -3321,7 +3328,8 @@ static inline int allocate_rdma_recv_req(
 				int dev_id, uint16_t msg_seq_num, void *buff,
 				size_t size,
 				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
-				nccl_net_ofi_rdma_req_t **ret_req)
+				nccl_net_ofi_rdma_req_t **ret_req,
+				bool recv_completion_optional)
 {
 	int ret = 0;
 	rdma_req_recv_data_t *recv_data;
@@ -3342,14 +3350,15 @@ static inline int allocate_rdma_recv_req(
 	req->msg_seq_num = msg_seq_num;
 
 	recv_data = get_recv_data(req);
-	recv_data->total_num_compls = 2;
+	/* In the case of early completion, only expect the completion for control msg itself */
+	recv_data->total_num_compls = recv_completion_optional ? 1 : 2;
 	recv_data->eager_copy_req = NULL;
 	recv_data->dst_buff = buff;
 	recv_data->dst_len = size;
 	recv_data->dest_mr_handle = buff_mr_handle;
 
 	/* TODO consolidate arguments to insert_send_ctrl_req and insert_recv_segms_req */
-	ret = insert_send_ctrl_req(r_comm, device, dev_id, msg_seq_num, buff, size, buff_mr_handle, req);
+	ret = insert_send_ctrl_req(r_comm, device, dev_id, msg_seq_num, buff, size, buff_mr_handle, req, recv_completion_optional);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to insert send ctrl request into recv request");
 		return ret;
@@ -3447,8 +3456,13 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	uint16_t msg_seq_num = 0;
 	bool eager = false;
 	int i;
+	bool recv_completion_optional = false;
 
 	assert(r_comm != NULL);
+
+	if (early_completion && *base_req == (void *)NCCL_NET_OPTIONAL_RECV_COMPLETION) {
+		recv_completion_optional = true;
+	}
 
 	if (r_comm->comm_active == false) {
 		NCCL_OFI_WARN("Called irecv on inactive communicator");
@@ -3540,7 +3554,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	ret = allocate_rdma_recv_req(r_comm, device, dev_id, msg_seq_num,
 					buffers[0], sizes[0],
-					mr_handles[0], &req);
+					mr_handles[0], &req, recv_completion_optional);
 	if (ret != 0) {
 		goto error;
 	}
@@ -5325,7 +5339,8 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 
 static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 			   nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
-			   nccl_net_ofi_xfer_info_t *xfer_info)
+			   nccl_net_ofi_xfer_info_t *xfer_info,
+			   bool no_target_completion)
 {
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
@@ -5335,12 +5350,19 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 
 	ssize_t rc;
 	/* Post RDMA write */
-	rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
+	if (no_target_completion) {
+		rc = fi_write(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
+					xfer_info->msg_size, desc,
+					comm_rail->remote_addr,
+					send_data->remote_buff + xfer_info->offset,
+					send_data->remote_mr_key[rail_id], req);
+	} else {
+		rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
 				xfer_info->msg_size, desc, send_data->wdata,
 				comm_rail->remote_addr,
 				send_data->remote_buff + xfer_info->offset,
 				send_data->remote_mr_key[rail_id], req);
-
+	}
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_writedata failed; RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
@@ -5469,7 +5491,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
 					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
 
-				ret = post_rdma_write(req, comm_rail, xfer_info);
+				ret = post_rdma_write(req, comm_rail, xfer_info, send_data->no_target_completion);
 
 				if (ret == 0) // Successfully sent the xfer with this rail
 					send_data->xferred_rail_id++;
@@ -7973,6 +7995,47 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
 		ret = ncclInvalidArgument;
+		goto error;
+	}
+
+	/* 
+	* NCCL Net v9 API Optimization for LL/LL128 Protocols
+	* 
+	* Background:
+	* When using LL (Low Latency) or LL128 protocols, NCCL sets the request pointer 
+	* to NCCL_NET_OPTIONAL_RECV_COMPLETION in irecv() calls. This indicates that 
+	* the plugin can complete a receiver request early without plugin explicitly
+	* polling the CQ to validate data arrival. This is achievable because NCCL itself
+	* following LL protocol semantics will validate data arrival by checking the flag bytes.
+	*
+	* Plugin Optimization Details:
+	* 1. Receiver Side:
+	*    - Marks request completion immediately after CTRL message send completion
+	*    - Does not wait for RDMA write operation completion
+	*
+	* 2. Sender Side:
+	*    - Uses fi_write instead of fi_writedata, to eliminate unnecessary CQ entries on RX side
+	*
+	* Requirements:
+ 	* - Eager msg mode is diabled: eager_max_size == -1
+	* - Provider must use FI_PROGRESS_AUTO data progress model
+	*/
+	if (ofi_nccl_early_completion() < 0) {
+		early_completion = data_progress_auto;
+	} else if (ofi_nccl_early_completion() == 0) {
+		early_completion = false;
+	} else {
+		if (!data_progress_auto) {
+			NCCL_OFI_WARN("Failed configuration of EARLY_COMPLETION due to provider data progress model is not FI_PROGRESS_AUTO");
+			ret = -ENOTSUP;
+			goto error;
+		}
+		early_completion = true;
+	}
+
+	if (early_completion && ofi_nccl_eager_max_size() != -1) {
+		NCCL_OFI_WARN("Conflicted configuration of EARLY_COMPLETION and EAGER_MAX_SIZE");
+		ret = -ENOTSUP;
 		goto error;
 	}
 
