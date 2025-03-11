@@ -5,75 +5,104 @@
 #ifndef NCCL_OFI_EP_ADDR_LIST_H
 #define NCCL_OFI_EP_ADDR_LIST_H
 
-struct nccl_ofi_ep_addr_list;
-typedef struct nccl_ofi_ep_addr_list nccl_ofi_ep_addr_list_t;
+#include <cstdint>
+#include <mutex>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
 
 /* Endpoint structure used by plugin code */
 struct nccl_net_ofi_ep;
 typedef struct nccl_net_ofi_ep nccl_net_ofi_ep_t;
 
-/**
- * Initialize an endpoint-address-set pair list. This function allocates memory
- * for the new list
- *
- * nccl_ofi_ep_addr_list_fini should be called to free memory associated with
- * this list.
- *
- * @param max_addr_size: max size of addresses stored in ep_addr_list
- * @return: pointer to the new list
- *          NULL, if error occurred
- */
-nccl_ofi_ep_addr_list_t *nccl_ofi_ep_addr_list_init(size_t max_addr_size);
 
-/**
- * Find endpoint in the list ep_pair_list that is not already connected to addr.
- * If an endpoint is found, add this address to its connection list.
- * If all endpoints are already connected to addr, return NULL.
- *
- * @param ep_list Input list
- * @param addr_in Libfabric address
- * @param addr_size Size of address
- * @param ep Output ep
- *	     NULL if no ep found
- * @return 0, on success
- *	   -ENOMEM, memory allocation failure
- *	   -EINVAL, invalid argument
- */
-int nccl_ofi_ep_addr_list_get(nccl_ofi_ep_addr_list_t *ep_list, void *addr_in,
-			      size_t addr_size, nccl_net_ofi_ep_t **ep);
+class nccl_ofi_ep_addr_list_t {
+public:
+	/**
+	 * Find endpoint in the list ep_pair_list that is not already connected to addr.
+	 * If an endpoint is found, add this address to its connection list.
+	 * If all endpoints are already connected to addr, return NULL.
+	 *
+	 * @param addr_in Libfabric address
+	 * @param addr_size Size of address
+	 * @param ep Output ep
+	 *	     NULL if no ep found
+	 *
+	 * @return 0, on success
+	 */
+	int get(const void *addr_in, size_t addr_size, nccl_net_ofi_ep_t **ep);
 
-/**
- * Add ep to the list ep_pair_list, with a single connection to addr.
- *
- * This function makes a copy of the data in addr, so the caller is free to
- * modify the memory at addr as desired.
- *
- * @param ep_list Input list
- * @param ep pointer to endpoint
- * @param addr_in Libfabric address of size MAX_EP_ADDR
- * @return 0, on success
- *	   -ENOMEM, memory allocation failure
- *	   -EINVAL, invalid argument
- */
-int nccl_ofi_ep_addr_list_insert(nccl_ofi_ep_addr_list_t *ep_list,
-				 nccl_net_ofi_ep_t *ep, void *addr_in,
-				 size_t addr_size);
 
-/**
- * Remove ep from the list ep_pair_list, if present
- *
- * @param ep_list Input list
- * @param ep pointer to endpoint
- *
- * @return 0, on success
- *         -ENOENT, ep not found
- */
-int nccl_ofi_ep_addr_list_delete(nccl_ofi_ep_addr_list_t *ep_list, nccl_net_ofi_ep_t *ep);
+        /**
+	 * Add ep to the list ep_pair_list, with a single connection to addr.
+	 *
+	 * This function makes a copy of the data in addr, so the caller is free to
+	 * modify the memory at addr as desired.
+	 *
+	 * @param ep pointer to endpoint
+	 * @param addr_in Libfabric address of size MAX_EP_ADDR
+	 *
+	 * @return 0, on success
+	 *	   -EINVAL, invalid argument
+	 */
+	int insert(nccl_net_ofi_ep_t *ep, const void *addr_in, size_t addr_size);
 
-/**
- * Finalize (destroy) an ep addr list
- * @param ep_list list to destroy
- */
-void nccl_ofi_ep_addr_list_fini(nccl_ofi_ep_addr_list_t *ep_list);
+
+	/**
+	 * Remove ep from the list ep_pair_list, if present
+	 *
+	 * @param ep pointer to endpoint
+	 *
+	 * @return 0, on success
+	 *         -ENOENT, ep not found
+	 */
+	int remove(nccl_net_ofi_ep_t *ep);
+
+private:
+	// we need an object to represent opaque Libfabric addresses with two
+	// different properties.  When we're searching for an address in the
+	// address_set for each endpoint, we want a lightweight overlay of the
+	// address passed into get() or insert().  But the definition of the
+	// existing ep_addr_list interface is that the remote address memory may
+	// be modified after insert() or get() returns.  This means that for the
+	// key stored in address_set, we need to actually have a deep copy.  To
+	// handle both cases, we create a surcture that can be initialized with
+	// a memory region as a lightweight string_view overlay, and on copy
+	// construction (which should only happen on insert into the
+	// address_set), we make a deep copy to keep the API guarantee.
+	//
+	// Because of this behavior, data may be an empty vector.  view will
+	// always point to useful data.
+	class address_storage {
+	public:
+		address_storage(const void *addr, size_t addr_len);
+		address_storage(const address_storage &other);
+
+		bool operator==(const address_storage& rhs) const;
+		const std::string_view& get_view(void) const { return view; }
+
+	private:
+		// ordering is important here.  view overlays at data, so data
+		// must be initialized before creating the view in the copy
+		// constructor.
+                const std::vector<char> data;
+		const std::string_view view;
+	};
+
+	struct address_storage_hash {
+		std::size_t operator()(const address_storage& k) const {
+			std::size_t val = std::hash<std::string_view>()(k.get_view());
+			return val;
+		}
+	};
+
+        using address_set = std::unordered_set<address_storage, address_storage_hash>;
+	using endpoint_map = std::unordered_map<nccl_net_ofi_ep_t *, address_set>;
+
+	std::mutex lock;
+	endpoint_map endpoints;
+};
 
 #endif
