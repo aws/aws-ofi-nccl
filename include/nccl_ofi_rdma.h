@@ -104,6 +104,7 @@ enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CTRL,
 	NCCL_OFI_RDMA_MSG_EAGER,
 	NCCL_OFI_RDMA_MSG_CLOSE,
+	NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION,
 	NCCL_OFI_RDMA_MSG_INVALID = 15,
 	NCCL_OFI_RDMA_MSG_MAX = NCCL_OFI_RDMA_MSG_INVALID,
 };
@@ -260,6 +261,12 @@ typedef struct {
 	/* Total number of completions. Expect one completion for receiving the
 	 * control message and one completion for each send segment. */
 	int total_num_compls;
+	/* 
+	 * Flag to indicate target side early completion, so that sender side
+	 * uses the corresponding RMA write operation.
+	 * True to use fi_write instead of fi_writedata in send() 
+	 */
+	bool no_target_completion;
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
 	nvtxRangeId_t seg_trace_id[MAX_NUM_RAILS];
