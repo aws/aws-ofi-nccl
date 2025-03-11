@@ -109,6 +109,9 @@ extern bool endpoint_mr;
 /* Indicates if remote virtual addressing is used */
 extern bool virt_addr_mr;
 
+/* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
+extern bool data_progress_auto;
+
 /* Selected communication protocol.
  *
  * Until the protocol environment variable is checked in init(), this
@@ -742,7 +745,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
  * @return      0 (Success)
  *
  * Set required behavior flags (and print debugging information) for
- * virt_addr_mr, and endpoint_mr.
+ * virt_addr_mr, endpoint_mr and data_progress_auto.
  */
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
