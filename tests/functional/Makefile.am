@@ -20,7 +20,7 @@ noinst_HEADERS = test-common.h
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring
 
-nccl_connection_SOURCES = nccl_connection.c
-nccl_message_transfer_SOURCES = nccl_message_transfer.c
-ring_SOURCES = ring.c
+nccl_connection_SOURCES = nccl_connection.cpp
+nccl_message_transfer_SOURCES = nccl_message_transfer.cpp
+ring_SOURCES = ring.cpp
 endif

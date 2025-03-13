@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_EP_ADDR_LIST_H
 #define NCCL_OFI_EP_ADDR_LIST_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 struct nccl_ofi_ep_addr_list;
 typedef struct nccl_ofi_ep_addr_list nccl_ofi_ep_addr_list_t;
 
@@ -79,9 +75,5 @@ int nccl_ofi_ep_addr_list_delete(nccl_ofi_ep_addr_list_t *ep_list, nccl_net_ofi_
  * @param ep_list list to destroy
  */
 void nccl_ofi_ep_addr_list_fini(nccl_ofi_ep_addr_list_t *ep_list);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif

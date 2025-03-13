@@ -8,7 +8,7 @@
 # Initialization
 AC_INIT([aws-ofi-nccl], [GitHub-dev], [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
 AC_PREREQ([2.69])
-AC_CONFIG_SRCDIR([src/nccl_ofi_net.c])
+AC_CONFIG_SRCDIR([src/nccl_ofi_net.cpp])
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIRS([m4])
@@ -32,6 +32,15 @@ AH_BOTTOM([
 dnl AX_CHECK_ENABLE_DEBUG must be called before AC_PROG_CC or
 dnl AM_PROG_AR
 AX_CHECK_ENABLE_DEBUG([no])
+
+# Checks for programs
+AC_PROG_CXX
+AC_LANG([C++])
+
+dnl use C++17, disable exceptions, and disable runtime type information
+AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
+CXXFLAGS="${CXXFLAGS} -fno-rtti -fno-exceptions"
+
 dnl Enable _GNU_SOURCE and other system extensions. The plugin uses several
 dnl nonstandard system functions, and the plugin only supports Linux OSes, so
 dnl the risk of silently enabling system extensions is minimal.
@@ -43,30 +52,17 @@ LT_INIT([shared disable-static pic-only])
 
 NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS=
 
-# Checks for programs
-AC_PROG_CC
-AM_PROG_CC_C_O
-AC_PROG_CXX
-m4_version_prereq([2.70], [], [AC_PROG_CC_STDC])
-AC_C_INLINE
-
 dnl ac_check_enable_debug will make sure AC_PROG_CC doesn't add a
 dnl bunch of debugging flags, so there's no ordering requirement
 dnl between this and AC_PROG_CC.
 AS_IF([test "${ax_enable_debug}" = "no"], [
              dnl Enable O3 optimization
-             CFLAGS="${CFLAGS} -O3"
              CXXFLAGS="${CXXFLAGS} -O3"
 
-             dnl use C++17, disable exceptions, and disable runtime type information
-             CXXFLAGS="-std=c++17 -fno-rtti -fno-exceptions"
-
              dnl dead code elim
-             CFLAGS="${CFLAGS} -ffunction-sections -fdata-sections"
              CXXFLAGS="${CXXFLAGS} -ffunction-sections -fdata-sections"
 
              dnl https://maskray.me/blog/2021-05-09-fno-semantic-interposition
-             CFLAGS="${CFLAGS} -fno-semantic-interposition -fvisibility=hidden"
              CXXFLAGS="${CXXFLAGS} -fno-semantic-interposition -fvisibility=hidden "
              LDFLAGS="${LDFLAGS} -Bsymbolic"
             ])
@@ -74,10 +70,6 @@ CHECK_ENABLE_SANITIZER()
 
 
 # Checks for header files
-AC_HEADER_STDBOOL
-AS_IF([test "${ac_cv_header_stdbool_h}" = "no"],
-      [AC_MSG_ERROR([NCCL OFI Plugin requires stdbool.h])])
-
 AC_CHECK_HEADER([limits.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires limits.h])])
 AC_CHECK_HEADER([stdlib.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires stdlib.h])])
 AC_CHECK_HEADER([string.h], [], [AC_MSG_ERROR([NCCL OFI Plugin rquires string.h])])
@@ -184,10 +176,6 @@ AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output 
 picky_cflags=""
 picky_cxxflags=""
 AC_DEFUN([ADD_PICKY_FLAGS],[
-    AC_LANG_PUSH([C])
-    AX_CHECK_COMPILE_FLAG([$1], [picky_cflags="${picky_cflags} $1"], [], [-Werror])
-    AC_LANG_POP()
-
     AC_LANG_PUSH([C++])
     AX_CHECK_COMPILE_FLAG([$1], [picky_cxxflags="${picky_cxxflags} $1"], [], [-Werror -x c++])
     AC_LANG_POP()

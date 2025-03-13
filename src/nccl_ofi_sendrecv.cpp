@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -77,7 +78,7 @@ static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
-		props->max_communicators = NCCL_OFI_MIN(device->max_tag, INT_MAX);
+		props->max_communicators = std::min(device->max_tag, static_cast<uint64_t>(INT_MAX));
 	}
 
 	props->rma_supported = 0;
@@ -101,8 +102,8 @@ static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
 	 * TODO: Update the plugin implementations to use size_t type for sizes and
 	 * use more accurate max value here
 	 */
-	props->max_p2p_bytes = NCCL_OFI_MIN(INT_MAX, props->max_p2p_bytes);
-	props->max_coll_bytes = NCCL_OFI_MIN(INT_MAX, props->max_coll_bytes);
+	props->max_p2p_bytes = std::min(static_cast<size_t>(INT_MAX), props->max_p2p_bytes);
+	props->max_coll_bytes = std::min(static_cast<size_t>(INT_MAX), props->max_coll_bytes);
 	return ret;
 }
 

@@ -5,6 +5,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <alloca.h>
 #include <limits.h>
 #include <stdio.h>
@@ -344,11 +345,11 @@ static int configure_ep_max_msg_size(struct fid_ep *ep)
 
 #if HAVE_DECL_FI_OPT_MAX_MSG_SIZE
 	ssize_t eager_max_size = (ssize_t)ofi_nccl_eager_max_size();
-	size_t optval = NCCL_OFI_MAX(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
-				     sizeof(nccl_ofi_rdma_connection_info_t));
+	size_t optval = std::max(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+				 sizeof(nccl_ofi_rdma_connection_info_t));
 
 	if (eager_max_size > 0) {
-		optval = NCCL_OFI_MAX(optval, (size_t)eager_max_size);
+		optval = std::max(optval, static_cast<size_t>(eager_max_size));
 	}
 
 	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT, FI_OPT_MAX_MSG_SIZE, &optval, sizeof(optval));

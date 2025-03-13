@@ -5,10 +5,6 @@
 #ifndef NCCL_OFI_SYSTEM_H_
 #define NCCL_OFI_SYSTEM_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 /*
  * @brief   Reads the product name from the DMI information.
  *          The caller must free the returned string.
@@ -21,9 +17,5 @@ extern "C" {
  *          product name, on success
  */
 const char *nccl_net_ofi_get_product_name(void);
-
-#ifdef __cplusplus
-}
-#endif
 
 #endif  // End NCCL_OFI_SYSTEM_H_

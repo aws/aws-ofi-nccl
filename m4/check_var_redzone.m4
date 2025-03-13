@@ -17,7 +17,7 @@ AC_DEFUN([CHECK_VAR_REDZONE], [
   AS_IF([test "$(( MEMCHECK_REDZONE_SIZE % 8 ))" != "0"],
         [AC_MSG_ERROR([MEMCHECK_REDZONE_SIZE=${MEMCHECK_REDZONE_SIZE} is not a multiple of 8])])
 
-  AC_DEFINE_UNQUOTED([MEMCHECK_REDZONE_SIZE], [${MEMCHECK_REDZONE_SIZE}], [Defines size of added redzones (in bytes) in case ASAN or valgrind is enabled.])
+  AC_DEFINE_UNQUOTED([MEMCHECK_REDZONE_SIZE], [${MEMCHECK_REDZONE_SIZE}UL], [Defines size of added redzones (in bytes) in case ASAN or valgrind is enabled.])
 
   AS_UNSET([default_memcheck_redzone_size])
 ])

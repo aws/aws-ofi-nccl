@@ -5,15 +5,10 @@
 #ifndef NCCL_OFI_MR_H_
 #define NCCL_OFI_MR_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "config.h"
 
 #include <assert.h>
 #include <pthread.h>
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <sys/uio.h>
@@ -22,7 +17,7 @@ extern "C" {
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_log.h"
 
-#define NCCL_OFI_CACHE_PAGE_SIZE (4096)
+#define NCCL_OFI_CACHE_PAGE_SIZE (4096ul)
 enum nccl_ofi_mr_ckey_type {
 	NCCL_OFI_MR_CKEY_INVALID = 0,
 	NCCL_OFI_MR_CKEY_IOVEC,
@@ -225,9 +220,5 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_
  *	   -ENOENT, if no matching entry was found
  */
 int nccl_ofi_mr_cache_del_entry(nccl_ofi_mr_cache_t *cache, void *handle);
-
-#ifdef __cplusplus
-}  // End extern "C"
-#endif
 
 #endif  // End NCCL_OFI_MR_H_

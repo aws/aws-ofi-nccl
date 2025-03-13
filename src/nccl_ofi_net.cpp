@@ -5,6 +5,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,7 +162,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * System page size isn't reflective of the GDR mappings. We're not trying to map a
 	 * whole page, but just to find an interval that makes an array-based cache manageable.
 	 */
-	mr_cache_alignment = NCCL_OFI_MIN(system_page_size, NCCL_OFI_CACHE_PAGE_SIZE);
+	mr_cache_alignment = std::min(system_page_size, NCCL_OFI_CACHE_PAGE_SIZE);
 
 #if HAVE_CUDA
 	ret = nccl_net_ofi_cuda_init();
