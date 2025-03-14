@@ -22,7 +22,7 @@ or greater. AWS customers are generally recommended to track
 for performance improvements and bug fixes.
 
 The 1.14.x release series supports
-[NCCL 2.25.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.25.3-1)
+[NCCL 2.26.2-1](https://github.com/NVIDIA/nccl/releases/tag/v2.26.2-1)
 while maintaining backward compatibility with older NCCL versions
 ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
 
