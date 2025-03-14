@@ -65,10 +65,19 @@ else
   libinternal_net_cudart_plugin_la_LDFLAGS = -whole-archive -static -avoid-version $(CUDA_LDFLAGS)
   libinternal_net_cudart_plugin_la_LIBADD = $(CUDA_LIBS)
   libinternal_net_plugin_la_LIBADD = libinternal_net_cudart_plugin.la
-  lib_LTLIBRARIES = libnccl-net.la
-  libnccl_net_la_SOURCES =
-  libnccl_net_la_LIBADD = libinternal_net_plugin.la
-  libnccl_net_la_LDFLAGS = -module -avoid-version
+  lib_LTLIBRARIES = libnccl-net-ofi.la
+  libnccl_net_ofi_la_SOURCES =
+  libnccl_net_ofi_la_LIBADD = libinternal_net_plugin.la
+  libnccl_net_ofi_la_LDFLAGS = -module -avoid-version
+
+
+if ENABLE_NCCL_NET_SYMLINK
+install-exec-hook:
+	cd $(DESTDIR)$(libdir) && $(LN_S) libnccl-net-ofi.so libnccl-net.so
+
+uninstall-local:
+	@files=libnccl-net.so ; dir='$(DESTDIR)$(libdir)' ; $(am__uninstall_files_from_dir)
+endif
 endif
 
 
