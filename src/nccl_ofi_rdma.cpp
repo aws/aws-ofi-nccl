@@ -7457,6 +7457,8 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 		nccl_net_ofi_rdma_device_rail_t *device_rail = rdma_device_get_rail(device, i);
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = rdma_domain_get_rail(domain, i);
 
+		domain_rail->rail_id = i;
+
 		ret = fi_domain(device_rail->fabric, device_rail->info,
 				&domain_rail->domain, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
