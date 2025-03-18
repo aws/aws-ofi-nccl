@@ -1222,6 +1222,9 @@ public:
 	 * @return	0, on success
 	 *		error, on others
 	 */
+	template <typename func>
+	int ofi_process_cq(func done_check);
+
 	int ofi_process_cq();
 
 	int handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
