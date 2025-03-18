@@ -1681,77 +1681,76 @@ static ssize_t ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
-	ssize_t count = 0;
 	int ret = 0;
 
-	while (true) {
-		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(rail->cq.get(), cqe_buffers, cq_read_count);
-		if (rc > 0) {
-			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
-			if (OFI_UNLIKELY(ret != 0)) {
-				return static_cast<ssize_t>(ret);
-			}
+	/* Receive completions for the given endpoint */
+	rc = fi_cq_read(rail->cq.get(), cqe_buffers, cq_read_count);
+	if (rc > 0) {
+		ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return static_cast<ssize_t>(ret);
+		}
 
-			count += rc;
-		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+		return rc;
+	} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+		/*
+		 * On call to fi_cq_readerr, Libfabric requires some members of
+		 * err_entry to be zero-initialized or point to valid data.  For
+		 * simplicity, just zero out the whole struct.
+		 */
+		struct fi_cq_err_entry err_entry = { };
+
+		rc = fi_cq_readerr(rail->cq.get(), &err_entry, 0);
+		if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 			/*
-			 * On call to fi_cq_readerr, Libfabric requires some members of
-			 * err_entry to be zero-initialized or point to valid data.  For
-			 * simplicity, just zero out the whole struct.
+			 * Error not available yet.
+			 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
 			 */
-			struct fi_cq_err_entry err_entry = { };
-
-			rc = fi_cq_readerr(rail->cq.get(), &err_entry, 0);
-			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
-				/*
-				 * Error not available yet.
-				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
-				 */
-				return count;
-			} else if (OFI_UNLIKELY(rc < 0)) {
-				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
-					      rc, fi_strerror(-rc));
-				return rc;
-			}
-
-			ret = rdma_process_error_entry(&err_entry, rail->cq.get(), rail->rail_id);
-			if (ret != 0) {
-				return static_cast<ssize_t>(ret);
-			}
-		} else if (rc == -FI_EAGAIN) {
-			/* No completions to process */
-			break;
-		} else {
-			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
+			return 0;
+		} else if (OFI_UNLIKELY(rc < 0)) {
+			NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
 				      rc, fi_strerror(-rc));
 			return rc;
 		}
-	}
 
-	return count;
+		ret = rdma_process_error_entry(&err_entry, rail->cq.get(), rail->rail_id);
+		return static_cast<ssize_t>(ret);
+	} else if (rc == -FI_EAGAIN) {
+		return 0;
+	} else {
+		NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
+			      rc, fi_strerror(-rc));
+		return rc;
+	}
 }
 
 
-int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
+template <typename func>
+int nccl_net_ofi_rdma_ep_t::ofi_process_cq(func done_check)
 {
 	int ret;
-	ssize_t count;
+	ssize_t loop_count;
 	ssize_t total_count = 0;
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 	nccl_net_ofi_rdma_device_t *device = domain_ptr->rdma_domain_get_device();
 
-	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_cq_rail_t *rail = this->rdma_endpoint_get_cq_rail(rail_id);
+	do {
+		loop_count = 0;
 
-		count = ofi_process_cq_rail(device, rail);
-		if (count < 0) {
-			return static_cast<int>(count);
+		for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+			nccl_net_ofi_rdma_cq_rail_t *rail = this->rdma_endpoint_get_cq_rail(rail_id);
+
+			ssize_t count = ofi_process_cq_rail(device, rail);
+			if (count < 0) {
+				return static_cast<int>(count);
+			}
+
+			loop_count += count;
 		}
 
-		total_count += count;
-	}
+		total_count += loop_count;
+	} while (loop_count > 0 && !done_check());
 
 	/* Process any pending requests */
 	ret = this->process_pending_reqs();
@@ -1761,6 +1760,12 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	}
 
 	return static_cast<int>(total_count);
+}
+
+
+int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
+{
+	return ofi_process_cq([]() -> bool { return false; });
 }
 
 
@@ -2476,7 +2481,9 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 			}
 		}
 #endif
-		ret = ep->ofi_process_cq();
+		ret = ep->ofi_process_cq([this]() -> bool {
+			return (this->state == NCCL_OFI_RDMA_REQ_COMPLETED);
+		});
 		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
 		}
@@ -5564,6 +5571,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	}
 
 
+
 	/* NCCL versions prior to 2.24 require special handling for 0 byte
 	 * messages when using user buffer registration.  NCCL passes the base
 	 * pointer from the user buffer, but passes the registration from the
@@ -5592,7 +5600,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	 * arrived yet, drive progress and re-check.
 	 */
 	if (OFI_UNLIKELY(!data_progress_auto && !have_ctrl)) {
-		ret = endpoint->ofi_process_cq();
+		ret = endpoint->ofi_process_cq([]() -> bool { return true; });
 		if (OFI_UNLIKELY(ret < 0)) {
 			goto error;
 		}
