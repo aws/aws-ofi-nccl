@@ -182,7 +182,7 @@ static inline void *sendrecv_req_get_ofi_context(nccl_net_ofi_sendrecv_req_t *re
 
 static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 					struct fi_cq_entry *cq_entry_base,
-					int rail_id)
+					uint16_t rail_id)
 {
 	auto cq_entry = reinterpret_cast<struct fi_cq_tagged_entry *>(cq_entry_base);
 
@@ -209,7 +209,7 @@ static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
  */
 static int sendrecv_req_handle_control_cq_entry(nccl_net_ofi_context_t *ctx,
 						struct fi_cq_entry *cq_entry_base,
-						int rail_id)
+						uint16_t rail_id)
 {
 	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);
 
@@ -227,7 +227,7 @@ static int sendrecv_req_handle_control_cq_entry(nccl_net_ofi_context_t *ctx,
 static int sendrecv_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 					   struct fid_cq *cq,
 					   struct fi_cq_err_entry *err_entry,
-					   int rail_id)
+					   uint16_t rail_id)
 {
 	(void)rail_id;
 	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);

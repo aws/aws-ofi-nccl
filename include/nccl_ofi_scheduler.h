@@ -19,7 +19,7 @@
  */
 typedef struct nccl_net_ofi_xfer_info {
 	/* Id of the rail */
-	int rail_id;
+	uint16_t rail_id;
 	/* Offset of the stripe into the message */
 	size_t offset;
 	/* Size of the stripe in bytes */
