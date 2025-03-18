@@ -1677,10 +1677,11 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 }
 
 
-static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_rdma_cq_rail_t *rail)
+static ssize_t ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_rdma_cq_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
+	ssize_t count = 0;
 	int ret = 0;
 
 	while (true) {
@@ -1688,8 +1689,11 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 		rc = fi_cq_read(rail->cq.get(), cqe_buffers, cq_read_count);
 		if (rc > 0) {
 			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
-			if (OFI_UNLIKELY(ret != 0))
-				goto exit;
+			if (OFI_UNLIKELY(ret != 0)) {
+				return static_cast<ssize_t>(ret);
+			}
+
+			count += rc;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
 			/*
 			 * On call to fi_cq_readerr, Libfabric requires some members of
@@ -1698,23 +1702,22 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 			 */
 			struct fi_cq_err_entry err_entry = { };
 
-			ret = fi_cq_readerr(rail->cq.get(), &err_entry, 0);
-			if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
+			rc = fi_cq_readerr(rail->cq.get(), &err_entry, 0);
+			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 				/*
 				 * Error not available yet.
 				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
 				 */
-				ret = 0;
-				break;
-			} else if (OFI_UNLIKELY(ret < 0)) {
-				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
-					      ret, fi_strerror(-ret));
-				goto exit;
+				return count;
+			} else if (OFI_UNLIKELY(rc < 0)) {
+				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %zd. Error: %s",
+					      rc, fi_strerror(-rc));
+				return rc;
 			}
 
 			ret = rdma_process_error_entry(&err_entry, rail->cq.get(), rail->rail_id);
 			if (ret != 0) {
-				goto exit;
+				return static_cast<ssize_t>(ret);
 			}
 		} else if (rc == -FI_EAGAIN) {
 			/* No completions to process */
@@ -1722,19 +1725,19 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 		} else {
 			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
 				      rc, fi_strerror(-rc));
-			ret = -EINVAL;
-			goto exit;
+			return rc;
 		}
 	}
 
-exit:
-	return ret;
+	return count;
 }
 
 
 int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 {
 	int ret;
+	ssize_t count;
+	ssize_t total_count = 0;
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 	nccl_net_ofi_rdma_device_t *device = domain_ptr->rdma_domain_get_device();
@@ -1742,21 +1745,24 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_cq_rail_t *rail = this->rdma_endpoint_get_cq_rail(rail_id);
 
-		ret = ofi_process_cq_rail(device, rail);
-		if (ret != 0) {
-			goto exit;
+		count = ofi_process_cq_rail(device, rail);
+		if (count < 0) {
+			return static_cast<int>(count);
 		}
+
+		total_count += count;
 	}
 
 	/* Process any pending requests */
 	ret = this->process_pending_reqs();
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Failed call to process_pending_reqs: %d", ret);
+		return ret;
 	}
 
- exit:
-	return ret;
+	return static_cast<int>(total_count);
 }
+
 
 /*
  * @brief	Zero out rdma request
@@ -2471,8 +2477,9 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 		}
 #endif
 		ret = ep->ofi_process_cq();
-		if (OFI_UNLIKELY(ret != 0))
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
+		}
 
 		/* In case of eager sends if the control message has not arrived
 		 * when the message was being sent, we do not increase the
@@ -2487,6 +2494,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 				goto exit;
 			}
 		}
+		ret = 0;
 	}
 
 	/* Determine whether the request has finished without error and free if done */
@@ -3076,7 +3084,7 @@ int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 	nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
 	if (!is_deque_empty) {
 		int ret = this->ofi_process_cq();
-		if (ret != 0) {
+		if (ret < 0) {
 			return ret;
 		}
 		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
@@ -3591,7 +3599,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	}
 
 	int ret = ep->ofi_process_cq();
-	if (ret != 0) {
+	if (ret < 0) {
 		return ret;
 	}
 
@@ -3770,7 +3778,7 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm *s_comm
 	}
 
 	int ret = ep->ofi_process_cq();
-	if (ret != 0) {
+	if (ret < 0) {
 		return ret;
 	}
 
@@ -4600,9 +4608,10 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 
 	/* Progress NCCL OFI engine so that connection is accepted */
 	int ret = l_comm_ep->ofi_process_cq();
-	if (OFI_UNLIKELY(ret != 0)) {
+	if (OFI_UNLIKELY(ret < 0)) {
 		return ret;
 	}
+	ret = 0;
 
 	/* Check if a connect message is received */
 	nccl_ofi_cm_receiver *receiver = l_comm->listener->accept();
@@ -4746,7 +4755,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 
 		/* Progress our engine to get completions */
 		ret = endpoint->ofi_process_cq();
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
 		}
 
@@ -5554,6 +5563,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		goto error;
 	}
 
+
 	/* NCCL versions prior to 2.24 require special handling for 0 byte
 	 * messages when using user buffer registration.  NCCL passes the base
 	 * pointer from the user buffer, but passes the registration from the
@@ -5583,7 +5593,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	 */
 	if (OFI_UNLIKELY(!data_progress_auto && !have_ctrl)) {
 		ret = endpoint->ofi_process_cq();
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto error;
 		}
 		have_ctrl = has_ctrl_msg(s_comm, msg_seq_num, tag);
@@ -6206,7 +6216,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Progress our engine to get completions */
 	ret = this->ofi_process_cq();
-	if (OFI_UNLIKELY(ret != 0)) {
+	if (OFI_UNLIKELY(ret < 0)) {
 		goto error;
 	}
 
