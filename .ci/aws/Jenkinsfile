@@ -171,6 +171,7 @@ pipeline {
                     def pr_num = "--test-aws-ofi-nccl-pr $env.CHANGE_ID"
                     def nccl_test_iter = "--test-aws-ofi-nccl-nccltest-iterations 5"
                     def efa_installer = "--use-prebuilt-ami-with-efa-installer true"
+                    def test_tcp_provider = "--test-libfabric-provider tcp"
 
                     def persistent_manual_cluster_addl_args = " --keep-cluster --skip-fixture-setup --skip-health-checks --use-existing-installer --cleanup-pf-directory --enable-placement-group false --lean-cluster-setup"
                     def container_addl_args = " --test-in-containers-on-ec2"
@@ -189,6 +190,7 @@ pipeline {
                     def p3_p4_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test test_ofi_nccl_functional"
                     def p5_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test"
                     def g4dn_addl_args = "${base_args} --test-list test_nccl_test test_ofi_nccl_functional"
+                    def g4dn_tcp_addl_args = "${g4dn_addl_args} ${test_tcp_provider}"
                     def neuron_addl_args = "${base_args} --test-list test_nccom_test"
 
                     // p3dn tests
@@ -208,6 +210,7 @@ pipeline {
 
                     // g4dn tests
                     stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock_persistent("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_lock_label, num_instances, g4dn_addl_args)
+                    stages["4_g4dn_ubuntu2204_tcp"] = get_test_stage_with_lock_persistent("4_g4dn_ubuntu2204_tcp", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_lock_label, num_instances, g4dn_tcp_addl_args)
 
                     // trn1 tests
                     stages["4_trn1_ubuntu2004"] = get_test_stage_with_lock_persistent("4_trn1_ubuntu2004", env.BUILD_TAG, "ubuntu2004", "trn1.32xlarge", trn1_lock_label, num_instances, neuron_addl_args)
