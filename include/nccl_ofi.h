@@ -178,7 +178,7 @@ struct nccl_net_ofi_context {
 	 * 		   Ignored in SENDRECV protocol
 	 */
 	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
-			       int rail_id);
+			       uint16_t rail_id);
 
 	/**
 	 * Callback to be invoked upon completion-with-error of the request
@@ -190,7 +190,7 @@ struct nccl_net_ofi_context {
 	 * 		   Ignored in SENDRECV protocol
 	 */
 	int (*handle_error_entry)(struct nccl_net_ofi_context *ctx, struct fid_cq *cq,
-				  struct fi_cq_err_entry *err_entry, int rail_id);
+				  struct fi_cq_err_entry *err_entry, uint16_t rail_id);
 };
 typedef struct nccl_net_ofi_context nccl_net_ofi_context_t;
 
