@@ -2006,10 +2006,11 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 }
 
 
-static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
+static ssize_t ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
+	ssize_t count = 0;
 	int ret = 0;
 
 	while (true) {
@@ -2017,8 +2018,11 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
 		if (rc > 0) {
 			ret = rdma_process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
-			if (OFI_UNLIKELY(ret != 0))
-				goto exit;
+			if (OFI_UNLIKELY(ret != 0)) {
+				return static_cast<ssize_t>(ret);
+			}
+
+			count += rc;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
 			struct fi_cq_err_entry err_entry;
 
@@ -2028,17 +2032,16 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 				 * Error not available yet.
 				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
 				 */
-				ret = 0;
-				break;
+				return count;
 			} else if (OFI_UNLIKELY(ret < 0)) {
 				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
 					      ret, fi_strerror(-ret));
-				goto exit;
+				return static_cast<ssize_t>(ret);
 			}
 
 			ret = rdma_process_error_entry(&err_entry, rail->cq, rail->rail_id);
 			if (ret != 0) {
-				goto exit;
+				return static_cast<ssize_t>(ret);
 			}
 		} else if (rc == -FI_EAGAIN) {
 			/* No completions to process */
@@ -2046,44 +2049,49 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		} else {
 			NCCL_OFI_WARN("Unable to retrieve completion queue entries. RC: %zd, ERROR: %s",
 				      rc, fi_strerror(-rc));
-			ret = -EINVAL;
-			goto exit;
+			return rc;
 		}
 	}
 
-exit:
-	return ret;
+	return count;
 }
+
 
 /*
  * @brief	Process completion entries for the given completion queue.
  *		This also updates several request fileds like size, status, etc
  *
- * @return	0, on success
- *		error, on others
+ * @return	number of cqes processed on success
+ *              0 if no cqe available
+ *		neagtive error code on error
  */
-static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
+static ssize_t ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret;
+	ssize_t count;
+	ssize_t total_count = 0;
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 
-		ret = ofi_process_cq_rail(ep, rail);
-		if (ret != 0) {
-			goto exit;
+		count = ofi_process_cq_rail(ep, rail);
+		if (count < 0) {
+			return count;
 		}
+
+		total_count += count;
 	}
 
 	/* Process any pending requests */
 	ret = process_pending_reqs(ep);
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Failed call to process_pending_reqs: %d", ret);
+		return ret;
 	}
 
- exit:
-	return ret;
+	return total_count;
 }
+
 
 /*
  * @brief	Zero out rdma request
@@ -2740,8 +2748,10 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	if (req->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
 		ret = ofi_process_cq(ep);
-		if (OFI_UNLIKELY(ret != 0))
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
+		}
+		ret = 0;
 	}
 
 	/* Determine whether the request has finished without error and free if done */
@@ -3504,7 +3514,7 @@ static int process_cq_if_pending(nccl_net_ofi_rdma_ep_t *ep)
 	nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 	if (!is_deque_empty) {
 		int ret = ofi_process_cq(ep);
-		if (ret != 0) {
+		if (ret < 0) {
 			return ret;
 		}
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
@@ -3946,9 +3956,10 @@ static int recv_comm_process_all_finalizing(void)
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 			r_comm->base.base.ep;
 		ret = ofi_process_cq(ep);
-		if (ret != 0) {
+		if (ret < 0) {
 			goto exit;
 		}
+		ret = 0;
 
 		if (r_comm->send_close_req == NULL) {
 			/* Waiting for all ctrls to complete */
@@ -4081,9 +4092,10 @@ static int send_comm_process_all_finalizing(void)
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 			s_comm->base.base.ep;
 		ret = ofi_process_cq(ep);
-		if (ret != 0) {
+		if (ret < 0) {
 			goto exit;
 		}
+		ret = 0;
 
 		nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 
@@ -4885,8 +4897,9 @@ static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 		 * resources for sending connect message
 		 */
 		int res = ofi_process_cq(ep);
-		if (res != 0)
+		if (res < 0) {
 			return res;
+		}
 	} else if (rc != 0) {
 		req->state = NCCL_OFI_RDMA_REQ_CREATED;
 		NCCL_OFI_WARN("Unable to send connect message for dev %d. RC: %zd, ERROR: %s",
@@ -4992,9 +5005,10 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		/* Progress NCCL OFI engine so that connection is accepted */
 		ret = ofi_process_cq(l_comm_ep);
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
 		}
+		ret = 0;
 
 		/* Check if the connect message is received */
 		nccl_net_ofi_mutex_lock(&req->req_lock);
@@ -5083,9 +5097,10 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		/* Progress our engine to get completions */
 		ret = ofi_process_cq(ep);
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			goto exit;
 		}
+		ret = 0;
 
 		/* Check if the connect response message is sent */
 		nccl_net_ofi_mutex_lock(&req->req_lock);
@@ -5956,7 +5971,7 @@ retry:
 			nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
 			ret = ofi_process_cq_rail(ep, rail);
-			if (OFI_UNLIKELY(ret != 0)) {
+			if (OFI_UNLIKELY(ret < 0)) {
 				goto error;
 			}
 		}
@@ -6740,8 +6755,9 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		 * resources for sending connect message
 		 */
 		int res = ofi_process_cq(ep);
-		if (res != 0)
+		if (res < 0) {
 			rc = -2;
+		}
 	} else if (rc != 0) {
 		NCCL_OFI_WARN("Unable to send connect message for dev %d. RC: %zd, ERROR: %s",
 			      device->base.dev_id, rc, fi_strerror(-rc));
@@ -6863,12 +6879,13 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 		/* Progress our engine to get completions */
 		ret = ofi_process_cq(ep);
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			/* Send communicator cannot be closed since
 			 * send request of send connect message is
 			 * still pending */
 			return ret;
 		}
+		ret = 0;
 
 		/* Check if the connect message is sent */
 		nccl_net_ofi_mutex_lock(&req->req_lock);
@@ -6900,9 +6917,10 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		 * connect response message has arrived, the
 		 * connection establishment will be finalized. */
 		ret = ofi_process_cq(ep);
-		if (OFI_UNLIKELY(ret != 0)) {
+		if (OFI_UNLIKELY(ret < 0)) {
 			return ret;
 		}
+		ret = 0;
 
 		nccl_net_ofi_mutex_lock(&s_comm->conn_resp_req->req_lock);
 		conn_resp_req_state = s_comm->conn_resp_req->state;
