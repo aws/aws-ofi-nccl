@@ -830,6 +830,8 @@ typedef struct nccl_net_ofi_rdma_device {
 
 
 typedef struct nccl_net_ofi_rdma_domain_rail {
+	uint16_t rail_id;
+
 	/* Access domain handles */
 	struct fid_domain *domain;
 
