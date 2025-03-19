@@ -34,6 +34,12 @@ dnl AM_PROG_AR
 AX_CHECK_ENABLE_DEBUG([no])
 
 # Checks for programs
+
+dnl Enable _GNU_SOURCE and other system extensions. The plugin uses several
+dnl nonstandard system functions, and the plugin only supports Linux OSes, so
+dnl the risk of silently enabling system extensions is minimal.
+AC_USE_SYSTEM_EXTENSIONS
+
 AC_PROG_CXX
 AC_LANG([C++])
 
@@ -41,10 +47,6 @@ dnl use C++17, disable exceptions, and disable runtime type information
 AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
 CXXFLAGS="${CXXFLAGS} -fno-rtti -fno-exceptions"
 
-dnl Enable _GNU_SOURCE and other system extensions. The plugin uses several
-dnl nonstandard system functions, and the plugin only supports Linux OSes, so
-dnl the risk of silently enabling system extensions is minimal.
-AC_USE_SYSTEM_EXTENSIONS
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
 AC_PROG_RANLIB
