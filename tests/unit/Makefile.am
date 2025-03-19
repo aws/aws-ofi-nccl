@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2025, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -19,7 +19,9 @@ noinst_PROGRAMS = \
 	scheduler \
 	idpool \
 	ep_addr_list \
-	mr
+	mr \
+	histogram_binner \
+	histogram
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -43,6 +45,8 @@ scheduler_SOURCES = scheduler.cpp
 ep_addr_list_SOURCES = ep_addr_list.cpp
 mr_SOURCES = mr.cpp
 aws_platform_mapper_SOURCES = aws_platform_mapper.cpp
+histogram_binner_SOURCES = histogram_binner.cpp
+histogram_SOURCES = histogram.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif

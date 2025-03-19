@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2023-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -38,4 +38,6 @@ noinst_HEADERS = \
 	internal/tuner/nccl_defaults.h \
 	nccl_ofi_platform.h \
 	nccl_ofi_ep_addr_list.h \
-	platform-aws.h
+	platform-aws.h \
+	stats/histogram.h \
+	stats/histogram_binner.h
