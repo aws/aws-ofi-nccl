@@ -13,7 +13,7 @@ AC_DEFUN([CHECK_PKG_HWLOC], [
   check_pkg_LIBS_save="${LIBS}"
 
   AC_ARG_WITH([hwloc],
-     [AC_HELP_STRING([--with-hwloc=PATH], [Path to non-standard hwloc installation])])
+     [AS_HELP_STRING([--with-hwloc=PATH], [Path to non-standard hwloc installation])])
 
   AS_IF([test -n "${with_hwloc}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-hwloc=${with_hwloc}"])
 
