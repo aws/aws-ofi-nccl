@@ -1120,7 +1120,6 @@ int nccl_net_ofi_endpoint_init(nccl_net_ofi_domain_t *domain,
 	ep->domain = domain;
 	ep->release_ep = nccl_net_ofi_endpoint_release;
 
-	ep->creating_thread_id = 0;
 	ep->ref_cnt = 0;
 
 	return 0;
