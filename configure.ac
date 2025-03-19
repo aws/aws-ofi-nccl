@@ -182,46 +182,66 @@ AC_DEFUN([ADD_PICKY_FLAGS],[
     AC_LANG_POP()
     ])
 
-dnl standard and normal
-ADD_PICKY_FLAGS([-Wall -Wextra])
-dnl C specific warning that warngs when using C features which prevent parsing
-dnl as C++. Best-effort, and doesn't cover everything.
-ADD_PICKY_FLAGS([-Wc++-compat])
-dnl gcc manual says this is enabled with c++-compat, but seemingly bugged.
-ADD_PICKY_FLAGS([-Wjump-misses-init])
-
-dnl some top-level API functions have unused parameters, but we have to keep
-dnl them. TODO: explicitly annotate those functions, rather than setting this
-dnl globally.
-ADD_PICKY_FLAGS([-Wno-unused-parameter])
-
-dnl warn when a variable shadows another variable.
-ADD_PICKY_FLAGS([-Wshadow])
-dnl warn on security issues around functions that format output (ie printf)
-ADD_PICKY_FLAGS([-Wformat=2])
-dnl warn for potential performance problem casts
-ADD_PICKY_FLAGS([-Wcast-align])
-dnl warn if a null dereference is detected
-ADD_PICKY_FLAGS([-Wnull-dereference])
-
-dnl warn when a case statement is missing a break or a line that contains a
-dnl comment before the next case.
-ADD_PICKY_FLAGS([-Wimplicit-fallthrough=2])
-
-dnl functions should either have internal linkage (static) or there should be a
-dnl header declarating the function.
-ADD_PICKY_FLAGS([-Wmissing-declarations])
-
-dnl enable GCC's static analyzer
-ADD_PICKY_FLAGS([-fanalyzer])
-dnl todo: clang-sa flags
-
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
-AS_IF([test "${enable_picky_compiler}" != "no"],
-      [AC_MSG_NOTICE([Adding ${picky_cxxflags} to CXXFLAGS.])
-       CXXFLAGS="${CXXFLAGS} ${picky_cxxflags}"
-       AS_UNSET([picky_cxxflags])])
+AS_IF([test "${enable_picky_compiler}" != "no"], [
+    dnl standard and normal
+    ADD_PICKY_FLAGS([-Wall -Wextra])
+
+    dnl some top-level API functions have unused parameters, but we have to keep
+    dnl them. TODO: explicitly annotate those functions, rather than setting this
+    dnl globally.
+    ADD_PICKY_FLAGS([-Wno-unused-parameter])
+
+    dnl warn when a variable shadows another variable.
+    ADD_PICKY_FLAGS([-Wshadow])
+    dnl warn on security issues around functions that format output (ie printf)
+    ADD_PICKY_FLAGS([-Wformat=2])
+    dnl warn for potential performance problem casts
+    ADD_PICKY_FLAGS([-Wcast-align])
+    dnl warn if a null dereference is detected
+    ADD_PICKY_FLAGS([-Wnull-dereference])
+
+    dnl warn when a case statement is missing a break or a line that contains a
+    dnl comment before the next case.
+    ADD_PICKY_FLAGS([-Wimplicit-fallthrough=2])
+
+    dnl functions should either have internal linkage (static) or there should be a
+    dnl header declarating the function.
+    ADD_PICKY_FLAGS([-Wmissing-declarations])
+
+    dnl try to enable GCC's static analyzer.  We've tripped over a number of
+    dnl problems with GNU's static analyzer and C++ code, especially regarding
+    dnl NULL return and leak reports from simple inheritance (as one example:
+    dnl https://gcc.gnu.org/bugzilla/show_bug.cgi?id=94355).  We really loved
+    dnl the analyzer for C code and would like it back, but even the simple
+    dnl example below trips multiple issues which really prevent the tool from
+    dnl being useful (as of GCC 14.2.0).  So we disable it in hopes that one day
+    dnl we can re-enable it.
+    dnl
+    dnl    class A {
+    dnl    public:
+    dnl        A(int num) : vec(num) { }
+    dnl        A() { }
+    dnl        std::vector<int> vec;
+    dnl    };
+    dnl
+    dnl    class B : public A {
+    dnl    public:
+    dnl        B(int num) : A(num) { }
+    dnl    };
+    dnl
+    dnl    auto b = new B(10);
+    dnl    delete b;
+    dnl
+    dnl ADD_PICKY_FLAGS([-fanalyzer])
+
+    dnl todo: clang-sa flags
+
+    AC_MSG_NOTICE([Adding ${picky_cxxflags} to CXXFLAGS.])
+    CXXFLAGS="${CXXFLAGS} ${picky_cxxflags}"
+])
+AS_UNSET([picky_cxxflags])
 
 werror_flags="-Werror"
 AC_ARG_ENABLE([werror],
