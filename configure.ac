@@ -175,11 +175,10 @@ AS_IF([test "${enable_trace}" = "yes" ],
        AC_MSG_RESULT(no)])
 AC_DEFINE_UNQUOTED([OFI_NCCL_TRACE], [${trace}], [Defined to 1 unit test output should include TRACE level])
 
-picky_cflags=""
 picky_cxxflags=""
 AC_DEFUN([ADD_PICKY_FLAGS],[
     AC_LANG_PUSH([C++])
-    AX_CHECK_COMPILE_FLAG([$1], [picky_cxxflags="${picky_cxxflags} $1"], [], [-Werror -x c++])
+    AX_CHECK_COMPILE_FLAG([$1], [picky_cxxflags="${picky_cxxflags} $1"], [], [-Werror])
     AC_LANG_POP()
     ])
 
@@ -220,23 +219,19 @@ dnl todo: clang-sa flags
 AC_ARG_ENABLE([picky-compiler],
    [AS_HELP_STRING([--disable-picky-compiler], [Disable adding picky compiler flags.])])
 AS_IF([test "${enable_picky_compiler}" != "no"],
-      [AC_MSG_NOTICE([Adding ${picky_cflags} to CFLAGS.])
-       CFLAGS="${CFLAGS} ${picky_cflags}"
+      [AC_MSG_NOTICE([Adding ${picky_cxxflags} to CXXFLAGS.])
        CXXFLAGS="${CXXFLAGS} ${picky_cxxflags}"
-       AS_UNSET([picky_cxxflags])
-       AS_UNSET([picky_cflags])])
+       AS_UNSET([picky_cxxflags])])
 
 werror_flags="-Werror"
 AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
 AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
-      [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CFLAGS.])
-       CXXFLAGS="${werror_flags} ${CXXFLAGS} "
-       CFLAGS="${werror_flags} ${CFLAGS} "],
+      [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CXXFLAGS.])
+       CXXFLAGS="${werror_flags} ${CXXFLAGS} "],
       [test "${enable_werror}" = "yes"],
-      [AC_MSG_NOTICE([Adding ${werror_flags} to CFLAGS.])
-       CXXFLAGS="${werror_flags} ${CXXFLAGS} "
-       CFLAGS="${werror_flags} ${CFLAGS} "])
+      [AC_MSG_NOTICE([Adding ${werror_flags} to CXXFLAGS.])
+       CXXFLAGS="${werror_flags} ${CXXFLAGS} "])
 
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
