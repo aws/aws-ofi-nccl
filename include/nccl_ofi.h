@@ -454,13 +454,6 @@ struct nccl_net_ofi_ep {
 	 */
 	int (*free_ep)(nccl_net_ofi_ep_t *ep);
 
-	/* thread id of the thread that called get_ep().  Used as the
-	   hash key for the endpoint hash */
-	long creating_thread_id;
-
-	/* hash table handle */
-	UT_hash_handle hh;
-
 	/* Endpoint reference counter for resource management.
 	 * sendrecv_get_ep()/sendrecv_release_ep() must be called in
 	 * pair when an object is acquired to use and
