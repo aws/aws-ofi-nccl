@@ -7974,6 +7974,9 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 			       "Using Libfabric 1.18 API, with GPUDirect RDMA support");
 		support_gdr = GDR_UNKNOWN;
+	} else if (ret == -FI_ENODATA) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "No eligible providers were found");
+		goto error;
 	} else {
 		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
 		goto error;
