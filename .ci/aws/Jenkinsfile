@@ -172,7 +172,7 @@ pipeline {
                     def nccl_test_iter = "--test-aws-ofi-nccl-nccltest-iterations 5"
                     def efa_installer = "--use-prebuilt-ami-with-efa-installer true"
 
-                    def persistent_manual_cluster_addl_args = " --keep-cluster --skip-fixture-setup --skip-health-checks --use-existing-installer --cleanup-pf-directory --enable-placement-group false --lean-cluster-setup"
+                    def persistent_manual_cluster_addl_args = " --keep-cluster --skip-fixture-setup --skip-health-checks --use-existing-installer --skip-portafiducia-install --enable-placement-group false --lean-cluster-setup"
                     def container_addl_args = " --test-in-containers-on-ec2"
 
                     def base_args = "${efa_installer} ${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${nccl_test_iter} ${persistent_manual_cluster_addl_args}"
