@@ -73,7 +73,7 @@ else
 
 if ENABLE_NCCL_NET_SYMLINK
 install-exec-hook:
-	cd $(DESTDIR)$(libdir) && $(LN_S) libnccl-net-ofi.so libnccl-net.so
+	cd $(DESTDIR)$(libdir) && rm -f libnccl-net.so && $(LN_S) libnccl-net-ofi.so libnccl-net.so
 
 uninstall-local:
 	@files=libnccl-net.so ; dir='$(DESTDIR)$(libdir)' ; $(am__uninstall_files_from_dir)
