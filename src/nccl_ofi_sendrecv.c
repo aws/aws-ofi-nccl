@@ -29,6 +29,8 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
+/* Indicates if provider supports FI_RMA */
+bool support_fi_rma = false;
 
 static nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain(nccl_net_ofi_sendrecv_ep_t *ep)
 {
@@ -561,12 +563,16 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, &mr_attr, &regattr_flags);
 	switch (type) {
 	case NCCL_PTR_HOST:
-		mr_attr.access |= FI_READ;
+		if (support_fi_rma) {
+			mr_attr.access |= FI_READ;
+		}
 		mr_attr.iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
-		mr_attr.access |= FI_REMOTE_READ;
+		if (support_fi_rma) {
+			mr_attr.access |= FI_REMOTE_READ;
+		}
 		mr_attr.iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -2741,6 +2747,7 @@ found:
 			iter = iter->next;
 		}
 	}
+	support_fi_rma = ((provider_list->caps & FI_RMA) != 0);
 
 	/* Allow for multiple virtual nics per nic to increase
 	 * throughput for NICs that do not handle single QP situations
