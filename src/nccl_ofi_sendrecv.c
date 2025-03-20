@@ -2451,7 +2451,7 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 }
 
 /**
- * Create an rdma device object
+ * Create a sendrecv device object
  */
 static nccl_net_ofi_sendrecv_device_t *
 nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
@@ -2717,6 +2717,29 @@ found:
 	if (provider_list == NULL) {
 		ret = -FI_ENODATA;
 		goto error;
+	}
+
+	/* The TCP provider in Libfabric versions prior to 2.2.0
+	 * erroneously requires a unique MR key even when FI_RMA
+	 * capabilities are not requested. Because we use local MRs
+	 * even if the provider does not require FI_MR_LOCAL and
+	 * because Libfabric clears the FI_MR_PROV_KEY mr_mode when
+	 * FI_RMA is not requested, we pass 0 as the mr key for all
+	 * registrations, tripping the TCP bug.
+	 * On versions of Libfabric before the bug is fixed, we
+	 * request FI_RMA capabilities from the tcp provider even
+	 * though we don't need it, so that we see the cleared
+	 * FI_MR_PROV_KEY, fi_mr_key() returns the passed key, and
+	 * everyone is happy (modulo a potential slight performance
+	 * hit for having the emulated RMA operations loaded).
+	 */
+	if (FI_VERSION_LT(fi_version(), FI_VERSION(2, 2)) &&
+			strcmp(provider_list->fabric_attr->prov_name, "tcp") == 0) {
+		struct fi_info *iter = provider_list;
+		while (iter != NULL) {
+			iter->caps |= FI_RMA;
+			iter = iter->next;
+		}
 	}
 
 	/* Allow for multiple virtual nics per nic to increase
