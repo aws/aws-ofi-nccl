@@ -12,7 +12,7 @@ def get_portafiducia_download_path() {
                 script: "aws sts get-caller-identity --query Account --output text | tr -dc 0-9",
                 returnStdout: true
               )
-    return "s3://libfabric-ci-$AWS_ACCOUNT_ID-us-west-2/portafiducia/portafiducia.tar.gz"
+    return "s3://vidsouza-testing/portafiducia.tar.gz"
 }
 
 def download_and_extract_portafiducia(outputDir) {
