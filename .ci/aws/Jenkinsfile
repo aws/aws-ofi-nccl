@@ -163,7 +163,6 @@ pipeline {
                     def stages = [:]
 
                     def timeout = "--timeout 40"
-                    def nccl_version = "--test-nccl-version v2.26.2-1"
                     def cluster_type = "--cluster-type manual_cluster"
                     def test_target = "--test-target aws-ofi-nccl"
                     def test_type = "--test-type pr"
@@ -176,7 +175,7 @@ pipeline {
                     def persistent_manual_cluster_addl_args = " --keep-cluster --skip-fixture-setup --skip-health-checks --use-existing-installer --skip-portafiducia-install --enable-placement-group false --lean-cluster-setup"
                     def container_addl_args = " --test-in-containers-on-ec2"
 
-                    def base_args = "${efa_installer} ${nccl_version} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${nccl_test_iter} ${persistent_manual_cluster_addl_args}"
+                    def base_args = "${efa_installer} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${nccl_test_iter} ${persistent_manual_cluster_addl_args}"
 
                     def num_instances = 4
                     def p3dn_lock_label = "p3dn-1-4node"
