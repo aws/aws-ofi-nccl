@@ -123,14 +123,14 @@ jobs:
       - name: Call `make`
         run: make V=1
 
+      - name: Call `make check`
+        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+
       - name: Call `make install`
         run: make install V=1
 
       - name: Call `make distcheck`
         run: make distcheck V=1
-
-      - name: Call `make check`
-        run: make check V=1
 
   distcheck:
     runs-on: ubuntu-22.04
@@ -250,14 +250,14 @@ jobs:
       - name: Call `make`
         run: make V=1
 
+      - name: Call `make check`
+        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+
       - name: Call `make install`
         run: sudo make install V=1
 
       - name: Call `make distcheck`
         run: make distcheck V=1
-
-      - name: Call `make check`
-        run: make check V=1
 
       - name: Upload config.log
         if: failure()
