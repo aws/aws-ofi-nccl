@@ -6147,8 +6147,11 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	nccl_net_ofi_ep_rail_t *rail;
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 
+	/* This is a little bit of a heuristic, but we need as many requests as
+	   we have posted control messages, so that's as reasonable a starting
+	   point as any. */
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
-				     ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+				     ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 				     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 				     &ep->rx_buff_reqs_fl);
 	if (ret != 0) {
@@ -6157,7 +6160,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	}
 
 	ret = nccl_ofi_freelist_init_mr(ep->ctrl_rx_buff_size,
-					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+					ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 					NULL, NULL,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					domain, 1, &ep->ctrl_rx_buff_fl);
@@ -6170,7 +6173,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	if (ep->eager_rx_buff_size > 0) {
 		ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
-						ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+						ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
 						NULL, NULL,
 						freelist_regmr_host_fn, freelist_deregmr_host_fn,
 						domain, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
@@ -6207,10 +6210,10 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	for (int rail_id = 0; rail_id < ep->num_control_rails; ++rail_id) {
 		rail = rdma_endpoint_get_control_rail(ep, rail_id);
 		rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_control_rails
+			ofi_nccl_rdma_min_posted_control_buffers(), ep->num_control_rails
 		);
 		rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_control_rails
+			ofi_nccl_rdma_max_posted_control_buffers(), ep->num_control_rails
 		);
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
@@ -6221,10 +6224,10 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 		if (ep->eager_rx_buff_size >= 0) {
 			rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-				ofi_nccl_rdma_min_posted_bounce_buffers(), ep->num_rails
+				ofi_nccl_rdma_min_posted_eager_buffers(), ep->num_rails
 				);
 			rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-				ofi_nccl_rdma_max_posted_bounce_buffers(), ep->num_rails
+				ofi_nccl_rdma_max_posted_eager_buffers(), ep->num_rails
 				);
 		} else {
 			rail->min_rx_buff_posted = 0;
@@ -7967,6 +7970,17 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	uint32_t api_version = 0;
 
 	*found_multiple_rails = false;
+
+	if (ofi_nccl_deprecated_rdma_min_posted_bounce_buffers() != -1) {
+		NCCL_OFI_WARN("Use of OFI_NCCL_RDMA_MIN_POSTED_BOUNCE_BUFFERS is deprecated.\n"
+			      "Please use OFI_NCCL_RDMA_MIN_POSTED_CONTROL_BUFFERS or OFI_NCCL_RDMA_MIN_POSTED_EAGER_BUFFERS.");
+		return -EINVAL;
+	}
+	if (ofi_nccl_deprecated_rdma_max_posted_bounce_buffers() != -1) {
+		NCCL_OFI_WARN("Use of OFI_NCCL_RDMA_MAX_POSTED_BOUNCE_BUFFERS is deprecated.\n"
+			      "Please use OFI_NCCL_RDMA_MAX_POSTED_CONTROL_BUFFERS or OFI_NCCL_RDMA_MAX_POSTED_EAGER_BUFFERS.");
+		return -EINVAL;
+	}
 
 	hints = fi_allocinfo();
 	if (hints == NULL) {
