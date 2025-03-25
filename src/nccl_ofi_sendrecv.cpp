@@ -124,56 +124,6 @@ static inline void sendrecv_req_update(nccl_net_ofi_sendrecv_req_t *req, nccl_ne
 	req->state = state;
 }
 
-/*
- * @brief	Processes completion entries from CQ
- *
- * @return	0, on success
- *		error, on others
- */
-static inline int sendrecv_process_completions(struct fi_cq_tagged_entry *cq_entry,
-					       uint64_t num_cqes, uint64_t max_tag)
-{
-	int ret = 0;
-	nccl_net_ofi_sendrecv_req_t *req = NULL;
-	uint64_t comp_idx = 0, comp_flags = 0;
-	uint64_t control_bit_mask = max_tag + 1;
-
-	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
-		void *op_ctx = cq_entry[comp_idx].op_context;
-
-		if (OFI_UNLIKELY(op_ctx == NULL)) {
-			NCCL_OFI_WARN("Invalid request context provided");
-			ret = -EINVAL;
-			goto exit;
-		}
-
-		comp_flags = cq_entry[comp_idx].flags;
-		req = container_of(op_ctx, nccl_net_ofi_sendrecv_req_t, ctx);
-
-		NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req, &req->ctx);
-
-		/* Determine if this is control message */
-		if (OFI_UNLIKELY(cq_entry[comp_idx].tag & control_bit_mask)) {
-			if (comp_flags & FI_RECV) {
-				/* Mark listen_comm to accepted state */
-				assert(req->comm->type == NCCL_NET_OFI_LISTEN_COMM);
-				nccl_net_ofi_sendrecv_listen_comm_t *l_comm =
-					(nccl_net_ofi_sendrecv_listen_comm_t *)req->comm;
-				l_comm->accepted = true;
-			}
-		}
-
-		if (comp_flags & FI_RECV) {
-			sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry[comp_idx].len);
-		} else {
-			sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, req->size);
-		}
-	}
-
- exit:
-	return ret;
-}
-
 static const char *sendrecv_req_state_get_string(nccl_net_ofi_sendrecv_req_state_t state)
 {
 	switch(state) {
@@ -219,6 +169,115 @@ static const char *nccl_net_ofi_req_str(nccl_net_ofi_sendrecv_req_t *req)
 	return buf;
 }
 
+static inline void *sendrecv_req_get_ofi_context(nccl_net_ofi_sendrecv_req_t *req)
+{
+	return static_cast<void *>(&req->ctx.ofi_ctx);
+}
+
+
+static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
+					struct fi_cq_entry *cq_entry_base,
+					int rail_id)
+{
+	auto cq_entry = reinterpret_cast<struct fi_cq_tagged_entry *>(cq_entry_base);
+
+	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);
+
+	NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req, &ctx->ofi_ctx);
+
+	if (cq_entry->flags & FI_RECV) {
+		sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry->len);
+	} else {
+		sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, req->size);
+	}
+
+	return 0;
+}
+
+
+/**
+ * Handle completions for receive control messages.
+ *
+ * Handle completions for receive control messages (needed to create an rcomm).
+ * The send-side control message request does not require special handling and
+ * so just uses sendrecv_req_handle_cq_entry.
+ */
+static int sendrecv_req_handle_control_cq_entry(nccl_net_ofi_context_t *ctx,
+						struct fi_cq_entry *cq_entry_base,
+						int rail_id)
+{
+	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);
+
+	/* Mark listen_comm to accepted state */
+	assert((reinterpret_cast<struct fi_cq_tagged_entry *>(cq_entry_base))->flags & FI_RECV);
+	assert(req->comm->type == NCCL_NET_OFI_LISTEN_COMM);
+	nccl_net_ofi_sendrecv_listen_comm_t *l_comm =
+		reinterpret_cast<nccl_net_ofi_sendrecv_listen_comm_t *>(req->comm);
+	l_comm->accepted = true;
+
+	return sendrecv_req_handle_cq_entry(ctx, cq_entry_base, rail_id);
+}
+
+
+static int sendrecv_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
+					   struct fid_cq *cq,
+					   struct fi_cq_err_entry *err_entry,
+					   int rail_id)
+{
+	(void)rail_id;
+	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);
+
+	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
+		      req,
+		      err_entry->err,
+		      err_entry->prov_errno,
+		      fi_cq_strerror(cq,
+				     err_entry->prov_errno,
+				     err_entry->err_data, NULL, 0),
+		      (long)err_entry->len,
+		      nccl_net_ofi_req_str(req));
+
+        sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_ERROR, err_entry->len);
+
+	return 0;
+}
+
+
+/*
+ * @brief	Processes completion entries from CQ
+ *
+ * @return	0, on success
+ *		error, on others
+ */
+static inline int sendrecv_process_completions(struct fi_cq_tagged_entry *cq_entry,
+					       size_t num_cqes)
+{
+	int ret = 0;
+
+	for (size_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
+		void *op_ctx = cq_entry[comp_idx].op_context;
+
+		if (OFI_UNLIKELY(op_ctx == NULL)) {
+			NCCL_OFI_WARN("Invalid request context provided");
+			return -EINVAL;
+		}
+
+		nccl_net_ofi_context_t *ctx = container_of(op_ctx,
+							   nccl_net_ofi_context_t,
+							   ofi_ctx);
+
+		ret = ctx->handle_cq_entry(ctx,
+					   reinterpret_cast<struct fi_cq_entry *>
+					   (&cq_entry[comp_idx]), 0);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Context progress failed: %d", ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 
 /*
  * @brief	Process completion entries for the given completion quque.
@@ -227,26 +286,27 @@ static const char *nccl_net_ofi_req_str(nccl_net_ofi_sendrecv_req_t *req)
  * @return	0, on success
  *		error, on others
  */
-static int sendrecv_cq_process(struct fid_cq *cq, uint64_t max_tag)
+static int sendrecv_cq_process(struct fid_cq *cq)
 {
 	ssize_t rc = 0;
 	int ret = 0;
 	struct fi_cq_err_entry err_buffer = {};
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
-	nccl_net_ofi_sendrecv_req_t *req = NULL;
 
 	while (true) {
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(cq, cqe_tagged_buffers, cq_read_count);
 		if (rc > 0) {
 			ret = sendrecv_process_completions(
-				cqe_tagged_buffers, rc,
-				max_tag);
+				cqe_tagged_buffers, rc);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		}
 		else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
+			nccl_net_ofi_context_t *ctx;
+
 			rc = fi_cq_readerr(cq, &err_buffer, 0);
+
 			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 				/*
 				 * Error not available yet.
@@ -261,18 +321,19 @@ static int sendrecv_cq_process(struct fid_cq *cq, uint64_t max_tag)
 				goto exit;
 			}
 
-			req = container_of(err_buffer.op_context,
-					   nccl_net_ofi_sendrecv_req_t, ctx);
-			NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
-				      req,
-				      err_buffer.err,
-				      err_buffer.prov_errno,
-				      fi_cq_strerror(cq,
-						     err_buffer.prov_errno,
-						     err_buffer.err_data, NULL, 0),
-				      (long)err_buffer.len,
-				      nccl_net_ofi_req_str(req));
-			sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_ERROR, err_buffer.len);
+			if (err_buffer.op_context == NULL) {
+				NCCL_OFI_WARN("Received error entry without a context.");
+				ret = -EINVAL;
+				goto exit;
+			}
+
+			ctx = container_of(err_buffer.op_context,
+					   nccl_net_ofi_context_t, ofi_ctx);
+			ret = ctx->handle_error_entry(ctx, cq, &err_buffer, 0);
+			if (ret != 0) {
+				goto exit;
+			}
+
 		}
 		else if (rc == -FI_EAGAIN) {
 			/* No completions to process */
@@ -296,8 +357,6 @@ static int sendrecv_cq_process(struct fid_cq *cq, uint64_t max_tag)
 static inline void sendrecv_req_zero(nccl_net_ofi_sendrecv_req_t *req)
 {
 	req->comm = NULL;
-
-	memset(&req->ctx, 0, sizeof(req->ctx));
 
 	req->dev_id = -1;
 	req->size = 0;
@@ -430,7 +489,7 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+		ret = sendrecv_cq_process(ep->cq);
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -478,6 +537,8 @@ static nccl_net_ofi_sendrecv_req_t *sendrecv_recv_req_prepare(nccl_net_ofi_sendr
 	}
 
 	req->base.test = sendrecv_req_test;
+	req->ctx.handle_cq_entry = sendrecv_req_handle_control_cq_entry;
+	req->ctx.handle_error_entry = sendrecv_req_handle_error_entry;
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
 	req->comm = &l_comm->base.base;
 	req->dev_id = l_comm->base.base.dev_id;
@@ -511,13 +572,13 @@ static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 	/* Post a buffer for receiving connection requests */
 	rc = fi_trecv(l_comm->local_ep, buffer, size,
 		      desc, FI_ADDR_UNSPEC, l_comm->tag | (ep->max_tag + 1),
-		      0, &req->ctx);
+		      0, sendrecv_req_get_ofi_context(req));
 	if (rc == -FI_EAGAIN) {
 		/*
 		 * Process completions so that you have enough
 		 * resources for posting receive buffer
 		 */
-		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+		ret = sendrecv_cq_process(ep->cq);
 		if (OFI_UNLIKELY(ret != 0))
 			return ret;
 	}
@@ -1022,7 +1083,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	}
 
 	/* Progress NCCL OFI */
-	ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+	ret = sendrecv_cq_process(ep->cq);
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -1056,7 +1117,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 
 		/* Try posting buffer to local EP */
 		rc = fi_trecv(r_comm->local_ep, buffers[recv_n], sizes[recv_n],
-			      desc, FI_ADDR_UNSPEC, r_comm->tag, 0, &req->ctx);
+			      desc, FI_ADDR_UNSPEC, r_comm->tag, 0, sendrecv_req_get_ofi_context(req));
 		if (rc == -FI_EAGAIN) {
 			/* Return NULL request */
 			*base_req = NULL;
@@ -1233,7 +1294,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 			     flush_mr_desc,
 			     r_comm->local_ep_addr,
 			     (uint64_t)(virt_addr_mr ? data : 0),
-			     cuda_key, &req->ctx);
+			     cuda_key, sendrecv_req_get_ofi_context(req));
 		if (rc == 0) {
 			break;
 		} else if (rc == -FI_EAGAIN) {
@@ -1250,7 +1311,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+			ret = sendrecv_cq_process(ep->cq);
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		} else {
@@ -1340,6 +1401,9 @@ static int sendrecv_fl_req_entry_init(void *entry)
 	auto req = static_cast<nccl_net_ofi_sendrecv_req_t *>(entry);
 	req->base.test = sendrecv_req_test;
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
+
+	req->ctx.handle_cq_entry = sendrecv_req_handle_cq_entry;
+	req->ctx.handle_error_entry = sendrecv_req_handle_error_entry;
 
 	return 0;
 }
@@ -1548,7 +1612,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
-		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+		ret = sendrecv_cq_process(ep->cq);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(req);
 			return ret;
@@ -1812,7 +1876,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 					       self_req,
 					       sendrecv_req_state_get_string(self_req->state));
 
-				ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+				ret = sendrecv_cq_process(ep->cq);
 
 				*base_req = NULL;
 				goto exit;
@@ -1848,10 +1912,10 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	 * if not able to send.
 	 */
 	rc = fi_tsend(s_comm->local_ep, data, size, desc,
-		      s_comm->remote_ep, s_comm->tag, &req->ctx);
+		      s_comm->remote_ep, s_comm->tag, sendrecv_req_get_ofi_context(req));
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+		ret = sendrecv_cq_process(ep->cq);
 		/* Return NULL request */
 		*base_req = NULL;
 		goto error;
@@ -2083,14 +2147,14 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 
 	rc = fi_tsend(s_comm->local_ep, (void *)conn_info,
 		      sizeof(*conn_info), desc, s_comm->remote_ep,
-		      s_comm->tag | (max_tag + 1), &req->ctx);
+		      s_comm->tag | (max_tag + 1), sendrecv_req_get_ofi_context(req));
 
 	if (rc == -FI_EAGAIN) {
 		/*
 		 * Process completions so that you have enough
 		 * resources for sending connect message
 		 */
-		int res = sendrecv_cq_process(ep->cq, ep->max_tag);
+		int res = sendrecv_cq_process(ep->cq);
 		if (res != 0)
 			return res;
 	} else if (rc != 0) {
@@ -2186,7 +2250,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Progress our engine to get completions */
-		ret = sendrecv_cq_process(ep->cq, ep->max_tag);
+		ret = sendrecv_cq_process(ep->cq);
 		if (OFI_UNLIKELY(ret != 0)) {
 			assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
