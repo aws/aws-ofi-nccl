@@ -157,6 +157,40 @@ struct nccl_net_ofi_req {
 	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
 };
 
+/**
+ * Struct enclosing the context parameter we pass to every Libfabric operation.
+ * Contains callback function members to be invoked upon completion of the
+ * corresponding request.
+ */
+struct nccl_net_ofi_context {
+	/**
+	 * OFI context2 object
+	 */
+	struct fi_context2 ofi_ctx;
+
+	/**
+	 * Callback to be invoked upon completion of the request
+	 *
+	 * @param ctx: ptr to this context object
+	 * @param cq_entry: cq entry from Libfabric
+	 * @param rail_id: the rail on which the cq entry arrived
+	 */
+	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
+			       int rail_id);
+
+	/**
+	 * Callback to be invoked upon completion-with-error of the request
+	 *
+	 * @param ctx: ptr to this context object
+	 * @param cq: Libfabric completion queue
+	 * @param err_entry: err entry from Libfabric
+	 * @param rail_id: the rail on which the cq err entry arrived
+	 */
+	int (*handle_error_entry)(struct nccl_net_ofi_context *ctx, struct fid_cq *cq,
+				  struct fi_cq_err_entry *err_entry, int rail_id);
+};
+typedef struct nccl_net_ofi_context nccl_net_ofi_context_t;
+
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
