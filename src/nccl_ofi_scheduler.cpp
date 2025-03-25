@@ -11,6 +11,7 @@
 
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 
 /*
@@ -263,7 +264,7 @@ static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *schedu
 	return ret;
 }
 
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler_p)
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_t **scheduler_p)
 {
 	int ret = 0;
 	nccl_net_ofi_threshold_scheduler_t *scheduler = NULL;
@@ -285,7 +286,7 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size,
 	scheduler->base.get_schedule = get_threshold_schedule;
 	scheduler->base.fini = threshold_scheduler_fini;
 	scheduler->rr_counter = 0;
-	scheduler->min_stripe_size = min_stripe_size;
+	scheduler->min_stripe_size = ofi_nccl_min_stripe_size();
 
 	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
 	if (ret) {

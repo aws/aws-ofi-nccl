@@ -123,14 +123,16 @@ static inline int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
 
 static inline int test_threshold_scheduler()
 {
-	size_t min_stripe_size = 4096;
 	size_t align = 128;
 	int num_rails = 4;
 	int num_stripes = 0;
 	int ret = 0;
 
+	size_t min_stripe_size = 4096;
+	setenv("OFI_NCCL_MIN_STRIPE_SIZE", "4096", 1);
+
 	nccl_net_ofi_scheduler_t *scheduler;
-	if (nccl_net_ofi_threshold_scheduler_init(num_rails, min_stripe_size, &scheduler)) {
+	if (nccl_net_ofi_threshold_scheduler_init(num_rails, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
 		return ret;
 	}
