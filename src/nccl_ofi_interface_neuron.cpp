@@ -19,7 +19,7 @@ static ncclResult_t init_v4(ncclDebugLogger_t logFunction)
 	 * API.
 	 */
 	setenv("OFI_NCCL_PROTOCOL", "SENDRECV", 0);
-	return nccl_net_ofi_init(logFunction);
+	return nccl_net_ofi_init_v2(logFunction);
 }
 
 static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v5_t* props)
@@ -72,42 +72,31 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v5_t* props)
 	return ret;
 }
 
-static ncclResult_t connect_v5(int dev, void* handle, void** sendComm)
-{
-	return nccl_net_ofi_connect(dev, handle, sendComm);
-}
-
-
-static ncclResult_t accept_v5(void* listenComm, void** recvComm)
-{
-	return nccl_net_ofi_accept(listenComm, recvComm);
-}
-
 
 extern "C" {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "AWS Libfabric",
-	.init = nccl_net_ofi_init,
-	.devices = nccl_net_ofi_devices,
+	.init = nccl_net_ofi_init_v2,
+	.devices = nccl_net_ofi_devices_v2,
 	.getProperties = getProperties_v5,
-	.listen = nccl_net_ofi_listen,
-	.connect = connect_v5,
-	.accept = accept_v5,
-	.regMr = nccl_net_ofi_regMr,
-	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
-	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend,
-	.irecv = nccl_net_ofi_irecv,
-	.iflush = nccl_net_ofi_iflush,
-	.test = nccl_net_ofi_test,
-	.closeSend = nccl_net_ofi_closeSend,
-	.closeRecv = nccl_net_ofi_closeRecv,
-	.closeListen = nccl_net_ofi_closeListen,
-	.getMrKey = nccl_net_ofi_get_mr_key,
-	.iwrite = nccl_net_ofi_iwrite,
-	.iwriteInline = nccl_net_ofi_iwrite_inline,
-	.iread = nccl_net_ofi_iread,
+	.listen = nccl_net_ofi_listen_v5,
+	.connect = nccl_net_ofi_connect_v5,
+	.accept = nccl_net_ofi_accept_v5,
+	.regMr = nccl_net_ofi_regMr_v8,
+	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
+	.deregMr = nccl_net_ofi_deregMr_v2,
+	.isend = nccl_net_ofi_isend_v5,
+	.irecv = nccl_net_ofi_irecv_v5,
+	.iflush = nccl_net_ofi_iflush_v5,
+	.test = nccl_net_ofi_test_v2,
+	.closeSend = nccl_net_ofi_closeSend_v2,
+	.closeRecv = nccl_net_ofi_closeRecv_v2,
+	.closeListen = nccl_net_ofi_closeListen_v2,
+	.getMrKey = nccl_net_ofi_get_mr_key_v5,
+	.iwrite = nccl_net_ofi_iwrite_v5,
+	.iwriteInline = nccl_net_ofi_iwrite_inline_v5,
+	.iread = nccl_net_ofi_iread_v5,
 };
 
 static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
@@ -135,20 +124,20 @@ static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = init_v4,
-	.devices = nccl_net_ofi_devices,
+	.devices = nccl_net_ofi_devices_v2,
 	.getProperties = getProperties_v4,
-	.listen = nccl_net_ofi_listen_v4,
-	.connect = nccl_net_ofi_connect_v4,
-	.accept = nccl_net_ofi_accept_v4,
-	.regMr = nccl_net_ofi_regMr,
-	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v4,
-	.irecv = nccl_net_ofi_irecv_v4,
+	.listen = nccl_net_ofi_listen_v2,
+	.connect = nccl_net_ofi_connect_v2,
+	.accept = nccl_net_ofi_accept_v2,
+	.regMr = nccl_net_ofi_regMr_v8,
+	.deregMr = nccl_net_ofi_deregMr_v2,
+	.isend = nccl_net_ofi_isend_v2,
+	.irecv = nccl_net_ofi_irecv_v2,
 	.iflush = nccl_net_ofi_iflush_v4,
-	.test = nccl_net_ofi_test,
-	.closeSend = nccl_net_ofi_closeSend,
-	.closeRecv = nccl_net_ofi_closeRecv,
-	.closeListen = nccl_net_ofi_closeListen,
+	.test = nccl_net_ofi_test_v2,
+	.closeSend = nccl_net_ofi_closeSend_v2,
+	.closeRecv = nccl_net_ofi_closeRecv_v2,
+	.closeListen = nccl_net_ofi_closeListen_v2,
 };
 
 } /* extern "C" */
