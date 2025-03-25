@@ -7634,7 +7634,7 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
  * Create an rdma device object
  */
 static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
-	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo, size_t min_strip_size)
+	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	int length = 0, target_length;
@@ -7723,7 +7723,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	/* Create scheduler */
-	ret = nccl_net_ofi_threshold_scheduler_init(length, min_strip_size, &device->scheduler);
+	ret = nccl_net_ofi_threshold_scheduler_init(length, &device->scheduler);
 	if (ret != 0) {
 		goto error;
 	}
@@ -7901,8 +7901,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 		nccl_net_ofi_rdma_device_t *device = nccl_net_ofi_rdma_device_create(&rdma_plugin->base,
 		                                                                     (int)dev_id,
 		                                                                     info_list,
-		                                                                     rdma_plugin->topo,
-		                                                                     ofi_nccl_min_stripe_size());
+		                                                                     rdma_plugin->topo);
 		if (device == NULL) {
 			NCCL_OFI_WARN("Device creation failed");
 			return -ENOMEM;

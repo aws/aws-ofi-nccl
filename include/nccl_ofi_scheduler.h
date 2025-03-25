@@ -108,13 +108,11 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
  *
  * @param	num_rails
  *		Number of rails
- * @param min_stripe_size
- * 		Minimum size of a message in bytes before message is multiplexed
  * @return	Scheduler, on success
  *		NULL, on error
  * @return	0, on success
  *		non-zero, on error
  */
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler);
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_t **scheduler);
 
 #endif // End NCCL_OFI_SCHEDULER_H_
