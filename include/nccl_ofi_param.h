@@ -283,6 +283,12 @@ OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
 OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
 
 /*
+ * The round robin scheduler has two round robin counts, for small (likely
+ * control) and medium (likely data) messages.  This parameter moves that value.
+ */
+OFI_NCCL_PARAM_UINT(sched_max_small_msg_size, "SCHED_MAX_SMALL_RR_SIZE", 64);
+
+/*
  * Deprecated value to control both eager and control bounce counts.
  */
 OFI_NCCL_PARAM_INT(deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", -1);
