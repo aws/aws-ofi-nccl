@@ -131,6 +131,8 @@ static inline int test_threshold_scheduler()
 	size_t min_stripe_size = 4096;
 	setenv("OFI_NCCL_MIN_STRIPE_SIZE", "4096", 1);
 
+	setenv("OFI_NCCL_SCHED_MAX_SMALL_RR_SIZE", "64", 1);
+
 	nccl_net_ofi_scheduler_t *scheduler;
 	if (nccl_net_ofi_threshold_scheduler_init(num_rails, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
@@ -159,7 +161,7 @@ static inline int test_threshold_scheduler()
 	                         min_stripe_size};
 	size_t msg_size_per_stripe_1[6][1] =
 		{{msg_sizes_1[0]}, {msg_sizes_1[1]}, {msg_sizes_1[2]}, {msg_sizes_1[3]}, {msg_sizes_1[4]}, {msg_sizes_1[5]}};
-	int rail_ids_1[6][1] = {{0}, {1}, {2}, {3}, {0}, {1}}; /* In round-robin for each iteration a new rail-id is used */
+	int rail_ids_1[6][1] = {{0}, {0}, {1}, {2}, {3}, {0}}; /* In round-robin for each iteration a new rail-id is used */
 	size_t offsets_1[6][1] = {{0}, {0}, {0}, {0}, {0}, {0}}; /* Offset remaines 0 in round robin */
 	for (int iter = 0; iter < 6; iter++) {
 		ret = test_multiplexer(scheduler,
@@ -193,7 +195,7 @@ static inline int test_threshold_scheduler()
 
 	/* For each message ensure that two rails are used. Also ensure that the rail-id pairs
 	 * are round-robin between each schedule */
-	int rail_ids_2[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
+	int rail_ids_2[6][2] = {{1, 2}, {3, 0}, {1, 2}, {3, 0}, {1, 2}, {3, 0}};
 	size_t offsets_2[6][2] = {{0, stripe_size[0]},
 				  {0, stripe_size[1]},
 				  {0, stripe_size[2]},
@@ -235,7 +237,7 @@ static inline int test_threshold_scheduler()
 	}
 	/* For each message ensure that three rails are used. Also ensure that the rail-id triplets
 	 * are round-robin between each schedule */
-	int rail_ids_3[6][2] = {{2, 3}, {0, 1}, {2, 3}, {0, 1}, {2, 3}, {0, 1}};
+	int rail_ids_3[6][2] = {{1, 2}, {3, 0}, {1, 2}, {3, 0}, {1, 2}, {3, 0}};
 	size_t offsets_3[6][2] = {{0, (stripe_size[0] * 2) / 2},
 				  {0, (stripe_size[1] * 2) / 2},
 				  {0, (stripe_size[2] * 2) / 2},
@@ -276,7 +278,7 @@ static inline int test_threshold_scheduler()
 		remaining_stripe_size[iter] = msg_sizes_4[iter] - (3 * stripe_size[iter]);
 	}
 	/* For each message ensure that all four rails are used. */
-	int rail_ids_4[6][4] = {{2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}, {2, 3, 0, 1}};
+	int rail_ids_4[6][4] = {{1, 2, 3, 0}, {1, 2, 3, 0}, {1, 2, 3, 0}, {1, 2, 3, 0}, {1, 2, 3, 0}, {1, 2, 3, 0}};
 	size_t offsets_4[6][4] = {{0, stripe_size[0], stripe_size[0] * 2, stripe_size[0] * 3},
 				  {0, stripe_size[1], stripe_size[1] * 2, stripe_size[1] * 3},
 				  {0, stripe_size[2], stripe_size[2] * 2, stripe_size[2] * 3},
