@@ -283,20 +283,42 @@ OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
 OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
 
 /*
- * Minimum rx buffers (ctrl/eager) posted per endpoint. The plugin will attempt
- * to post more rx buffers if we dip below this threshold, allocating new rx
- * buffers if needed.
- *
- * Note: the parameter is called "bounce buffer" for backward compatibility.
+ * Deprecated value to control both eager and control bounce counts.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 64);
+OFI_NCCL_PARAM_INT(deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", -1);
+
+/*
+ * Deprecated value to control both eager and control bounce counts.
+ */
+OFI_NCCL_PARAM_INT(deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", -1);
+
+/*
+ * Minimum eager rx buffers posted per endpoint. The plugin will attempt to post
+ * more rx buffers if we dip below this threshold, allocating new rx buffers if
+ * needed.
+ */
+OFI_NCCL_PARAM_INT(rdma_min_posted_eager_buffers, "RDMA_MIN_POSTED_EAGER_BUFFERS", 64);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 128);
+OFI_NCCL_PARAM_INT(rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS", 128);
+
+/*
+ * Minimum control rx buffers posted per endpoint. The plugin will attempt to post
+ * more rx buffers if we dip below this threshold, allocating new rx buffers if
+ * needed.
+ */
+OFI_NCCL_PARAM_INT(rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
+
+/*
+ * Maximum rx buffers posted per endpoint. The plugin will not attempt to
+ * post more rx buffers if we reach this threshold, returning available
+ * buffers to the free list if needed
+ */
+OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
 
 /*
  * Whether to spread the control message across multiple rails in round robin fashion or
