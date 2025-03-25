@@ -10,6 +10,7 @@
 #include <pthread.h>
 
 #include "nccl_ofi_scheduler.h"
+#include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
@@ -81,44 +82,54 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 
 	assert(num_rails > 0);
 
-	num_stripes = get_num_stripes(scheduler, size, num_rails);
+	if (size < scheduler->max_small_msg_size) {
+		nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
+		int curr_rail_id = scheduler->rr_small_counter;
+		scheduler->rr_small_counter = (scheduler->rr_small_counter + 1) % num_rails;
+		nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
 
-	assert(num_stripes <= num_rails);
+		schedule->num_xfer_infos = 1;
 
-	int curr_rail_id, next_rail_id;
-	nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
+		schedule->rail_xfer_infos[0].rail_id = curr_rail_id;
+		schedule->rail_xfer_infos[0].offset = 0;
+		schedule->rail_xfer_infos[0].msg_size = size;
+		NCCL_OFI_TRACE(NCCL_NET, "scheduler: short size %lu rail %d", size, curr_rail_id);
+	} else {
+		num_stripes = get_num_stripes(scheduler, size, num_rails);
+		assert(num_stripes <= num_rails);
 
-	/* Retieve and increment multiplex-round-robin counter; wrap around if required */
-	curr_rail_id = scheduler->rr_counter;
-	next_rail_id = (curr_rail_id + num_stripes) % num_rails;
-	scheduler->rr_counter = next_rail_id;
+		nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
+		int curr_rail_id = scheduler->rr_counter;
+		scheduler->rr_counter = (scheduler->rr_counter + num_stripes) % num_rails;
+		nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
 
-	nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
+		/* Number of bytes left to assign */
+		size_t left = size;
+		/* Offset into message */
+		size_t offset = 0;
 
-	/* Number of bytes left to assign */
-	size_t left = size;
-	/* Offset into message */
-	size_t offset = 0;
+		/* Calculate max stripe size as a multiple of 128 for alignment.
+		 * Split message size across stripes, ensuring each stripe is within max_stripe_size and LL128 aligned */
+		size_t max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_stripes), align) * align;
 
-	/* Calculate max stripe size as a multiple of 128 for alignment.
-	 * Split message size across stripes, ensuring each stripe is within max_stripe_size and LL128 aligned */
-	size_t max_stripe_size = NCCL_OFI_DIV_CEIL(NCCL_OFI_DIV_CEIL(size, num_stripes), align) * align;
+		schedule->num_xfer_infos = num_stripes;
 
-	schedule->num_xfer_infos = num_stripes;
+		NCCL_OFI_TRACE(NCCL_NET, "scheduler: long size %lu start rail %d num_rails %d", size, curr_rail_id, num_stripes);
+		/* Compute stripes and assign to rails */
+		for (int stripe_idx = 0; stripe_idx < num_stripes; ++stripe_idx) {
+			size_t stripe_size = std::min(left, max_stripe_size);
 
-	/* Compute stripes and assign to rails */
-	for (int stripe_idx = 0; stripe_idx < num_stripes; ++stripe_idx) {
-		size_t stripe_size = std::min(left, max_stripe_size);
+			schedule->rail_xfer_infos[stripe_idx].rail_id = curr_rail_id;
+			schedule->rail_xfer_infos[stripe_idx].offset = offset;
+			schedule->rail_xfer_infos[stripe_idx].msg_size = stripe_size;
 
-		schedule->rail_xfer_infos[stripe_idx].rail_id = curr_rail_id;
-		schedule->rail_xfer_infos[stripe_idx].offset = offset;
-		schedule->rail_xfer_infos[stripe_idx].msg_size = stripe_size;
+			offset += stripe_size;
+			left -= stripe_size;
 
-		offset += stripe_size;
-		left -= stripe_size;
-
-		curr_rail_id = (curr_rail_id + 1) % num_rails;
+			curr_rail_id = (curr_rail_id + 1) % num_rails;
+		}
 	}
+
 	return ret;
 }
 
@@ -285,7 +296,9 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_
 
 	scheduler->base.get_schedule = get_threshold_schedule;
 	scheduler->base.fini = threshold_scheduler_fini;
+	scheduler->rr_small_counter = 0;
 	scheduler->rr_counter = 0;
+	scheduler->max_small_msg_size = ofi_nccl_sched_max_small_msg_size();
 	scheduler->min_stripe_size = ofi_nccl_min_stripe_size();
 
 	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
