@@ -31,6 +31,7 @@ struct nccl_ofi_freelist_block_t {
 	size_t memory_size;
 	void *mr_handle;
 	nccl_ofi_freelist_elem_t *entries;
+	size_t num_entries;
 };
 
 /*
@@ -68,6 +69,17 @@ typedef int (*nccl_ofi_freelist_regmr_fn)(void *opaque, void *data, size_t size,
 typedef int (*nccl_ofi_freelist_deregmr_fn)(void *handle);
 
 /*
+ * Function pointer to call to initialize newly allocated entries
+ */
+typedef int (*nccl_ofi_freelist_entry_init_fn)(void *entry);
+
+/*
+ * Function pointer to call to finalize entries before deallocating
+ */
+typedef void (*nccl_ofi_freelist_entry_fini_fn)(void *entry);
+
+
+/*
  * Freelist structure
  *
  * Core freelist structure.  This should be considered opaque to users
@@ -90,6 +102,9 @@ struct nccl_ofi_freelist_t {
 
 	size_t memcheck_redzone_size;
 
+	nccl_ofi_freelist_entry_init_fn entry_init_fn;
+	nccl_ofi_freelist_entry_fini_fn entry_fini_fn;
+
 	pthread_mutex_t lock;
 };
 typedef struct nccl_ofi_freelist_t nccl_ofi_freelist_t;
@@ -109,11 +124,21 @@ typedef struct nccl_ofi_freelist_t nccl_ofi_freelist_t;
  * The freelist will grow until there are at most max_entry_count
  * entries allocated as part of the freelist.  If max_entry_count is
  * 0, the freelist will grow until memory exhaustion.
+ *
+ * The caller can provide optional callbacks to be called during entry
+ * allocation and deallocation. The init callback function is intended to
+ * initialize the entry, so it is in a known state when returned from
+ * nccl_ofi_freelist_entry_alloc. The fini callback is intended to handle
+ * any cleanup associated with the init callback, and will be called before
+ * the backing memory is deallocated by the freelist. Either of these
+ * callbacks can be set to NULL if not required.
  */
 int nccl_ofi_freelist_init(size_t entry_size,
 			   size_t initial_entry_count,
 			   size_t increase_entry_count,
 			   size_t max_entry_count,
+			   nccl_ofi_freelist_entry_init_fn entry_init_fn,
+			   nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
 			   nccl_ofi_freelist_t **freelist_p);
 
 /* Initialize "complex" freelist structure
@@ -130,6 +155,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      size_t initial_entry_count,
 			      size_t increase_entry_count,
 			      size_t max_entry_count,
+			      nccl_ofi_freelist_entry_init_fn entry_init_fn,
+			      nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,

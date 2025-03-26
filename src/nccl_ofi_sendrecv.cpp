@@ -1397,6 +1397,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	/* Pre-allocated buffers for data path */
 
 	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_REQUESTS,
+				     NULL, NULL,
 				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
@@ -2001,6 +2002,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Pre-allocated buffers for data path */
 	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_SEND_REQUESTS,
+				     NULL, NULL,
 				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
@@ -2309,6 +2311,7 @@ static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *b
 
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_ofi_connection_info_t),
 					4, 4, 0,
+					NULL, NULL,
 					sendrecv_freelist_regmr_host_fn, sendrecv_freelist_deregmr_host_fn,
 					ep, sizeof(void *), &ep->conn_msg_fl);
 	if (ret != 0) {

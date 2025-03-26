@@ -38,6 +38,29 @@ static inline int deregmr_simple(void *handle)
 	return ncclSuccess;
 }
 
+static size_t entry_init_fn_count = 0, entry_fini_fn_count = 0;
+
+static int entry_init_fn_simple(void *entry)
+{
+	*(static_cast<uint8_t *>(entry)) = 42;
+	++entry_init_fn_count;
+
+	return 0;
+}
+
+
+static void entry_fini_fn_simple(void *entry)
+{
+	auto entry_u8_ptr = static_cast<uint8_t *>(entry);
+	if ((*entry_u8_ptr) != 42) {
+		NCCL_OFI_WARN("Unexpected entry value");
+		exit(1);
+	}
+	*entry_u8_ptr = 0;
+	++entry_fini_fn_count;
+}
+
+
 struct random_freelisted_item {
 	int random;
 	char buf[419];
@@ -58,6 +81,7 @@ int main(int argc, char *argv[])
 				     16,
 				     0,
 				     8,
+				     NULL, NULL,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -77,14 +101,21 @@ int main(int argc, char *argv[])
 	}
 	nccl_ofi_freelist_fini(freelist);
 
-	/* require addition to reach full size */
+	/* require addition to reach full size (with entry init/fini test) */
 	ret = nccl_ofi_freelist_init(1,
 				     8,
 				     8,
 				     16,
+				     entry_init_fn_simple,
+				     entry_fini_fn_simple,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
+		exit(1);
+	}
+	/* Expect max_entry_count calls here, because of the round up to page size  */
+	if (entry_init_fn_count != 16) {
+		NCCL_OFI_WARN("Wrong number of entry_init_fn calls: %zu", entry_init_fn_count);
 		exit(1);
 	}
 	for (i = 0 ; i < 16 ; i++) {
@@ -99,13 +130,25 @@ int main(int argc, char *argv[])
 		NCCL_OFI_WARN("allocation unexpectedly worked");
 		exit(1);
 	}
+
+	if (entry_init_fn_count != 16) {
+		NCCL_OFI_WARN("Wrong number of entry_init_fn calls: %zu", entry_init_fn_count);
+		exit(1);
+	}
+
 	nccl_ofi_freelist_fini(freelist);
+
+	if (entry_fini_fn_count != 16) {
+		NCCL_OFI_WARN("Wrong number of entry_fini_fn_count calls: %zu", entry_fini_fn_count);
+		exit(1);
+	}
 
 	/* no max size */
 	ret = nccl_ofi_freelist_init(1,
 				     8,
 				     8,
 				     0,
+				     NULL, NULL,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -126,6 +169,7 @@ int main(int argc, char *argv[])
 				     8,
 				     8,
 				     16,
+				     NULL, NULL,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -139,13 +183,21 @@ int main(int argc, char *argv[])
 		}
 		nccl_ofi_freelist_entry_free(freelist, entry);
 	}
+
 	nccl_ofi_freelist_fini(freelist);
+
+	if (entry_init_fn_count != entry_fini_fn_count) {
+		NCCL_OFI_WARN("entry_init_fn_count (%zu) and entry_fini_fn_count (%zu) mismatch",
+			      entry_init_fn_count, entry_fini_fn_count);
+		exit(1);
+	}
 
 	/* make sure entries look rationally spaced */
 	ret = nccl_ofi_freelist_init(1024,
 				     16,
 				     0,
 				     16,
+				     NULL, NULL,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -175,10 +227,14 @@ int main(int argc, char *argv[])
 
 	/* and now with registrations... */
 	simple_base = NULL;
+	entry_init_fn_count = 0;
+	entry_fini_fn_count = 0;
 	ret = nccl_ofi_freelist_init_mr(1024,
 					32,
 					0,
 					32,
+					entry_init_fn_simple,
+					entry_fini_fn_simple,
 					regmr_simple,
 					deregmr_simple,
 					(void *)0xdeadbeaf,
@@ -190,6 +246,10 @@ int main(int argc, char *argv[])
 	}
 	if (!simple_base) {
 		NCCL_OFI_WARN("looks like registration not called");
+		exit(1);
+	}
+	if (entry_init_fn_count != 32) {
+		NCCL_OFI_WARN("Wrong number of entry_init_fn calls: %zu", entry_init_fn_count);
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
@@ -207,6 +267,11 @@ int main(int argc, char *argv[])
 	nccl_ofi_freelist_fini(freelist);
 	if (simple_base) {
 		NCCL_OFI_WARN("looks like deregistration not called");
+		exit(1);
+	}
+
+	if (entry_fini_fn_count != 32) {
+		NCCL_OFI_WARN("Wrong number of entry_fini_fn calls: %zu", entry_fini_fn_count);
 		exit(1);
 	}
 

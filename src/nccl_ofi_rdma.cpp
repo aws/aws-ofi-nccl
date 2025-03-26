@@ -4633,7 +4633,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	/* Maximum freelist entries is 4*NCCL_OFI_MAX_REQUESTS because each receive request
 	   can have associated reqs for send_ctrl, recv_segms, and eager_copy */
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
-				     4 * NCCL_OFI_MAX_REQUESTS, &r_comm->nccl_ofi_reqs_fl);
+				     4 * NCCL_OFI_MAX_REQUESTS, NULL, NULL,
+				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
 				  dev_id);
@@ -4658,7 +4659,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	ret = nccl_ofi_freelist_init_mr(std::max(sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
 						 sizeof(nccl_net_ofi_rdma_close_msg_t)),
-					8, 8, NCCL_OFI_MAX_REQUESTS, freelist_regmr_host_fn,
+					8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
+					freelist_regmr_host_fn,
 					freelist_deregmr_host_fn, domain, 1,
 					&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
@@ -6139,6 +6141,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
 				     ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+				     NULL, NULL,
 				     &ep->rx_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init rx_buff_reqs_fl");
@@ -6147,6 +6150,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	ret = nccl_ofi_freelist_init_mr(ep->ctrl_rx_buff_size,
 					ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+					NULL, NULL,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					domain, 1, &ep->ctrl_rx_buff_fl);
 	if (ret != 0) {
@@ -6159,6 +6163,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	if (ep->eager_rx_buff_size > 0) {
 		ret = nccl_ofi_freelist_init_mr(ep->eager_rx_buff_size,
 						ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
+						NULL, NULL,
 						freelist_regmr_host_fn, freelist_deregmr_host_fn,
 						domain, EAGER_RX_BUFFER_ALIGNMENT, &ep->eager_rx_buff_fl);
 		if (ret != 0) {
@@ -6172,7 +6177,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 	}
 
         ret = nccl_ofi_freelist_init_mr(sizeof(nccl_ofi_rdma_connection_info_t),
-					4, 4, 0,
+					4, 4, 0, NULL, NULL,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
 					domain, sizeof(void *), &ep->conn_msg_fl);
 	if (ret != 0) {
@@ -6520,7 +6525,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Allocate request free list */
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
-				     NCCL_OFI_MAX_SEND_REQUESTS, &ret_s_comm->nccl_ofi_reqs_fl);
+				     NCCL_OFI_MAX_SEND_REQUESTS, NULL, NULL, &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI request free list for dev %d rail %d",
 			      dev_id, rail_id);
