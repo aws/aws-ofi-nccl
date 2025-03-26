@@ -49,6 +49,8 @@ static int freelist_init_internal(size_t entry_size,
 				  size_t initial_entry_count,
 				  size_t increase_entry_count,
 				  size_t max_entry_count,
+				  nccl_ofi_freelist_entry_init_fn entry_init_fn,
+				  nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
 				  bool have_reginfo,
 				  nccl_ofi_freelist_regmr_fn regmr_fn,
 				  nccl_ofi_freelist_deregmr_fn deregmr_fn,
@@ -103,6 +105,9 @@ static int freelist_init_internal(size_t entry_size,
 	freelist->deregmr_fn = deregmr_fn;
 	freelist->regmr_opaque = regmr_opaque;
 
+	freelist->entry_init_fn = entry_init_fn;
+	freelist->entry_fini_fn = entry_fini_fn;
+
 	ret = pthread_mutex_init(&freelist->lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
@@ -127,12 +132,16 @@ int nccl_ofi_freelist_init(size_t entry_size,
 			   size_t initial_entry_count,
 			   size_t increase_entry_count,
 			   size_t max_entry_count,
+			   nccl_ofi_freelist_entry_init_fn entry_init_fn,
+			   nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
 			   nccl_ofi_freelist_t **freelist_p)
 {
 	return freelist_init_internal(entry_size,
 				      initial_entry_count,
 				      increase_entry_count,
 				      max_entry_count,
+				      entry_init_fn,
+				      entry_fini_fn,
 				      false,
 				      NULL,
 				      NULL,
@@ -145,6 +154,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      size_t initial_entry_count,
 			      size_t increase_entry_count,
 			      size_t max_entry_count,
+			      nccl_ofi_freelist_entry_init_fn entry_init_fn,
+			      nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
 			      nccl_ofi_freelist_regmr_fn regmr_fn,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
@@ -155,6 +166,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 				      initial_entry_count,
 				      increase_entry_count,
 				      max_entry_count,
+				      entry_init_fn,
+				      entry_fini_fn,
 				      true,
 				      regmr_fn,
 				      deregmr_fn,
@@ -175,6 +188,13 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 		void *memory = block->memory;
 		size_t size = block->memory_size;
 		freelist->blocks = block->next;
+
+		if (freelist->entry_fini_fn != NULL) {
+			for (size_t i = 0; i < block->num_entries; ++i) {
+				nccl_ofi_freelist_elem_t *entry = &block->entries[i];
+				freelist->entry_fini_fn(entry->ptr);
+			}
+		}
 
 		/* note: the base of the allocation and the memory
 		   pointer are the same (that is, the block structure
@@ -287,6 +307,8 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		goto error;
 	}
 
+	block->num_entries = allocation_count;
+
 	freelist->blocks = block;
 
 	for (size_t i = 0 ; i < allocation_count ; ++i) {
@@ -310,6 +332,13 @@ int nccl_ofi_freelist_add(nccl_ofi_freelist_t *freelist,
 		freelist->num_allocated_entries++;
 
 		nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
+
+		if (freelist->entry_init_fn) {
+			ret = freelist->entry_init_fn(entry->ptr);
+			if (ret != 0) {
+				goto error;
+			}
+		}
 
 		buffer += user_entry_size;
 	}
