@@ -979,9 +979,6 @@ static inline nccl_net_ofi_sendrecv_req_t *sendrecv_allocate_req(nccl_ofi_freeli
 	assert(req);
 	req->elem = elem;
 
-	req->base.test = sendrecv_req_test;
-	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
-
  exit:
 	return req;
 }
@@ -1337,6 +1334,17 @@ static int sendrecv_recv_comm_alloc_and_reg_flush_buff(struct fid_domain *domain
 	return ret;
 }
 
+
+static int sendrecv_fl_req_entry_init(void *entry)
+{
+	auto req = static_cast<nccl_net_ofi_sendrecv_req_t *>(entry);
+	req->base.test = sendrecv_req_test;
+	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
+
+	return 0;
+}
+
+
 /*
  * @brief	Allocate and setup receive communicator object for a peer. This
  * 		prepares plugin to receive messages from the given peer.
@@ -1397,7 +1405,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	/* Pre-allocated buffers for data path */
 
 	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_REQUESTS,
-				     NULL, NULL,
+				     sendrecv_fl_req_entry_init, NULL,
 				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
@@ -2002,7 +2010,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Pre-allocated buffers for data path */
 	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_SEND_REQUESTS,
-				     NULL, NULL,
+				     sendrecv_fl_req_entry_init, NULL,
 				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
