@@ -1046,15 +1046,10 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 				size_t_bits);
 			return -EINVAL;
 		}
-		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 1 << shift);
+		domain->mr_rkey_pool = new nccl_ofi_idpool_t(1 << shift);
 	} else {
 		/* Mark key pool as not in use */
-		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 0);
-	}
-	if (ret != 0) {
-		NCCL_OFI_WARN("Creating MR id pool failed: %s",
-			      strerror(-ret));
-		return -ret;
+		domain->mr_rkey_pool = new nccl_ofi_idpool_t(0);
 	}
 
 exit:
@@ -1068,8 +1063,10 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 		nccl_ofi_mr_cache_finalize(domain->mr_cache);
 	}
 
-	nccl_ofi_idpool_fini(&domain->mr_rkey_pool);
-
+	if (domain->mr_rkey_pool != NULL) {
+		delete domain->mr_rkey_pool;
+		domain->mr_rkey_pool = NULL;
+	}
 	return 0;
 }
 
