@@ -348,7 +348,7 @@ struct nccl_net_ofi_domain {
 	nccl_ofi_mr_cache_t *mr_cache;
 
 	/* Memory registration key pool */
-	nccl_ofi_idpool_t mr_rkey_pool;
+	nccl_ofi_idpool_t *mr_rkey_pool;
 
 	pthread_mutex_t domain_lock;
 

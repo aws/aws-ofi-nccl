@@ -603,8 +603,8 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 		goto exit;
 	}
 
-	if (nccl_ofi_idpool_active(key_pool)) {
-		int key = nccl_ofi_idpool_allocate_id(key_pool);
+	if (key_pool->size() != 0) {
+		int key = key_pool->allocate_id();
 		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
 			goto exit;
@@ -754,12 +754,12 @@ static int sendrecv_comm_mr_base_dereg(struct fid_mr *mr_handle,
 		}
 	}
 
-	if (nccl_ofi_idpool_active(key_pool)) {
+	if (key_pool->size() != 0) {
 		uint64_t key = fi_mr_key(mr_handle);
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("Error retrieving MR key, leaking key");
 		} else {
-			ret = nccl_ofi_idpool_free_id(key_pool, key);
+			ret = key_pool->free_id(key);
 			if (OFI_UNLIKELY(ret != 0)) {
 				NCCL_OFI_WARN("Error freeing MR key %" PRIu64 ", leaking key", key);
 			}
@@ -820,7 +820,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		/* Cache miss */
 	}
 
-	key_pool = &domain->base.mr_rkey_pool;
+	key_pool = domain->base.mr_rkey_pool;
 	struct fid_domain *ofi_domain;
 	ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
 	ret = sendrecv_mr_base_register(ofi_domain, ep->ofi_ep, key_pool,
@@ -886,7 +886,7 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 	assert(domain != NULL);
 
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool, domain->base.mr_cache);
+	return sendrecv_comm_mr_base_dereg(mr_handle, domain->base.mr_rkey_pool, domain->base.mr_cache);
 }
 
 
@@ -919,7 +919,7 @@ static int sendrecv_freelist_regmr_host_fn(void *opaque, void *data, size_t size
 		return -ENOMEM;
 	}
 
-	freelist_handle->key_pool = &(sendrecv_endpoint_get_domain(ep))->base.mr_rkey_pool;
+	freelist_handle->key_pool = (sendrecv_endpoint_get_domain(ep))->base.mr_rkey_pool;
 
 	int ret = sendrecv_mr_buffers_internal_register(domain->domain,
 							ep->ofi_ep,
@@ -1358,7 +1358,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	struct fid_domain *ofi_domain;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
-	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = domain->base.mr_rkey_pool;
 	int dev_id = device->base.dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1748,7 +1748,7 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 	assert(domain != NULL);
 
 	struct fid_mr *mr_handle = (struct fid_mr *)mhandle;
-	return sendrecv_comm_mr_base_dereg(mr_handle, &domain->base.mr_rkey_pool,
+	return sendrecv_comm_mr_base_dereg(mr_handle, domain->base.mr_rkey_pool,
 				  domain->base.mr_cache);
 }
 
