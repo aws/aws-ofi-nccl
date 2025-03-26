@@ -4,116 +4,72 @@
 
 #include "config.h"
 
-#include <assert.h>
-#include <errno.h>
-#include <stdlib.h>
+#include <cstddef>
+#include <stdexcept>
+#include <mutex>
+#include <vector>
+
+#include <rdma/fabric.h>
 
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_math.h"
-#include "nccl_ofi_pthread.h"
+#include "nccl_ofi_log.h"
 
-/*
- * @brief	Initialize pool of IDs
- *
- * Allocates and initializes a nccl_ofi_idpool_t object, marking all
- * IDs as available.
- *
- * @param	idpool_p
- *		Return value with the ID pool pointer allocated
- * @param	size
- *		Size of the id pool (number of IDs)
- * @return	0 on success
- *		non-zero on error
- */
-int nccl_ofi_idpool_init(nccl_ofi_idpool_t *idpool, size_t size)
+
+nccl_ofi_idpool_t::nccl_ofi_idpool_t(size_t size_arg) :
+	size(size_arg)
 {
-	int ret = 0;
+	idpool = std::vector<uint64_t>();
 
-	assert(NULL != idpool);
+	/* Initializing empty idpool */
+	if (size == 0) { return; }
 
-	if (0 == size) {
-		/* Empty or unused pool */
-		idpool->ids = NULL;
-		idpool->size = 0;
-		return ret;
-	}
-
-	/* Scale pool size to number of 64-bit uints (rounded up) */
+	/* Divide idpool across uint64 vector element and initialize IDs as 
+	   available (set each bit to 1) */
 	size_t num_long_elements = NCCL_OFI_ROUND_UP(size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
+	idpool.assign(num_long_elements, 0xffffffffffffffff);
 
-	/* Allocate memory for the pool */
-	idpool->ids = (uint64_t *)malloc(sizeof(uint64_t) * num_long_elements);
-
-	/* Return in case of allocation error */
-	if (NULL == idpool->ids) {
-		NCCL_OFI_WARN("Unable to allocate ID pool");
-		return -ENOMEM;
+	// When initializing the vector elements by setting all bits to 1, it can 
+	// set more IDs to be "available" than the desired size of the idpool if
+	// size_arg is not divisible by the size of the vector elements (e.g. if 
+	// size_arg is 67, then two uint64 vectors elements will be initialized and 
+	// 2 * 64 = 128 IDs would be marked as available rather than 67). In this 
+	// case, set the last vector element to a value with only 
+	// "size % (sizeof(uint64_t) * 8)" bits (IDs) set to 1.
+	//
+	// EXAMPLE: for size_arg of 67, the initialized vector elements in bits are:
+	// idpool[0]=11111111111111111111111111111111111111111111111111111111
+	// idpool[1]=11111111111111111111111111111111111111111111111111111111
+	// After the update below, it will look like:
+	// idpool[0]=11111111111111111111111111111111111111111111111111111111
+	// idpool[1]=00000000000000000000000000000000000000000000000000000111
+	if ((size % (sizeof(uint64_t) * 8)) != 0) {
+		idpool[num_long_elements - 1] = (1ULL << (size % (sizeof(uint64_t) * 8))) - 1;
 	}
-
-	/* Set all IDs to be available */
-	memset(idpool->ids, 0xff, size / 8);
-	if (size % 8) {
-		idpool->ids[num_long_elements - 1] = (1ULL << (size % (sizeof(uint64_t) * 8))) - 1;
-	}
-
-	/* Initialize mutex */
-	ret = nccl_net_ofi_mutex_init(&idpool->lock, NULL);
-	if (OFI_UNLIKELY(ret)) {
-		NCCL_OFI_WARN("Unable to initialize mutex");
-		free(idpool->ids);
-		idpool->ids = NULL;
-		return ret;
-	}
-
-	idpool->size = size;
-
-	return ret;
 }
 
-/*
- * @brief	Allocate an ID
- *
- * Extract an available ID from the ID pool, mark the ID as
- * unavailable in the pool, and return extracted ID. No-op in case
- * no ID was available.
- *
- * This operation is locked by the ID pool's internal lock.
- *
- * @param	idpool
- *		The ID pool
- * @return	the extracted ID (zero-based) on success,
- *		negative value on error
- */
-int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
+
+size_t nccl_ofi_idpool_t::allocate_id()
 {
-	assert(NULL != idpool);
+	std::lock_guard<std::mutex> l(lock);
 
-	if (0 == idpool->size) {
+	if (0 == size) {
 		NCCL_OFI_WARN("Cannot allocate an ID from a 0-sized pool");
-		return -ENOMEM;
+		throw std::runtime_error("nccl_ofi_idpool_t: Cannot allocate an ID from a 0-sized pool");
 	}
-
-	if (OFI_UNLIKELY(NULL == idpool->ids)) {
-		NCCL_OFI_WARN("Invalid call to nccl_ofi_allocate_id with uninitialized pool");
-		return -EINVAL;
-	}
-
-	/* Scale pool size to number of 64-bit uints (rounded up) */
-	size_t num_long_elements = NCCL_OFI_ROUND_UP(idpool->size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
-
-	nccl_net_ofi_mutex_lock(&idpool->lock);
-
 	int entry_index = 0;
 
 	bool found = false;
 	size_t id = 0;
-	for (size_t i = 0; i < num_long_elements; i++) {
-		entry_index = __builtin_ffsll(idpool->ids[i]);
+
+	/* Iterate over each of the idpool vector elements */
+	for (size_t i = 0; i < idpool.size(); i++) {
+		entry_index = __builtin_ffsll(idpool[i]);
 		if (0 != entry_index) {
 			/* Found one available ID */
 
 			/* Set to 0 bit at entry_index - 1 */
-			idpool->ids[i] &= ~(1ULL << (entry_index - 1));
+			idpool[i] &= ~(1ULL << (entry_index - 1));
 
 			/* Store the ID we found */
 			id = (size_t)((i * sizeof(uint64_t) * 8) + entry_index - 1);
@@ -122,100 +78,45 @@ int nccl_ofi_idpool_allocate_id(nccl_ofi_idpool_t *idpool)
 		}
 	}
 
-	nccl_net_ofi_mutex_unlock(&idpool->lock);
-
-	if (!found || id >= idpool->size) {
-		NCCL_OFI_WARN("No IDs available (max: %lu)", idpool->size);
-		return -ENOMEM;
+	if (!found || id >= size) {
+		NCCL_OFI_WARN("No IDs available (max: %lu)", size);
+		return FI_KEY_NOTAVAIL;
 	}
 
 	return id;
 }
 
-/*
- * @brief	Free an ID from the pool
- *
- * Return input ID into the pool.
- *
- * This operation is locked by the ID pool's internal lock.
- *
- * @param	idpool
- *		The ID pool
- * @param	id
- *		The ID to release (zero-based)
- * @return	0 on success
- *		non-zero on error
- */
-int nccl_ofi_idpool_free_id(nccl_ofi_idpool_t *idpool, size_t id)
+
+void nccl_ofi_idpool_t::free_id(size_t id)
 {
-	assert(NULL != idpool);
+	std::lock_guard<std::mutex> l(lock);
 
-	if (0 == idpool->size) {
+	if (0 == size) {
 		NCCL_OFI_WARN("Cannot free an ID from a 0-sized pool");
-		return -EINVAL;
+		throw std::runtime_error("nccl_ofi_idpool_t: Cannot free an ID from a 0-sized pool");
 	}
 
-	if (OFI_UNLIKELY(NULL == idpool->ids)) {
-		NCCL_OFI_WARN("Invalid call to nccl_ofi_free_id with uninitialized pool");
-		return -EINVAL;
+	if (OFI_UNLIKELY(id >= size)) {
+		NCCL_OFI_WARN("ID value %lu out of range (max: %lu)", id, size);
+		throw std::runtime_error("nccl_ofi_idpool_t: Tried to free out of range ID value");
 	}
-
-	if (OFI_UNLIKELY(id >= idpool->size)) {
-		NCCL_OFI_WARN("ID value %lu out of range (max: %lu)", id, idpool->size);
-		return -EINVAL;
-	}
-
-	nccl_net_ofi_mutex_lock(&idpool->lock);
 
 	size_t i = id / (sizeof(uint64_t) * 8);
 	size_t entry_index = id % (sizeof(uint64_t) * 8);
 
 	/* Check if bit is 1 already */
-	if (idpool->ids[i] & (1ULL << entry_index)) {
+	if (idpool[i] & (1ULL << entry_index)) {
 		NCCL_OFI_WARN("Attempted to free an ID that's not in use (%lu)", id);
-
-		nccl_net_ofi_mutex_unlock(&idpool->lock);
-		return -ENOTSUP;
+		throw std::runtime_error("nccl_ofi_idpool_t: Attempted to free an ID that's not in use");
 	}
 
 	/* Set bit to 1, making the ID available */
-	idpool->ids[i] |= 1ULL << (entry_index);
-
-	nccl_net_ofi_mutex_unlock(&idpool->lock);
-
-	return 0;
+	idpool[i] |= 1ULL << (entry_index);
 }
 
-/*
- * @brief	Release pool of IDs and free resources
- *
- * Releases a nccl_ofi_idpool_t object and frees allocated memory.
- *
- * @param	idpool_p
- *		Pointer to the ID pool, it will be set to NULL on success
- * @return	0 on success
- *		non-zero on error
- */
-int nccl_ofi_idpool_fini(nccl_ofi_idpool_t *idpool)
+
+size_t nccl_ofi_idpool_t::get_size()
 {
-	int ret = 0;
-
-	assert(NULL != idpool);
-
-	if (0 == idpool->size && NULL == idpool->ids) {
-		/* Empty or unused pool, no-op */
-		return ret;
-	}
-
-	/* Destroy mutex */
-	ret = nccl_net_ofi_mutex_destroy(&idpool->lock);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to destroy mutex");
-	}
-
-	free(idpool->ids);
-	idpool->ids = NULL;
-	idpool->size = 0;
-
-	return ret;
+	std::lock_guard<std::mutex> l(lock);
+	return size;
 }
