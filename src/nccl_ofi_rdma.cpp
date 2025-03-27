@@ -162,6 +162,9 @@ static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_devi
 
 static nccl_net_ofi_rdma_ep_t *rdma_req_get_ep(nccl_net_ofi_rdma_req_t *req)
 {
+	/* TODO: this function doesn't work for rx buffers, which have no
+	   associated comm */
+	assert(req->comm);
 	return (nccl_net_ofi_rdma_ep_t *)req->comm->ep;
 }
 
@@ -1544,9 +1547,9 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req);
 static int post_eager_copy(nccl_net_ofi_rdma_req_t *req);
 
 
-static nccl_net_ofi_rdma_req_t *rdma_op_context_get_req(void *op_context, int rail_id)
+static nccl_net_ofi_rdma_req_t *rdma_context_get_req(nccl_net_ofi_context_t *ctx,
+						     int rail_id)
 {
-	struct fi_context2 *ctx = (struct fi_context2 *)op_context;
 	if (OFI_UNLIKELY(ctx == NULL)) {
 		return NULL;
 	}
@@ -1569,153 +1572,187 @@ static nccl_net_ofi_rdma_req_t *rdma_op_context_get_req(void *op_context, int ra
  * @return	0, on success
  *		error, on others
  */
-static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_t num_cqes, nccl_net_ofi_rdma_device_t *device,
-				      int rail_id)
+static inline int rdma_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
+					   struct fi_cq_entry *cq_entry_base,
+					   int rail_id)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_req_t *req = NULL;
-	uint64_t comp_idx = 0, comp_flags = 0;
+	auto cq_entry = reinterpret_cast<fi_cq_data_entry *>(cq_entry_base);
+	uint64_t comp_flags = cq_entry->flags;
 
 	rdma_req_send_data_t *send_data = NULL;
 	rdma_req_rma_op_data_t *rma_op_data = NULL;
 
-	for (comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
-		/* The context for these operations is req.
-		 * except in the FI_REMOTE_WRITE case where is NULL */
-		comp_flags = cq_entry[comp_idx].flags;
-
-		/**
-		 * Types of completions:
-		 * 1. SEND: connect, connect response, or control message
-		 * 2. RECV w/o immediate data: connect, connect response, or control message
-		 * 3. RECV w/ immediate data: eager message
-		 * 4. Remote-initiated write
-		 * 5. Local-initiated write: send operation, RMA write, or RMA write inline
-		 * 6. READ: flush, eager copy, or RMA read
-		 */
-		if (comp_flags & FI_REMOTE_WRITE) {
-			/* Remote-initiated write is complete */
-			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
-		} else {
-			req = rdma_op_context_get_req(cq_entry[comp_idx].op_context, rail_id);
-			if (OFI_UNLIKELY(req == NULL)) {
-				NCCL_OFI_WARN("Completion with unexpected NULL op_context");
-				return -EINVAL;
-			}
-
-			if (comp_flags & FI_SEND) {
-				/* Send completions */
-
-				if (req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP) {
-					/* CONN or CONN_RESP send completion */
-					ret = inc_req_completion(req, sizeof(nccl_ofi_rdma_connection_info_t), 1);
-
-				} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
-					/* CTRL message send completion */
-					NCCL_OFI_TRACE_SEND_CTRL_END(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
-					ret = set_send_ctrl_completed(req);
-
-				} else if (req->type == NCCL_OFI_RDMA_SEND) {
-					/* Eager message send completion */
-					NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
-					send_data = get_send_data(req);
-					assert(send_data->eager);
-					ret = inc_req_completion(req, 0, send_data->total_num_compls);
-				} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
-					ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
-				} else {
-					NCCL_OFI_WARN("Send completion from unexpected request type");
-					ret = -EINVAL;
-				}
-			} else if (comp_flags & FI_RECV) {
-				/* Receive completions */
-				ret = handle_rx_buff_recv(device, rail_id, &cq_entry[comp_idx], req,
-							  comp_flags & FI_REMOTE_CQ_DATA);
-
-			} else if (comp_flags & FI_WRITE) {
-				switch (req->type) {
-				case NCCL_OFI_RDMA_SEND: {
-					/* Local-initiated write of send operation is complete */
-					NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
-									       req);
-
-					send_data = get_send_data(req);
-					ret = inc_req_completion(req, 0, send_data->total_num_compls);
-					break;
-				}
-				case NCCL_OFI_RDMA_WRITE: {
-					/* Local-initiated RMA write is complete */
-
-					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
-					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-					break;
-				}
-				case NCCL_OFI_RDMA_READ:
-				case NCCL_OFI_RDMA_RECV:
-				case NCCL_OFI_RDMA_SEND_CTRL:
-				case NCCL_OFI_RDMA_SEND_CLOSE:
-				case NCCL_OFI_RDMA_RECV_SEGMS:
-				case NCCL_OFI_RDMA_EAGER_COPY:
-				case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-				case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-				case NCCL_OFI_RDMA_FLUSH:
-				case NCCL_OFI_RDMA_SEND_CONN:
-				case NCCL_OFI_RDMA_RECV_CONN:
-				case NCCL_OFI_RDMA_RECV_CONN_RESP:
-				case NCCL_OFI_RDMA_SEND_CONN_RESP:
-				case NCCL_OFI_RDMA_INVALID_TYPE:
-				default:
-					NCCL_OFI_WARN("Write complete from unexpected request type!");
-					ret = -EINVAL;
-				}
-			} else if (comp_flags & FI_READ) {
-				switch (req->type) {
-				case NCCL_OFI_RDMA_FLUSH: {
-					/* fi_read flush is complete */
-					ret = handle_flush_comp(req);
-					break;
-				}
-				case NCCL_OFI_RDMA_EAGER_COPY: {
-					ret = set_eager_copy_completed(req);
-					break;
-				}
-				case NCCL_OFI_RDMA_READ: {
-					/* Local-initiated RMA read is complete */
-
-					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
-					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-					break;
-				}
-				case NCCL_OFI_RDMA_SEND:
-				case NCCL_OFI_RDMA_WRITE:
-				case NCCL_OFI_RDMA_RECV:
-				case NCCL_OFI_RDMA_SEND_CTRL:
-				case NCCL_OFI_RDMA_SEND_CLOSE:
-				case NCCL_OFI_RDMA_RECV_SEGMS:
-				case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-				case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-				case NCCL_OFI_RDMA_SEND_CONN:
-				case NCCL_OFI_RDMA_RECV_CONN:
-				case NCCL_OFI_RDMA_RECV_CONN_RESP:
-				case NCCL_OFI_RDMA_SEND_CONN_RESP:
-				case NCCL_OFI_RDMA_INVALID_TYPE:
-				default:
-					NCCL_OFI_WARN("Read complete from unexpected request type!");
-					ret = -EINVAL;
-				}
-			} else {
-				NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
-				ret = -EINVAL;
-			}
-		}
-
-		if (OFI_UNLIKELY(ret != 0)) {
-			goto exit;
-		}
+	/* The context for these operations is req. */
+	nccl_net_ofi_rdma_req_t *req = rdma_context_get_req(ctx, rail_id);
+	if (OFI_UNLIKELY(req == NULL)) {
+		NCCL_OFI_WARN("Completion with unexpected NULL op_context");
+		return -EINVAL;
 	}
-exit:
+
+	/**
+	 * Types of completions:
+	 * 1. SEND: connect, connect response, or control message
+	 * 2. RECV w/o immediate data: connect, connect response, or control message
+	 * 3. RECV w/ immediate data: eager message
+	 * 5. Local-initiated write: send operation, RMA write, or RMA write inline
+	 * 6. READ: flush, eager copy, or RMA read
+	 */
+
+	if (comp_flags & FI_SEND) {
+		/* Send completions */
+
+		if (req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_SEND_CONN_RESP) {
+			/* CONN or CONN_RESP send completion */
+			ret = inc_req_completion(req, sizeof(nccl_ofi_rdma_connection_info_t), 1);
+
+		} else if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
+			/* CTRL message send completion */
+			NCCL_OFI_TRACE_SEND_CTRL_END(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
+			ret = set_send_ctrl_completed(req);
+
+		} else if (req->type == NCCL_OFI_RDMA_SEND) {
+			/* Eager message send completion */
+			NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
+			send_data = get_send_data(req);
+			assert(send_data->eager);
+			ret = inc_req_completion(req, 0, send_data->total_num_compls);
+		} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
+			ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
+		} else {
+			NCCL_OFI_WARN("Send completion from unexpected request type");
+			ret = -EINVAL;
+		}
+	} else if (comp_flags & FI_RECV) {
+
+		nccl_net_ofi_rdma_device_t *device =
+			rdma_endpoint_get_device(get_rx_buff_data(req)->ep);
+		/* Receive completions */
+		ret = handle_rx_buff_recv(device, rail_id, cq_entry, req,
+					  comp_flags & FI_REMOTE_CQ_DATA);
+
+	} else if (comp_flags & FI_WRITE) {
+		switch (req->type) {
+		case NCCL_OFI_RDMA_SEND: {
+			/* Local-initiated write of send operation is complete */
+			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
+								req);
+
+			send_data = get_send_data(req);
+			ret = inc_req_completion(req, 0, send_data->total_num_compls);
+			break;
+		}
+		case NCCL_OFI_RDMA_WRITE: {
+			/* Local-initiated RMA write is complete */
+
+			rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+			ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
+			break;
+		}
+		case NCCL_OFI_RDMA_READ:
+		case NCCL_OFI_RDMA_RECV:
+		case NCCL_OFI_RDMA_SEND_CTRL:
+		case NCCL_OFI_RDMA_SEND_CLOSE:
+		case NCCL_OFI_RDMA_RECV_SEGMS:
+		case NCCL_OFI_RDMA_EAGER_COPY:
+		case NCCL_OFI_RDMA_CTRL_RX_BUFF:
+		case NCCL_OFI_RDMA_EAGER_RX_BUFF:
+		case NCCL_OFI_RDMA_FLUSH:
+		case NCCL_OFI_RDMA_SEND_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN_RESP:
+		case NCCL_OFI_RDMA_SEND_CONN_RESP:
+		case NCCL_OFI_RDMA_INVALID_TYPE:
+		default:
+			NCCL_OFI_WARN("Write complete from unexpected request type!");
+			ret = -EINVAL;
+		}
+	} else if (comp_flags & FI_READ) {
+		switch (req->type) {
+		case NCCL_OFI_RDMA_FLUSH: {
+			/* fi_read flush is complete */
+			ret = handle_flush_comp(req);
+			break;
+		}
+		case NCCL_OFI_RDMA_EAGER_COPY: {
+			ret = set_eager_copy_completed(req);
+			break;
+		}
+		case NCCL_OFI_RDMA_READ: {
+			/* Local-initiated RMA read is complete */
+
+			rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+			ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
+			break;
+		}
+		case NCCL_OFI_RDMA_SEND:
+		case NCCL_OFI_RDMA_WRITE:
+		case NCCL_OFI_RDMA_RECV:
+		case NCCL_OFI_RDMA_SEND_CTRL:
+		case NCCL_OFI_RDMA_SEND_CLOSE:
+		case NCCL_OFI_RDMA_RECV_SEGMS:
+		case NCCL_OFI_RDMA_CTRL_RX_BUFF:
+		case NCCL_OFI_RDMA_EAGER_RX_BUFF:
+		case NCCL_OFI_RDMA_SEND_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN_RESP:
+		case NCCL_OFI_RDMA_SEND_CONN_RESP:
+		case NCCL_OFI_RDMA_INVALID_TYPE:
+		default:
+			NCCL_OFI_WARN("Read complete from unexpected request type!");
+			ret = -EINVAL;
+		}
+	} else {
+		NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
+		ret = -EINVAL;
+	}
+
 	return ret;
 }
+
+
+static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
+					   uint64_t num_cqes,
+					   nccl_net_ofi_rdma_device_t *device,
+					   int rail_id)
+{
+	int ret = 0;
+
+	for (uint64_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
+		void *op_ctx = cq_entry[comp_idx].op_context;
+
+		if (cq_entry[comp_idx].flags & FI_REMOTE_WRITE) {
+
+			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
+			if (ret != 0) {
+				return ret;
+			}
+
+			continue;
+		}
+
+		/* For all other completion types, op_ctx should be a valid
+		   pointer */
+		if (OFI_UNLIKELY(op_ctx == NULL)) {
+			NCCL_OFI_WARN("Invalid request context provided");
+			return -EINVAL;
+		}
+
+		nccl_net_ofi_context_t *ctx = container_of(op_ctx,
+							   nccl_net_ofi_context_t,
+							   ofi_ctx);
+
+		ret = ctx->handle_cq_entry(ctx, reinterpret_cast<struct fi_cq_entry *>(&cq_entry[comp_idx]),
+					   rail_id);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Context progress failed: %d", ret);
+			return ret;
+		}
+	}
+
+	return 0;
+}
+
 
 /*
  * @brief	Process error completion entries from the CQ error queue
@@ -1723,28 +1760,15 @@ exit:
  * @return	0, on success
  *		error, on others
  */
-static inline int process_err_completion(nccl_net_ofi_rdma_device_t *device,
-					 nccl_net_ofi_ep_rail_t *rail)
+static inline int rdma_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
+					      struct fid_cq *cq,
+					      struct fi_cq_err_entry *err_entry,
+					      int rail_id)
 {
-	struct fi_cq_err_entry err_entry = {};
-	nccl_net_ofi_rdma_req_t *req = NULL;
 	int ret = 0;
-	struct fid_cq *cq = rail->cq;
+	nccl_net_ofi_rdma_req_t *req = NULL;
 
-	ret = fi_cq_readerr(cq, &err_entry, 0);
-	if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
-		/*
-		 * Error not available yet.
-		 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
-		 */
-		return 0;
-	} else if (OFI_UNLIKELY(ret < 0)) {
-		NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
-			      ret, fi_strerror(-ret));
-		goto exit;
-	}
-
-	if (err_entry.err == FI_ECANCELED) {
+	if (err_entry->err == FI_ECANCELED) {
 		/* Closing an EP with posted receives will (erroneously) generate
 		   cancellation events for the posted receives with the EFA provider
 		   in Libfabric versions prior to 1.22. These events are harmless
@@ -1752,33 +1776,26 @@ static inline int process_err_completion(nccl_net_ofi_rdma_device_t *device,
 
 		   With Libfabric 1.22 and later, we shouldn't get these cancel
 		   events at all. The plugin does not explicitly call fi_cancel. */
-		ret = -err_entry.err;
+		ret = -(err_entry->err);
 		goto exit;
 	}
 
-	if (err_entry.flags & FI_REMOTE_WRITE) {
-		req = get_req_from_imm_data(device, err_entry.data);
-		if (!req) {
-			NCCL_OFI_WARN("Unknown remote write error, could not get CQ data");
-			ret = -EIO;
-			goto exit;
-		}
-	} else {
-		/* For all other operations, ctx should be a req */
-		if (!err_entry.op_context) {
-			NCCL_OFI_WARN("Operation with NULL context completed with error");
-			ret = -EIO;
-			goto exit;
-		}
-		req = rdma_op_context_get_req(err_entry.op_context, rail->rail_id);
+	if (OFI_UNLIKELY(ctx == NULL)) {
+		NCCL_OFI_WARN("Invalid ctx");
+		return -EINVAL;
 	}
 
+	req = rdma_context_get_req(ctx, rail_id);
+	assert(req);
+
 	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
-		      req, err_entry.err,
-		      err_entry.prov_errno,
-		      fi_cq_strerror(cq, err_entry.prov_errno, err_entry.err_data, NULL, 0),
-		      (long)err_entry.len, nccl_net_ofi_req_str(req));
-	if ((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) || (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF)) {
+		      req, err_entry->err,
+		      err_entry->prov_errno,
+		      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
+		      (long)err_entry->len, nccl_net_ofi_req_str(req));
+
+	if ((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) ||
+		(req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF)) {
 		/* A rx buffer receive failed -- this is an internal error so bail out */
 		NCCL_OFI_WARN("Fatal: rx buffer recv completed with error");
 	} else {
@@ -1793,10 +1810,17 @@ static inline int process_err_completion(nccl_net_ofi_rdma_device_t *device,
 	 * how to deal with these, so it is safe to pass up the err as-is.
 	 * However, any special-handling for prov_errno should be handled here.
 	 */
-	ret = -err_entry.err;
+	ret = -(err_entry->err);
 exit:
 	return ret;
 }
+
+
+static inline void *rdma_req_get_ofi_context(nccl_net_ofi_rdma_req_t *req, int rail_id)
+{
+	return static_cast<void *>(&(req->ctx[rail_id].ofi_ctx));
+}
+
 
 static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 {
@@ -1811,7 +1835,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 		      rma_op_data->buff_len, rma_op_data->desc,
 		      comm_rail->remote_addr,
 		      rma_op_data->remote_buff,
-		     rma_op_data->remote_mr_key, (void *)&req->ctx[rail_id]);
+		     rma_op_data->remote_mr_key, rdma_req_get_ofi_context(req, rail_id));
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_read failed; RC: %zd, Error: %s",
@@ -1946,6 +1970,42 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 	return rc;
 }
 
+
+static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, struct fid_cq *cq,
+					   int rail_id)
+{
+	if (err_entry->flags & FI_REMOTE_WRITE) {
+		/* On some providers (including EFA), we cannot rely on the cq data
+		   being valid for an error completion. So don't try to get a request
+		   here. */
+		NCCL_OFI_WARN("Remote write completed with error. RC: %d. Error: %d (%s). Completed length: %ld",
+			      err_entry->err, err_entry->prov_errno,
+			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
+			      (long)err_entry->len);
+		return -EIO;
+	}
+
+	/* For all other completion types, op_ctx should be a valid
+	   pointer */
+	void *op_ctx = err_entry->op_context;
+	if (OFI_UNLIKELY(op_ctx == NULL)) {
+		NCCL_OFI_WARN("Invalid request context provided");
+		return -EINVAL;
+	}
+
+	nccl_net_ofi_context_t *ctx = container_of(op_ctx, nccl_net_ofi_context_t, ofi_ctx);
+
+	int ret = ctx->handle_error_entry(ctx, cq, err_entry, rail_id);
+	if (ret == -FI_ECANCELED) {
+		/* Non-fatal cancellation event -- see comment in
+		   rdma_req_handle_error_entry. Ignore. */
+		return 0;
+	} else {
+		return ret;
+	}
+}
+
+
 static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
@@ -1956,20 +2016,28 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
 		if (rc > 0) {
-			ret = process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
+			ret = rdma_process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-			ret = process_err_completion(rdma_endpoint_get_device(ep), rail);
-			if (ret == 0) {
-				/* Error entry not available yet */
-				break;
-			} else if (ret == -FI_ECANCELED) {
-				/* Non-fatal cancellation event -- see comment in
-				   process_err_completion. Ignore. */
+			struct fi_cq_err_entry err_entry;
+
+			ret = fi_cq_readerr(rail->cq, &err_entry, 0);
+			if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
+				/*
+				 * Error not available yet.
+				 * fi_cq_read will keep returning -FI_EAVAIL so just bail out and try again later.
+				 */
 				ret = 0;
-				continue;
-			} else {
+				break;
+			} else if (OFI_UNLIKELY(ret < 0)) {
+				NCCL_OFI_WARN("Unable to read from fi_cq_readerr. RC: %d. Error: %s",
+					      ret, fi_strerror(-ret));
+				goto exit;
+			}
+
+			ret = rdma_process_error_entry(&err_entry, rail->cq, rail->rail_id);
+			if (ret != 0) {
 				goto exit;
 			}
 		} else if (rc == -FI_EAGAIN) {
@@ -2751,6 +2819,16 @@ static void prepare_send_conn_resp_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 }
 
+
+static inline void rdma_req_init_ctx(nccl_net_ofi_rdma_req_t *req)
+{
+	for (int i = 0; i < MAX_NUM_RAILS; ++i) {
+		req->ctx[i].handle_cq_entry = rdma_req_handle_cq_entry;
+		req->ctx[i].handle_error_entry = rdma_req_handle_error_entry;
+	}
+}
+
+
 /*
  * @brief	Initialize request of listen communicator
  *
@@ -2773,6 +2851,8 @@ static int prepare_recv_conn_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return -ret;
 	}
+
+	rdma_req_init_ctx(req);
 
 	return 0;
 }
@@ -4437,6 +4517,8 @@ static int rdma_fl_req_entry_init(void *entry)
 		return ret;
 	}
 
+	rdma_req_init_ctx(req);
+
 	return ret;
 }
 
@@ -4806,7 +4888,7 @@ static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 	rc = fi_send(comm_rail->local_ep, (void *)r_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
-		     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+		     comm_rail->remote_addr, rdma_req_get_ofi_context(req, rail_id));
 
 	if (rc == -FI_EAGAIN) {
 		req->state = NCCL_OFI_RDMA_REQ_CREATED;
@@ -5359,7 +5441,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 	msg.addr = comm_rail->remote_addr;
 	msg.rma_iov = &rma_iov;
 	msg.rma_iov_count = 1;
-	msg.context = (void *)&req->ctx[rail_id];
+	msg.context = rdma_req_get_ofi_context(req, rail_id);
 	msg.data = 0;
 
 	/* Post the message using fi_writemsg with FI_INJECT */
@@ -5391,13 +5473,13 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 					xfer_info->msg_size, desc,
 					comm_rail->remote_addr,
 					send_data->remote_buff + xfer_info->offset,
-					send_data->remote_mr_key[rail_id], (void *)&req->ctx[rail_id]);
+					send_data->remote_mr_key[rail_id], rdma_req_get_ofi_context(req, rail_id));
 	} else {
 		rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
 					xfer_info->msg_size, desc, send_data->wdata,
 					comm_rail->remote_addr,
 					send_data->remote_buff + xfer_info->offset,
-					send_data->remote_mr_key[rail_id], (void *)&req->ctx[rail_id]);
+					send_data->remote_mr_key[rail_id], rdma_req_get_ofi_context(req, rail_id));
 	}
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_writedata failed; RC: %zd, Error: %s",
@@ -5422,7 +5504,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	ssize_t rc;
 	/* Post eager send */
 	rc = fi_senddata(comm_rail->local_ep, (void*)(((uintptr_t)send_data->buff) + xfer_info->offset), xfer_info->msg_size, desc,
-			 send_data->wdata, comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+			 send_data->wdata, comm_rail->remote_addr, rdma_req_get_ofi_context(req, rail_id));
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_senddata failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
@@ -5467,7 +5549,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 	msg.desc = &desc;
 	msg.iov_count = 1;
 	msg.addr = FI_ADDR_UNSPEC;
-	msg.context = (void *)&req->ctx[ep_rail->rail_id];
+	msg.context = rdma_req_get_ofi_context(req, ep_rail->rail_id);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
 	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep, &msg, flags);
@@ -5575,7 +5657,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
 			desc,
-			     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+			     comm_rail->remote_addr, rdma_req_get_ofi_context(req, rail_id));
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA %s request. RC: %zd, Error: %s",
 			      nccl_net_ofi_req_str(req), rc, fi_strerror(-rc));
@@ -5677,7 +5759,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 
 	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->dst_buff,
 			     rx_buff_data->recv_len, desc, comm_rail->local_addr,
-			     (uint64_t)rx_buff, rx_key, (void *)&req->ctx[rx_rail_id]);
+			     (uint64_t)rx_buff, rx_key, rdma_req_get_ofi_context(req, rx_rail_id));
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
@@ -5723,7 +5805,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 			     (void *)host_buff_addr,
 			     f_buff->size, desc, comm_rail->local_addr,
 			     (uint64_t)(virt_addr_mr ? flush_data->data : 0),
-			     cuda_key, (void *)&req->ctx[rail_id]);
+			     cuda_key, rdma_req_get_ofi_context(req, rail_id));
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
 			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
 				      rc, fi_strerror(-rc));
@@ -6667,7 +6749,7 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	 * can be lifted.
 	 */
 	rc = fi_send(comm_rail->local_ep, (void *)s_comm->conn_msg->ptr, sizeof(nccl_ofi_rdma_connection_info_t), desc,
-		     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
+		     comm_rail->remote_addr, rdma_req_get_ofi_context(req, rail_id));
 
 	if (rc == -FI_EAGAIN) {
 		/*
