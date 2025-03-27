@@ -2063,8 +2063,6 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 		goto exit;
 	}
 
-	nccl_net_ofi_mutex_destroy(&req->req_lock);
-
 	/* Update free list */
 	if (OFI_UNLIKELY(nccl_ofi_reqs_fl == NULL)) {
 		ret = -EINVAL;
@@ -3184,21 +3182,9 @@ static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t*)elem->ptr;
 	assert(req);
 
-	zero_nccl_ofi_req(req);
 	req->elem = elem;
-	req->base.test = test;
-	req->ncompls = 0;
-
-	/* Initialize mutex for request access */
-	if (nccl_net_ofi_mutex_init(&req->req_lock, NULL)) {
-		NCCL_OFI_WARN("Unable to initialize mutex");
-		goto cleanup;
-	}
 
 	return req;
-cleanup:
-	nccl_ofi_freelist_entry_free(fl, elem);
-	return NULL;
 }
 
 /**
@@ -4439,6 +4425,37 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
 	return ret;
 }
 
+
+/**
+ * Freelist callback to initialize new RDMA request type
+ */
+static int rdma_fl_req_entry_init(void *entry)
+{
+	auto req = static_cast<nccl_net_ofi_rdma_req_t *>(entry);
+	assert(req);
+	zero_nccl_ofi_req(req);
+	req->base.test = test;
+
+	/* Initialize mutex for request access */
+	int ret = nccl_net_ofi_mutex_init(&req->req_lock, NULL);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to initialize mutex");
+		return ret;
+	}
+
+	return ret;
+}
+
+
+static void rdma_fl_req_entry_fini(void *entry)
+{
+	nccl_net_ofi_rdma_req_t *req = static_cast<nccl_net_ofi_rdma_req_t *>(entry);
+	assert(req);
+
+	nccl_net_ofi_mutex_destroy(&req->req_lock);
+}
+
+
 /*
  * @brief	Allocate and setup receive communicator object for a peer. This
  * 		prepares plugin to receive messages from the given peer.
@@ -4633,7 +4650,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	/* Maximum freelist entries is 4*NCCL_OFI_MAX_REQUESTS because each receive request
 	   can have associated reqs for send_ctrl, recv_segms, and eager_copy */
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
-				     4 * NCCL_OFI_MAX_REQUESTS, NULL, NULL,
+				     4 * NCCL_OFI_MAX_REQUESTS,
+				     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 				     &r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
@@ -6141,7 +6159,7 @@ static inline int init_rx_buffers(nccl_net_ofi_rdma_ep_t *ep)
 
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
 				     ofi_nccl_rdma_min_posted_bounce_buffers(), 16, 0,
-				     NULL, NULL,
+				     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 				     &ep->rx_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init rx_buff_reqs_fl");
@@ -6525,7 +6543,9 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Allocate request free list */
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t), 16, 16,
-				     NCCL_OFI_MAX_SEND_REQUESTS, NULL, NULL, &ret_s_comm->nccl_ofi_reqs_fl);
+				     NCCL_OFI_MAX_SEND_REQUESTS,
+				     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
+				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI request free list for dev %d rail %d",
 			      dev_id, rail_id);
