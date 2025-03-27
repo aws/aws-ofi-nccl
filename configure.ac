@@ -43,9 +43,9 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_CXX
 AC_LANG([C++])
 
-dnl use C++17, disable exceptions, and disable runtime type information
+dnl use C++17, disable runtime type information
 AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
-CXXFLAGS="${CXXFLAGS} -fno-rtti -fno-exceptions"
+CXXFLAGS="${CXXFLAGS} -fno-rtti"
 
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
