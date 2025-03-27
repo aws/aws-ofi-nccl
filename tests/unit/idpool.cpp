@@ -23,20 +23,16 @@ int main(int argc, char *argv[]) {
 		/* Scale pool size to number of 64-bit uints (rounded up) */
 		size_t num_long_elements = NCCL_OFI_ROUND_UP(size, sizeof(uint64_t) * 8) / (sizeof(uint64_t) * 8);
 
-		nccl_ofi_idpool_t *idpool = (nccl_ofi_idpool_t *)malloc(sizeof(nccl_ofi_idpool_t));
-		assert(NULL != idpool);
-
-		/* Test nccl_ofi_idpool_init */
-		ret = nccl_ofi_idpool_init(idpool, size);
-		assert(0 == ret);
-		assert(idpool->size == size);
+		/* Test nccl_ofi_idpool_t constructor */
+		nccl_ofi_idpool_t *idpool = new nccl_ofi_idpool_t(size);
+		assert(idpool->size() == size);
 
 		/* Test that all bits are set */
 		for (size_t i = 0; i < num_long_elements; i++) {
 			if (i == num_long_elements - 1 && size % (sizeof(uint64_t) * 8)) {
-				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->ids[i]);
+				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->get(i));
 			} else {
-				assert(0xffffffffffffffff == idpool->ids[i]);
+				assert(0xffffffffffffffff == idpool->get(i));
 			}
 		}
 
@@ -44,10 +40,10 @@ int main(int argc, char *argv[]) {
 		int id = 0;
 		(void) id; // Avoid unused-variable warning
 		for (uint64_t i = 0; i < size; i++) {
-			id = nccl_ofi_idpool_allocate_id(idpool);
+			id = idpool->allocate_id();
 			assert((uint64_t)id == i);
 		}
-		id = nccl_ofi_idpool_allocate_id(idpool);
+		id = idpool->allocate_id();
 		assert(-ENOMEM == id);
 
 		/* Test freeing and reallocating IDs */
@@ -56,51 +52,44 @@ int main(int argc, char *argv[]) {
 
 			for (size_t i = 0; i < sizeof(holes) / sizeof(int); i++) {
 				if (0 == i || holes[i] != holes[i-1]) {
-					ret = nccl_ofi_idpool_free_id(idpool, holes[i]);
+					ret = idpool->free_id(holes[i]);
 					assert(0 == ret);
 				}
 			}
 
 			for (size_t i = 0; i < sizeof(holes) / sizeof(int); i++) {
 				if (0 == i || holes[i] != holes[i-1]) {
-					id = nccl_ofi_idpool_allocate_id(idpool);
+					id = idpool->allocate_id();
 					assert(id == holes[i]);
 				}
 			}
 		}
 
 		/* Test nccl_ofi_free_id */
-		ret = nccl_ofi_idpool_free_id(idpool, (int)size);
+		ret = idpool->free_id((int)size);
 		assert(-EINVAL == ret);
 
 		for (size_t i = 0; i < size; i++) {
-			ret = nccl_ofi_idpool_free_id(idpool, i);
+			ret = idpool->free_id(i);
 			assert(0 == ret);
 		}
 
 		if (size) {
-			ret = nccl_ofi_idpool_free_id(idpool, 0);
+			ret = idpool->free_id(0);
 			assert(-ENOTSUP == ret);
 		}
 
 		/* Test that all bits are set */
 		for (size_t i = 0; i < num_long_elements; i++) {
 			if (i == num_long_elements - 1 && size % (sizeof(uint64_t) * 8)) {
-				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->ids[i]);
+				assert((1ULL << (size % (sizeof(uint64_t) * 8))) - 1 == idpool->get(i));
 			} else {
-				assert(0xffffffffffffffff == idpool->ids[i]);
+				assert(0xffffffffffffffff == idpool->get(i));
 			}
 		}
 
-		/* Test nccl_ofi_idpool_fini */
-		ret = nccl_ofi_idpool_fini(idpool);
-		assert(0 == ret);
-		/* nccl_ofi_idpool_fini is a no-op if the pool is
-		   0-sized or uninitialized */
-		ret = nccl_ofi_idpool_fini(idpool);
-		assert(0 == ret);
-
-		free(idpool);
+		/* Test deconstructor */
+		delete idpool;
 		idpool = NULL;
 	}
 

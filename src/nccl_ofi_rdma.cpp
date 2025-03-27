@@ -2813,7 +2813,7 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		return 0;
 	}
 
-	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = domain->base.mr_rkey_pool;
 	nccl_ofi_mr_cache_t *mr_cache = domain->base.mr_cache;
 
 	if (mr_cache) {
@@ -2833,8 +2833,8 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		}
 	}
 
-	if (nccl_ofi_idpool_active(key_pool) && mr_handle->mr_key >= 0) {
-		ret = nccl_ofi_idpool_free_id(key_pool, mr_handle->mr_key);
+	if (key_pool->size() != 0 && mr_handle->mr_key >= 0) {
+		ret = key_pool->free_id(mr_handle->mr_key);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Error freeing MR key %d, leaking key",
 				      mr_handle->mr_key);
@@ -2873,7 +2873,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
 	int num_rails = domain->num_rails;
-	nccl_ofi_idpool_t *key_pool = &domain->base.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = domain->base.mr_rkey_pool;
 
 	*mhandle = NULL;
 
@@ -2891,8 +2891,8 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 		goto error;
 	}
 
-        if (nccl_ofi_idpool_active(key_pool)) {
-		ret_handle->mr_key =nccl_ofi_idpool_allocate_id(key_pool);
+    if (key_pool->size() != 0) {
+		ret_handle->mr_key =key_pool->allocate_id();
 		if (OFI_UNLIKELY(ret_handle->mr_key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
 			ret = ret_handle->mr_key;
@@ -3798,7 +3798,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	rdma_device_set_comm(device, r_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
+	ret = device->comm_idpool->free_id(r_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 	}
@@ -3970,7 +3970,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	rdma_device_set_comm(device, s_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(device->comm_idpool, s_comm->local_comm_id);
+	ret = device->comm_idpool->free_id(s_comm->local_comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, s_comm->local_comm_id);
 		return ret;
@@ -4525,7 +4525,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	r_comm->n_ctrl_delivered = 0;
 
 	/* Allocate recv communicator ID */
-	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
+	comm_id = device->comm_idpool->allocate_id();
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		r_comm->local_comm_id = COMM_ID_INVALID;
 		goto error;
@@ -4706,7 +4706,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		if (r_comm->msgbuff)
 			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
 		if (COMM_ID_INVALID != r_comm->local_comm_id) {
-			ret = nccl_ofi_idpool_free_id(device->comm_idpool, r_comm->local_comm_id);
+			ret = device->comm_idpool->free_id(r_comm->local_comm_id);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, r_comm->local_comm_id);
 			}
@@ -5104,8 +5104,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	/* Release communicator ID */
-	ret = nccl_ofi_idpool_free_id(rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool,
-				      l_comm->comm_id);
+	ret = rdma_endpoint_get_device((nccl_net_ofi_rdma_ep_t *)base_ep)->comm_idpool->free_id(l_comm->comm_id);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
 	}
@@ -5167,7 +5166,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm->base.close = listen_close;
 
 	/* Allocate listen communicator ID */
-	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
+	comm_id = device->comm_idpool->allocate_id();
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		l_comm->comm_id = COMM_ID_INVALID;
 		ret = comm_id;
@@ -5190,7 +5189,7 @@ static int listen(nccl_net_ofi_ep_t *base_ep,
 
 error:
 	if (l_comm && COMM_ID_INVALID != l_comm->comm_id) {
-		if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, l_comm->comm_id)) {
+		if (0 != device->comm_idpool->free_id(l_comm->comm_id)) {
 			NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, l_comm->comm_id);
 		}
 	}
@@ -6507,7 +6506,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->remote_comm_id = handle->comm_id;
 
 	/* Allocate send communicator ID */
-	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
+	comm_id = device->comm_idpool->allocate_id();
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		ret_s_comm->local_comm_id = COMM_ID_INVALID;
 		ret = comm_id;
@@ -6586,7 +6585,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
  error:
 	if (ret_s_comm) {
 		if (COMM_ID_INVALID != ret_s_comm->local_comm_id) {
-			if (0 != nccl_ofi_idpool_free_id(device->comm_idpool, ret_s_comm->local_comm_id)) {
+			if (0 != device->comm_idpool->free_id(ret_s_comm->local_comm_id)) {
 				NCCL_OFI_WARN("Error freeing communicator ID %" PRIu32, ret_s_comm->local_comm_id);
 			}
 		}
@@ -7609,12 +7608,7 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 	}
 
 	if (device->comm_idpool) {
-		ret = nccl_ofi_idpool_fini(device->comm_idpool);
-		if (ret) {
-			NCCL_OFI_WARN("Failed to free idpool");
-			if (first_error == 0) first_error = ret;
-		}
-		free(device->comm_idpool);
+		delete device->comm_idpool;
 		device->comm_idpool = NULL;
 	}
 
@@ -7767,19 +7761,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	/* Initialize device ID pool */
-	device->comm_idpool = (nccl_ofi_idpool_t *)malloc(sizeof(nccl_ofi_idpool_t));
-	if (OFI_UNLIKELY(device->comm_idpool == NULL)) {
-		NCCL_OFI_WARN("Unable to allocate rdma endpoint ID pool");
-		ret = -ENOMEM;
-		goto error;
-	}
-
-	ret = nccl_ofi_idpool_init(device->comm_idpool, device->num_comm_ids);
-	if (OFI_UNLIKELY(ret != 0)) {
-		free(device->comm_idpool);
-		device->comm_idpool = NULL;
-		goto error;
-	}
+	device->comm_idpool = new nccl_ofi_idpool_t(device->num_comm_ids);
 
 	/* NVTX domain */
 #if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
