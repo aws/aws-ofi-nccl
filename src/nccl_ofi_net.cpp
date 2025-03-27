@@ -848,10 +848,6 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 
 	device->create_domain = NULL;
 	device->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
-	if (device->domain_table == NULL) {
-		NCCL_OFI_WARN("Could not allocate domain table");
-		return -ENOMEM;
-	}
 
 exit:
 

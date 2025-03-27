@@ -7357,11 +7357,6 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 
 	if (ofi_nccl_endpoint_per_communicator() != 0) {
 		domain->ep_addr_list = new nccl_ofi_ep_addr_list_t;
-		if (domain->ep_addr_list == NULL) {
-			NCCL_OFI_WARN("Failed to init ep addr list");
-			ret = -ENOMEM;
-			goto error;
-		}
 	} else {
 		domain->ep_addr_list = NULL;
 	}
