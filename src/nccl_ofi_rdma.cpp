@@ -2833,10 +2833,10 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 		}
 	}
 
-	if (nccl_ofi_idpool_active(key_pool) && mr_handle->mr_key >= 0) {
+	if (nccl_ofi_idpool_active(key_pool)) {
 		ret = nccl_ofi_idpool_free_id(key_pool, mr_handle->mr_key);
 		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Error freeing MR key %d, leaking key",
+			NCCL_OFI_WARN("Error freeing MR key %ld, leaking key",
 				      mr_handle->mr_key);
 		}
 	}
@@ -2891,17 +2891,17 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 		goto error;
 	}
 
-        if (nccl_ofi_idpool_active(key_pool)) {
-		ret_handle->mr_key =nccl_ofi_idpool_allocate_id(key_pool);
-		if (OFI_UNLIKELY(ret_handle->mr_key < 0)) {
+	if (nccl_ofi_idpool_active(key_pool)) {
+		auto key = nccl_ofi_idpool_allocate_id(key_pool);
+		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
-			ret = ret_handle->mr_key;
 			goto error;
 		}
+		ret_handle->mr_key = static_cast<uint64_t>(key);
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr((uint64_t)ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      rdma_domain_get_device(domain)->base.dev_id);
