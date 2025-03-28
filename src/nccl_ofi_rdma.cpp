@@ -4,6 +4,8 @@
 #include "config.h"
 
 #include <algorithm>
+#include <deque>
+
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -95,8 +97,8 @@
 /** Global variables **/
 
 /* List of comms undergoing deferred cleanup */
-static nccl_ofi_deque_t *s_comm_cleanup_list = NULL;
-static nccl_ofi_deque_t *r_comm_cleanup_list = NULL;
+static std::deque<nccl_net_ofi_rdma_send_comm_t*> *s_comm_cleanup_list = NULL;
+static std::deque<nccl_net_ofi_rdma_recv_comm_t*> *r_comm_cleanup_list = NULL;
 static pthread_mutex_t comm_cleanup_list_lock = PTHREAD_MUTEX_INITIALIZER;
 /* Number of open (not finalizing) send and recv comms */
 static int num_open_comms = 0;
@@ -970,14 +972,12 @@ static inline int repost_rx_buff(nccl_net_ofi_rdma_ep_t *ep,
 	ret = send_progress(rx_buff_req);
 	if (ret == -FI_EAGAIN) {
 		/* Add to pending reqs queue */
-		ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &rx_buff_req->pending_reqs_elem);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-			return ret;
-		}
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		ep->pending_reqs_queue->push_back(rx_buff_req);
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 		NCCL_OFI_TRACE_PENDING_INSERT(rx_buff_req);
 
-		return ret;
+		return 0;
 	} else if (OFI_UNLIKELY(ret != 0)) {
 		return ret;
 	}
@@ -1058,11 +1058,10 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		ret = send_progress(req);
 		if (ret == -FI_EAGAIN) {
 			/* Add to pending reqs queue */
-			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-				return ret;
-			}
+			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+			ep->pending_reqs_queue->push_back(req);
+			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+			ret = 0;
 			NCCL_OFI_TRACE_PENDING_INSERT(req);
 		}
 		else if (OFI_UNLIKELY(ret != 0)) {
@@ -1872,14 +1871,10 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 		/* Extract ep */
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 		/* Place in pending requests queue for next try */
-		int ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue,
-						     &req->pending_reqs_elem);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-			return ret;
-		} else {
-			rc = 0;
-		}
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		ep->pending_reqs_queue->push_back(req);
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		rc = 0;
 
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	}
@@ -1898,22 +1893,17 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int rc = 0;
-	nccl_ofi_deque_elem_t *deque_elem;
-	nccl_ofi_deque_t *pending_reqs_queue = ep->pending_reqs_queue;
 
 	while (true) {
-		rc = nccl_ofi_deque_remove_front(pending_reqs_queue, &deque_elem);
-		if (OFI_UNLIKELY(rc != 0)) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_remove_front: %d", rc);
-			return rc;
+		nccl_net_ofi_rdma_req_t *req = NULL;
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		if (!ep->pending_reqs_queue->empty()) {
+			req = ep->pending_reqs_queue->front();
+			ep->pending_reqs_queue->pop_front();
 		}
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		if (req == NULL) { break; }
 
-		if (deque_elem == NULL) {
-			/* Deque is empty */
-			break;
-		}
-
-		nccl_net_ofi_rdma_req_t *req = container_of(deque_elem, nccl_net_ofi_rdma_req_t, pending_reqs_elem);
 		switch (req->type) {
 			case NCCL_OFI_RDMA_WRITE:
 			case NCCL_OFI_RDMA_SEND:
@@ -1945,11 +1935,10 @@ static int process_pending_reqs(nccl_net_ofi_rdma_ep_t *ep)
 			break;
 		} else if (rc == -FI_EAGAIN) {
 			/* Put the request in the front of the queue and try again later */
-			rc = nccl_ofi_deque_insert_front(pending_reqs_queue, &req->pending_reqs_elem);
-			if (rc != 0) {
-				NCCL_OFI_WARN("Failed to insert_front pending request");
-				return rc;
-			}
+			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+			ep->pending_reqs_queue->push_front(req);
+			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+			rc = 0;
 			break;
 		}
 		NCCL_OFI_TRACE_PENDING_REMOVE(req);
@@ -2389,11 +2378,9 @@ static inline int handle_rx_eagain(nccl_net_ofi_rdma_ep_t *ep,
 				       nccl_net_ofi_rdma_req_t *req, size_t num_buffs_failed)
 {
 	/* Add to pending reqs queue */
-	int ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-		return ret;
-	}
+	nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+	ep->pending_reqs_queue->push_back(req);
+	nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
 	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
@@ -2403,7 +2390,7 @@ static inline int handle_rx_eagain(nccl_net_ofi_rdma_ep_t *ep,
 
 	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
 
-	return ret;
+	return 0;
 }
 
 static inline int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
@@ -3435,13 +3422,18 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm_
 static int process_cq_if_pending(nccl_net_ofi_rdma_ep_t *ep)
 {
 	/* Process the CQ if there are any pending requests */
-	if (!nccl_ofi_deque_isempty(ep->pending_reqs_queue)) {
+	nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+	bool is_deque_empty = ep->pending_reqs_queue->empty();
+	nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+	if (!is_deque_empty) {
 		int ret = ofi_process_cq(ep);
 		if (ret != 0) {
 			return ret;
 		}
-
-		if (!nccl_ofi_deque_isempty(ep->pending_reqs_queue)) {
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		is_deque_empty = ep->pending_reqs_queue->empty();
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		if (!is_deque_empty) {
 			/* Network is still busy. */
 			return -EAGAIN;
 		}
@@ -3873,10 +3865,9 @@ static int recv_comm_process_all_finalizing(void)
 {
 	int ret = 0;
 
-	NCCL_OFI_DEQUE_FOREACH(r_comm_cleanup_list) {
+	for (auto it = r_comm_cleanup_list->begin(); it != r_comm_cleanup_list->end();) {
 
-		nccl_net_ofi_rdma_recv_comm_t *r_comm =
-			container_of(elem, nccl_net_ofi_rdma_recv_comm_t, cleanup_list_elem);
+		nccl_net_ofi_rdma_recv_comm_t *r_comm = *it;
 
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 			r_comm->base.base.ep;
@@ -3905,6 +3896,8 @@ static int recv_comm_process_all_finalizing(void)
 					goto exit;
 				}
 			}
+
+			++it;
 		} else /* (r_comm->send_close_req != NULL) */ {
 
 			/* Waiting for close message delivery */
@@ -3917,11 +3910,13 @@ static int recv_comm_process_all_finalizing(void)
 				ret = -EIO;
 				goto exit;
 			} else if (state == NCCL_OFI_RDMA_REQ_COMPLETED) {
-				nccl_ofi_deque_remove(r_comm_cleanup_list, elem);
+				it = r_comm_cleanup_list->erase(it);
 				ret = recv_comm_destroy(r_comm);
 				if (ret != 0) {
 					goto exit;
 				}
+			} else {
+				++it;
 			}
 		}
 	}
@@ -4009,10 +4004,9 @@ static int send_comm_process_all_finalizing(void)
 {
 	int ret = 0;
 
-	NCCL_OFI_DEQUE_FOREACH(s_comm_cleanup_list) {
+	for (auto it = s_comm_cleanup_list->begin(); it != s_comm_cleanup_list->end();) {
 
-		nccl_net_ofi_rdma_send_comm_t *s_comm =
-			container_of(elem, nccl_net_ofi_rdma_send_comm_t, cleanup_list_elem);
+		nccl_net_ofi_rdma_send_comm_t *s_comm = *it;
 
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 			s_comm->base.base.ep;
@@ -4029,12 +4023,14 @@ static int send_comm_process_all_finalizing(void)
 		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
 		if (ready_to_destroy) {
-			nccl_ofi_deque_remove(s_comm_cleanup_list, elem);
+			it = s_comm_cleanup_list->erase(it);
 
 			ret = send_comm_destroy(s_comm);
 			if (ret != 0) {
 				goto exit;
 			}
+		} else {
+			++it;
 		}
 
 	}
@@ -4054,8 +4050,8 @@ static int comm_close_handler(void)
 {
 	int ret = 0;
 
-	while (!(nccl_ofi_deque_isempty(s_comm_cleanup_list)) ||
-	       !(nccl_ofi_deque_isempty(r_comm_cleanup_list))) {
+	while (!(s_comm_cleanup_list->empty()) ||
+	       !(r_comm_cleanup_list->empty())) {
 
 		ret = recv_comm_process_all_finalizing();
 		if (ret != 0) {
@@ -4106,8 +4102,7 @@ static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 
 	/* Defer cleanup until we deliver all outstanding control messages
 	   and deliver the close message */
-	nccl_ofi_deque_insert_back(r_comm_cleanup_list,
-				   &r_comm->cleanup_list_elem);
+	r_comm_cleanup_list->push_back(r_comm);
 
 	assert(num_open_comms > 0);
 	num_open_comms--;
@@ -4237,11 +4232,10 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		}
 	} else {
 		/* Add to pending reqs queue */
-		ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-			goto error;
-		}
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		ep->pending_reqs_queue->push_back(req);
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	}
 
@@ -4520,7 +4514,6 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
-	memset(&r_comm->cleanup_list_elem, 0, sizeof(r_comm->cleanup_list_elem));
 	r_comm->n_ctrl_sent = 0;
 	r_comm->n_ctrl_delivered = 0;
 
@@ -5765,13 +5758,12 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req)
 		ret = send_progress(rx_buff_req);
 		if (ret == -FI_EAGAIN) {
 			/* Place in pending requests queue for next try */
-			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &rx_buff_req->pending_reqs_elem);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-				return ret;
-			}
+			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+			ep->pending_reqs_queue->push_back(rx_buff_req);
+			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 			NCCL_OFI_TRACE_PENDING_INSERT(rx_buff_req);
-			return ret;
+
+			return 0;
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -5979,11 +5971,10 @@ retry:
 		ret = send_progress(req);
 		if (ret == -FI_EAGAIN) {
 			/* Add to pending reqs queue */
-			ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-				goto error;
-			}
+			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+			ep->pending_reqs_queue->push_back(req);
+			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+			ret = 0;
 			NCCL_OFI_TRACE_PENDING_INSERT(req);
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			/* TODO: Remove req from message buffer */
@@ -6039,8 +6030,7 @@ static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
 	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
 
 	/* Deferred cleanup */
-	nccl_ofi_deque_insert_back(s_comm_cleanup_list,
-				   &s_comm->cleanup_list_elem);
+	s_comm_cleanup_list->push_back(s_comm);
 
 	assert(num_open_comms > 0);
 	num_open_comms--;
@@ -6370,11 +6360,10 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
 	ret = send_progress(req);
 	if (ret == -FI_EAGAIN) {
 		/* Add to pending reqs queue */
-		ret = nccl_ofi_deque_insert_back(ep->pending_reqs_queue, &req->pending_reqs_elem);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to nccl_ofi_deque_insert_back: %d", ret);
-			goto error;
-		}
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		ep->pending_reqs_queue->push_back(req);
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	} else if (OFI_UNLIKELY(ret != 0)) {
 		ret = -ENOTSUP;
@@ -6491,7 +6480,6 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = 0;
-	memset(&ret_s_comm->cleanup_list_elem, 0, sizeof(ret_s_comm->cleanup_list_elem));
 
 	ret_s_comm->received_close_message = false;
 	ret_s_comm->n_ctrl_received = 0;
@@ -7152,9 +7140,13 @@ static int nccl_net_ofi_rdma_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 		return ret;
 	}
 
-	ret = nccl_ofi_deque_finalize(ep->pending_reqs_queue);
+	if (ep->pending_reqs_queue) {
+		delete ep->pending_reqs_queue;
+		ep->pending_reqs_queue = NULL;
+	}
+
+	ret = nccl_net_ofi_mutex_destroy(&ep->pending_reqs_lock);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to finalize pending_reqs_queue: %d", ret);
 		return ret;
 	}
 
@@ -7258,9 +7250,11 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		goto error;
 	}
 
-	ret = nccl_ofi_deque_init(&ep->pending_reqs_queue);
+	ep->pending_reqs_queue = new std::deque<nccl_net_ofi_rdma_req_t *>;
+
+	ret = nccl_net_ofi_mutex_init(&ep->pending_reqs_lock, NULL);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to init pending_reqs_queue: %d", ret);
+		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		goto error;
 	}
 
@@ -7844,17 +7838,15 @@ static inline int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 		rdma_plugin->topo = NULL;
 	}
 
-	ret = nccl_ofi_deque_finalize(r_comm_cleanup_list);
-	if (ret != 0) {
-		last_error = ret;
+	if (r_comm_cleanup_list != NULL) {
+		delete r_comm_cleanup_list;
+		r_comm_cleanup_list = NULL;
 	}
-	r_comm_cleanup_list = NULL;
 
-	ret = nccl_ofi_deque_finalize(s_comm_cleanup_list);
-	if (ret != 0) {
-		last_error = ret;
+	if (s_comm_cleanup_list != NULL) {
+		delete s_comm_cleanup_list;
+		s_comm_cleanup_list = NULL;
 	}
-	s_comm_cleanup_list = NULL;
 
 	ret = nccl_net_ofi_plugin_fini(plugin);
 	if (ret != 0) {
@@ -7947,15 +7939,8 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 
 	/* TODO: we should probably have an rdma_plugin object and put globals
 	   such as these there. */
-	ret = nccl_ofi_deque_init(&s_comm_cleanup_list);
-	if (ret != 0) {
-		goto error;
-	}
-
-	ret = nccl_ofi_deque_init(&r_comm_cleanup_list);
-	if (ret != 0) {
-		goto error;
-	}
+	s_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_send_comm_t*>;
+	r_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_recv_comm_t*>;
 
 	plugin->topo = topo;
 
@@ -7965,13 +7950,6 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 	*plugin_p = plugin;
 
 	return 0;
-
-error:
-	if (plugin) {
-		plugin->base.release_plugin(&plugin->base);
-		plugin = NULL;
-	}
-	return ret;
 }
 
 

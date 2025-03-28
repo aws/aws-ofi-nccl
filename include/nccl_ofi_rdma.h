@@ -8,8 +8,9 @@
 
 #include <rdma/fabric.h>
 
+#include <deque>
+
 #include "nccl_ofi.h"
-#include "nccl_ofi_deque.h"
 #include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
@@ -371,12 +372,6 @@ typedef struct nccl_net_ofi_rdma_req {
 	/* Message sequence number */
 	uint16_t msg_seq_num;
 
-	/*
-	 * Associated deque element object, used when request is in pending request
-	 * queue
-	 */
-	nccl_ofi_deque_elem_t pending_reqs_elem;
-
 	/* Number of arrived request completions */
 	int ncompls;
 
@@ -531,8 +526,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
 
-	nccl_ofi_deque_elem_t cleanup_list_elem;
-
 	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
@@ -606,8 +599,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
 	nccl_net_ofi_rdma_req_t *send_close_req;
-
-	nccl_ofi_deque_elem_t cleanup_list_elem;
 
 	/* Counters for total sent and received control messages */
 	pthread_mutex_t ctrl_counter_lock;
@@ -733,7 +724,9 @@ struct nccl_net_ofi_rdma_ep {
 	bool use_long_rkeys;
 
 	/* Pending requests queue */
-	nccl_ofi_deque_t *pending_reqs_queue;
+	std::deque<nccl_net_ofi_rdma_req_t *> *pending_reqs_queue;
+	/* Lock for `pending_reqs_queue` */
+	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
 	nccl_ofi_freelist_t *ctrl_rx_buff_fl;

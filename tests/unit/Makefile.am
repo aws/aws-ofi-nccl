@@ -14,7 +14,6 @@ LDADD = $(top_builddir)/src/libinternal_net_plugin.la
 noinst_HEADERS = test-common.h
 
 noinst_PROGRAMS = \
-	deque \
 	freelist \
 	msgbuff \
 	scheduler \
@@ -38,7 +37,6 @@ endif
 endif
 
 idpool_SOURCES = idpool.cpp
-deque_SOURCES = deque.cpp
 freelist_SOURCES = freelist.cpp
 msgbuff_SOURCES = msgbuff.cpp
 scheduler_SOURCES = scheduler.cpp

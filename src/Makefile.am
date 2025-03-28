@@ -19,7 +19,6 @@ sources = \
 	nccl_ofi_mr.cpp \
 	nccl_ofi_msgbuff.cpp \
 	nccl_ofi_freelist.cpp \
-	nccl_ofi_deque.cpp \
 	nccl_ofi_idpool.cpp \
 	nccl_ofi_ofiutils.cpp \
 	nccl_ofi_pthread.cpp \
