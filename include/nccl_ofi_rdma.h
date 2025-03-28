@@ -353,14 +353,13 @@ typedef struct {
 	int total_num_compls;
 } rdma_req_flush_data_t;
 
-
 /*
  * @brief	RDMA request
  */
 typedef struct nccl_net_ofi_rdma_req {
 	nccl_net_ofi_req_t base;
 
-	struct fi_context2 ctx[MAX_NUM_RAILS];
+	nccl_net_ofi_context_t ctx[MAX_NUM_RAILS];
 
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
