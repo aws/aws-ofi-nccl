@@ -186,12 +186,15 @@ pipeline {
                     def trn1_lock_label = "trn1-1-4node"
                     def trn1n_lock_label = "trn1n-1-4node"
 
+                    def nvidia_test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
+                    def neuron_test_list = "--test-list test_nccom_test"
+
                     def p3_p4_p5_base_os = "alinux2"
-                    def p3_p4_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test test_ofi_nccl_functional"
-                    def p5_addl_args = "${base_args} ${container_addl_args} --test-list test_nccl_test"
-                    def g4dn_addl_args = "${base_args} --test-list test_nccl_test test_ofi_nccl_functional"
+                    def p3_p4_addl_args = "${base_args} ${container_addl_args} ${nvidia_test_list}"
+                    def p5_addl_args = "${base_args} ${container_addl_args}  ${nvidia_test_list}"
+                    def g4dn_addl_args = "${base_args} ${nvidia_test_list}"
                     def g4dn_tcp_addl_args = "${g4dn_addl_args} ${test_tcp_provider}"
-                    def neuron_addl_args = "${base_args} --test-list test_nccom_test"
+                    def neuron_addl_args = "${base_args} ${neuron_test_list}"
 
                     // p3dn tests
                     stages["4_p3dn_al2"] = get_test_stage_with_lock_container("4_p3dn_al2", env.BUILD_TAG, p3_p4_p5_base_os, "alinux2", "p3dn.24xlarge", p3dn_lock_label, num_instances, p3_p4_addl_args)
