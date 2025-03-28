@@ -24,6 +24,11 @@ typedef enum nccl_net_ofi_sendrecv_req_direction {
 	NCCL_OFI_SENDRECV_RECV,
 } nccl_net_ofi_sendrecv_req_direction_t;
 
+typedef struct nccl_net_ofi_sendrecv_mr_handle {
+	uint64_t mr_key;
+	struct fid_mr *mr;
+} nccl_net_ofi_sendrecv_mr_handle_t;
+
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	/* This base listen communicator must be the first member of
 	 * this struct. This allows casting between pointers of this
@@ -64,7 +69,7 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 	void *host_buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */
-	struct fid_mr *mr_handle;
+	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
 typedef struct nccl_net_ofi_sendrecv_recv_comm {
