@@ -684,6 +684,7 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 		int key = nccl_ofi_idpool_allocate_id(key_pool);
 		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
+			ret = key;
 			goto exit;
 		}
 		ret_handle->mr_key = static_cast<uint64_t>(key);
