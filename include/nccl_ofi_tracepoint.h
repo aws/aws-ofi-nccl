@@ -34,7 +34,8 @@
 	NCCL_OFI_TRACE_SEND_NVTX(dev, size, comm, msg_seq_num, request, nccl_req); \
 } while(0)
 
-#define NCCL_OFI_TRACE_SEND_END(request) do { \
+#define NCCL_OFI_TRACE_SEND_END(dev, comm, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, SendEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_SEND_END_NVTX(request); \
 } while(0)
 
@@ -78,7 +79,8 @@
 	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_END(request) do { \
+#define NCCL_OFI_TRACE_RECV_END(dev, comm, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, RecvEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_RECV_END_NVTX(request); \
 } while(0)
 

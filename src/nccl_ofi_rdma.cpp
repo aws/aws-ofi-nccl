@@ -2714,9 +2714,9 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		}
 
 		if (req->type == NCCL_OFI_RDMA_SEND) {
-			NCCL_OFI_TRACE_SEND_END(req);
+			NCCL_OFI_TRACE_SEND_END(req->dev_id, base_comm, req);
 		} else if (req->type == NCCL_OFI_RDMA_RECV) {
-			NCCL_OFI_TRACE_RECV_END(req);
+			NCCL_OFI_TRACE_RECV_END(req->dev_id, base_comm, req);
 		}
 
 		assert(req->free);
