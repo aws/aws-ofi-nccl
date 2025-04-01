@@ -2882,6 +2882,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 		auto key = nccl_ofi_idpool_allocate_id(key_pool);
 		if (OFI_UNLIKELY(key < 0)) {
 			NCCL_OFI_WARN("MR key allocation failed");
+			ret = key;
 			goto error;
 		}
 		ret_handle->mr_key = static_cast<uint64_t>(key);
@@ -4521,6 +4522,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	comm_id = nccl_ofi_idpool_allocate_id(device->comm_idpool);
 	if (OFI_UNLIKELY(comm_id < 0)) {
 		r_comm->local_comm_id = COMM_ID_INVALID;
+		ret = comm_id;
 		goto error;
 	}
 	r_comm->local_comm_id = (uint32_t)comm_id;
