@@ -15,8 +15,8 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, msg_seq_num, request, nccl_req); \
 } while (0)
 
-#define NCCL_OFI_TRACE_RECV_SENDRECV(dev, tag, size, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req); \
+#define NCCL_OFI_TRACE_RECV_SENDRECV(dev, comm, size, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, size, request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_FLUSH_SENDRECV(request, nccl_req) do { \
@@ -73,9 +73,9 @@
 	NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV(dev, tag, size, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req); \
-	NCCL_OFI_TRACE_RECV_NVTX(dev, tag, size, request, nccl_req); \
+#define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, size, request, nccl_req); \
+	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_RECV_END(request) do { \

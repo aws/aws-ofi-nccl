@@ -1068,7 +1068,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 			desc = fi_mr_desc(mr_handles[recv_n]->mr);
 		}
 
-		NCCL_OFI_TRACE_RECV_SENDRECV(dev_id, r_comm->tag, sizes[recv_n], req, base_req);
+		NCCL_OFI_TRACE_RECV_SENDRECV(dev_id, r_comm, sizes[recv_n], req, base_req);
 
 		/*
 		 * TODO: Use NCCL provided tags when plugin supports grouped
