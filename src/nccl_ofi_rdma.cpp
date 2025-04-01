@@ -3589,7 +3589,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	/* At this point, we've successfully inserted a new request, so update the num inflight. */
 	(r_comm->num_inflight_reqs)++;
 
-	NCCL_OFI_TRACE_RECV(dev_id, r_comm->local_comm_id, sizes[0], req, base_req);
+	NCCL_OFI_TRACE_RECV(dev_id, r_comm, sizes[0], req, base_req);
 
 	/* Send ctrl msg */
 	nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);

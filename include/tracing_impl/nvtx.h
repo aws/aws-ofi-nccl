@@ -150,7 +150,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_NVTX(dev, tag, size, request, nccl_req) do { \
+#define NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req) do { \
 	if (NCCL_OFI_NVTX_TRACE_PER_COMM) { \
 		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_recv_comm_t *)request->comm) \
 			->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
