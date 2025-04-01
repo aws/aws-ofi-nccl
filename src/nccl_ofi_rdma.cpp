@@ -1442,7 +1442,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 		return ret;
 	}
 
-	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, cq_entry->len, req, req->msg_seq_num);
+	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, req->comm, cq_entry->len, req, req->msg_seq_num);
 
 	return 0;
 }
