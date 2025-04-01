@@ -82,8 +82,8 @@
 	NCCL_OFI_TRACE_RECV_END_NVTX(request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, size, request, msg_seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, size, request, msg_seq_num); \
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, comm, size, request, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, comm, size, request, msg_seq_num); \
 	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request, msg_seq_num); \
 } while(0)
 
