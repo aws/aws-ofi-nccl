@@ -108,7 +108,6 @@ static ncclResult_t nccl_net_ofi_retval_translate_impl(int retval)
  *
  * @return ncclSuccess, if convertion is successful
  *         ncclInvalidArgument, if input is NULL
- *         ncclInternalError, if message length doesn't fit into size_t range
  */
  static inline ncclResult_t convert_int_msg_sizes_to_size_t(const int* sizes, size_t *sizes_size_t, const size_t n) {
     if (OFI_UNLIKELY(sizes == NULL)) {
@@ -245,7 +244,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm)
 }
 
 
-ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm)
+ncclResult_t nccl_net_ofi_listen_v2(int dev, void* handle, void** listenComm)
 {
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 	ncclResult_t ret;
@@ -338,7 +337,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm)
 }
 
 
-ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
+ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void** sendComm)
 {
 	ncclResult_t ret = ncclSuccess;
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
@@ -359,7 +358,7 @@ ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm)
 	return ret;
 }
 
-ncclResult_t nccl_net_ofi_regMr_v7(void *comm, void *data, int size, int type,
+ncclResult_t nccl_net_ofi_regMr_v2(void *comm, void *data, int size, int type,
 				   void **mhandle)
 {
 	return nccl_net_ofi_regMr(comm, data, (size_t)size, type, mhandle);
@@ -541,7 +540,7 @@ error:
 }
 
 
-ncclResult_t nccl_net_ofi_accept_v4(void* listenComm, void** recvComm)
+ncclResult_t nccl_net_ofi_accept_v2(void* listenComm, void** recvComm)
 {
 	ncclResult_t ret = ncclInvalidArgument;
 
@@ -703,7 +702,7 @@ ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhan
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
+ncclResult_t nccl_net_ofi_isend_v2(void* sendComm, void* data, int size,
 			  void* mhandle, void** request)
 {
 	size_t size_size_t;
@@ -716,7 +715,7 @@ ncclResult_t nccl_net_ofi_isend_v4(void* sendComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v8(void* sendComm, void* data, int size,
+ncclResult_t nccl_net_ofi_isend_v5(void* sendComm, void* data, int size,
 				int tag, void* mhandle, void** request)
 {
 	size_t size_size_t;
@@ -776,7 +775,7 @@ ncclResult_t nccl_net_ofi_irecv(void* rComm, int n, void** buffers, size_t* size
 }
 
 
-ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
+ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size,
 			  void* mhandle, void** request)
 {
 	int tag = 0;
@@ -790,7 +789,7 @@ ncclResult_t nccl_net_ofi_irecv_v4(void* recvComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_irecv_v8(void* recvComm, int n, void** data,
+ncclResult_t nccl_net_ofi_irecv_v5(void* recvComm, int n, void** data,
 				int* sizes, int* tags, void** mhandles, void** request)
 {
 	if (OFI_UNLIKELY(recvComm == NULL || data == NULL ||
@@ -875,7 +874,7 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 }
 
 
-ncclResult_t nccl_net_ofi_flush_v3(void* recvComm, void* data, int size, void* mhandle)
+ncclResult_t nccl_net_ofi_iflush_v2(void* recvComm, void* data, int size, void* mhandle)
 {
 	void *req = NULL;
 	ncclResult_t ret = ncclSuccess;

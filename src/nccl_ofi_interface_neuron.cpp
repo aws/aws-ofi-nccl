@@ -97,8 +97,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.regMr = nccl_net_ofi_regMr,
 	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v8,
-	.irecv = nccl_net_ofi_irecv_v8,
+	.isend = nccl_net_ofi_isend_v5,
+	.irecv = nccl_net_ofi_irecv_v5,
 	.iflush = nccl_net_ofi_iflush,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,
@@ -110,7 +110,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.iread = nccl_net_ofi_iread,
 };
 
-static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t *props)
+static ncclResult_t getProperties_v3(int dev_id, ncclNetProperties_v4_t *props)
 {
 	nccl_ofi_properties_t ofi_properties;
 	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
@@ -136,14 +136,14 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "AWS Libfabric",
 	.init = init_v4,
 	.devices = nccl_net_ofi_devices,
-	.getProperties = getProperties_v4,
-	.listen = nccl_net_ofi_listen_v4,
-	.connect = nccl_net_ofi_connect_v4,
-	.accept = nccl_net_ofi_accept_v4,
+	.getProperties = getProperties_v3,
+	.listen = nccl_net_ofi_listen_v2,
+	.connect = nccl_net_ofi_connect_v2,
+	.accept = nccl_net_ofi_accept_v2,
 	.regMr = nccl_net_ofi_regMr,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v4,
-	.irecv = nccl_net_ofi_irecv_v4,
+	.isend = nccl_net_ofi_isend_v2,
+	.irecv = nccl_net_ofi_irecv_v2,
 	.iflush = nccl_net_ofi_iflush_v4,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,

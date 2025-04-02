@@ -144,7 +144,7 @@ static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t *props)
 }
 
 
-static ncclResult_t getProperties_v6(int dev_id, ncclNetProperties_v6_t *props)
+static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v6_t *props)
 {
 	nccl_ofi_properties_t ofi_properties;
 	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
@@ -172,10 +172,10 @@ static ncclResult_t getProperties_v6(int dev_id, ncclNetProperties_v6_t *props)
 }
 
 
-static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t* props)
+static ncclResult_t getProperties_v3(int dev_id, ncclNetProperties_v4_t* props)
 {
 	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v6(dev_id, &props_v6);
+	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
 	if (ret != ncclSuccess) {
 		return ret;
 	}
@@ -195,7 +195,7 @@ static ncclResult_t getProperties_v4(int dev_id, ncclNetProperties_v4_t* props)
 static ncclResult_t pciPath_v2(int dev_id, char** path)
 {
 	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v6(dev_id, &props_v6);
+	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
 	if (ret != ncclSuccess) {
 		return ret;
 	}
@@ -209,7 +209,7 @@ static ncclResult_t pciPath_v2(int dev_id, char** path)
 static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
 {
 	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v6(dev_id, &props_v6);
+	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
 	if (ret != ncclSuccess) {
 		return ret;
 	}
@@ -242,14 +242,14 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v2_t ncclNetPlugin_v2 = {
 	.devices = nccl_net_ofi_devices,
 	.pciPath = pciPath_v2,
 	.ptrSupport = ptrSupport_v2,
-	.listen = nccl_net_ofi_listen_v4,
-	.connect = nccl_net_ofi_connect_v4,
-	.accept = nccl_net_ofi_accept_v4,
-	.regMr = nccl_net_ofi_regMr_v7,
+	.listen = nccl_net_ofi_listen_v2,
+	.connect = nccl_net_ofi_connect_v2,
+	.accept = nccl_net_ofi_accept_v2,
+	.regMr = nccl_net_ofi_regMr_v2,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v4,
-	.irecv = nccl_net_ofi_irecv_v4,
-	.flush = nccl_net_ofi_flush_v3,
+	.isend = nccl_net_ofi_isend_v2,
+	.irecv = nccl_net_ofi_irecv_v2,
+	.flush = nccl_net_ofi_iflush_v2,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,
 	.closeRecv = nccl_net_ofi_closeRecv,
@@ -260,15 +260,15 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v3_t ncclNetPlugin_v3 = {
 	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
-	.getProperties = getProperties_v4,
-	.listen = nccl_net_ofi_listen_v4,
-	.connect = nccl_net_ofi_connect_v4,
-	.accept = nccl_net_ofi_accept_v4,
-	.regMr = nccl_net_ofi_regMr_v7,
+	.getProperties = getProperties_v3,
+	.listen = nccl_net_ofi_listen_v2,
+	.connect = nccl_net_ofi_connect_v2,
+	.accept = nccl_net_ofi_accept_v2,
+	.regMr = nccl_net_ofi_regMr_v2,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v4,
-	.irecv = nccl_net_ofi_irecv_v4,
-	.flush = nccl_net_ofi_flush_v3,
+	.isend = nccl_net_ofi_isend_v2,
+	.irecv = nccl_net_ofi_irecv_v2,
+	.flush = nccl_net_ofi_iflush_v2,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,
 	.closeRecv = nccl_net_ofi_closeRecv,
@@ -279,14 +279,14 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
 	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
-	.getProperties = getProperties_v4,
-	.listen = nccl_net_ofi_listen_v4,
-	.connect = nccl_net_ofi_connect_v4,
-	.accept = nccl_net_ofi_accept_v4,
-	.regMr = nccl_net_ofi_regMr_v7,
+	.getProperties = getProperties_v3,
+	.listen = nccl_net_ofi_listen_v2,
+	.connect = nccl_net_ofi_connect_v2,
+	.accept = nccl_net_ofi_accept_v2,
+	.regMr = nccl_net_ofi_regMr_v2,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v4,
-	.irecv = nccl_net_ofi_irecv_v4,
+	.isend = nccl_net_ofi_isend_v2,
+	.irecv = nccl_net_ofi_irecv_v2,
 	.iflush = nccl_net_ofi_iflush_v4,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,
@@ -298,14 +298,14 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "Libfabric",
 	.init = nccl_net_ofi_init,
 	.devices = nccl_net_ofi_devices,
-	.getProperties = getProperties_v6,
+	.getProperties = getProperties_v5,
 	.listen = nccl_net_ofi_listen,
 	.connect = nccl_net_ofi_connect,
 	.accept = nccl_net_ofi_accept,
-	.regMr = nccl_net_ofi_regMr_v7,
+	.regMr = nccl_net_ofi_regMr_v2,
 	.deregMr = nccl_net_ofi_deregMr,
-	.isend = nccl_net_ofi_isend_v8,
-	.irecv = nccl_net_ofi_irecv_v8,
+	.isend = nccl_net_ofi_isend_v5,
+	.irecv = nccl_net_ofi_irecv_v5,
 	.iflush = nccl_net_ofi_iflush,
 	.test = nccl_net_ofi_test,
 	.closeSend = nccl_net_ofi_closeSend,
@@ -317,15 +317,15 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "Libfabric",
         .init = nccl_net_ofi_init,
         .devices = nccl_net_ofi_devices,
-        .getProperties = getProperties_v6,
+        .getProperties = getProperties_v5,
         .listen = nccl_net_ofi_listen,
         .connect = nccl_net_ofi_connect,
         .accept = nccl_net_ofi_accept,
-        .regMr = nccl_net_ofi_regMr_v7,
+        .regMr = nccl_net_ofi_regMr_v2,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
-        .isend = nccl_net_ofi_isend_v8,
-        .irecv = nccl_net_ofi_irecv_v8,
+        .isend = nccl_net_ofi_isend_v5,
+        .irecv = nccl_net_ofi_irecv_v5,
         .iflush = nccl_net_ofi_iflush,
         .test = nccl_net_ofi_test,
         .closeSend = nccl_net_ofi_closeSend,
@@ -341,11 +341,11 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
         .listen = nccl_net_ofi_listen,
         .connect = connect_v7,
         .accept = accept_v7,
-        .regMr = nccl_net_ofi_regMr_v7,
+        .regMr = nccl_net_ofi_regMr_v2,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
-        .isend = nccl_net_ofi_isend_v8,
-        .irecv = nccl_net_ofi_irecv_v8,
+        .isend = nccl_net_ofi_isend_v5,
+        .irecv = nccl_net_ofi_irecv_v5,
         .iflush = nccl_net_ofi_iflush,
         .test = nccl_net_ofi_test,
         .closeSend = nccl_net_ofi_closeSend,
@@ -366,8 +366,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .regMr = nccl_net_ofi_regMr,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
-        .isend = nccl_net_ofi_isend_v8,
-        .irecv = nccl_net_ofi_irecv_v8,
+        .isend = nccl_net_ofi_isend_v5,
+        .irecv = nccl_net_ofi_irecv_v5,
         .iflush = nccl_net_ofi_iflush,
         .test = nccl_net_ofi_test,
         .closeSend = nccl_net_ofi_closeSend,
