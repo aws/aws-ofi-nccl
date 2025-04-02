@@ -885,8 +885,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 	domain_num = device->domain_table->size();
 	assert(domain_num > 0);
 	for (auto domain_iter = device->domain_table->begin() ;
-	     domain_iter != device->domain_table->end() ;
-	     ++domain_iter) {
+	     domain_iter != device->domain_table->end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
@@ -904,6 +903,11 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 			ep = NULL;
 		}
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+		/* The call to domain->release() below will remove this domain
+		   from the table, invalidating domain_iter. So increment it
+		   here first. */
+		++domain_iter;
 
 		/* domain->release takes the domain lock, and removes itself
 		 * from domain_table. Skipping device lock here.*/
