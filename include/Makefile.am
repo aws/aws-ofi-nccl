@@ -21,7 +21,15 @@ noinst_HEADERS = \
 	nccl_ofi_msgbuff.h \
 	nccl_ofi_param.h \
 	nccl_ofi_pthread.h \
-	nccl_ofi_rdma.h \
+	rdma/nccl_ofi_rdma_communicator.h \
+	rdma/nccl_ofi_rdma_constants.h \
+	rdma/nccl_ofi_rdma_device.h \
+	rdma/nccl_ofi_rdma_domain.h \
+	rdma/nccl_ofi_rdma_endpoint.h \
+	rdma/nccl_ofi_rdma_messages.h \
+	rdma/nccl_ofi_rdma_mr_handle.h \
+	rdma/nccl_ofi_rdma_plugin.h \
+	rdma/nccl_ofi_rdma_request.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_scheduler.h \
 	nccl_ofi_system.h \

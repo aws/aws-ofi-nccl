@@ -22,7 +22,7 @@
 #include "nccl_ofi_cuda.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
-#include "nccl_ofi_rdma.h"
+#include "rdma/nccl_ofi_rdma_plugin.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_idpool.h"
