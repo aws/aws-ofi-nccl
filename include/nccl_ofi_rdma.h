@@ -127,7 +127,7 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
 	int num_rails;
 
 	/* value of mr key id, if keys must be requested */
-	int mr_key;
+	uint64_t mr_key;
 
 	/* Array of size `num_rails' */
 	struct fid_mr **mr;
