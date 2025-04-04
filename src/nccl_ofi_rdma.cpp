@@ -787,16 +787,6 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	return 0;
 }
 
-static inline int free_eager_copy_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
-
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
 
 static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_net_ofi_rdma_recv_comm_t *r_comm,
 				       nccl_net_ofi_rdma_req_t *rx_buff_req)
@@ -810,7 +800,7 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_n
 	eager_copy_req->comm = &r_comm->base.base;
 	eager_copy_req->dev_id = recv_req->dev_id;
 	eager_copy_req->type = NCCL_OFI_RDMA_EAGER_COPY;
-	eager_copy_req->free = free_eager_copy_req;
+	eager_copy_req->free = nccl_net_ofi_rdma_req_t::free_eager_copy_req;
 	eager_copy_req->msg_seq_num = recv_req->msg_seq_num;
 
 	rdma_req_eager_copy_data_t *eager_copy_data = eager_copy_req->get_eager_copy_data();
@@ -1619,233 +1609,6 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 }
 
 
-/*
- * @brief	Free write request
- */
-static inline int free_write_req(nccl_net_ofi_rdma_req_t *req,
-				 bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_WRITE);
-	nccl_net_ofi_rdma_send_comm_t *s_comm =
-		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
-	return req->free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free read request
- */
-static inline int free_read_req(nccl_net_ofi_rdma_req_t *req,
-				bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_READ);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl, 
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free send request
- */
-static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
-					 bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_SEND);
-	nccl_net_ofi_rdma_send_comm_t *s_comm =
-		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
-	rdma_req_send_data_t *send_data;
-
-	send_data = req->get_send_data();
-
-	if (!send_data->eager && dec_inflight_reqs) {
-		/* free is going to be called inside of test(), which will
-		   happen in a time when NCCL guarantees no other thread will
-		   be accessing the communicator.  So no mutex protections are
-		   required if we do it here.  Better would be to do this as
-		   soon as we get the CQE for this request, but that would
-		   require atomics or locks, which isn't worth it today.  But
-		   if we ever refactor the locking strategy, we should revisit
-		   this. */
-		(s_comm->num_inflight_writes)--;
-	}
-
-	if (send_data->schedule) {
-		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
-		nccl_net_ofi_release_schedule(device->scheduler, send_data->schedule);
-		send_data->schedule = NULL;
-	}
-
-	return req->free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free receive request
- */
-static inline int free_recv_req(nccl_net_ofi_rdma_req_t *req,
-					 bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_RECV);
-	int ret = 0;
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_recv_data_t *recv_data = req->get_recv_data();
-	nccl_net_ofi_rdma_req_t *send_ctrl_req = recv_data->send_ctrl_req;
-	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
-	nccl_net_ofi_rdma_req_t *eager_copy_req = recv_data->eager_copy_req;
-
-	if (send_ctrl_req) {
-		ret = send_ctrl_req->free(send_ctrl_req, false);
-		if (ret) {
-			NCCL_OFI_WARN("Failed to free receive request");
-			return ret;
-		}
-	}
-
-	if (recv_segms_req) {
-		ret = recv_segms_req->free(recv_segms_req, false);
-		if (ret) {
-			NCCL_OFI_WARN("Failed to free receive request");
-			return ret;
-		}
-	}
-
-	if (eager_copy_req) {
-		ret = eager_copy_req->free(eager_copy_req, false);
-		if (ret) {
-			NCCL_OFI_WARN("Failed to free receive request");
-			return ret;
-		}
-	}
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free receive segments request
- */
-static inline int free_recv_segms_req(nccl_net_ofi_rdma_req_t *req,
-					      bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-						 dec_inflight_reqs);
-}
-
-/*
- * @brief	Free send control request
- */
-static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
-					      bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_ctrl_data_t *send_ctrl_data = req->get_send_ctrl_data();
-
-	if (send_ctrl_data->ctrl_schedule != NULL) {
-		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
-		nccl_net_ofi_release_schedule(device->scheduler, send_ctrl_data->ctrl_schedule);
-		send_ctrl_data->ctrl_schedule = NULL;
-	}
-
-	if (send_ctrl_data->ctrl_fl_elem) {
-		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_ctrl_data->ctrl_fl_elem);
-		send_ctrl_data->ctrl_fl_elem = NULL;
-	}
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free send close request
- */
-static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
-					      bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_close_data_t *send_close_data = req->req_get_send_close_data();
-
-	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
-		nccl_net_ofi_release_schedule(device->scheduler, send_close_data->ctrl_schedule);
-		send_close_data->ctrl_schedule = NULL;
-	}
-
-	if (send_close_data->ctrl_fl_elem) {
-		nccl_ofi_freelist_entry_free(r_comm->ctrl_buff_fl, send_close_data->ctrl_fl_elem);
-		send_close_data->ctrl_fl_elem = NULL;
-	}
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Free send connect and receive connect response request of send communicator
- */
-static inline int free_send_comm_connection_req(nccl_net_ofi_rdma_req_t *req,
-							 bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_SEND_CONN || req->type == NCCL_OFI_RDMA_RECV_CONN_RESP);
-	nccl_net_ofi_rdma_send_comm_t *s_comm =
-		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
-
-	return req->free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
-						 dec_inflight_reqs);
-}
-
-/*
- * @brief	Free flush request
- */
-static inline int free_flush_req(nccl_net_ofi_rdma_req_t *req,
-					  bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_FLUSH);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
-	return req->free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-							  dec_inflight_reqs);
-}
-
-/*
- * @brief	Dummy free function that shall not be called.
- *
- * @return	non-zero
- */
-static inline int free_invalid(nccl_net_ofi_rdma_req_t *req,
-					bool dec_inflight_reqs)
-{
-	NCCL_OFI_WARN("Failed to free request. Type :%d", req->type);
-	return -EINVAL;
-}
-
-static inline int eager_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
-					   bool dec_inflight_reqs)
-{
-	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
-	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
-
-	assert(ep->eager_rx_buff_size > 0);
-
-	/* Free buffer */
-	if (rx_buff_data->rx_buff_fl_elem) {
-		nccl_ofi_freelist_entry_free(ep->eager_rx_buff_fl, rx_buff_data->rx_buff_fl_elem);
-	}
-	return req->free_base_req(NULL, ep->rx_buff_reqs_fl, false);
-}
-
 static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							       nccl_net_ofi_ep_rail_t *rail)
 {
@@ -1857,7 +1620,7 @@ static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma
 	req->comm = NULL;
 	req->type = NCCL_OFI_RDMA_EAGER_RX_BUFF;
 	req->dev_id = rdma_endpoint_get_device(ep)->base.dev_id;
-	req->free = eager_rx_buff_req_free;
+	req->free = nccl_net_ofi_rdma_req_t::eager_rx_buff_req_free;
 
 	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 
@@ -1877,18 +1640,6 @@ static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma
 	return req;
 }
 
-static inline int ctrl_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
-					bool dec_inflight_reqs)
-{
-	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
-	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
-	/* Free buffer */
-	if (rx_buff_data->rx_buff_fl_elem) {
-		nccl_ofi_freelist_entry_free(ep->ctrl_rx_buff_fl, rx_buff_data->rx_buff_fl_elem);
-	}
-	return req->free_base_req(NULL, ep->rx_buff_reqs_fl, false);
-}
 
 static inline nccl_net_ofi_rdma_req_t *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							      nccl_net_ofi_ep_rail_t *rail)
@@ -1899,7 +1650,7 @@ static inline nccl_net_ofi_rdma_req_t *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_
 	req->comm = NULL;
 	req->type = NCCL_OFI_RDMA_CTRL_RX_BUFF;
 	req->dev_id = rdma_endpoint_get_device(ep)->base.dev_id;
-	req->free = ctrl_rx_buff_req_free;
+	req->free = nccl_net_ofi_rdma_req_t::ctrl_rx_buff_req_free;
 
 	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 
@@ -2289,7 +2040,7 @@ static void prepare_send_conn_resp_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	assert(req->type == NCCL_OFI_RDMA_RECV_CONN);
 
 	req->type = NCCL_OFI_RDMA_SEND_CONN_RESP;
-	req->free = free_invalid;
+	req->free = nccl_net_ofi_rdma_req_t::free_invalid;
 	req->size = 0;
 	req->ncompls = 0;
 
@@ -2307,7 +2058,7 @@ static int prepare_recv_conn_req(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	nccl_net_ofi_rdma_req_t *req = &l_comm->req;
 
 	req->type = NCCL_OFI_RDMA_RECV_CONN;
-	req->free = free_invalid;
+	req->free = nccl_net_ofi_rdma_req_t::free_invalid;
 	req->base.test = test;
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 	req->comm = &l_comm->base.base;
@@ -2744,7 +2495,7 @@ static inline int insert_send_ctrl_req(
 	send_ctrl_req->comm = &r_comm->base.base;
 	send_ctrl_req->dev_id = dev_id;
 	send_ctrl_req->type = NCCL_OFI_RDMA_SEND_CTRL;
-	send_ctrl_req->free = free_send_ctrl_req;
+	send_ctrl_req->free = nccl_net_ofi_rdma_req_t::free_send_ctrl_req;
 	send_ctrl_req->msg_seq_num = msg_seq_num;
 
 	rdma_req_send_ctrl_data_t *send_ctrl_data = send_ctrl_req->get_send_ctrl_data();
@@ -2848,7 +2599,7 @@ static inline int insert_recv_segms_req(
 	recv_segms_req->comm = &r_comm->base.base;
 	recv_segms_req->dev_id = dev_id;
 	recv_segms_req->type = NCCL_OFI_RDMA_RECV_SEGMS;
-	recv_segms_req->free = free_recv_segms_req;
+	recv_segms_req->free = nccl_net_ofi_rdma_req_t::free_recv_segms_req;
 	recv_segms_req->msg_seq_num = msg_seq_num;
 
 	rdma_req_recv_segms_data_t *recv_segms_data = recv_segms_req->get_recv_segms_data();
@@ -2887,7 +2638,7 @@ static inline int allocate_rdma_recv_req(
 	req->comm = &r_comm->base.base;
 	req->dev_id = dev_id;
 	req->type = NCCL_OFI_RDMA_RECV;
-	req->free = free_recv_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_recv_req;
 	req->msg_seq_num = msg_seq_num;
 
 	recv_data = req->get_recv_data();
@@ -3366,7 +3117,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 	send_close_req->comm = &r_comm->base.base;
 	send_close_req->dev_id = r_comm->base.base.dev_id;
 	send_close_req->type = NCCL_OFI_RDMA_SEND_CLOSE;
-	send_close_req->free = free_send_close_req;
+	send_close_req->free = nccl_net_ofi_rdma_req_t::free_send_close_req;
 	send_close_req->msg_seq_num = 0; /* Unimportant */
 
 	rdma_req_send_close_data_t *send_close_data = send_close_req->req_get_send_close_data();
@@ -3679,7 +3430,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	req->comm = &r_comm->base.base;
 	req->dev_id = dev_id;
 	req->type = NCCL_OFI_RDMA_FLUSH;
-	req->free = free_flush_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_flush_req;
 
 	flush_data = req->get_flush_data();
 	flush_data->data = buff;
@@ -3856,7 +3607,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
 	}
-	req->free = free_read_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_read_req;
 
 	req->init_rma_op_req(&r_comm->base.base, buff, size, desc, remote_buff,
 			remote_mr_key, flags, NCCL_OFI_RDMA_READ);
@@ -4743,7 +4494,7 @@ static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
 	}
-	req->free = free_write_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_write_req;
 	req->init_rma_op_req(&s_comm->base.base, buff, size, desc, remote_buff,
 			remote_mr_key, flags, NCCL_OFI_RDMA_WRITE);
 
@@ -4773,7 +4524,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	req->comm = &s_comm->base.base;
 	req->dev_id = s_comm->base.base.dev_id;
 	req->type = NCCL_OFI_RDMA_SEND;
-	req->free = free_send_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_send_req;
 	req->msg_seq_num = msg_seq_num;
 	req->size = size;
 
@@ -6129,7 +5880,7 @@ static inline nccl_net_ofi_rdma_req_t *prepare_send_conn_req(nccl_net_ofi_rdma_s
 	req->comm = &s_comm->base.base;
 	req->dev_id = s_comm->base.base.dev_id;
 	req->type = NCCL_OFI_RDMA_SEND_CONN;
-	req->free = free_send_comm_connection_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_send_comm_connection_req;
 
 	return req;
 }
@@ -6156,7 +5907,7 @@ static inline nccl_net_ofi_rdma_req_t *prepare_recv_conn_resp_req(nccl_net_ofi_r
 	req->comm = &s_comm->base.base;
 	req->dev_id = s_comm->base.base.dev_id;
 	req->type = NCCL_OFI_RDMA_RECV_CONN_RESP;
-	req->free = free_send_comm_connection_req;
+	req->free = nccl_net_ofi_rdma_req_t::free_send_comm_connection_req;
 
 	return req;
 }

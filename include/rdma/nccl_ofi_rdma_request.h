@@ -460,6 +460,77 @@ typedef struct nccl_net_ofi_rdma_req {
 	 */
 	const char *nccl_net_ofi_req_str();
 
+
+	/**
+	 * @brief	Free write request
+	 */
+	static int free_write_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free read request
+	 */
+	static int free_read_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free send request
+	 */
+	static int free_send_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free receive request
+	 */
+	static int free_recv_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free receive segments request
+	 */
+	static int free_recv_segms_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free send control request
+	 */
+	static int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free send close request
+	 */
+	static int free_send_close_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free send connect and receive connect response request of send communicator
+	 */
+	static int free_send_comm_connection_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Free flush request
+	 */
+	static int free_flush_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	/**
+	 * @brief	Dummy free function that shall not be called.
+	 *
+	 * @return	non-zero
+	 */
+	static int free_invalid(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	static int eager_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	static int free_eager_copy_req(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	static int ctrl_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
 } nccl_net_ofi_rdma_req_t;
 
 #endif // End NCCL_OFI_RDMA_REQUEST_H_
