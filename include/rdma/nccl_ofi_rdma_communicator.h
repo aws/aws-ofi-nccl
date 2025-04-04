@@ -143,6 +143,11 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_send_comm_rail_t *control_rails;
 
+	/**
+	* @brief Return send communicator rail with index `rail_id`
+	*/
+	nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(int rail_id);
+
 } nccl_net_ofi_rdma_send_comm_t;
 
 /*
@@ -161,6 +166,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm_rail {
 
 	/* Libfabric address of local endpoint used for flushing */
 	fi_addr_t local_addr;
+
 } nccl_net_ofi_rdma_recv_comm_rail_t;
 
 /*
@@ -215,6 +221,26 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
+
+	/**
+	* @brief Return receive communicator rail with index `rail_id`
+	*/
+	nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(int rail_id);
+
+
+	/**
+	* @brief Return receive communicator control rail with index `rail_id`
+	*/
+	nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(int rail_id);
+
+
+	ssize_t send_ctrl_post(nccl_ofi_freelist_elem_t *ctrl_fl_elem,
+						   int rail_id,
+						   size_t size,
+						   nccl_net_ofi_rdma_req_t *req);
+
+
+
 } nccl_net_ofi_rdma_recv_comm_t;
 
 typedef struct nccl_net_ofi_rdma_listen_comm {

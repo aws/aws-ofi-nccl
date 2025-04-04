@@ -163,17 +163,6 @@ static inline nccl_ofi_rdma_connection_info_t *get_rx_connection_msg(
 
 
 /*
- * @brief Return send communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
-								int rail_id)
-{
-	assert(s_comm->rails);
-	assert(rail_id < s_comm->num_rails);
-	return &s_comm->rails[rail_id];
-}
-
-/*
  * @brief Return send communicator control rail with index `rail_id`
  */
 static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
@@ -185,27 +174,6 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rai
 	return &s_comm->control_rails[rail_id];
 }
 
-/*
- * @brief Return receive communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-								int rail_id)
-{
-	assert(r_comm->rails);
-	assert(rail_id < r_comm->num_rails);
-	return &r_comm->rails[rail_id];
-}
-
-/*
- * @brief Return receive communicator control rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-								int rail_id)
-{
-	assert(r_comm->control_rails);
-	assert(rail_id < r_comm->num_control_rails);
-	return &r_comm->control_rails[rail_id];
-}
 
 static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
@@ -1326,7 +1294,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 	rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	int rail_id = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -3759,7 +3727,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	/* Initialize local and remote endpoint resources for each control rail */
 	for (int rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
 		nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->control_ep_names[rail_id];
 
@@ -3790,7 +3758,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	/* Initialize local and remote endpoint resources for each rail */
 	for (int rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
 		nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
@@ -3977,7 +3945,7 @@ static int post_send_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 {
 	ssize_t rc = 0;
 	size_t rail_id = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
 	freelist_regmr_fn_handle_t *fl_mr_handle = (freelist_regmr_fn_handle_t *)r_comm->conn_msg->mr_handle;
 	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rail_id]);
 
@@ -4512,7 +4480,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
 	size_t rail_id = 0;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, rail_id);
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = s_comm->rdma_send_comm_get_rail(rail_id);
 	rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -4588,7 +4556,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 
 			/* Get communicator rail information to xfer the req */
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-				rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+			s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
 
 			ret = req->post_rdma_eager_send(comm_rail, xfer_info);
 		} else {
@@ -4597,7 +4565,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
 				/* Get communicator rail information to xfer the req */
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+				s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
 
 				ret = req->post_rdma_write(comm_rail, xfer_info, send_data->no_target_completion);
 
@@ -4629,31 +4597,6 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	return ret;
 }
 
-static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-			  nccl_ofi_freelist_elem_t *ctrl_fl_elem,
-			  int rail_id,
-			  size_t size,
-			  nccl_net_ofi_rdma_req_t *req)
-{
-	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
-
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
-
-	assert(rail_id < mr_handle->num_rails);
-	void *desc = fi_mr_desc(mr_handle->mr[rail_id]);
-
-	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
-			size,
-			desc,
-			     comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Error posting RDMA %s request. RC: %zd, Error: %s",
-			      req->nccl_net_ofi_req_str(), rc, fi_strerror(-rc));
-	}
-	return rc;
-}
 
 static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 {
@@ -4678,7 +4621,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
 
-	ssize_t rc = send_ctrl_post(r_comm, ctrl_fl_elem, rail_id, ctrl_msg_len, req);
+	ssize_t rc = r_comm->send_ctrl_post(ctrl_fl_elem, rail_id, ctrl_msg_len, req);
 
 	if (rc == 0) {
 		NCCL_OFI_TRACE_SEND_CTRL_START(req->dev_id,
@@ -4705,7 +4648,7 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 
 	req->state = NCCL_OFI_RDMA_REQ_PENDING;
 
-	ssize_t rc = send_ctrl_post(r_comm, ctrl_fl_elem, rail_id,
+	ssize_t rc = r_comm->send_ctrl_post(ctrl_fl_elem, rail_id,
 				    sizeof(nccl_net_ofi_rdma_close_msg_t), req);
 
 	return rc;
@@ -4728,7 +4671,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	int rx_rail_id = rx_buff_data->rail->rail_id;
-	comm_rail = rdma_recv_comm_get_rail(r_comm, rx_rail_id);
+	comm_rail = r_comm->rdma_recv_comm_get_rail(rx_rail_id);
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
@@ -4771,7 +4714,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 
 	/* iterate all rails and post RDMA local read */
 	for (int rail_id = 0; rail_id < ep->num_rails; rail_id++) {
-		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 
 		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
 
