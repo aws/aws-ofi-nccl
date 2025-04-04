@@ -10,6 +10,7 @@
 
 #include "nccl_ofi.h"
 #include "rdma/nccl_ofi_rdma_constants.h"
+#include "rdma/nccl_ofi_rdma_messages.h"
 #include "rdma/nccl_ofi_rdma_mr_handle.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
@@ -88,7 +89,29 @@ typedef struct {
 	 * Back-pointer to associated endpoint
 	 */
 	nccl_net_ofi_rdma_ep_t *ep;
+
+
+	/**
+	 * Get ctrl message from rx buffer
+	 */
+	inline nccl_net_ofi_rdma_ctrl_msg_t *get_rx_ctrl_msg()
+	{
+		return (nccl_net_ofi_rdma_ctrl_msg_t *)this->rx_buff_fl_elem->ptr;
+	}
+
+	/**
+	 * Get close message from rx buffer
+	 */
+	inline nccl_net_ofi_rdma_close_msg_t *rx_get_close_msg()
+	{
+		nccl_net_ofi_rdma_close_msg_t *close_msg =
+			(nccl_net_ofi_rdma_close_msg_t *)this->rx_buff_fl_elem->ptr;
+		assert(close_msg->type == NCCL_OFI_RDMA_MSG_CLOSE);
+		return close_msg;
+	}
+
 } rdma_req_rx_buff_data_t;
+
 
 typedef struct {
 	/* Remote destination buffer address */
@@ -164,6 +187,15 @@ typedef struct {
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
 #endif
+
+
+	/**
+	 * Get ctrl message from send_ctrl_data
+	 */
+	inline nccl_net_ofi_rdma_ctrl_msg_t *rdma_send_ctrl_get_msg()
+	{
+		return (nccl_net_ofi_rdma_ctrl_msg_t *)this->ctrl_fl_elem->ptr;
+	}
 } rdma_req_send_ctrl_data_t;
 
 /*
@@ -176,6 +208,12 @@ typedef struct {
 	 * pointer to reference it when transferring the buffer over
 	 * network. */
 	nccl_net_ofi_schedule_t *ctrl_schedule;
+
+	inline nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg()
+	{
+		return (nccl_net_ofi_rdma_close_msg_t *)this->ctrl_fl_elem->ptr;
+	}
+
 } rdma_req_send_close_data_t;
 
 typedef struct {

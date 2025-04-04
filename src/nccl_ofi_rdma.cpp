@@ -166,44 +166,6 @@ static inline nccl_ofi_rdma_connection_info_t *get_rx_connection_msg(
 	return (nccl_ofi_rdma_connection_info_t *)rx_buff_data->rx_buff_fl_elem->ptr;
 }
 
-/*
- * Get ctrl message from rx buffer
- */
-static inline nccl_net_ofi_rdma_ctrl_msg_t *get_rx_ctrl_msg
-	(rdma_req_rx_buff_data_t *rx_buff_data)
-{
-	return (nccl_net_ofi_rdma_ctrl_msg_t *)rx_buff_data->rx_buff_fl_elem->ptr;
-}
-
-/*
- * Get close message from rx buffer
- */
-static inline nccl_net_ofi_rdma_close_msg_t *rx_get_close_msg
-	(rdma_req_rx_buff_data_t *rx_buff_data)
-{
-	nccl_net_ofi_rdma_close_msg_t *close_msg =
-		(nccl_net_ofi_rdma_close_msg_t *)rx_buff_data->rx_buff_fl_elem->ptr;
-	assert(close_msg->type == NCCL_OFI_RDMA_MSG_CLOSE);
-	return close_msg;
-}
-
-/**
- * Get ctrl message from send_ctrl_data
- */
-static nccl_net_ofi_rdma_ctrl_msg_t *rdma_send_ctrl_get_msg
-	(rdma_req_send_ctrl_data_t *send_ctrl_data)
-{
-	return (nccl_net_ofi_rdma_ctrl_msg_t *)send_ctrl_data->ctrl_fl_elem->ptr;
-}
-
-/**
- * Get close message from send_close_data
- */
-static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
-	(rdma_req_send_close_data_t *send_close_data)
-{
-	return (nccl_net_ofi_rdma_close_msg_t *)send_close_data->ctrl_fl_elem->ptr;
-}
 
 /*
  * @brief Return send communicator rail with index `rail_id`
@@ -594,7 +556,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 
 	rdma_req_send_data_t *send_data = req->get_send_data();
 	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = rx_buff_data->get_rx_ctrl_msg();
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		if (ep->use_long_rkeys) {
@@ -733,7 +695,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	assert(req->msg_seq_num == msg_seq_num);
 	rdma_req_send_data_t *send_data = req->get_send_data();
 	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = rx_buff_data->get_rx_ctrl_msg();
 
 	if (!send_data->eager) {
 		ret = update_send_data_from_remote(s_comm, rx_buff_req, req);
@@ -899,7 +861,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
-		rx_get_close_msg(rx_buff_data);
+	rx_buff_data->rx_get_close_msg();
 
 	nccl_net_ofi_rdma_send_comm_t *s_comm = rdma_device_get_send_comm(device, close_msg->send_comm_id);
 	assert(s_comm);
@@ -962,7 +924,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 	 * header type.  So cast to a control message and lookup the
 	 * type from there. */
 	nccl_ofi_rdma_msg_type_t msg_type = eager ? (nccl_ofi_rdma_msg_type_t)NCCL_OFI_RDMA_MSG_EAGER
-	                                          :  get_rx_ctrl_msg(rx_buff_data)->type;
+	                                          :  rx_buff_data->get_rx_ctrl_msg()->type;
 
 	switch (msg_type) {
 	case NCCL_OFI_RDMA_MSG_CONN:
@@ -1022,7 +984,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 		/* CTRL receive completion */
 		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
 
-		ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
+		ctrl_msg = rx_buff_data->get_rx_ctrl_msg();
 		s_comm = rdma_device_get_send_comm(device, ctrl_msg->remote_comm_id);
 
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(s_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
@@ -2541,7 +2503,7 @@ static inline int insert_send_ctrl_req(
 		return -ENOTSUP;
 	}
 
-	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = rdma_send_ctrl_get_msg(send_ctrl_data);
+	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = send_ctrl_data->rdma_send_ctrl_get_msg();
 
 	/* If early completion is turned on, CTRL msg type will be NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION to influence send() behavior */
 	ctrl_msg->type = recv_completion_optional ? NCCL_OFI_RDMA_MSG_CTRL_NO_COMPLETION : NCCL_OFI_RDMA_MSG_CTRL;
@@ -3137,7 +3099,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 		return -ENOMEM;
 	}
 
-	nccl_net_ofi_rdma_close_msg_t *close_msg = rdma_send_close_get_msg(send_close_data);
+	nccl_net_ofi_rdma_close_msg_t *close_msg = send_close_data->rdma_send_close_get_msg();
 
 	close_msg->type = NCCL_OFI_RDMA_MSG_CLOSE;
 	close_msg->ctrl_counter = r_comm->n_ctrl_delivered;
