@@ -304,7 +304,7 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * @brief	Return rx data struct of rx request
 	 */
 	rdma_req_rx_buff_data_t *get_rx_buff_data();
-	
+
 
 	/*
 	 * @brief	Return write inline struct of write request
@@ -313,14 +313,14 @@ typedef struct nccl_net_ofi_rdma_req {
 
 
 	/*
- 	 * @brief	Return send data struct of send request
- 	 */
+	 * @brief	Return send data struct of send request
+	 */
 	rdma_req_send_data_t *get_send_data();
-	
-	
+
+
 	/*
- 	 * @brief	Return recv data struct of recv request
- 	 */
+	 * @brief	Return recv data struct of recv request
+	 */
 	rdma_req_recv_data_t *get_recv_data();
 
 
@@ -328,7 +328,7 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * @brief	Return send control data struct of send control request
 	 */
 	rdma_req_send_ctrl_data_t *get_send_ctrl_data();
-	
+
 
 	/*
 	 * @brief	Return send close data struct of send close request
@@ -338,20 +338,127 @@ typedef struct nccl_net_ofi_rdma_req {
 
 	/*
 	 * @brief	Return eager local copy data struct of request
-	 */	
+	 */
 	rdma_req_eager_copy_data_t *get_eager_copy_data();
-	
+
 
 	/*
 	 * @brief	Return receive segments data struct of receive segments request
 	 */
 	rdma_req_recv_segms_data_t *get_recv_segms_data();
-	
+
 
 	/*
- 	 * @brief	Return flush data struct of flush request
- 	 */
+	 * @brief	Return flush data struct of flush request
+	 */
 	rdma_req_flush_data_t *get_flush_data();
+
+
+	/*
+	 * @brief 	Increment request completions of main requests and set request
+	 *		state to completed if total number of completions is reached
+	 *
+	 * Note that the request state is only updated if the request state
+	 * does not track an error already.
+	 *
+	 * This function is guarded by the request lock.
+	 *
+	 * To update the state of subrequests, use the subrequest specific
+	 * update functions.
+	 *
+	 * @param	size
+	 *		Size of the completion
+	 * @param	total_ncompls
+	 *		Total number of expected request completions
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	int inc_req_completion(size_t size, int total_ncompls);
+
+
+	/*
+	 * @brief	Set ctrl request to completed
+	 *
+	 * Set send ctrl request to completed. Furthermore, increment
+	 * completions of parent request (receive request).
+	 *
+	 * Modifications of the send control request are guarded by the send
+	 * control request's lock.  Modifications of the receive request are
+	 * guarded by the receive request's lock.
+	 *
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	int set_send_ctrl_completed();
+
+
+	/*
+	 * @brief	Increment segment completions of receive segment request
+	 *
+	 * Increment segment completions of receive segment request. In case
+	 * all segments arrived, increment completions of parent request
+	 * (receive request).
+	 *
+	 * Modifications of the receive segment request are guarded by the
+	 * receive segment request's lock.  Modifications of the receive
+	 * request are guarded by the receive request's lock.
+	 *
+	 * @param	size
+	 *		Size of the completed segment
+	 * @param	total_nsegms
+	 *		Total number of expected segments
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	int inc_recv_seg_completion(size_t size, int total_nsegms);
+
+
+	/**
+	 * @brief	Handle completion for a flush request
+	 */
+	int handle_flush_comp();
+
+
+
+	/*
+	 * @brief	Zero out rdma request
+	 */
+	void zero_nccl_ofi_req();
+
+
+	/**
+	 * @brief	Set state of request and potential parent requests to error
+	 */
+	void set_request_state_to_error();
+
+
+	/**
+	 * @brief	Free request by returning request back into freelist
+	 */
+	int free_base_req(uint64_t *num_inflight_reqs,
+					  nccl_ofi_freelist_t *nccl_ofi_reqs_fl,
+					  bool dec_inflight_reqs);
+
+
+	void init_rma_op_req(nccl_net_ofi_comm_t *comm_arg,
+						 void *buff, size_t size_arg,
+						 void *desc,
+						 uint64_t remote_buff,
+						 uint64_t remote_mr_key,
+						 uint64_t flags,
+						 nccl_net_ofi_rdma_req_type_t req_type);
+
+
+	const char *req_type_str(nccl_net_ofi_rdma_req_type_t req_type);
+
+
+	const char *req_state_str(nccl_net_ofi_rdma_req_state_t req_state);
+
+
+	/**
+	 * @brief	Print NCCL OFI request information
+	 */
+	const char *nccl_net_ofi_req_str();
 
 } nccl_net_ofi_rdma_req_t;
 
