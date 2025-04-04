@@ -13,6 +13,10 @@
 #include <inttypes.h>
 #include <sys/mman.h>
 #include <ctype.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <netdb.h>
+#include <net/if.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_param.h"
@@ -487,4 +491,54 @@ void nccl_ofi_ofiutils_free_info_list(struct fi_info *info_list)
 			break;
 		}
 	}
+}
+
+uint32_t nccl_ofi_get_first_interface_ip(void)
+{
+	struct ifaddrs *ifaddr = nullptr;
+	struct sockaddr_in *sin = nullptr;
+	struct ifaddrs *ifa = nullptr;
+	char host[NI_MAXHOST] = {0};
+	uint32_t ip_addr = 0;
+
+	if (getifaddrs(&ifaddr) == -1)
+	{
+		NCCL_OFI_WARN("Failed to get interface addresses");
+		goto error;
+	}
+
+	for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next)
+	{
+		if (ifa->ifa_addr == nullptr || ifa->ifa_addr->sa_family != AF_INET)
+		{
+			continue;
+		}
+
+		if (!(ifa->ifa_flags & IFF_LOOPBACK))
+		{
+			if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+					host, NI_MAXHOST, nullptr, 0, NI_NUMERICHOST) != 0)
+			{
+				continue;
+			}
+
+			sin = (struct sockaddr_in *)ifa->ifa_addr;
+			ip_addr = sin->sin_addr.s_addr;
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Found interface IP: %s", host);
+			goto exit;
+		}
+	}
+
+	NCCL_OFI_WARN("No suitable interface found");
+
+error:
+	ip_addr = 0;
+
+exit:
+	if (ifaddr)
+	{
+		freeifaddrs(ifaddr);
+	}
+	return ip_addr;
 }

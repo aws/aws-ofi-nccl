@@ -55,4 +55,10 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
  */
 bool platform_default_domain_per_thread(void) __attribute__((weak));
 
+/*
+ * Platform-specific hook to generate a unique device identifier.
+ */
+uint64_t platform_get_unique_node_id(struct fi_info *info, int device_index) __attribute__((weak));
+
+
 #endif // End NCCL_OFI_PLATFORM_H_

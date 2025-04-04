@@ -23,12 +23,36 @@
 #include "nccl_ofi_platform.h"
 #include "platform-aws.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
 
+/*
+ * GUID byte positions and their mappings
+ */
+enum guid_field {
+	GUID_FIELD_FUNC_IDX,      /* Bits 7-0: Function index */
+	GUID_FIELD_VF_PCI_BUS,    /* Bits 15-8: VF PCI bus */
+	GUID_FIELD_PER_CARD_BUS,  /* Bits 23-16: Per-card PCI bus */
+	GUID_FIELD_FUNC_MAC_HIGH  /* Bits 63-24: Function MAC high bytes */
+};
+
+/* Structure to define how to extract each field */
+struct guid_field_map {
+	int start_bit;    /* Starting bit position in GUID */
+	int end_bit;      /* Ending bit position in GUID */
+};
+
+/* Lookup table for field extraction */
+static const struct guid_field_map field_mapping[] = {
+	[GUID_FIELD_FUNC_IDX]      = {0,  7},    /* Function index */
+	[GUID_FIELD_VF_PCI_BUS]    = {8,  15},   /* VF PCI bus */
+	[GUID_FIELD_PER_CARD_BUS]  = {16, 23},   /* Per-card PCI bus */
+	[GUID_FIELD_FUNC_MAC_HIGH] = {24, 63}    /* Function MAC high bytes */
+};
 
 /*
  * platform_data_map is an ordered list of platform entries.  The
@@ -768,23 +792,39 @@ exit:
 	return ret;
 }
 
-static int get_rail_vf_idx(struct fi_info *info)
+/**
+ * Extract specific field from GUID based on bit positions
+ * @param info: Device information structure
+ * @param field: Field to extract from GUID
+ * @return: The extracted field value or negative errno on failure
+ */
+static int get_guid_field(struct fi_info *info, enum guid_field field)
 {
 	char *node_guid_filename = NULL;
 	FILE *fp = NULL;
-	int vf_idx;
+	unsigned int group[4];
+	const struct guid_field_map *map = &field_mapping[field];
+	int num_bits = map->end_bit - map->start_bit + 1;
+	uint64_t mask = (1ULL << num_bits) - 1;
+	int group_idx = (map->start_bit / 16);
+	int shift = map->start_bit % 16;
+	int value = 0;
 	int ret;
+
+	if (field >= sizeof(field_mapping)/sizeof(field_mapping[0])) {
+		return -EINVAL;
+	}
 
 	ret = asprintf(&node_guid_filename, "/sys/class/infiniband/%s/node_guid",
 		       info->nic->device_attr->name);
 	if (ret < 0) {
-		vf_idx = -errno;
+		value = -errno;
 		goto cleanup;
 	}
 	fp = fopen(node_guid_filename, "r");
 	if (fp == NULL) {
 		NCCL_OFI_WARN("Error opening file: %s", node_guid_filename);
-		vf_idx = -errno;
+		value = -errno;
 		goto cleanup;
 	}
 
@@ -792,15 +832,19 @@ static int get_rail_vf_idx(struct fi_info *info)
 	 * GUID is a 64-bit hex number with format:
 	 *
 	 * XXXX:XXXX:XXXX:XXXX
-	 *
-	 * The lowest 8 bits are the VF id.
 	 */
-	ret = fscanf(fp, "%*x:%*x:%*x:%*2x%2x", &vf_idx);
-	if (ret != 1) {
-		NCCL_OFI_WARN("GUID parsing failed, got %d, expected 1", ret);
-		vf_idx = -EIO;
+	ret = fscanf(fp, "%x:%x:%x:%x", &group[0], &group[1], &group[2], &group[3]);
+	if (ret != 4) {
+		NCCL_OFI_WARN("GUID parsing failed, got %d fields, expected 4", ret);
+		value = -EIO;
 		goto cleanup;
 	}
+
+	/* Extract the field using the bit positions */
+	value = (group[3 - group_idx] >> shift) & mask;
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "GUID: %04x:%04x:%04x:%04x, field: %d, value: 0x%02x",
+		group[0], group[1], group[2], group[3], field, value);
 
 cleanup:
 	if (node_guid_filename) {
@@ -810,7 +854,29 @@ cleanup:
 		fclose(fp);
 	}
 
-	return vf_idx;
+	return value;
+}
+
+uint64_t platform_get_unique_node_id(struct fi_info *info, int device_index) {
+	uint64_t final_id = 0;
+        uint32_t ip_addr = nccl_ofi_get_first_interface_ip();
+        if (ip_addr == 0) {
+                return 0;
+        }
+
+        int per_card_bus = get_guid_field(info, GUID_FIELD_PER_CARD_BUS);
+        if (per_card_bus < 0) {
+                NCCL_OFI_WARN("Failed to get per-card PCI bus from GUID");
+                return 0;
+        }
+
+	final_id = (static_cast<uint64_t>(ip_addr) << 32) |
+		   (static_cast<uint8_t>(per_card_bus));
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+                       "Generated ID: 0x%lx from IP: 0x%x, per_card_bus: 0x%x",
+                       final_id, ip_addr, per_card_bus);
+        return final_id;
 }
 
 
@@ -871,7 +937,7 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
 		}
 		info_iter = info_iter->next;
 
-		int ret = get_rail_vf_idx(info_array[info_count]);
+		int ret = get_guid_field(info_array[info_count], GUID_FIELD_FUNC_IDX);
 		if (ret < 0) {
 			NCCL_OFI_WARN("lookup of rail for index %lu failed: %s",
 				      info_count, strerror(-ret));
