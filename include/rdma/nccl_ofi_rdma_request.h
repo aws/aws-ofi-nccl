@@ -596,6 +596,22 @@ typedef struct nccl_net_ofi_rdma_req {
 	int alloc_eager_copy_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 							 nccl_net_ofi_rdma_req_t *rx_buff_req);
 
+
+	int post_rma_write();
+
+
+	/**
+	 * @brief	This function helps progress the send request by submitting it
+	 *		to the network. This can be invoked when submitting a new request
+	*		or processing pending requests list.
+	*
+	* @return	0, if successfully sent
+	*              -EINVAL   Invalid request
+	* 		-FI_EAGAIN, if need to retry the xfer
+	* 		-1, error
+	*/
+	int send_progress();
+
 } nccl_net_ofi_rdma_req_t;
 
 #endif // End NCCL_OFI_RDMA_REQUEST_H_

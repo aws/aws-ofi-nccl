@@ -13,6 +13,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "rdma/nccl_ofi_rdma_constants.h"
+#include "rdma/nccl_ofi_rdma_domain.h"
 #include "rdma/nccl_ofi_rdma_request.h"
 
 
@@ -127,6 +128,33 @@ struct nccl_net_ofi_rdma_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
+
+
+	nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain();
+
+
+	int handle_rx_eagain(nccl_net_ofi_ep_rail_t *rail,
+						 nccl_net_ofi_rdma_req_t *req,
+						 size_t num_buffs_failed);
+
+
+	int post_rx_buffs_on_rail(nccl_net_ofi_ep_rail_t *rail);
+
+
+	/**
+	 * Post all rx buffers for a rail if we don't have enough
+	 */
+	int check_post_rx_buffers_rail(nccl_net_ofi_ep_rail_t *rail);
+
+
+	/**
+	 * @brief	Re-post a rx buffer that has not yet been removed from active
+	 * 		count
+	 */
+	int repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req);
+
+
+	nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device();
 };
 
 #endif // End NCCL_OFI_RDMA_ENDPOINT_H_

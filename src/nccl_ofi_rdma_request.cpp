@@ -719,3 +719,114 @@ int nccl_net_ofi_rdma_req_t::alloc_eager_copy_req(nccl_net_ofi_rdma_recv_comm_t 
 	return 0;
 }
 
+
+int nccl_net_ofi_rdma_req_t::post_rma_write()
+{
+	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)this->comm;
+	size_t rail_id = 0;
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = s_comm->rdma_send_comm_get_rail(rail_id);
+	rdma_req_rma_op_data_t *rma_op_data_local = this->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
+	ssize_t rc;
+
+	struct iovec iov;
+	struct fi_msg_rma msg;
+	struct fi_rma_iov rma_iov;
+
+	/* Set up the iovec */
+	iov.iov_base = rma_op_data_local->buff;
+	iov.iov_len = rma_op_data_local->buff_len;
+
+	/* Set up the rma_iov */
+	rma_iov.addr = rma_op_data_local->remote_buff;
+	rma_iov.len = rma_op_data_local->buff_len;
+	rma_iov.key = rma_op_data_local->remote_mr_key;
+
+	/* Initialize the message */
+	msg.msg_iov = &iov;
+	msg.desc = &rma_op_data_local->desc;
+	msg.iov_count = 1;
+	msg.addr = comm_rail->remote_addr;
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = (void *)&this->ctx[rail_id];
+	msg.data = 0;
+
+	/* Post the message using fi_writemsg with FI_INJECT */
+	rc = fi_writemsg(comm_rail->local_ep, &msg, rma_op_data_local->flags);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("fi_write_inline failed; RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
+int nccl_net_ofi_rdma_req_t::send_progress()
+{
+	ssize_t ret = 0;;
+	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)this->comm;
+
+	assert(this != NULL);
+
+	if (this->type == NCCL_OFI_RDMA_SEND) { // Post RDMA write
+		rdma_req_send_data_t *send_data_local = this->get_send_data();
+
+		// Get Schedule
+		nccl_net_ofi_schedule_t *schedule = send_data_local->schedule;
+		if (OFI_UNLIKELY(schedule == NULL)) {
+			NCCL_OFI_WARN("Schedule for req %p is NULL", this);
+			return -ENOTSUP;;
+		}
+
+		assert(!(send_data_local->eager) || schedule->num_xfer_infos == 1);
+
+		nccl_net_ofi_xfer_info_t *xfers = schedule->rail_xfer_infos;
+
+		if (send_data_local->eager) {
+			/* Get xfer information from the schedule */
+			nccl_net_ofi_xfer_info_t *xfer_info = &xfers[0];
+
+			/* Get communicator rail information to xfer the this */
+			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
+			s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
+
+			ret = this->post_rdma_eager_send(comm_rail, xfer_info);
+		} else {
+			for (size_t rail_it = send_data_local->xferred_rail_id; rail_it < schedule->num_xfer_infos; rail_it++) {
+				/* Get xfer information from the schedule */
+				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
+				/* Get communicator rail information to xfer the req */
+				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
+				s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
+
+				ret = this->post_rdma_write(comm_rail, xfer_info, send_data_local->no_target_completion);
+
+				if (ret == 0) // Successfully sent the xfer with this rail
+					send_data_local->xferred_rail_id++;
+				else
+					break;
+			}
+		}
+	} else if (this->type == NCCL_OFI_RDMA_WRITE) { // Post RMA write
+		ret = post_rma_write();
+		if (ret == 0) {
+			rdma_req_rma_op_data_t *rma_op_data_local = this->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
+			// Successfully sent the xfer with this rail
+			rma_op_data_local->xferred_rail_id++;
+		}
+	} else if (this->type == NCCL_OFI_RDMA_CTRL_RX_BUFF ||
+		   this->type == NCCL_OFI_RDMA_EAGER_RX_BUFF) { // Post rx Buffer
+		rdma_req_rx_buff_data_t *rx_buff_data_local = this->get_rx_buff_data();
+		/* Get ep rail information to xfer the req */
+		assert(rx_buff_data_local->rail != NULL);
+
+		ret = this->post_rx_buffer(rx_buff_data_local->rail, false);
+	} else {
+		NCCL_OFI_WARN("Unexpected request type. Request type: %d", this->type);
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
