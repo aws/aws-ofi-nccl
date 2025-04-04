@@ -6,6 +6,9 @@
 #include "config.h"
 
 #include <algorithm>
+#include <functional>
+#include <string>
+
 #include <alloca.h>
 #include <limits.h>
 #include <stdio.h>
@@ -29,6 +32,35 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
 
+#ifndef SYSFS_BOARD_ASSET_TAG_STR
+#define SYSFS_BOARD_ASSET_TAG_STR "/sys/devices/virtual/dmi/id/board_asset_tag"
+#endif
+
+static struct sysfs_info instance_id_info = {"EC2 Instance ID", NULL, false, PTHREAD_MUTEX_INITIALIZER};
+
+/*
+ * GUID byte positions and their mappings
+ */
+enum guid_field {
+	GUID_FIELD_FUNC_IDX,      /* Bits 7-0: Function index */
+	GUID_FIELD_VF_PCI_BUS,    /* Bits 15-8: VF PCI bus */
+	GUID_FIELD_PER_CARD_BUS,  /* Bits 23-16: Per-card PCI bus */
+	GUID_FIELD_FUNC_MAC_HIGH  /* Bits 63-24: Function MAC high bytes */
+};
+
+/* Structure to define how to extract each field */
+struct guid_field_map {
+	int start_bit;    /* Starting bit position in GUID */
+	int end_bit;      /* Ending bit position in GUID */
+};
+
+/* Lookup table for field extraction */
+static const struct guid_field_map field_mapping[] = {
+	[GUID_FIELD_FUNC_IDX]      = {0,  7},    /* Function index */
+	[GUID_FIELD_VF_PCI_BUS]    = {8,  15},   /* VF PCI bus */
+	[GUID_FIELD_PER_CARD_BUS]  = {16, 23},   /* Per-card PCI bus */
+	[GUID_FIELD_FUNC_MAC_HIGH] = {24, 63}    /* Function MAC high bytes */
+};
 
 /*
  * platform_data_map is an ordered list of platform entries.  The
@@ -768,23 +800,39 @@ exit:
 	return ret;
 }
 
-static int get_rail_vf_idx(struct fi_info *info)
+/**
+ * Extract specific field from GUID based on bit positions
+ * @param info: Device information structure
+ * @param field: Field to extract from GUID
+ * @return: The extracted field value or negative errno on failure
+ */
+static int get_guid_field(struct fi_info *info, enum guid_field field)
 {
 	char *node_guid_filename = NULL;
 	FILE *fp = NULL;
-	int vf_idx;
+	unsigned int group[4];
+	const struct guid_field_map *map = &field_mapping[field];
+	int num_bits = map->end_bit - map->start_bit + 1;
+	uint64_t mask = (1ULL << num_bits) - 1;
+	int group_idx = (map->start_bit / 16);
+	int shift = map->start_bit % 16;
+	int value = 0;
 	int ret;
+
+	if (field >= sizeof(field_mapping)/sizeof(field_mapping[0])) {
+		return -EINVAL;
+	}
 
 	ret = asprintf(&node_guid_filename, "/sys/class/infiniband/%s/node_guid",
 		       info->nic->device_attr->name);
 	if (ret < 0) {
-		vf_idx = -errno;
+		value = -errno;
 		goto cleanup;
 	}
 	fp = fopen(node_guid_filename, "r");
 	if (fp == NULL) {
 		NCCL_OFI_WARN("Error opening file: %s", node_guid_filename);
-		vf_idx = -errno;
+		value = -errno;
 		goto cleanup;
 	}
 
@@ -792,15 +840,19 @@ static int get_rail_vf_idx(struct fi_info *info)
 	 * GUID is a 64-bit hex number with format:
 	 *
 	 * XXXX:XXXX:XXXX:XXXX
-	 *
-	 * The lowest 8 bits are the VF id.
 	 */
-	ret = fscanf(fp, "%*x:%*x:%*x:%*2x%2x", &vf_idx);
-	if (ret != 1) {
-		NCCL_OFI_WARN("GUID parsing failed, got %d, expected 1", ret);
-		vf_idx = -EIO;
+	ret = fscanf(fp, "%x:%x:%x:%x", &group[0], &group[1], &group[2], &group[3]);
+	if (ret != 4) {
+		NCCL_OFI_WARN("GUID parsing failed, got %d fields, expected 4", ret);
+		value = -EIO;
 		goto cleanup;
 	}
+
+	/* Extract the field using the bit positions */
+	value = (group[3 - group_idx] >> shift) & mask;
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "GUID: %04x:%04x:%04x:%04x, field: %d, value: 0x%02x",
+		group[0], group[1], group[2], group[3], field, value);
 
 cleanup:
 	if (node_guid_filename) {
@@ -810,7 +862,40 @@ cleanup:
 		fclose(fp);
 	}
 
-	return vf_idx;
+	return value;
+}
+
+static const char *get_instance_id(void)
+{
+	return nccl_net_ofi_read_sysfs_value(SYSFS_BOARD_ASSET_TAG_STR,
+			&instance_id_info,
+			"OFI_NCCL_FORCE_INSTANCE_ID",
+			32);
+}
+
+uint64_t platform_get_unique_node_id(struct fi_info *info) {
+    std::hash<std::string> hasher;
+    
+    /** Get the AWS EC2 Instance ID **/
+    const char* instance_id = get_instance_id();
+    if (instance_id == NULL) {
+        NCCL_OFI_WARN("Failed to get EC2 instance ID");
+        return 0;
+    }
+    
+    /** Get the per-card PCI bus (bits 16-23 from GUID) **/
+    uint8_t per_card_pci_bus = (uint8_t)get_guid_field(info, GUID_FIELD_PER_CARD_BUS);
+    NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "instance_id=%s, per_card_pci_bus=0x%02x (%u)", 
+			instance_id, per_card_pci_bus, per_card_pci_bus);
+    
+    /** Create hash from instance_id and keep the 56 LSB of the hash **/
+    std::string to_hash = std::string(instance_id);
+    uint64_t hash_value = hasher(to_hash) & ((1ULL << 56) - 1);
+ 
+    /** Combine: 56 bits of hashed instance_id + 8 bits of per_card_pci_bus **/
+    uint64_t final_id = (hash_value << 8) | per_card_pci_bus;
+        
+    return final_id;
 }
 
 
@@ -871,7 +956,7 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
 		}
 		info_iter = info_iter->next;
 
-		int ret = get_rail_vf_idx(info_array[info_count]);
+		int ret = get_guid_field(info_array[info_count], GUID_FIELD_FUNC_IDX);
 		if (ret < 0) {
 			NCCL_OFI_WARN("lookup of rail for index %lu failed: %s",
 				      info_count, strerror(-ret));

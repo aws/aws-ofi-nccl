@@ -437,6 +437,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
 	const char *platform_type = NULL;
+	nccl_net_ofi_device *device = NULL;
 
 	memset(props, 0, sizeof(*props));
 
@@ -444,6 +445,9 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	if (ret != 0) {
 		goto error;
 	}
+
+	device = plugin->get_device(plugin, dev_id);
+	props->guid = device->guid;
 
 	/* Change default values as set by NIC attributes */
 	nic_info = (struct fid_nic *)nic_prov->nic;
@@ -816,6 +820,13 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	device->plugin = plugin;
 	device->dev_id = device_index;
 	device->name = strdup(ofi_info->fabric_attr->prov_name);
+
+	if (platform_get_unique_node_id) {
+		device->guid = platform_get_unique_node_id(ofi_info);
+	} else {
+		device->guid = device->dev_id;
+	}
+
 	if (device->name == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device name");
 		ret = -ENOMEM;

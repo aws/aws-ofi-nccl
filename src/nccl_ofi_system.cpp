@@ -16,30 +16,30 @@
 #define SYSFS_PRODUCT_NAME_STR "/sys/devices/virtual/dmi/id/product_name"
 #endif
 
-const char *nccl_net_ofi_get_product_name(void)
+
+static struct sysfs_info product_name_info = {"product name", NULL, false, PTHREAD_MUTEX_INITIALIZER};
+
+const char *nccl_net_ofi_read_sysfs_value(const char *file, struct sysfs_info *info,
+	const char *env_override, size_t buffer_size)
 {
-	char file[] = SYSFS_PRODUCT_NAME_STR;
 	FILE *fd = NULL;
 	char ch;
 	size_t len = 0;
-	size_t product_name_len = 64;
-	static bool init = false;
-	static char *product_name = NULL;
-	static pthread_mutex_t product_name_mutex = PTHREAD_MUTEX_INITIALIZER;
 
-	char* forced_pn = getenv("OFI_NCCL_FORCE_PRODUCT_NAME");
-	if (forced_pn != NULL) {
-		return forced_pn;
+	/* Check for environment variable override */
+	char *forced_value = getenv(env_override);
+	if (forced_value != NULL) {
+		return forced_value;
 	}
 
-	nccl_net_ofi_mutex_lock(&product_name_mutex);
+	nccl_net_ofi_mutex_lock(&info->mutex);
 
-	if (init) {
-		nccl_net_ofi_mutex_unlock(&product_name_mutex);
-		return product_name;
+	if (info->init) {
+		nccl_net_ofi_mutex_unlock(&info->mutex);
+		return info->data;
 	}
 
-	init = true;
+	info->init = true;
 
 	fd = fopen(file, "r");
 	if (fd == NULL) {
@@ -47,40 +47,39 @@ const char *nccl_net_ofi_get_product_name(void)
 		goto error;
 	}
 
-	product_name = (char *)malloc(sizeof(char) * product_name_len);
-	if (product_name == NULL) {
-		NCCL_OFI_WARN("Unable to allocate product name");
+	info->data = (char *)malloc(sizeof(char) * buffer_size);
+	if (info->data == NULL) {
+		NCCL_OFI_WARN("Unable to allocate %s buffer", info->property);
 		goto error;
 	}
 
-	/* Read first line of the file, reallocing the buffer as necessary */
 	while ((feof(fd) == 0) && (ferror(fd) == 0) && ((ch = fgetc(fd)) != '\n')) {
-		product_name[len++] = ch;
-		if (len >= product_name_len) {
-			char *new_product_name = (char *)realloc(product_name, len + product_name_len);
-			if (new_product_name == NULL) {
-				NCCL_OFI_WARN("Unable to (re)allocate product name");
+		info->data[len++] = ch;
+		if (len >= buffer_size) {
+			char *new_data = (char *)realloc(info->data, len + buffer_size);
+			if (new_data == NULL) {
+				NCCL_OFI_WARN("Unable to (re)allocate %s buffer", info->property);
 				goto error;
 			}
-			product_name = new_product_name;
+			info->data = new_data;
 		}
 	}
 
-	product_name[len] = '\0';
+	info->data[len] = '\0';
 
 	if (ferror(fd)) {
 		NCCL_OFI_WARN("Error reading file: %s", file);
 		goto error;
 	}
 
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Product Name is %s", product_name);
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "%s is %s", info->property, info->data);
 
 	goto exit;
 
 error:
-	if (product_name) {
-		free(product_name);
-		product_name = NULL;
+	if (info->data) {
+		free(info->data);
+		info->data = NULL;
 	}
 
 exit:
@@ -88,7 +87,26 @@ exit:
 		fclose(fd);
 	}
 
-	nccl_net_ofi_mutex_unlock(&product_name_mutex);
+	nccl_net_ofi_mutex_unlock(&info->mutex);
 
-	return product_name;
+	return info->data;
+}
+
+/*
+ * @brief   Reads the instance_id from the DMI information.
+ *          The caller must free the returned string.
+ *          Provides the manufacturer-assigned product name
+ *          /sys/devices/virtual/dmi/id/board_asset_tag.
+ *          Users of this API *should* free the buffer when a
+ *          Non-NULL string is returned.
+ *
+ * @return  NULL, on allocation and file system error
+ *          product name, on success
+ */
+const char *nccl_net_ofi_get_product_name(void)
+{
+	return nccl_net_ofi_read_sysfs_value(SYSFS_PRODUCT_NAME_STR,
+		                    &product_name_info,
+		                    "OFI_NCCL_FORCE_PRODUCT_NAME",
+		                    64);
 }
