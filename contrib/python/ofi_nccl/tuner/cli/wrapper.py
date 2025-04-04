@@ -46,6 +46,7 @@ class NCCLProto(int, Enum):
     LL128 = 1
     SIMPLE = 2
 
+
 class TunerPlatform(str, Enum):
     P5en = "p5en.48xlarge"
     P5 = "p5.48xlarge"
@@ -66,7 +67,12 @@ class Tuner:
         self.logger.log(py_level, message)
 
     def __init__(
-            self, tuner_dso: pathlib.Path, nranks: int, nnodes: int, platform: TunerPlatform, log_level=logging.DEBUG
+        self,
+        tuner_dso: pathlib.Path,
+        nranks: int,
+        nnodes: int,
+        platform: TunerPlatform,
+        log_level=logging.DEBUG,
     ):
         self.nranks = nranks
         self.nnodes = nnodes
