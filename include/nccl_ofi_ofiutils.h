@@ -40,4 +40,11 @@ void nccl_ofi_ofiutils_free_info_list(struct fi_info *info_list);
 
 int nccl_ofi_mr_keys_need_own_key(struct fi_info* provider, bool *provide_own_mr_key);
 
+
+/*
+* @brief Get first non-loopback interface IP address
+* @return IP address as uint32_t (network byte order), 0 on error
+*/
+uint32_t nccl_ofi_get_first_interface_ip(void);
+
 #endif

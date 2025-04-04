@@ -284,6 +284,12 @@ struct nccl_net_ofi_device {
 	 */
 	char *name;
 
+	/*
+	 * Globally unique device identifier that combines
+	 * host identity with device-specific information.
+	 */
+	uint64_t guid;
+
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
 	 * selected.

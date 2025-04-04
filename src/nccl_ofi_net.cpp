@@ -437,6 +437,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
 	const char *platform_type = NULL;
+	nccl_net_ofi_device *device = NULL;
 
 	memset(props, 0, sizeof(*props));
 
@@ -444,6 +445,9 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	if (ret != 0) {
 		goto error;
 	}
+
+	device = plugin->get_device(plugin, dev_id);
+	props->guid = device->guid;
 
 	/* Change default values as set by NIC attributes */
 	nic_info = (struct fid_nic *)nic_prov->nic;
@@ -838,6 +842,24 @@ unlock:
 	return ret;
 }
 
+/*
+ * @brief Create unique node ID combining interface IP and device ID
+ * @param dev_id Device identifier (8 bits)
+ * @return 64-bit unique identifier, 0 on error
+ */
+static uint64_t get_unique_node_id(uint8_t dev_id) {
+	uint64_t result = 0;
+        uint32_t ip_addr = nccl_ofi_get_first_interface_ip();
+        if (ip_addr == 0) {
+                return 0;
+        }
+
+        result = (static_cast<uint64_t>(ip_addr) << 32) | dev_id;
+        NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+		       "Generated ID: 0x%lx from IP: 0x%x, dev_id: %d",
+		       result, ip_addr, dev_id);
+        return result;
+}
 
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
 			     int device_index, struct fi_info *ofi_info)
@@ -847,6 +869,13 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	device->plugin = plugin;
 	device->dev_id = device_index;
 	device->name = strdup(ofi_info->fabric_attr->prov_name);
+
+	if (platform_get_unique_node_id) {
+		device->guid = platform_get_unique_node_id(ofi_info, device_index);
+	} else {
+		device->guid = get_unique_node_id(device->dev_id);
+	}
+
 	if (device->name == NULL) {
 		NCCL_OFI_WARN("Unable to allocate device name");
 		ret = -ENOMEM;
