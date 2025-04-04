@@ -22,10 +22,11 @@
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_rdma_ep;
 struct nccl_net_ofi_ep_rail;
+struct nccl_net_ofi_rdma_device;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
-
+typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -289,6 +290,68 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * request by its own. */
 	int (*free)(nccl_net_ofi_rdma_req_t *req,
 		    bool dec_inflight_reqs);
+
+
+	/* Get endpoint from request */
+	nccl_net_ofi_rdma_ep_t *rdma_req_get_ep();
+
+
+	/* Get device from request */
+	nccl_net_ofi_rdma_device_t *rdma_req_get_device();
+
+
+	/*
+	 * @brief	Return rx data struct of rx request
+	 */
+	rdma_req_rx_buff_data_t *get_rx_buff_data();
+	
+
+	/*
+	 * @brief	Return write inline struct of write request
+	 */
+	rdma_req_rma_op_data_t *req_get_rma_op_data(nccl_net_ofi_rdma_req_type_t req_type);
+
+
+	/*
+ 	 * @brief	Return send data struct of send request
+ 	 */
+	rdma_req_send_data_t *get_send_data();
+	
+	
+	/*
+ 	 * @brief	Return recv data struct of recv request
+ 	 */
+	rdma_req_recv_data_t *get_recv_data();
+
+
+	/*
+	 * @brief	Return send control data struct of send control request
+	 */
+	rdma_req_send_ctrl_data_t *get_send_ctrl_data();
+	
+
+	/*
+	 * @brief	Return send close data struct of send close request
+	 */
+	rdma_req_send_close_data_t *req_get_send_close_data();
+
+
+	/*
+	 * @brief	Return eager local copy data struct of request
+	 */	
+	rdma_req_eager_copy_data_t *get_eager_copy_data();
+	
+
+	/*
+	 * @brief	Return receive segments data struct of receive segments request
+	 */
+	rdma_req_recv_segms_data_t *get_recv_segms_data();
+	
+
+	/*
+ 	 * @brief	Return flush data struct of flush request
+ 	 */
+	rdma_req_flush_data_t *get_flush_data();
 
 } nccl_net_ofi_rdma_req_t;
 

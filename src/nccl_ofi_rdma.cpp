@@ -106,17 +106,6 @@ static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_devi
 }
 
 
-static nccl_net_ofi_rdma_ep_t *rdma_req_get_ep(nccl_net_ofi_rdma_req_t *req)
-{
-	return (nccl_net_ofi_rdma_ep_t *)req->comm->ep;
-}
-
-
-static nccl_net_ofi_rdma_device_t *rdma_req_get_device(nccl_net_ofi_rdma_req_t *req)
-{
-	return (nccl_net_ofi_rdma_device_t *)rdma_req_get_ep(req)->base.domain->device;
-}
-
 /*
  * @brief	Get endpoint communicator with given ID
  */
@@ -547,79 +536,6 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	return ret;
 }
 
-/*
- * @brief	Return rx data struct of rx request
- */
-static inline rdma_req_rx_buff_data_t *get_rx_buff_data(nccl_net_ofi_rdma_req_t *req) {
-	assert((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) ||
-	       (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF));
-	return &req->rx_buff_data;
-}
-
-/*
- * @brief	Return write inline struct of write request
- */
-static inline rdma_req_rma_op_data_t *req_get_rma_op_data(nccl_net_ofi_rdma_req_t *req,
-	nccl_net_ofi_rdma_req_type_t type) {
-	assert(req->type == type);
-	return &req->rma_op_data;
-}
-
-/*
- * @brief	Return send data struct of send request
- */
-static inline rdma_req_send_data_t *get_send_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_SEND);
-	return &req->send_data;
-}
-
-/*
- * @brief	Return recv data struct of recv request
- */
-static inline rdma_req_recv_data_t *get_recv_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_RECV);
-	return &req->recv_data;
-}
-
-/*
- * @brief	Return send control data struct of send control request
- */
-static inline rdma_req_send_ctrl_data_t *get_send_ctrl_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
-	return &req->send_ctrl_data;
-}
-
-/*
- * @brief	Return send close data struct of send close request
- */
-static inline rdma_req_send_close_data_t *req_get_send_close_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
-	return &req->send_close_data;
-}
-
-/*
- * @brief	Return eager local copy data struct of request
- */
-static inline rdma_req_eager_copy_data_t *get_eager_copy_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
-	return &req->eager_copy_data;
-}
-
-/*
- * @brief	Return receive segments data struct of receive segments request
- */
-static inline rdma_req_recv_segms_data_t *get_recv_segms_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
-	return &req->recv_segms_data;
-}
-
-/*
- * @brief	Return flush data struct of flush request
- */
-static inline rdma_req_flush_data_t *get_flush_data(nccl_net_ofi_rdma_req_t *req) {
-	assert(req->type == NCCL_OFI_RDMA_FLUSH);
-	return &req->flush_data;
-}
 
 /*
  * @brief	Set state of request and potential parent requests to error
@@ -633,10 +549,10 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req_t *req)
 
 	/* Set state of parent requests to error as well */
 	if (req->type == NCCL_OFI_RDMA_SEND_CTRL) {
-		rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
+		rdma_req_send_ctrl_data_t *send_ctrl_data = req->get_send_ctrl_data();
 		send_ctrl_data->recv_req->state = NCCL_OFI_RDMA_REQ_ERROR;
 	} else if (req->type == NCCL_OFI_RDMA_RECV_SEGMS) {
-		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
+		rdma_req_recv_segms_data_t *recv_segms_data = req->get_recv_segms_data();
 		recv_segms_data->recv_req->state = NCCL_OFI_RDMA_REQ_ERROR;
 	}
 }
@@ -708,9 +624,9 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
 	int ret = 0;
-	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(req);
+	rdma_req_eager_copy_data_t *eager_copy_data = req->get_eager_copy_data();
 	nccl_net_ofi_rdma_req_t *recv_req = eager_copy_data->recv_req;
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
@@ -721,7 +637,7 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	/* Get size of received data */
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = eager_copy_data->eager_rx_buff_req->get_rx_buff_data();
 	size_t size = rx_buff_data->recv_len;
 
 	/* Check posted count and re-post rx buffer if needed */
@@ -755,9 +671,9 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req_t *req)
 static inline int set_send_ctrl_completed(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
-	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
+	rdma_req_send_ctrl_data_t *send_ctrl_data = req->get_send_ctrl_data();
 	nccl_net_ofi_rdma_req_t *recv_req = send_ctrl_data->recv_req;
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 
 	assert(req->comm->type == NCCL_NET_OFI_RECV_COMM);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
@@ -819,9 +735,9 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
-		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
+		rdma_req_recv_segms_data_t *recv_segms_data = req->get_recv_segms_data();
 		nccl_net_ofi_rdma_req_t *recv_req = recv_segms_data->recv_req;
-		rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+		rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 
 		/* Total number of completions have arrived */
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
@@ -850,8 +766,8 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 
-	rdma_req_send_data_t *send_data = get_send_data(req);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_send_data_t *send_data = req->get_send_data();
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
 
 	for (int rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
@@ -928,7 +844,7 @@ static inline int repost_rx_buff(nccl_net_ofi_rdma_ep_t *ep,
 		return ret;
 	}
 
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 
 	/* Next, check the posted count and post more buffers if needed. */
 	return check_post_rx_buffers_rail(ep, rx_buff_data->rail);
@@ -970,7 +886,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 		/* Inserted! In this case sender has not yet called send() for this message, so
 		   return success and initiate RDMA write when sender calls send(). */
-		return decrease_rx_buff_cnt(ep, get_rx_buff_data(rx_buff_req)->rail);
+		return decrease_rx_buff_cnt(ep, rx_buff_req->get_rx_buff_data()->rail);
 	}
 
 	if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_INVALID_IDX || stat != NCCL_OFI_MSGBUFF_INPROGRESS)) {
@@ -989,8 +905,8 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 
 	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t *)elem;
 	assert(req->msg_seq_num == msg_seq_num);
-	rdma_req_send_data_t *send_data = get_send_data(req);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_send_data_t *send_data = req->get_send_data();
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 	nccl_net_ofi_rdma_ctrl_msg_t *ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
 
 	if (!send_data->eager) {
@@ -1071,12 +987,12 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_n
 	eager_copy_req->free = free_eager_copy_req;
 	eager_copy_req->msg_seq_num = recv_req->msg_seq_num;
 
-	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(eager_copy_req);
+	rdma_req_eager_copy_data_t *eager_copy_data = eager_copy_req->get_eager_copy_data();
 	eager_copy_data->recv_req = recv_req;
 	eager_copy_data->eager_rx_buff_req = rx_buff_req;
-	assert(get_rx_buff_data(rx_buff_req)->recv_len != 0);
+	assert(rx_buff_req->get_rx_buff_data()->recv_len != 0);
 
-	get_recv_data(recv_req)->eager_copy_req = eager_copy_req;
+	recv_req->get_recv_data()->eager_copy_req = eager_copy_req;
 
 	return 0;
 }
@@ -1092,7 +1008,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	/* Decrease rx buffer count. It will be incremented again when reposting */
-	ret = decrease_rx_buff_cnt(ep, get_rx_buff_data(rx_buff_req)->rail);
+	ret = decrease_rx_buff_cnt(ep, rx_buff_req->get_rx_buff_data()->rail);
 	if (ret != 0) {
 		return ret;
 	}
@@ -1125,9 +1041,9 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 		return -EINVAL;
 	}
 	nccl_net_ofi_rdma_req_t *recv_req = (nccl_net_ofi_rdma_req_t *)elem;
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 	if (rx_buff_data->recv_len == 0) {
 		/* Special case: for zero-sized messages, we can skip the local read */
 		/* Re-post rx buffer */
@@ -1161,7 +1077,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *rx_buff_req)
 {
 	assert(rx_buff_req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF);
 
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
@@ -1210,7 +1126,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 		return -EINVAL;
 	}
 
-	rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rx_buff_data = rx_buff_req->get_rx_buff_data();
 	rx_buff_data->recv_len = cq_entry->len;
 
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
@@ -1378,7 +1294,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	}
 	assert(req->type == NCCL_OFI_RDMA_RECV);
 
-	rdma_req_recv_data_t *recv_data = get_recv_data(req);
+	rdma_req_recv_data_t *recv_data = req->get_recv_data();
 	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
 
 	uint64_t total_segms = GET_NUM_SEG_FROM_IMM(cq_entry->data);
@@ -1399,7 +1315,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 static inline int handle_flush_comp(nccl_net_ofi_rdma_req_t *req)
 {
 	int ret;
-	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+	rdma_req_flush_data_t *flush_data = req->get_flush_data();
 
 	ret = inc_req_completion(req, 0, flush_data->total_num_compls);
 
@@ -1564,7 +1480,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 				} else if (req->type == NCCL_OFI_RDMA_SEND) {
 					/* Eager message send completion */
 					NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
-					send_data = get_send_data(req);
+					send_data = req->get_send_data();
 					assert(send_data->eager);
 					ret = inc_req_completion(req, 0, send_data->total_num_compls);
 				} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
@@ -1585,14 +1501,14 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 					NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
 									       req);
 
-					send_data = get_send_data(req);
+					send_data = req->get_send_data();
 					ret = inc_req_completion(req, 0, send_data->total_num_compls);
 					break;
 				}
 				case NCCL_OFI_RDMA_WRITE: {
 					/* Local-initiated RMA write is complete */
 
-					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+					rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
 					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
 					break;
 				}
@@ -1628,7 +1544,7 @@ static inline int process_completions(struct fi_cq_data_entry *cq_entry, uint64_
 				case NCCL_OFI_RDMA_READ: {
 					/* Local-initiated RMA read is complete */
 
-					rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+					rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_READ);
 					ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
 					break;
 				}
@@ -1746,7 +1662,7 @@ exit:
 
 static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 {
-	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
+	rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	int rail_id = 0;
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
@@ -2058,7 +1974,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
 	rdma_req_send_data_t *send_data;
 
-	send_data = get_send_data(req);
+	send_data = req->get_send_data();
 
 	if (!send_data->eager && dec_inflight_reqs) {
 		/* free is going to be called inside of test(), which will
@@ -2073,7 +1989,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 	}
 
 	if (send_data->schedule) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
+		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
 		nccl_net_ofi_release_schedule(device->scheduler, send_data->schedule);
 		send_data->schedule = NULL;
 	}
@@ -2092,7 +2008,7 @@ static inline int free_recv_req(nccl_net_ofi_rdma_req_t *req,
 	int ret = 0;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_recv_data_t *recv_data = get_recv_data(req);
+	rdma_req_recv_data_t *recv_data = req->get_recv_data();
 	nccl_net_ofi_rdma_req_t *send_ctrl_req = recv_data->send_ctrl_req;
 	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
 	nccl_net_ofi_rdma_req_t *eager_copy_req = recv_data->eager_copy_req;
@@ -2148,10 +2064,10 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
+	rdma_req_send_ctrl_data_t *send_ctrl_data = req->get_send_ctrl_data();
 
 	if (send_ctrl_data->ctrl_schedule != NULL) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
+		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
 		nccl_net_ofi_release_schedule(device->scheduler, send_ctrl_data->ctrl_schedule);
 		send_ctrl_data->ctrl_schedule = NULL;
 	}
@@ -2174,10 +2090,10 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
+	rdma_req_send_close_data_t *send_close_data = req->req_get_send_close_data();
 
 	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
+		nccl_net_ofi_rdma_device_t *device = req->rdma_req_get_device();
 		nccl_net_ofi_release_schedule(device->scheduler, send_close_data->ctrl_schedule);
 		send_close_data->ctrl_schedule = NULL;
 	}
@@ -2235,7 +2151,7 @@ static inline int eager_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
 					   bool dec_inflight_reqs)
 {
 	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 
 	assert(ep->eager_rx_buff_size > 0);
@@ -2260,7 +2176,7 @@ static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma
 	req->dev_id = rdma_endpoint_get_device(ep)->base.dev_id;
 	req->free = eager_rx_buff_req_free;
 
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 
 	nccl_ofi_freelist_elem_t *rx_buff_fl_elem =
 		nccl_ofi_freelist_entry_alloc(ep->eager_rx_buff_fl);
@@ -2282,7 +2198,7 @@ static inline int ctrl_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
 					bool dec_inflight_reqs)
 {
 	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 	/* Free buffer */
 	if (rx_buff_data->rx_buff_fl_elem) {
@@ -2302,7 +2218,7 @@ static inline nccl_net_ofi_rdma_req_t *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_
 	req->dev_id = rdma_endpoint_get_device(ep)->base.dev_id;
 	req->free = ctrl_rx_buff_req_free;
 
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 
 	nccl_ofi_freelist_elem_t *rx_buff_fl_elem =
 		nccl_ofi_freelist_entry_alloc(ep->ctrl_rx_buff_fl);
@@ -3148,7 +3064,7 @@ static inline int insert_send_ctrl_req(
 	send_ctrl_req->free = free_send_ctrl_req;
 	send_ctrl_req->msg_seq_num = msg_seq_num;
 
-	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(send_ctrl_req);
+	rdma_req_send_ctrl_data_t *send_ctrl_data = send_ctrl_req->get_send_ctrl_data();
 
 	if (ep->num_control_rails > 1) {
 		size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
@@ -3221,7 +3137,7 @@ static inline int insert_send_ctrl_req(
 		}
 	}
 
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 	recv_data->send_ctrl_req = send_ctrl_req;
 
 	return 0;
@@ -3252,10 +3168,10 @@ static inline int insert_recv_segms_req(
 	recv_segms_req->free = free_recv_segms_req;
 	recv_segms_req->msg_seq_num = msg_seq_num;
 
-	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(recv_segms_req);
+	rdma_req_recv_segms_data_t *recv_segms_data = recv_segms_req->get_recv_segms_data();
 	recv_segms_data->recv_req = recv_req;
 
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_recv_data_t *recv_data = recv_req->get_recv_data();
 	recv_data->recv_segms_req = recv_segms_req;
 
 	return 0;
@@ -3291,7 +3207,7 @@ static inline int allocate_rdma_recv_req(
 	req->free = free_recv_req;
 	req->msg_seq_num = msg_seq_num;
 
-	recv_data = get_recv_data(req);
+	recv_data = req->get_recv_data();
 	/* In the case of early completion, only expect the completion for control msg itself */
 	recv_data->total_num_compls = recv_completion_optional ? 1 : 2;
 	recv_data->eager_copy_req = NULL;
@@ -3506,11 +3422,11 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto error;
 	}
 
-	recv_data = get_recv_data(req);
+	recv_data = req->get_recv_data();
 
 	if (eager) {
 		nccl_net_ofi_rdma_req_t *rx_buff_req = (nccl_net_ofi_rdma_req_t *)elem;
-		rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+		rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 		if (rx_buff_data->recv_len == 0) {
 			/* Special case for zero-sized messages */
 			ret = check_post_rx_buff_req(rx_buff_req);
@@ -3770,7 +3686,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 	send_close_req->free = free_send_close_req;
 	send_close_req->msg_seq_num = 0; /* Unimportant */
 
-	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(send_close_req);
+	rdma_req_send_close_data_t *send_close_data = send_close_req->req_get_send_close_data();
 
 	/* For simplicity (since close messages aren't perf-critical), set
 	   schedule to NULL. All close messages will be sent over rail 0. */
@@ -4082,7 +3998,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	req->type = NCCL_OFI_RDMA_FLUSH;
 	req->free = free_flush_req;
 
-	flush_data = get_flush_data(req);
+	flush_data = req->get_flush_data();
 	flush_data->data = buff;
 	flush_data->mr_handle = buff_mr_handle;
 	flush_data->total_num_compls = ep->num_rails;
@@ -4251,7 +4167,7 @@ static void init_rma_op_req(nccl_net_ofi_rdma_req_t *req,
 	req->type = req_type;
 	req->size = size;
 
-	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, req_type);
+	rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(req_type);
 	rma_op_data->remote_buff = remote_buff;
 	rma_op_data->remote_mr_key = remote_mr_key;
 	rma_op_data->xferred_rail_id = 0;
@@ -5204,7 +5120,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	req->msg_seq_num = msg_seq_num;
 	req->size = size;
 
-	rdma_req_send_data_t *send_data = get_send_data(req);
+	rdma_req_send_data_t *send_data = req->get_send_data();
 	send_data->xferred_rail_id = 0;
 	send_data->buff = buff;
 	send_data->buff_len = size;
@@ -5282,7 +5198,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
 	size_t rail_id = 0;
 	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, rail_id);
-	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+	rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
 	struct iovec iov;
@@ -5324,7 +5240,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 			   nccl_net_ofi_xfer_info_t *xfer_info,
 			   bool no_target_completion)
 {
-	rdma_req_send_data_t *send_data = get_send_data(req);
+	rdma_req_send_data_t *send_data = req->get_send_data();
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	int rail_id = xfer_info->rail_id;
 	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
@@ -5359,7 +5275,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
 				nccl_net_ofi_xfer_info_t *xfer_info)
 {
-	rdma_req_send_data_t *send_data = get_send_data(req);
+	rdma_req_send_data_t *send_data = req->get_send_data();
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	int rail_id = xfer_info->rail_id;
 	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
@@ -5383,7 +5299,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 			      nccl_net_ofi_ep_rail_t *ep_rail,
 			      bool set_fi_more)
 {
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 	nccl_ofi_freelist_elem_t *rx_buff_fl_elem = rx_buff_data->rx_buff_fl_elem;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
 		(freelist_regmr_fn_handle_t *)rx_buff_fl_elem->mr_handle;
@@ -5443,7 +5359,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	assert(req != NULL);
 
 	if (req->type == NCCL_OFI_RDMA_SEND) { // Post RDMA write
-		rdma_req_send_data_t *send_data = get_send_data(req);
+		rdma_req_send_data_t *send_data = req->get_send_data();
 
 		// Get Schedule
 		nccl_net_ofi_schedule_t *schedule = send_data->schedule;
@@ -5484,13 +5400,13 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 	} else if (req->type == NCCL_OFI_RDMA_WRITE) { // Post RMA write
 		ret = post_rma_write(req);
 		if (ret == 0) {
-			rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
+			rdma_req_rma_op_data_t *rma_op_data = req->req_get_rma_op_data(NCCL_OFI_RDMA_WRITE);
 			// Successfully sent the xfer with this rail
 			rma_op_data->xferred_rail_id++;
 		}
 	} else if (req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF ||
 		   req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF) { // Post rx Buffer
-		rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
+		rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
 		/* Get ep rail information to xfer the req */
 		assert(rx_buff_data->rail != NULL);
 
@@ -5533,7 +5449,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CTRL);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
+	rdma_req_send_ctrl_data_t *send_ctrl_data = req->get_send_ctrl_data();
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	nccl_net_ofi_schedule_t *schedule = send_ctrl_data->ctrl_schedule;
@@ -5567,7 +5483,7 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
+	rdma_req_send_close_data_t *send_close_data = req->req_get_send_close_data();
 
 	int rail_id;
 
@@ -5588,9 +5504,9 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(req);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
-	rdma_req_recv_data_t *recv_data = get_recv_data(eager_copy_data->recv_req);
+	rdma_req_eager_copy_data_t *eager_copy_data = req->get_eager_copy_data();
+	rdma_req_rx_buff_data_t *rx_buff_data = eager_copy_data->eager_rx_buff_req->get_rx_buff_data();
+	rdma_req_recv_data_t *recv_data = eager_copy_data->recv_req->get_recv_data();
 
 	/* Validate size of data */
 	if (recv_data->dst_len < rx_buff_data->recv_len) {
@@ -5639,7 +5555,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
-	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+	rdma_req_flush_data_t *flush_data = req->get_flush_data();
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
 
@@ -5684,7 +5600,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req)
 {
 	int ret = 0;
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = rx_buff_req->get_rx_buff_data();
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 
 	nccl_net_ofi_ep_rail_t *rail = rx_buff_data->rail;
