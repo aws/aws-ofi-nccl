@@ -40,4 +40,66 @@
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+/* Message buffer size -- maximum span of simultaneous inflight messages */
+#define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
+
+/* Maximum number of comms open simultaneously. Eventually this will be
+   runtime-expandable */
+#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
+
+/*
+ * @brief	Number of bits used for number of segments value
+ */
+#define NUM_NUM_SEG_BITS ((uint64_t)4)
+
+/*
+ * @brief	Communicator ID bitmask
+ */
+#define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
+
+/*
+ * @brief	Signifier for an invalid Communicator ID
+ */
+#define COMM_ID_INVALID            (COMM_ID_MASK)
+
+/*
+ * @brief	Message sequence number bitmask for immediate data
+ */
+#define MSG_SEQ_NUM_MASK (((uint64_t)1 << NCCL_OFI_RDMA_SEQ_BITS) - 1)
+
+/*
+ * @brief	Number of segments bitmask for immediate data
+ */
+#define MSG_NUM_SEG_MASK (((uint64_t)1 << NUM_NUM_SEG_BITS) - 1)
+
+/*
+ * @brief	Extract communicator ID from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_COMM_ID_FROM_IMM(data) (((data) >> NCCL_OFI_RDMA_SEQ_BITS) & COMM_ID_MASK)
+
+/*
+ * @brief	Extract message sequence number from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
+
+/*
+ * @brief	Extract number of segments from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
+
+/*
+ * @brief	Build write completion immediate data from comm ID, message seq
+ *		number and number of segments used to transfer RDMA write
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
+	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
+
 #endif // End NCCL_OFI_RDMA_CONSTANTS_H_
