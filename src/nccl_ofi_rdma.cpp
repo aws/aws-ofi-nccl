@@ -78,16 +78,6 @@ static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_devi
 
 
 /*
- * @brief	Get endpoint communicator with given ID
- */
-static inline nccl_net_ofi_comm_t *rdma_device_get_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
-{
-	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
-	assert(local_comm_id < device->num_comm_ids);
-	return device->comms[local_comm_id];
-}
-
-/*
  * @brief	Set endpoint communicator with given ID
  */
 static inline void rdma_device_set_comm(nccl_net_ofi_rdma_device_t *device,
@@ -104,20 +94,9 @@ static inline void rdma_device_set_comm(nccl_net_ofi_rdma_device_t *device,
  */
 static inline nccl_net_ofi_rdma_listen_comm_t *rdma_device_get_listen_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
 {
-	nccl_net_ofi_rdma_listen_comm_t *l_comm = (nccl_net_ofi_rdma_listen_comm_t *)rdma_device_get_comm(device, local_comm_id);
+	nccl_net_ofi_rdma_listen_comm_t *l_comm = (nccl_net_ofi_rdma_listen_comm_t *)device->rdma_device_get_comm(local_comm_id);
 	assert(l_comm->base.base.type == NCCL_NET_OFI_LISTEN_COMM);
 	return l_comm;
-}
-
-/*
- * @brief	Get endpoint send communicator with given ID
- */
-static inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
-{
-	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)
-		rdma_device_get_comm(device, local_comm_id);
-	assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
-	return s_comm;
 }
 
 /*
@@ -127,7 +106,7 @@ static inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(nccl_net_
 							   uint32_t local_comm_id)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)
-		rdma_device_get_comm(device, local_comm_id);
+		device->rdma_device_get_comm(local_comm_id);
 	assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
 	return r_comm;
 }
@@ -738,7 +717,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
 	rx_buff_data->rx_get_close_msg();
 
-	nccl_net_ofi_rdma_send_comm_t *s_comm = rdma_device_get_send_comm(device, close_msg->send_comm_id);
+	nccl_net_ofi_rdma_send_comm_t *s_comm = device->rdma_device_get_send_comm(close_msg->send_comm_id);
 	assert(s_comm);
 
 	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
@@ -832,7 +811,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 		assert(sizeof(nccl_ofi_rdma_connection_info_t) == cq_entry->len);
 
 		conn_resp_msg = get_rx_connection_msg(rx_buff_data);
-		s_comm = rdma_device_get_send_comm(device, conn_resp_msg->remote_comm_id);
+		s_comm = device->rdma_device_get_send_comm(conn_resp_msg->remote_comm_id);
 
 		assert(NULL != s_comm->conn_resp_req);
 		assert(NCCL_NET_OFI_SEND_COMM == s_comm->conn_resp_req->comm->type);
@@ -860,7 +839,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, int ra
 		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
 
 		ctrl_msg = rx_buff_data->get_rx_ctrl_msg();
-		s_comm = rdma_device_get_send_comm(device, ctrl_msg->remote_comm_id);
+		s_comm = device->rdma_device_get_send_comm(ctrl_msg->remote_comm_id);
 
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(s_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
 

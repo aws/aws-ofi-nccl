@@ -81,6 +81,19 @@ typedef struct nccl_net_ofi_rdma_device {
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
+
+
+	/**
+	 * @brief	Get endpoint communicator with given ID
+	 */
+	nccl_net_ofi_comm_t *rdma_device_get_comm(uint32_t local_comm_id);
+
+
+	/*
+	* @brief	Get endpoint send communicator with given ID
+	*/
+	nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(uint32_t local_comm_id);
+
 } nccl_net_ofi_rdma_device_t;
 
 

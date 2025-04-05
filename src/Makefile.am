@@ -15,6 +15,7 @@ sources = \
 	nccl_ofi_system.cpp \
 	nccl_ofi_rdma.cpp \
 	nccl_ofi_rdma_communicator.cpp \
+	nccl_ofi_rdma_device.cpp \
 	nccl_ofi_rdma_endpoint.cpp \
 	nccl_ofi_rdma_request.cpp \
 	nccl_ofi_scheduler.cpp \
