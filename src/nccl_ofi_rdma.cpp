@@ -26,6 +26,7 @@
 #include "rdma/nccl_ofi_rdma_domain.h"
 #include "rdma/nccl_ofi_rdma_device.h"
 #include "rdma/nccl_ofi_rdma_endpoint.h"
+#include "rdma/nccl_ofi_rdma_freelist_regmr_fn_handle.h"
 #include "rdma/nccl_ofi_rdma_messages.h"
 #include "rdma/nccl_ofi_rdma_mr_handle.h"
 #include "rdma/nccl_ofi_rdma_plugin.h"
@@ -2337,11 +2338,6 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 		      type,
 		      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
-
-typedef struct {
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	nccl_net_ofi_rdma_domain_t *domain;
-} freelist_regmr_fn_handle_t;
 
 /**
  * Register host memory for use with the given communicator

@@ -26,6 +26,7 @@ noinst_HEADERS = \
 	rdma/nccl_ofi_rdma_device.h \
 	rdma/nccl_ofi_rdma_domain.h \
 	rdma/nccl_ofi_rdma_endpoint.h \
+	rdma/nccl_ofi_rdma_freelist_regmr_fn_handle.h \
 	rdma/nccl_ofi_rdma_messages.h \
 	rdma/nccl_ofi_rdma_mr_handle.h \
 	rdma/nccl_ofi_rdma_plugin.h \
