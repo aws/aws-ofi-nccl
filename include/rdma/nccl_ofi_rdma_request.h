@@ -26,12 +26,14 @@ struct nccl_net_ofi_ep_rail;
 struct nccl_net_ofi_rdma_device;
 struct nccl_net_ofi_rdma_send_comm_rail;
 struct nccl_net_ofi_rdma_recv_comm;
+struct nccl_ofi_rdma_connection_info;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
 typedef struct nccl_net_ofi_rdma_send_comm_rail nccl_net_ofi_rdma_send_comm_rail_t;
 typedef struct nccl_net_ofi_rdma_recv_comm nccl_net_ofi_rdma_recv_comm_t;
+typedef struct nccl_ofi_rdma_connection_info nccl_ofi_rdma_connection_info_t;
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -112,6 +114,15 @@ typedef struct {
 			(nccl_net_ofi_rdma_close_msg_t *)this->rx_buff_fl_elem->ptr;
 		assert(close_msg->type == NCCL_OFI_RDMA_MSG_CLOSE);
 		return close_msg;
+	}
+
+
+	/**
+	 * Get connection message from rx buffer
+	 */
+	inline nccl_ofi_rdma_connection_info_t *get_rx_connection_msg()
+	{
+		return (nccl_ofi_rdma_connection_info_t *)this->rx_buff_fl_elem->ptr;
 	}
 
 } rdma_req_rx_buff_data_t;
@@ -611,6 +622,61 @@ typedef struct nccl_net_ofi_rdma_req {
 	* 		-1, error
 	*/
 	int send_progress();
+
+
+	int check_post_rx_buff_req();
+
+
+	/**
+	 * @brief	Set eager copy request to completed
+	 *
+	 * Set eager copy ctrl request to completed. Furthermore, increment
+	 * completions of parent request (receive request).
+	 *
+	 * Modifications of the eager copy request are guarded by the eager copy req's
+	 * lock.  Modifications of the receive request are guarded by the receive
+	 * request's lock.
+	 *
+	 * @param	req
+	 *		Eager copy request
+	*		size
+	*		Size of received eager data
+	* @return	0, on success
+	*		non-zero, on error
+	*/
+	int set_eager_copy_completed();
+
+
+	int post_rma_read();
+
+
+	int post_rdma_ctrl();
+
+
+	int post_close_msg();
+
+
+	int post_eager_copy();
+
+
+	int post_flush_req();
+
+
+	/**
+	 * Progress a request associated with recv
+	 *
+	 * Post request associated with a receive. If `add_to_pending` is true
+	 * and request could not be posted due to FI_EAGAIN, add request to
+	 * pending requests queue.
+	 *
+	 * @param add_to_pending	whether to add to pending reqs queue on EAGAIN
+	 * @return 			0, if request is successfully posted or added to pending requests queue
+	 *	   			negative errno, otherwise
+	*/
+	int receive_progress(bool add_to_pending);
+
+
+	int handle_close_msg_recv();
 
 } nccl_net_ofi_rdma_req_t;
 

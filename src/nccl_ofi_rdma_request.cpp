@@ -14,6 +14,8 @@
 
 #include "nccl_ofi_tracepoint.h"
 
+/* NEED TO FIGURE OUT GLOBAL VARIABLES, SET ACROSS FILES */
+ssize_t cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);;
 
 nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_req_t::rdma_req_get_ep()
 {
@@ -35,7 +37,7 @@ rdma_req_rx_buff_data_t *nccl_net_ofi_rdma_req_t::get_rx_buff_data() {
 
 
 rdma_req_rma_op_data_t *nccl_net_ofi_rdma_req_t::req_get_rma_op_data(nccl_net_ofi_rdma_req_type_t req_type) {
-	assert(this->req_type == type);
+	assert(this->type == req_type);
 	return &this->rma_op_data;
 }
 
@@ -421,10 +423,10 @@ int nccl_net_ofi_rdma_req_t::free_recv_req(nccl_net_ofi_rdma_req_t *req, bool de
 	int ret = 0;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	rdma_req_recv_data_t *recv_data = req->get_recv_data();
-	nccl_net_ofi_rdma_req_t *send_ctrl_req = recv_data->send_ctrl_req;
-	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
-	nccl_net_ofi_rdma_req_t *eager_copy_req = recv_data->eager_copy_req;
+	rdma_req_recv_data_t *recv_data_local = req->get_recv_data();
+	nccl_net_ofi_rdma_req_t *send_ctrl_req = recv_data_local->send_ctrl_req;
+	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data_local->recv_segms_req;
+	nccl_net_ofi_rdma_req_t *eager_copy_req = recv_data_local->eager_copy_req;
 
 	if (send_ctrl_req) {
 		ret = send_ctrl_req->free(send_ctrl_req, false);
@@ -828,5 +830,344 @@ int nccl_net_ofi_rdma_req_t::send_progress()
 	}
 
 	return ret;
+}
+
+
+int nccl_net_ofi_rdma_req_t::check_post_rx_buff_req()
+{
+	int ret = 0;
+	rdma_req_rx_buff_data_t *rx_buff_data_local = this->get_rx_buff_data();
+	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data_local->ep;
+
+	nccl_net_ofi_ep_rail_t *rail = rx_buff_data_local->rail;
+
+	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
+
+	bool need_post = false;
+	if (rail->num_rx_buff_posted < rail->max_rx_buff_posted) {
+		++(rail->num_rx_buff_posted);
+		need_post = true;
+	}
+
+	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
+
+	if (need_post) {
+		/* Attempt to re-post rx buffer */
+		ret = this->send_progress();
+		if (ret == -FI_EAGAIN) {
+			/* Place in pending requests queue for next try */
+			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+			ep->pending_reqs_queue->push_back(this);
+			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+			NCCL_OFI_TRACE_PENDING_INSERT(this);
+
+			return 0;
+		} else if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+
+		/* Post more buffers if needed */
+		ret = ep->check_post_rx_buffers_rail(rail);
+	} else {
+		ret = this->free(this, false);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to free rx_buff_req");
+			return -EIO;
+		}
+	}
+
+	return ret;
+}
+
+
+int nccl_net_ofi_rdma_req_t::set_eager_copy_completed()
+{
+	assert(this->type == NCCL_OFI_RDMA_EAGER_COPY);
+	int ret = 0;
+	rdma_req_eager_copy_data_t *eager_copy_data_local = this->get_eager_copy_data();
+	nccl_net_ofi_rdma_req_t *recv_req = eager_copy_data_local->recv_req;
+	rdma_req_recv_data_t *recv_data_local = recv_req->get_recv_data();
+
+	nccl_net_ofi_mutex_lock(&this->req_lock);
+
+	/* Set send ctrl request completed */
+	this->ncompls = 1;
+	this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+
+	nccl_net_ofi_mutex_unlock(&this->req_lock);
+
+	/* Get size of received data */
+	rdma_req_rx_buff_data_t *rx_buff_data_local = eager_copy_data_local->eager_rx_buff_req->get_rx_buff_data();
+	size_t size_local = rx_buff_data_local->recv_len;
+
+	/* Check posted count and re-post rx buffer if needed */
+	ret = eager_copy_data_local->eager_rx_buff_req->check_post_rx_buff_req();
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
+		return ret;
+	}
+
+	/* Add completion to parent request */
+	ret = recv_req->inc_req_completion(size_local, recv_data_local->total_num_compls);
+
+	return ret;
+}
+
+
+int nccl_net_ofi_rdma_req_t::post_rma_read()
+{
+	rdma_req_rma_op_data_t *rma_op_data_local = this->req_get_rma_op_data(NCCL_OFI_RDMA_READ);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+	int rail_id = 0;
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
+
+	ssize_t rc;
+	/* Post RMA read */
+	rc = fi_read(comm_rail->local_ep, rma_op_data_local->buff,
+		      rma_op_data_local->buff_len, rma_op_data_local->desc,
+		      comm_rail->remote_addr,
+		      rma_op_data_local->remote_buff,
+		     rma_op_data_local->remote_mr_key, (void *)&this->ctx[rail_id]);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("fi_read failed; RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::post_rdma_ctrl()
+{
+	assert(this->type == NCCL_OFI_RDMA_SEND_CTRL);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+	rdma_req_send_ctrl_data_t *send_ctrl_data_local = this->get_send_ctrl_data();
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+
+	nccl_net_ofi_schedule_t *schedule = send_ctrl_data_local->ctrl_schedule;
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_ctrl_data_local->ctrl_fl_elem;
+
+	int rail_id;
+
+	if (schedule != NULL) {
+		/* Use round robin schedule for ctrl message */
+		nccl_net_ofi_xfer_info_t *xfer_info = &schedule->rail_xfer_infos[0];
+		rail_id = xfer_info->rail_id;
+	} else {
+		/* Always use control rail 0 for ctrl message */
+		rail_id = 0;
+	}
+
+	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys);
+
+	ssize_t rc = r_comm->send_ctrl_post(ctrl_fl_elem, rail_id, ctrl_msg_len, this);
+
+	if (rc == 0) {
+		NCCL_OFI_TRACE_SEND_CTRL_START(this->dev_id,
+			rail_id,
+			this->comm, this, this->msg_seq_num);
+	}
+
+	return rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::post_close_msg()
+{
+	assert(this->type == NCCL_OFI_RDMA_SEND_CLOSE);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+	rdma_req_send_close_data_t *send_close_data_local = this->req_get_send_close_data();
+
+	int rail_id;
+
+	assert(send_close_data_local->ctrl_schedule == NULL);
+	/* Always use control rail 0 for close message */
+	rail_id = 0;
+
+	nccl_ofi_freelist_elem_t *ctrl_fl_elem = send_close_data_local->ctrl_fl_elem;
+
+	this->state = NCCL_OFI_RDMA_REQ_PENDING;
+
+	ssize_t rc = r_comm->send_ctrl_post(ctrl_fl_elem, rail_id,
+					sizeof(nccl_net_ofi_rdma_close_msg_t), this);
+
+	return rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::post_eager_copy()
+{
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+	rdma_req_eager_copy_data_t *eager_copy_data_local = this->get_eager_copy_data();
+	rdma_req_rx_buff_data_t *rx_buff_data_local = eager_copy_data_local->eager_rx_buff_req->get_rx_buff_data();
+	rdma_req_recv_data_t *recv_data_local = eager_copy_data_local->recv_req->get_recv_data();
+
+	/* Validate size of data */
+	if (recv_data_local->dst_len < rx_buff_data_local->recv_len) {
+		NCCL_OFI_TRACE(NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
+			       recv_data_local->dst_len, rx_buff_data_local->recv_len);
+		rx_buff_data_local->recv_len = recv_data_local->dst_len;
+	}
+
+	// Get communicator rail information to xfer the req
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
+	int rx_rail_id = rx_buff_data_local->rail->rail_id;
+	comm_rail = r_comm->rdma_recv_comm_get_rail(rx_rail_id);
+
+	/* Unpack mr_handle */
+	freelist_regmr_fn_handle_t *fl_handle =
+		(freelist_regmr_fn_handle_t *)rx_buff_data_local->rx_buff_fl_elem->mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *rx_mr_handle = fl_handle->mr_handle;
+
+	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data_local->dest_mr_handle;
+
+	assert(rx_rail_id < dest_mr_handle->num_rails);
+	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id]);
+
+	void *rx_buff = rx_buff_data_local->rx_buff_fl_elem->ptr;
+	uint64_t rx_key = fi_mr_key(rx_mr_handle->mr[rx_rail_id]);
+	if (rx_key == FI_KEY_NOTAVAIL) {
+		NCCL_OFI_WARN("Failed to get rx_key");
+		return -EIO;
+	}
+
+	ssize_t rc = fi_read(comm_rail->local_ep, recv_data_local->dst_buff,
+			     rx_buff_data_local->recv_len, desc, comm_rail->local_addr,
+			     (uint64_t)rx_buff, rx_key, (void *)&this->ctx[rx_rail_id]);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	}
+
+	return rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::post_flush_req()
+{
+ 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
+	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
+	rdma_req_flush_data_t *flush_data_local = this->get_flush_data();
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
+	ssize_t rc = 0;
+
+	/* iterate all rails and post RDMA local read */
+	for (int rail_id = 0; rail_id < ep->num_rails; rail_id++) {
+		comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
+
+		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
+
+		uint64_t cuda_key = 0ULL;
+		if (flush_data_local->mr_handle != NULL) {
+			struct fid_mr *mr_handle = NULL;
+			mr_handle = flush_data_local->mr_handle->mr[rail_id];
+
+			/* Extract remote key */
+			cuda_key = fi_mr_key(mr_handle);
+			if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+				NCCL_OFI_WARN("Memory registration may not have completed.");
+				rc = -FI_ENODATA;
+				goto exit;
+			}
+		}
+
+		uint64_t host_buff_addr = (uint64_t)f_buff->host_buffer + (cpu_cache_line_size * rail_id);
+
+		rc = fi_read(comm_rail->local_ep,
+			     (void *)host_buff_addr,
+			     f_buff->size, desc, comm_rail->local_addr,
+			     (uint64_t)(virt_addr_mr ? flush_data_local->data : 0),
+			     cuda_key, (void *)&this->ctx[rail_id]);
+		if ((rc != 0) && (rc != -FI_EAGAIN)) {
+			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
+				      rc, fi_strerror(-rc));
+			goto exit;
+		}
+	}
+
+ exit:
+	return (int)rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::receive_progress(bool add_to_pending)
+{
+	int rc = 0;
+	switch (this->type) {
+		case NCCL_OFI_RDMA_EAGER_COPY:
+			rc = this->post_eager_copy();
+			break;
+		case NCCL_OFI_RDMA_SEND_CTRL:
+			rc = this->post_rdma_ctrl();
+			break;
+		case NCCL_OFI_RDMA_SEND_CLOSE:
+			rc = this->post_close_msg();
+			break;
+		case NCCL_OFI_RDMA_FLUSH:
+			rc = this->post_flush_req();
+			break;
+		case NCCL_OFI_RDMA_READ: // Post RMA read
+			rc = this->post_rma_read();
+			break;
+		case NCCL_OFI_RDMA_WRITE:
+		case NCCL_OFI_RDMA_RECV:
+		case NCCL_OFI_RDMA_SEND:
+		case NCCL_OFI_RDMA_RECV_SEGMS:
+		case NCCL_OFI_RDMA_CTRL_RX_BUFF:
+		case NCCL_OFI_RDMA_EAGER_RX_BUFF:
+		case NCCL_OFI_RDMA_SEND_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN:
+		case NCCL_OFI_RDMA_RECV_CONN_RESP:
+		case NCCL_OFI_RDMA_SEND_CONN_RESP:
+		case NCCL_OFI_RDMA_INVALID_TYPE:
+		default:
+			NCCL_OFI_WARN("Unexpected type: %d", this->type);
+			return -EINVAL;
+	}
+	if (rc == -FI_EAGAIN && add_to_pending) {
+		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)this->comm;
+		/* Extract ep */
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		/* Place in pending requests queue for next try */
+		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
+		ep->pending_reqs_queue->push_back(this);
+		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		rc = 0;
+
+		NCCL_OFI_TRACE_PENDING_INSERT(this);
+	}
+
+	return rc;
+}
+
+
+int nccl_net_ofi_rdma_req_t::handle_close_msg_recv()
+{
+	assert(this->type == NCCL_OFI_RDMA_CTRL_RX_BUFF);
+
+	rdma_req_rx_buff_data_t *rx_buff_data_local = this->get_rx_buff_data();
+
+	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data_local->ep;
+	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
+
+	nccl_net_ofi_rdma_close_msg_t *close_msg =
+	rx_buff_data_local->rx_get_close_msg();
+
+	nccl_net_ofi_rdma_send_comm_t *s_comm = device->rdma_device_get_send_comm(close_msg->send_comm_id);
+	assert(s_comm);
+
+	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
+
+	assert(s_comm->received_close_message == false);
+	s_comm->received_close_message = true;
+	s_comm->n_ctrl_expected = close_msg->ctrl_counter;
+
+	nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
+
+	return ep->repost_rx_buff(this);
 }
 
