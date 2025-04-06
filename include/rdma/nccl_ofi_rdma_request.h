@@ -24,10 +24,14 @@ struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_rdma_ep;
 struct nccl_net_ofi_ep_rail;
 struct nccl_net_ofi_rdma_device;
+struct nccl_net_ofi_rdma_send_comm_rail;
+struct nccl_net_ofi_rdma_recv_comm;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
+typedef struct nccl_net_ofi_rdma_send_comm_rail nccl_net_ofi_rdma_send_comm_rail_t;
+typedef struct nccl_net_ofi_rdma_recv_comm nccl_net_ofi_rdma_recv_comm_t;
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -568,6 +572,29 @@ typedef struct nccl_net_ofi_rdma_req {
 
 
 	static int ctrl_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req, bool dec_inflight_reqs);
+
+
+	int post_rdma_write(nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
+						nccl_net_ofi_xfer_info_t *xfer_info,
+						bool no_target_completion);
+
+
+	int post_rdma_eager_send(nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
+							 nccl_net_ofi_xfer_info_t *xfer_info);
+
+
+	int post_rx_buffer(nccl_net_ofi_ep_rail_t *ep_rail,
+					   bool set_fi_more);
+
+
+	/**
+	 * @brief	Assign an allocated rdma request buffer
+	 */
+	static nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl);
+
+
+	int alloc_eager_copy_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+							 nccl_net_ofi_rdma_req_t *rx_buff_req);
 
 } nccl_net_ofi_rdma_req_t;
 

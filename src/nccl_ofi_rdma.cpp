@@ -69,12 +69,6 @@ static int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rai
 static inline int repost_rx_buff(nccl_net_ofi_rdma_ep_t *ep,
 					 nccl_net_ofi_rdma_req_t *rx_buff_req);
 
-static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
-			      nccl_net_ofi_ep_rail_t *ep_rail,
-			      bool set_fi_more);
-
-static nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl);
-
 
 static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req);
 
@@ -751,31 +745,6 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 }
 
 
-static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_net_ofi_rdma_recv_comm_t *r_comm,
-				       nccl_net_ofi_rdma_req_t *rx_buff_req)
-{
-	nccl_net_ofi_rdma_req_t *eager_copy_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
-	if (eager_copy_req == NULL) {
-		NCCL_OFI_WARN("Failed to allocate eager_copy_req");
-		return -ENOMEM;
-	}
-
-	eager_copy_req->comm = &r_comm->base.base;
-	eager_copy_req->dev_id = recv_req->dev_id;
-	eager_copy_req->type = NCCL_OFI_RDMA_EAGER_COPY;
-	eager_copy_req->free = nccl_net_ofi_rdma_req_t::free_eager_copy_req;
-	eager_copy_req->msg_seq_num = recv_req->msg_seq_num;
-
-	rdma_req_eager_copy_data_t *eager_copy_data = eager_copy_req->get_eager_copy_data();
-	eager_copy_data->recv_req = recv_req;
-	eager_copy_data->eager_rx_buff_req = rx_buff_req;
-	assert(rx_buff_req->get_rx_buff_data()->recv_len != 0);
-
-	recv_req->get_recv_data()->eager_copy_req = eager_copy_req;
-
-	return 0;
-}
-
 /**
  * @brief	Handle receiving an RDMA eager message.
  */
@@ -835,7 +804,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 		return ret;
 	}
 
-	ret = alloc_eager_copy_req(recv_req, r_comm, rx_buff_req);
+	ret = recv_req->alloc_eager_copy_req(r_comm, rx_buff_req);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed call to alloc_eager_copy_req");
 		return ret;
@@ -1575,7 +1544,7 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							       nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_rdma_req_t *req = allocate_req(ep->rx_buff_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(ep->rx_buff_reqs_fl);
 	if (!req) return NULL;
 
 	assert(ep->eager_rx_buff_size > 0);
@@ -1607,7 +1576,7 @@ static inline nccl_net_ofi_rdma_req_t *eager_rx_buff_req_alloc(nccl_net_ofi_rdma
 static inline nccl_net_ofi_rdma_req_t *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							      nccl_net_ofi_ep_rail_t *rail)
 {
-	nccl_net_ofi_rdma_req_t *req = allocate_req(ep->rx_buff_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(ep->rx_buff_reqs_fl);
 	if (!req) return NULL;
 
 	req->comm = NULL;
@@ -1680,7 +1649,7 @@ static inline int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_t *ep,
 		 * handle_rx_eagain() are posted without FI_MORE,
 		 * so we don't have to handle that case.
 		 */
-		ret = post_rx_buffer(req, rail, !is_last_req);
+		ret = req->post_rx_buffer(rail, !is_last_req);
 		if (ret == -FI_EAGAIN) {
 			/* Update posted count */
 			/* We failed to post num_buffs_failed buffers that we promised above */
@@ -2407,26 +2376,6 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	return dereg_mr(mr_handle, domain);
 }
 
-/*
- * @brief	Assign an allocated rdma request buffer
- */
-static inline nccl_net_ofi_rdma_req_t *allocate_req(nccl_ofi_freelist_t *fl)
-{
-	assert(fl != NULL);
-
-	nccl_ofi_freelist_elem_t *elem = nccl_ofi_freelist_entry_alloc(fl);
-	if (OFI_UNLIKELY(elem == NULL)) {
-		NCCL_OFI_WARN("No freelist items available");
-		return NULL;
-	}
-
-	nccl_net_ofi_rdma_req_t *req = (nccl_net_ofi_rdma_req_t*)elem->ptr;
-	assert(req);
-
-	req->elem = elem;
-
-	return req;
-}
 
 /**
  * @brief	Allocate a new control message that the receiver will
@@ -2443,7 +2392,7 @@ static inline int insert_send_ctrl_req(
 {
 	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	nccl_net_ofi_rdma_req_t *send_ctrl_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *send_ctrl_req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_ctrl_req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI send control request for device %d",
 						dev_id);
@@ -2546,7 +2495,7 @@ static inline int insert_recv_segms_req(
 				nccl_net_ofi_rdma_req_t *recv_req)
 {
 	/* Allocate recv segms request */
-	nccl_net_ofi_rdma_req_t *recv_segms_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *recv_segms_req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(recv_segms_req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI receive segments request for device %d",
 						dev_id);
@@ -2585,7 +2534,7 @@ static inline int allocate_rdma_recv_req(
 	rdma_req_recv_data_t *recv_data;
 
 	/* Allocate receive request */
-	nccl_net_ofi_rdma_req_t *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI receive request for device %d",
 						dev_id);
@@ -2828,7 +2777,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 			}
 			recv_data->eager_copy_req = NULL;
 		} else {
-			ret = alloc_eager_copy_req(req, r_comm, rx_buff_req);
+			ret = req->alloc_eager_copy_req(r_comm, rx_buff_req);
 			if (ret != 0) {
 				goto error;
 			}
@@ -3067,7 +3016,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
  */
 static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	nccl_net_ofi_rdma_req_t *send_close_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *send_close_req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_close_req == NULL)) {
 		return -ENOMEM;
 	}
@@ -3379,7 +3328,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
-	nccl_net_ofi_rdma_req_t *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
 			      dev_id);
@@ -3560,7 +3509,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
-	nccl_net_ofi_rdma_req_t *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
@@ -4447,7 +4396,7 @@ static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
-	nccl_net_ofi_rdma_req_t *req = allocate_req(s_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
@@ -4474,7 +4423,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
-	nccl_net_ofi_rdma_req_t *req = allocate_req(s_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req_t *req = nccl_net_ofi_rdma_req_t::allocate_req(s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
@@ -4601,111 +4550,6 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 	return rc;
 }
 
-static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
-			   nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
-			   nccl_net_ofi_xfer_info_t *xfer_info,
-			   bool no_target_completion)
-{
-	rdma_req_send_data_t *send_data = req->get_send_data();
-	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
-	int rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
-	void *desc = fi_mr_desc(rail_mr_handle);
-
-	ssize_t rc;
-	/* Post RDMA write */
-	if (no_target_completion) {
-		rc = fi_write(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
-					xfer_info->msg_size, desc,
-					comm_rail->remote_addr,
-					send_data->remote_buff + xfer_info->offset,
-					send_data->remote_mr_key[rail_id], (void *)&req->ctx[rail_id]);
-	} else {
-		rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
-					xfer_info->msg_size, desc, send_data->wdata,
-					comm_rail->remote_addr,
-					send_data->remote_buff + xfer_info->offset,
-					send_data->remote_mr_key[rail_id], (void *)&req->ctx[rail_id]);
-	}
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("fi_writedata failed; RC: %zd, Error: %s",
-			      rc, fi_strerror(-rc));
-	} else if (rc == 0) {
-		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
-	}
-
-	return rc;
-}
-
-static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
-				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
-				nccl_net_ofi_xfer_info_t *xfer_info)
-{
-	rdma_req_send_data_t *send_data = req->get_send_data();
-	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
-	int rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
-	void *desc = fi_mr_desc(rail_mr_handle);
-
-	ssize_t rc;
-	/* Post eager send */
-	rc = fi_senddata(comm_rail->local_ep, (void*)(((uintptr_t)send_data->buff) + xfer_info->offset), xfer_info->msg_size, desc,
-			 send_data->wdata, comm_rail->remote_addr, (void *)&req->ctx[rail_id]);
-
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("fi_senddata failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
-	} else if (rc == 0) {
-		NCCL_OFI_TRACE_EAGER_SEND_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
-	}
-
-	return rc;
-}
-
-static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
-			      nccl_net_ofi_ep_rail_t *ep_rail,
-			      bool set_fi_more)
-{
-	rdma_req_rx_buff_data_t *rx_buff_data = req->get_rx_buff_data();
-	nccl_ofi_freelist_elem_t *rx_buff_fl_elem = rx_buff_data->rx_buff_fl_elem;
-	freelist_regmr_fn_handle_t *fl_mr_handle =
-		(freelist_regmr_fn_handle_t *)rx_buff_fl_elem->mr_handle;
-	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rx_buff_data->rail->rail_id]);
-	struct iovec iov;
-	struct fi_msg msg;
-	uint64_t flags = 0;
-
-	if (set_fi_more) {
-		flags |= FI_MORE;
-	}
-
-	/* Reset memcheck guards of rx buffer freelist entry to
-	 * accessible but undefined to cover cases where the buffer
-	 * gets re-posted */
-	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
-	assert(req->type != NCCL_OFI_RDMA_EAGER_RX_BUFF || ep->eager_rx_buff_size > 0);
-
-	nccl_ofi_freelist_t *fl = (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF ?
-		ep->eager_rx_buff_fl : ep->ctrl_rx_buff_fl);
-	nccl_ofi_freelist_entry_set_undefined(fl, rx_buff_fl_elem->ptr);
-
-	iov.iov_base = rx_buff_fl_elem->ptr;
-	iov.iov_len = rx_buff_data->buff_len;
-
-	msg.msg_iov = &iov;
-	msg.desc = &desc;
-	msg.iov_count = 1;
-	msg.addr = FI_ADDR_UNSPEC;
-	msg.context = (void *)&req->ctx[ep_rail->rail_id];
-
-	req->state = NCCL_OFI_RDMA_REQ_CREATED;
-	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep, &msg, flags);
-	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("Error posting rx buffer. RC: %zd, Error: %s",
-			      rc, fi_strerror(-rc));
-	}
-
-	return rc;
-}
 
 /*
  * @brief	This function helps progress the send request by submitting it
@@ -4746,7 +4590,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
 				rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
 
-			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
+			ret = req->post_rdma_eager_send(comm_rail, xfer_info);
 		} else {
 			for (size_t rail_it = send_data->xferred_rail_id; rail_it < schedule->num_xfer_infos; rail_it++) {
 				/* Get xfer information from the schedule */
@@ -4755,7 +4599,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
 					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
 
-				ret = post_rdma_write(req, comm_rail, xfer_info, send_data->no_target_completion);
+				ret = req->post_rdma_write(comm_rail, xfer_info, send_data->no_target_completion);
 
 				if (ret == 0) // Successfully sent the xfer with this rail
 					send_data->xferred_rail_id++;
@@ -4776,7 +4620,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 		/* Get ep rail information to xfer the req */
 		assert(rx_buff_data->rail != NULL);
 
-		ret = post_rx_buffer(req, rx_buff_data->rail, false);
+		ret = req->post_rx_buffer(rx_buff_data->rail, false);
 	} else {
 		NCCL_OFI_WARN("Unexpected request type. Request type: %d", req->type);
 		ret = -EINVAL;
@@ -5828,7 +5672,7 @@ static inline nccl_net_ofi_rdma_req_t *prepare_send_conn_req(nccl_net_ofi_rdma_s
 {
 	nccl_net_ofi_rdma_req_t *req = NULL;
 
-	req = allocate_req(s_comm->nccl_ofi_reqs_fl);
+	req = nccl_net_ofi_rdma_req_t::allocate_req(s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
 			      s_comm->base.base.dev_id);
@@ -5855,7 +5699,7 @@ static inline nccl_net_ofi_rdma_req_t *prepare_recv_conn_resp_req(nccl_net_ofi_r
 {
 	nccl_net_ofi_rdma_req_t *req = NULL;
 
-	req = allocate_req(s_comm->nccl_ofi_reqs_fl);
+	req = nccl_net_ofi_rdma_req_t::allocate_req(s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
 			      s_comm->base.base.dev_id);
