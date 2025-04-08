@@ -41,11 +41,75 @@ static bool kernel_version_rdma_dmabuf_ioctl_ok(void)
 	return (maj == 5 && min >= 12) || (maj > 5);
 }
 
+/**
+ * @brief device_supports_dmabuf - Check if the device supports DMA-BUF
+ * @info: Provider info or hints
+ * @is_prov: true if info is provider, false if hints
+ *
+ * Determines if the device supports DMA-BUF based on its device ID
+ * When passed hints (is_prov = false), it first
+ * gets the actual provider info.
+ *
+ * Return: true if DMA-BUF is supported, false otherwise
+ */
+static bool device_supports_dmabuf(const struct fi_info *info, bool is_prov)
+{
+	struct fi_info *providers = NULL;
+	char *endptr;
+	uint32_t device_id;
+	bool ret = false;
+
+	if (!info) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Invalid input: info is NULL");
+		goto error;
+	}
+
+	/* If hints provided, get actual provider info */
+	if (!is_prov) {
+		int rc = fi_getinfo(FI_VERSION(1, 18), NULL, NULL, 0, info, &providers);
+		if (rc != 0 || !providers) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Failed to get provider info from hints");
+			goto error;
+		}
+		info = providers;
+	}
+
+	/* Check for valid device attributes */
+	if (!info->nic || !info->nic->device_attr || !info->nic->device_attr->device_id) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Invalid device attributes");
+		goto error;
+	}
+
+	/* Convert device ID from string to uint32_t */
+	device_id = (uint32_t)strtoul(info->nic->device_attr->device_id, &endptr, 16);
+	if (*endptr != '\0') {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Invalid device ID format");
+		goto error;
+	}
+
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Device ID: 0x%x", device_id);
+	ret = (device_id >= 0xefa3);
+	goto exit;
+
+error:
+	ret = false;
+
+exit:
+	/* Clean up provider info if we allocated it */
+	if (providers)
+		fi_freeinfo(providers);
+	return ret;
+}
+
 
 /* Check preconditions for using DMA-BUF. Note that we may disable DMA-BUF for
  * other reasons, even if this function returns true. For example, if we do not
  * resolve a provider with FI_HMEM support */
-int nccl_ofi_dmabuf_viable()
+int nccl_ofi_dmabuf_viable(const struct fi_info* info, bool is_prov)
 {
 	/* Disable DMA-BUF if building against older libfabric. */
 	if (!HAVE_DECL_FI_MR_DMABUF) {
@@ -80,6 +144,12 @@ int nccl_ofi_dmabuf_viable()
 	 */
 	if (!kernel_version_rdma_dmabuf_ioctl_ok()) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Will not attempt to use DMA-BUF, kernel 5.12+ not found.");
+		return false;
+	}
+
+	/* Check if device supports DMA-BUF */
+	if (!device_supports_dmabuf(info, is_prov)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Will not attempt to use DMA-BUF, device ID does not support it.");
 		return false;
 	}
 

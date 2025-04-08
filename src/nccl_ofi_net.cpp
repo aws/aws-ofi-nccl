@@ -581,7 +581,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 
 	props->dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
 		FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
-		nccl_ofi_dmabuf_viable()
+		nccl_ofi_dmabuf_viable(nic_prov, true)
 		;
 	if (props->dmabuf_support) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");

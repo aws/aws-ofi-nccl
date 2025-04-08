@@ -260,22 +260,14 @@ OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
 OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
 
 /*
- * In cases where libfabric>=1.20 is available, and the provider has FI_HMEM
- * support, the only further stated requirement for a user application to use
- * dmabuf is to pass FI_MR_DMABUF in the flags on the call to fi_regattr(3).
- *
- * Unfortunately, the plugin needs to signal DMABUF support or lack thereof back
- * to NCCL prior to having an opportuntiy to make any any memory registrations.
- * This ultimately means that the plugin will opimistically assume DMA-BUF is
- * viable on all FI_HMEM providers beyond libfabric 1.20, if not for this param.
- *
- * If dmabuf registrations fail, (ie: if ibv_reg_dmabuf_mr cannot be resolved),
- * the plugin has no freedom to renegotiate DMABUF support with NCCL, and so it
- * is fatal. Under those conditions, users should ensure that they have set this
- * environment variable to '1' to force NCCL to avoid providing dmabuf file
- * desciptors. This is the default, pending perf investigations.
+ * Determines if DMA-BUF support is viable. DMA-BUF will be disabled if:
+ * 1. The libfabric version is older than 1.20 (FI_MR_DMABUF not declared).
+ * 2. Explicitly disabled by the user via OFI_NCCL_DISABLE_DMABUF environment variable.
+ * 3. Using CUDA and the CUDA device does not report DMA-BUF support.
+ * 4. Running on a kernel version older than 5.12.
+ * 5. The device does not support DMA-BUF based on its device ID.
  */
-OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
+OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
