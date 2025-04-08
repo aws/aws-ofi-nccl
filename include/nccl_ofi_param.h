@@ -273,9 +273,9 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
  * the plugin has no freedom to renegotiate DMABUF support with NCCL, and so it
  * is fatal. Under those conditions, users should ensure that they have set this
  * environment variable to '1' to force NCCL to avoid providing dmabuf file
- * desciptors. This is the default, pending perf investigations.
+ * desciptors.
  */
-OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 1);
+OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
