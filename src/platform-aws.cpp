@@ -275,25 +275,6 @@ exit:
 
 
 #if HAVE_CUDA
-static int configure_nccl_proto(void)
-{
-	int ret;
-
-	if (!getenv("NCCL_PROTO")) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO to \"simple\"");
-		ret = setenv("NCCL_PROTO", "simple", 0);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
-				      strerror(errno));
-			return -errno;
-		}
-	} else if (strcasecmp(getenv("NCCL_PROTO"), "simple") != 0) {
-		NCCL_OFI_WARN("NCCL_PROTO was set to \"LL/LL128\", but the Libfabric endpoint does not support 128 byte in-order aligned stores. This endpoint may corrupt data during communication");
-	}
-
-	return 0;
-}
-
 /*
  * Try to set one of the in-order flags for either send/recv or rdma
  * on the current endpoint to true.  have_ordering will be the
@@ -742,7 +723,11 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 			nccl_proto_configured = true;
 
 			if (!have_ordering) {
-				ret = configure_nccl_proto();
+				/* When byte delivery ordering is not guaranteed, force
+				 * the simple protocol as the LL/LL128 protocols can lead
+				 * to data corruption without data delivery ordering.
+				 */
+				ret = nccl_net_ofi_configure_nccl_proto_simple("byte delivery ordering");
 				if (ret != 0) {
 					NCCL_OFI_WARN("Failed to set NCCL_PROTO: %d", ret);
 					ret = -ENOTSUP;

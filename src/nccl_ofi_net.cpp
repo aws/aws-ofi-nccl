@@ -328,6 +328,24 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		ret = -ENOTSUP;
 		goto exit;
 	}
+	/* Force SIMPLE protocol when using a provider that does not support
+	 * GDR. NCCL disables the LL128 protocol in this case, but leaves the
+	 * LL protocol enabled. Without GDR, the LL protocol polls on host
+	 * memory for completion flags. In addition to being slow, this assumes
+	 * that host memory is updated in 8 byte segments. However, most
+	 * providers that do not support HMEM (like the tcp or sockets
+	 * providers) do not make any guarantees about data delivery ordering.
+	 * There is not a good way to ask Libfabric providers about their data
+	 * delivery support in the general case, so take a conservative
+	 * approach and force the simple protocol whenever using a provider
+	 * that does not support HMEM.
+	 */
+	if (support_gdr != GDR_SUPPORTED) {
+		ret = nccl_net_ofi_configure_nccl_proto_simple("GDR");
+		if (ret != 0) {
+			goto exit;
+		}
+	}
 
 	*plugin_p = plugin;
 
@@ -1185,4 +1203,23 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 #else
 	return -FI_ENOPROTOOPT;
 #endif
+}
+
+
+int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason)
+{
+	int ret;
+
+	if (getenv("NCCL_PROTO") == NULL) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO='simple' to prevent data corruption (reason: %s not supported)",
+			      log_reason);
+		ret = setenv("NCCL_PROTO", "simple", 1);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
+				      strerror(errno));
+			return -errno;
+		}
+	}
+
+	return 0;
 }
