@@ -328,6 +328,17 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		ret = -ENOTSUP;
 		goto exit;
 	}
+	/* Configure NCCL_PROTO to "simple" when GDR is not supported
+	 * to prevent potential data corruption with LL/LL128 in:
+	 * - EFA provider without platform-specific config
+	 * - Non-EFA providers
+	 */
+	if (support_gdr != GDR_SUPPORTED) {
+		ret = nccl_net_ofi_configure_nccl_proto_simple(PROTO_SIMPLE_LOG_GDR);
+		if (ret != 0) {
+			goto exit;
+		}
+	}
 
 	*plugin_p = plugin;
 
@@ -1154,4 +1165,28 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 #else
 	return -FI_ENOPROTOOPT;
 #endif
+}
+
+
+int nccl_net_ofi_configure_nccl_proto_simple(nccl_net_ofi_proto_log_type_t log_type)
+{
+	int ret;
+
+	if (getenv("NCCL_PROTO") == NULL) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO='simple' to prevent data corruption (reason: %s not supported)",
+			      log_type == PROTO_SIMPLE_LOG_GDR ? "GDR" : "byte delivery ordering");
+		ret = setenv("NCCL_PROTO", "simple", 1);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
+				      strerror(errno));
+			return -errno;
+		}
+	}
+	/* Note: Warning for pre-existing NCCL_PROTO setting was removed as modern NCCL
+	 * supports complex protocol formats (e.g., "allreduce:simple", "^LL").
+	 * TODO: Consider adding protocol format validation to put an INFO and finding
+	 * a better file location for this function.
+	 */
+
+	return 0;
 }

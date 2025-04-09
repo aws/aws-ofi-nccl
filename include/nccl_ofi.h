@@ -791,4 +791,22 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
  */
 long nccl_net_ofi_gettid(void);
 
+enum nccl_net_ofi_proto_log_type_t {
+	PROTO_SIMPLE_LOG_GDR = 0,
+	PROTO_SIMPLE_LOG_BYTE_ORDERING
+};
+ /*
+ * @brief   Configures NCCL_PROTO environment variable to "simple".
+ *
+ * @details If NCCL_PROTO is not set, configures it to "simple" protocol.
+ *          If NCCL_PROTO is already set to something other than "simple",
+ *          warns about potential data corruption.
+ *
+ * @input   log type from nccl_net_ofi_proto_log_type_t
+ *
+ * @return  0 on success or when warning is issued
+ *          -errno in case of any failure
+ */
+int nccl_net_ofi_configure_nccl_proto_simple(nccl_net_ofi_proto_log_type_t log_type);
+
 #endif // End NCCL_OFI_H_
