@@ -312,7 +312,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		      (properties.regIsGlobal == 0) ? "false" : "true");
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
 		      (properties.dmabuf_support == 0) ? "false" : "true");
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = base_ep->release_ep(false, false);
 	if (ret != 0) {
 		goto exit;
 	}
@@ -893,7 +893,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 			ep = domain->endpoint;
 			domain->endpoint = NULL;
 
-			ret = ep->release_ep(ep, true, true);
+			ret = ep->release_ep(true, true);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
 				if (first_error != 0) {
@@ -955,7 +955,7 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 			       ep, domain);
 	}
 
-	ep->ref_cnt++;
+	ep->increment_ref_cnt();
 	*ep_p = ep;
 
 unlock:
@@ -1071,70 +1071,47 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 }
 
 
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup)
+int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 {
 	int ret = 0;
-	nccl_net_ofi_domain_t *domain;
-
-	assert(ep != NULL);
-	domain = ep->domain;
+	nccl_net_ofi_domain_t *domain_ptr = this->domain;
 
 	if (!skip_lock) {
-		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
 	}
 
-	ep->ref_cnt--;
+	this->decrement_ref_cnt();
+	if (this->get_ref_cnt() == 0 || force_cleanup) {
+		domain_ptr->endpoint = NULL;
 
-	if (ep->ref_cnt == 0 || force_cleanup) {
-		domain->endpoint = NULL;
-
-		if (force_cleanup && ep->ref_cnt != 0) {
+		if (force_cleanup && this->get_ref_cnt()) {
 			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
-			      ep, ep->ref_cnt);
+				      this, this->get_ref_cnt());
 		}
 
-		ret = ep->free_ep(ep);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
-			goto cleanup;
-		}
+		delete this;
 	}
 
-cleanup:
-
 	if (!skip_lock) {
-		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+		nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
 	}
 
 	/* Skip domain->release when handled by device->release_all_domain_and_ep()
 	 * to avoid domain lock issue after the domain freed */
 	if (!force_cleanup && ret == 0) {
-		ret = domain->release(domain, skip_lock, false);
+		ret = domain_ptr->release(domain_ptr, skip_lock, false);
 	}
 
 	return ret;
 }
 
 
-int nccl_net_ofi_endpoint_init(nccl_net_ofi_domain_t *domain,
-			       nccl_net_ofi_ep_t *ep)
+nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain_arg)
 {
-	assert(domain != NULL);
-	assert(ep != NULL);
+	assert(domain_arg != NULL);
+	this->domain = domain_arg;
 
-	ep->domain = domain;
-	ep->release_ep = nccl_net_ofi_endpoint_release;
-
-	ep->ref_cnt = 0;
-
-	return 0;
-}
-
-
-int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep)
-{
-	/* nothing to do today */
-	return 0;
+	this->ref_cnt = 0;
 }
 
 

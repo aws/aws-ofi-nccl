@@ -184,11 +184,13 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_ep_t;
+
+struct nccl_net_ofi_rdma_domain;
 struct nccl_net_ofi_rdma_req;
-struct nccl_net_ofi_rdma_ep;
 struct nccl_net_ofi_ep_rail;
+typedef struct nccl_net_ofi_rdma_domain nccl_net_ofi_rdma_domain_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
-typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
@@ -696,17 +698,24 @@ struct nccl_net_ofi_ep_rail {
  * for the rdma protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-struct nccl_net_ofi_rdma_ep {
-	/* This base endpoint interface struct provides access to the
-	 * rdma endpoint's functions such as rdma_listen() and
-	 * rdma_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
-	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+class nccl_net_ofi_rdma_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up endpoint rails and freelists. 
+	 */
+	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain);
+
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, releases endpoint rails
+	 * and freelists.
+	 */
+	~nccl_net_ofi_rdma_ep_t() override;
+
 
 	/* Number of rails */
 	int num_rails;
@@ -758,6 +767,35 @@ struct nccl_net_ofi_rdma_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
+
+
+	/** 
+	 * Overriding base virtual functions
+	 */
+
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+
+
+	/**
+	 * @brief	Execute the connect functionality from listen/connect/accept
+	 *		connection establishment
+	 *
+	 * The connect functionality does the following: (a) create send communicator
+	 * with only the first communicator rail being initalized, (b) post send
+	 * operation to send connect message to remote, containing local endpoint
+	 * addresses, (c) wait until message is delivered, (d) waits for the connect
+	 * response message, and (e) calls finish_connect.
+	 *
+	 * The `finish_connect' method completes the initialization of the remaining
+	 * communicator rails using the received connect responce message.
+	 */
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm_t **send_comm) override;
+
+
+	int release_ep(bool skip_lock, bool force_cleanup) override;
+
 };
 
 /*
