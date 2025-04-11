@@ -58,8 +58,11 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         [
         AC_MSG_CHECKING([if CUDA 11.3+ is available for GDR Write Flush support])
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
+        #ifndef __cplusplus
+        #include <assert.h>
+        #endif
         #include <cuda.h>
-        _Static_assert(CUDA_VERSION >= 11030, "cudart>=11030 required for cuFlushGPUDirectRDMAWrites");
+        static_assert(CUDA_VERSION >= 11030, "cudart>=11030 required for cuFlushGPUDirectRDMAWrites");
         ])],[ check_cuda_gdr_flush_define=1 chk_result=yes ],
             [ check_cuda_gdr_flush_define=0 chk_result=no ])
         AC_MSG_RESULT(${chk_result})
@@ -70,8 +73,11 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         [
         AC_MSG_CHECKING([if CUDA 11.7+ is available for DMA-BUF support])
         AC_COMPILE_IFELSE([AC_LANG_PROGRAM([
+        #ifndef __cplusplus
+        #include <assert.h>
+        #endif
         #include <cuda.h>
-        _Static_assert(CUDA_VERSION >= 11070, "cudart>=11070 required for DMABUF");
+        static_assert(CUDA_VERSION >= 11070, "cudart>=11070 required for DMABUF");
         ])],[ check_cuda_dmabuf_define=1 chk_result=yes ],
             [ check_cuda_dmabuf_define=0 chk_result=no ])
         AC_MSG_RESULT(${chk_result})
