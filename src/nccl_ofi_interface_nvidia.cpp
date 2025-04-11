@@ -220,17 +220,50 @@ static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
 }
 
 
-static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
-			       ncclNetDeviceHandle_v7_t** sendDevComm)
+// Nvidia introduced the ability to have part of the communication driven by a
+// cuda kernel, which requires a version-specific device pointer be passed
+// through the accept/connect APIs.  We don't support that interface, so we
+// never need to look at the third argument.  Rather than pollute the api
+// interface, just declare these wrappers in the nvidia interface.
+static ncclResult_t nccl_net_ofi_connect_v7(int dev, void* handle, void** sendComm,
+					    ncclNetDeviceHandle_v7_t** sendDevComm)
 {
 	return nccl_net_ofi_connect(dev, handle, sendComm);
 }
 
 
-static ncclResult_t accept_v7(void* listenComm, void** recvComm,
-			      ncclNetDeviceHandle_v7_t** recvDevComm)
+static ncclResult_t nccl_net_ofi_connect_v8(int dev, void* handle, void** sendComm,
+					    ncclNetDeviceHandle_v8_t** sendDevComm)
 {
-	return nccl_net_ofi_accept(listenComm, recvComm);
+	return nccl_net_ofi_connect(dev, handle, sendComm);
+}
+
+
+static ncclResult_t nccl_net_ofi_connect_v9(int dev, void* handle, void** sendComm,
+					    ncclNetDeviceHandle_v9_t** sendDevComm)
+{
+	return nccl_net_ofi_connect(dev, handle, sendComm);
+}
+
+
+static ncclResult_t nccl_net_ofi_accept_v7(void* listenComm, void** recvComm,
+					   ncclNetDeviceHandle_v7_t** recvDevComm)
+{
+	return nccl_net_ofi_accept(listenComm,  recvComm);
+}
+
+
+static ncclResult_t nccl_net_ofi_accept_v8(void* listenComm, void** recvComm,
+					   ncclNetDeviceHandle_v8_t** recvDevComm)
+{
+	return nccl_net_ofi_accept(listenComm,  recvComm);
+}
+
+
+static ncclResult_t nccl_net_ofi_accept_v9(void* listenComm, void** recvComm,
+					   ncclNetDeviceHandle_v9_t** recvDevComm)
+{
+	return nccl_net_ofi_accept(listenComm,  recvComm);
 }
 
 
@@ -339,8 +372,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v7,
         .listen = nccl_net_ofi_listen,
-        .connect = connect_v7,
-        .accept = accept_v7,
+        .connect = nccl_net_ofi_connect_v7,
+        .accept = nccl_net_ofi_accept_v7,
         .regMr = nccl_net_ofi_regMr_v7,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
@@ -361,8 +394,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v8,
         .listen = nccl_net_ofi_listen,
-        .connect = connect_v7,
-        .accept = accept_v7,
+        .connect = nccl_net_ofi_connect_v8,
+        .accept = nccl_net_ofi_accept_v8,
         .regMr = nccl_net_ofi_regMr,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,
@@ -383,8 +416,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .devices = nccl_net_ofi_devices,
         .getProperties = getProperties_v9,
         .listen = nccl_net_ofi_listen,
-        .connect = connect_v7,
-        .accept = accept_v7,
+        .connect = nccl_net_ofi_connect_v9,
+        .accept = nccl_net_ofi_accept_v9,
         .regMr = nccl_net_ofi_regMr,
         .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf,
         .deregMr = nccl_net_ofi_deregMr,

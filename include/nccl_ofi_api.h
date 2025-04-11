@@ -16,6 +16,10 @@ ncclResult_t nccl_net_ofi_devices(int *ndev);
 ncclResult_t nccl_net_ofi_get_properties(int dev, struct nccl_ofi_properties *ofi_properties);
 ncclResult_t nccl_net_ofi_listen(int dev, void *handle, void **listenComm);
 ncclResult_t nccl_net_ofi_listen_v4(int dev, void* handle, void** listenComm);
+// Nvidia introduced the ability to have part of the communication driven by a
+// cuda kernel, which requires a version-specific device pointer be passed
+// through the accept/connect APIs.  Rather than list all those connect calls
+// here, we just declare them in the nvidia interface file to keep this list sane.
 ncclResult_t nccl_net_ofi_connect(int dev, void* handle, void** sendComm);
 ncclResult_t nccl_net_ofi_connect_v4(int dev, void* handle, void** sendComm);
 ncclResult_t nccl_net_ofi_accept(void *listenComm, void **recvComm);
