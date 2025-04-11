@@ -2755,7 +2755,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 		goto error;
 	}
 
-	if (nccl_ofi_dmabuf_viable()) {
+	if (nccl_ofi_dmabuf_viable(hints, false)) {
 		sendrecv_get_hints(hints, true);
 		ret = nccl_ofi_ofiutils_get_providers(provider_filter,
 						      FI_VERSION(1, 20),

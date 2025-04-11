@@ -5,6 +5,9 @@
 #ifndef NCCL_OFI_DMABUF_H_
 #define NCCL_OFI_DMABUF_H_
 
-int nccl_ofi_dmabuf_viable(void);
+#include <rdma/fabric.h>
+#include <rdma/fi_ext.h>
+
+int nccl_ofi_dmabuf_viable(const struct fi_info *info, bool is_prov);
 
 #endif  // NCCL_OFI_DMABUF_H_
