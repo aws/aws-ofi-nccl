@@ -94,6 +94,18 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
+/*
+ * Domain - container for the libfabric domain, which is the threading
+ * boundary for most Libfabric providers, given how the util cq
+ * implementation works.
+ */
+typedef struct nccl_net_ofi_sendrecv_domain {
+	nccl_net_ofi_domain_t base;
+
+	/* Access Domain handle */
+	struct fid_domain *domain;
+} nccl_net_ofi_sendrecv_domain_t;
+
 /**
  * @brief	Sendrecv Endpoint
  *
@@ -101,18 +113,22 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
  * for the sendrecv protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-typedef struct nccl_net_ofi_sendrecv_ep {
-	/* This base endpoint interface struct provides access to the
-	 * sendrecv endpoint's functions such as sendrecv_listen() and
-	 * sendrecv_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
-	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+class nccl_net_ofi_sendrecv_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up freelist and endpoint resources.   
+	 */
+	nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg);
 
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, releases freelist and 
+	 * endpoint resources.
+	 */
+	~nccl_net_ofi_sendrecv_ep_t() override;
 	/* Current available tag ID */
 	uint64_t tag;
 
@@ -130,20 +146,18 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 
 	/* free list for control messages */
 	nccl_ofi_freelist_t *conn_msg_fl;
-} nccl_net_ofi_sendrecv_ep_t;
 
 
-/*
- * Domain - container for the libfabric domain, which is the threading
- * boundary for most Libfabric providers, given how the util cq
- * implementation works.
- */
-typedef struct nccl_net_ofi_sendrecv_domain {
-	nccl_net_ofi_domain_t base;
+	/* Override virtual functions */
 
-	/* Access Domain handle */
-	struct fid_domain *domain;
-} nccl_net_ofi_sendrecv_domain_t;
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+
+
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm_t **send_comm) override;
+
+};
 
 
 /**
