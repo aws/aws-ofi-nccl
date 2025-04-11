@@ -2,11 +2,11 @@
 
 fmt=" \
 tagname=%(refname:short) \
-tagger_name=%(taggername:mailmap) \
-tagger_email=%(taggeremail:mailmap) \
+tagger_name=%(taggername) \
+tagger_email=%(taggeremail) \
 tagger_when=%(taggerdate) \
-committer_name=%(committername:mailmap) \
-committer_email=%(committeremail:mailmap) \
+committer_name=%(committername) \
+committer_email=%(committeremail) \
 committer_when=%(committerdate) \
 "
 
