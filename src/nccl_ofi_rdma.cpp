@@ -2020,7 +2020,12 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-			struct fi_cq_err_entry err_entry;
+			/*
+			 * On call to fi_cq_readerr, Libfabric requires some members of
+			 * err_entry to be zero-initialized or point to valid data.  For
+			 * simplicity, just zero out the whole struct.
+			 */
+			struct fi_cq_err_entry err_entry = { };
 
 			ret = fi_cq_readerr(rail->cq, &err_entry, 0);
 			if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {

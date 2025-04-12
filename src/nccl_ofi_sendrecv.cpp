@@ -295,6 +295,11 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 {
 	ssize_t rc = 0;
 	int ret = 0;
+	/*
+	 * On call to fi_cq_readerr, Libfabric requires some members of
+	 * err_entry to be zero-initialized or point to valid data.  For
+	 * simplicity, just zero out the whole struct.
+	 */
 	struct fi_cq_err_entry err_buffer = {};
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
 
