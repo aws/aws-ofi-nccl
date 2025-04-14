@@ -604,9 +604,9 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 				       "DMA-BUF disabled due to missing nic data");
 			props->dmabuf_support = false;
-		} else if (strcmp("efa0", nic_prov->nic->device_attr->device_id) == 0 ||
-			   strcmp("efa1", nic_prov->nic->device_attr->device_id) == 0 ||
-			   strcmp("efa2", nic_prov->nic->device_attr->device_id) == 0) {
+		} else if (strcmp("0xefa0", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa1", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa2", nic_prov->nic->device_attr->device_id) == 0) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 				       "DMA-BUF disabled due to EFA device id %s",
 				       nic_prov->nic->device_attr->device_id);
