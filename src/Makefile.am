@@ -8,6 +8,9 @@
 # net plugin
 #
 sources = \
+	cm/nccl_ofi_cm.cpp \
+	cm/nccl_ofi_cm_resources.cpp \
+	cm/nccl_ofi_cm_reqs.cpp \
 	nccl_ofi_api.cpp \
 	nccl_ofi_compat.cpp \
 	nccl_ofi_net.cpp \
