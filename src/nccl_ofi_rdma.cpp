@@ -925,7 +925,7 @@ int nccl_net_ofi_rdma_ep_t::repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	if (ret == -FI_EAGAIN) {
 		/* Add to pending reqs queue */
 		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-		pending_reqs_queue->push_back(rx_buff_req);
+		pending_reqs_queue.push_back(rx_buff_req);
 		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		NCCL_OFI_TRACE_PENDING_INSERT(rx_buff_req);
 
@@ -1008,7 +1008,7 @@ static inline int handle_ctrl_recv(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		if (ret == -FI_EAGAIN) {
 			/* Add to pending reqs queue */
 			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-			ep->pending_reqs_queue->push_back(req);
+			ep->pending_reqs_queue.push_back(req);
 			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 			ret = 0;
 			NCCL_OFI_TRACE_PENDING_INSERT(req);
@@ -1776,7 +1776,7 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 		/* Place in pending requests queue for next try */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-		ep->pending_reqs_queue->push_back(req);
+		ep->pending_reqs_queue.push_back(req);
 		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 		rc = 0;
 
@@ -1794,9 +1794,9 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 	while (true) {
 		nccl_net_ofi_rdma_req_t *req = NULL;
 		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-		if (!pending_reqs_queue->empty()) {
-			req = pending_reqs_queue->front();
-			pending_reqs_queue->pop_front();
+		if (!pending_reqs_queue.empty()) {
+			req = pending_reqs_queue.front();
+			pending_reqs_queue.pop_front();
 		}
 		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		if (req == NULL) { break; }
@@ -1829,7 +1829,7 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 		} else if (rc == -FI_EAGAIN) {
 			/* Put the request in the front of the queue and try again later */
 			nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-			pending_reqs_queue->push_front(req);
+			pending_reqs_queue.push_front(req);
 			nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 			rc = 0;
 			break;
@@ -2315,7 +2315,7 @@ int nccl_net_ofi_rdma_ep_t::handle_rx_eagain(nccl_net_ofi_ep_rail_t *rail,
 {
 	/* Add to pending reqs queue */
 	nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-	pending_reqs_queue->push_back(req);
+	pending_reqs_queue.push_back(req);
 	nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
@@ -3302,7 +3302,7 @@ int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 {
 	/* Process the CQ if there are any pending requests */
 	nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-	bool is_deque_empty = pending_reqs_queue->empty();
+	bool is_deque_empty = pending_reqs_queue.empty();
 	nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 	if (!is_deque_empty) {
 		int ret = ofi_process_cq();
@@ -3310,7 +3310,7 @@ int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 			return ret;
 		}
 		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
-		is_deque_empty = pending_reqs_queue->empty();
+		is_deque_empty = pending_reqs_queue.empty();
 		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		if (!is_deque_empty) {
 			/* Network is still busy. */
@@ -4232,7 +4232,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	} else {
 		/* Add to pending reqs queue */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-		ep->pending_reqs_queue->push_back(req);
+		ep->pending_reqs_queue.push_back(req);
 		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
@@ -5654,7 +5654,7 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req)
 		if (ret == -FI_EAGAIN) {
 			/* Place in pending requests queue for next try */
 			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-			ep->pending_reqs_queue->push_back(rx_buff_req);
+			ep->pending_reqs_queue.push_back(rx_buff_req);
 			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 			NCCL_OFI_TRACE_PENDING_INSERT(rx_buff_req);
 
@@ -5872,7 +5872,7 @@ retry:
 		if (ret == -FI_EAGAIN) {
 			/* Add to pending reqs queue */
 			nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-			ep->pending_reqs_queue->push_back(req);
+			ep->pending_reqs_queue.push_back(req);
 			nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 			ret = 0;
 			NCCL_OFI_TRACE_PENDING_INSERT(req);
@@ -6208,7 +6208,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
 	if (ret == -FI_EAGAIN) {
 		/* Add to pending reqs queue */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-		ep->pending_reqs_queue->push_back(req);
+		ep->pending_reqs_queue.push_back(req);
 		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
@@ -6644,11 +6644,6 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 		ret = -EINVAL;
 	}
 
-	if (pending_reqs_queue) {
-		delete pending_reqs_queue;
-		pending_reqs_queue = nullptr;
-	}
-
 	err_code = nccl_net_ofi_mutex_destroy(&pending_reqs_lock);
 	if (err_code != 0) {
 		NCCL_OFI_WARN("rdma endpoint destructor: destroying pending_reqs_lock mutex failed, rc %d", err_code);
@@ -6826,8 +6821,6 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 	rails = std::vector<nccl_net_ofi_ep_rail_t>(num_rails, nccl_net_ofi_ep_rail_t{});
 
 	control_rails = std::vector<nccl_net_ofi_ep_rail_t>(num_control_rails, nccl_net_ofi_ep_rail_t{});
-
-	pending_reqs_queue = new std::deque<nccl_net_ofi_rdma_req_t *>;
 
 	ret = nccl_net_ofi_mutex_init(&pending_reqs_lock, NULL);
 	if (ret != 0) {
