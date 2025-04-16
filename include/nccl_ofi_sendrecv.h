@@ -94,8 +94,31 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /* Forward declarations needed for sendrecv transport endpoint type */
+struct nccl_net_ofi_sendrecv_device;
 struct nccl_net_ofi_sendrecv_domain;
+typedef struct nccl_net_ofi_sendrecv_device nccl_net_ofi_sendrecv_device_t;
 typedef struct nccl_net_ofi_sendrecv_domain nccl_net_ofi_sendrecv_domain_t;
+
+
+/*
+ * Domain - container for the libfabric domain, which is the threading
+ * boundary for most Libfabric providers, given how the util cq
+ * implementation works.
+ */
+typedef struct nccl_net_ofi_sendrecv_domain {
+	nccl_net_ofi_domain_t base;
+
+	/* Access Domain handle */
+	struct fid_domain *domain;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
+
+	/* Connection manager for this domain */
+	nccl_ofi_connection_manager *cm;
+
+} nccl_net_ofi_sendrecv_domain_t;
+
 
 /**
  * @brief	Sendrecv Endpoint
@@ -133,6 +156,21 @@ public:
 		return (nccl_net_ofi_sendrecv_domain_t *) domain;
 	}
 
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
+	{
+		return (nccl_net_ofi_sendrecv_device_t *)this->sendrecv_endpoint_get_domain()->base.device;
+	}
+
+	/**
+	 * @brief	Returns the domain, dependent on the platform.
+	 *
+	 * @return	fid_domain for the device (P-series) or endpoint (Neuron).
+	 */
+	inline struct fid_domain* sendrecv_endpoint_get_ofi_domain()
+	{
+		return this->sendrecv_endpoint_get_domain()->domain;
+	}
+
 	/* Current available tag ID */
 	uint64_t tag;
 
@@ -148,26 +186,6 @@ public:
 protected:
 	int cleanup_resources() override;
 };
-
-
-/*
- * Domain - container for the libfabric domain, which is the threading
- * boundary for most Libfabric providers, given how the util cq
- * implementation works.
- */
-typedef struct nccl_net_ofi_sendrecv_domain {
-	nccl_net_ofi_domain_t base;
-
-	/* Access Domain handle */
-	struct fid_domain *domain;
-
-	/* Completion Queue handle */
-	struct fid_cq *cq;
-
-	/* Connection manager for this domain */
-	nccl_ofi_connection_manager *cm;
-
-} nccl_net_ofi_sendrecv_domain_t;
 
 
 /**
