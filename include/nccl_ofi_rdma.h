@@ -743,7 +743,7 @@ public:
 	 */
 	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_rail(uint16_t rail_id)
 	{
-		assert(this->rails);
+		assert(!this->rails.empty());
 		assert(rail_id < this->num_rails);
 		return &this->rails[rail_id];
 	}
@@ -753,7 +753,7 @@ public:
 	 */
 	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_control_rail(uint16_t rail_id)
 	{
-		assert(this->control_rails);
+		assert(!this->control_rails.empty());
 		assert(rail_id < this->num_control_rails);
 		return &this->control_rails[rail_id];
 	}
@@ -878,10 +878,10 @@ public:
 	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *rails = nullptr;
+	std::vector<nccl_net_ofi_ep_rail_t> rails;
 
 	/* Array of `num_control_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *control_rails = nullptr;
+	std::vector<nccl_net_ofi_ep_rail_t> control_rails;
 
 	bool use_long_rkeys;
 
