@@ -6655,9 +6655,6 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 		ret = -EINVAL;
 	}
 
-	free(control_rails);
-	free(rails);
-
 	assert(ret == 0);
 
 	return ret;
@@ -6825,19 +6822,10 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 
 	use_long_rkeys = device->use_long_rkeys;
 
-	rails = (nccl_net_ofi_ep_rail_t *)calloc(num_rails,
-						 sizeof(nccl_net_ofi_ep_rail_t));
-	if (!rails) {
-		NCCL_OFI_WARN("Unable to allocate rdma rails");
-		throw std::runtime_error("rdma endpoint constructor: data rail allocation failed");
-	}
+	/* Zero-initialize the rails and control_rails vector elements */
+	rails = std::vector<nccl_net_ofi_ep_rail_t>(num_rails, nccl_net_ofi_ep_rail_t{});
 
-	control_rails = (nccl_net_ofi_ep_rail_t *)calloc(num_control_rails,
-							 sizeof(nccl_net_ofi_ep_rail_t));
-	if (!control_rails) {
-		NCCL_OFI_WARN("Unable to allocate rdma control rails");
-		throw std::runtime_error("rdma endpoint constructor: control rail allocation failed");
-	}
+	control_rails = std::vector<nccl_net_ofi_ep_rail_t>(num_control_rails, nccl_net_ofi_ep_rail_t{});
 
 	pending_reqs_queue = new std::deque<nccl_net_ofi_rdma_req_t *>;
 
