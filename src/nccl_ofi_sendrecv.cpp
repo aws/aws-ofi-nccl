@@ -52,18 +52,6 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 				       nccl_ofi_mr_cache_t *mr_cache);
 
 
-static nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain(nccl_net_ofi_sendrecv_ep_t *ep)
-{
-	return (nccl_net_ofi_sendrecv_domain_t*)ep->domain;
-}
-
-
-static nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device(nccl_net_ofi_sendrecv_ep_t *ep)
-{
-	return (nccl_net_ofi_sendrecv_device_t*)sendrecv_endpoint_get_domain(ep)->base.device;
-}
-
-
 static nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device(nccl_net_ofi_sendrecv_domain_t *domain)
 {
 	return (nccl_net_ofi_sendrecv_device_t *)domain->base.device;
@@ -485,7 +473,7 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 
 	CHECK_DOMAIN_ACTIVE(domain, "sendrecv_req_test");
@@ -525,20 +513,6 @@ typedef struct {
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 	nccl_ofi_idpool_t *key_pool;
 } sendrecv_freelist_mr_handle_t;
-
-
-/*
- * @brief	Returns the domain, dependent on the platform.
- *
- * @return	fid_domain for the device (P-series) or endpoint (Neuron).
- *
- */
-
-static inline struct fid_domain* sendrecv_endpoint_get_ofi_domain(nccl_net_ofi_sendrecv_ep_t *ep)
-{
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
-	return domain->domain;
-}
 
 
 /*
@@ -799,13 +773,13 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		sendrecv_endpoint_get_device(ep);
+	ep->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
@@ -836,7 +810,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	key_pool = domain->base.mr_rkey_pool;
 	struct fid_domain *ofi_domain;
-	ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
+	ofi_domain = ep->sendrecv_endpoint_get_ofi_domain();
 	ret = sendrecv_mr_base_register(ofi_domain, ep->ofi_ep, key_pool,
 					dev_id, ckey, type, &ret_handle);
 	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
@@ -890,13 +864,13 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = ep->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
@@ -951,7 +925,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain, "recv");
 
@@ -1051,7 +1025,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
  */
 static inline void sendrecv_endpoint_abort(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	nccl_net_ofi_domain_t *base_domain = &sendrecv_endpoint_get_domain(ep)->base;
+	nccl_net_ofi_domain_t *base_domain = &ep->sendrecv_endpoint_get_domain()->base;
 
 	pthread_wrapper domain_lock(&base_domain->domain_lock);
 
@@ -1142,7 +1116,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
 	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(r_comm->base.base.ep);
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain_ptr, "flush");
 
@@ -1418,7 +1392,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 		return NULL;
 	}
 
-	ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
+	ofi_domain = ep->sendrecv_endpoint_get_ofi_domain();
 
 	/*
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
@@ -1489,7 +1463,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	}
 
 	nccl_net_ofi_sendrecv_domain_t *domain =
-		sendrecv_endpoint_get_domain(ep);
+	ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
@@ -1498,7 +1472,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		sendrecv_endpoint_get_device(ep);
+	ep->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
@@ -1685,7 +1659,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = nullptr;
 	int dev_id = 0;
 	int num_addrs;
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = sendrecv_endpoint_get_domain(this);
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
 	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain_ptr, "listen");
@@ -1755,13 +1729,13 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
-		sendrecv_endpoint_get_device(ep);
+	ep->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
@@ -1789,7 +1763,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain, "send");
 
@@ -1922,7 +1896,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	int ret = 0;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = ep->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device.");
 		return -EINVAL;
@@ -2057,7 +2031,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 {
 	int ret = 0;
 	*send_comm = nullptr;
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = sendrecv_endpoint_get_domain(this);
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
 	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
@@ -2096,7 +2070,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Progress our engine to get completions */
-	ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(this)->cq);
+	ret = sendrecv_cq_process(this->sendrecv_endpoint_get_domain()->cq);
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(s_comm);
 		return ret;
@@ -2146,7 +2120,7 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 	nccl_net_ofi_sendrecv_device_t *device = nullptr;
 
 	/* Validate device */
-	device = sendrecv_endpoint_get_device(this);
+	device = this->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		ret = -EINVAL;
@@ -2207,7 +2181,7 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 	this->tag = 0;
 	this->max_tag = device->max_tag;
 
-	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(this);
+	struct fid_domain *ofi_domain = this->sendrecv_endpoint_get_ofi_domain();
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
 						ofi_domain,
 						&this->ofi_ep,
