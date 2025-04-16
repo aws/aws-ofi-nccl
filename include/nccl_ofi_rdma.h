@@ -885,7 +885,7 @@ public:
 	bool use_long_rkeys;
 
 	/* Pending requests queue */
-	std::deque<nccl_net_ofi_rdma_req_t *> *pending_reqs_queue = nullptr;
+	std::deque<nccl_net_ofi_rdma_req_t *> pending_reqs_queue;
 	/* Lock for `pending_reqs_queue` */
 	pthread_mutex_t pending_reqs_lock;
 
