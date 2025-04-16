@@ -874,10 +874,10 @@ public:
 	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *rails = NULL;
+	std::vector<nccl_net_ofi_ep_rail_t> rails;
 
 	/* Array of `num_control_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *control_rails = NULL;
+	std::vector<nccl_net_ofi_ep_rail_t> control_rails;
 
 	bool use_long_rkeys;
 
