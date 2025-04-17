@@ -5,6 +5,8 @@
 #include "config.h"
 
 #include <algorithm>
+#include <stdexcept>
+
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -50,15 +52,9 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 				       nccl_ofi_mr_cache_t *mr_cache);
 
 
-static nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain(nccl_net_ofi_sendrecv_ep_t *ep)
-{
-	return (nccl_net_ofi_sendrecv_domain_t*)ep->base.domain;
-}
-
-
 static nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	return (nccl_net_ofi_sendrecv_device_t*)sendrecv_endpoint_get_domain(ep)->base.device;
+	return (nccl_net_ofi_sendrecv_device_t*)ep->sendrecv_endpoint_get_domain()->base.device;
 }
 
 
@@ -483,7 +479,7 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 
 	CHECK_DOMAIN_ACTIVE(domain, "sendrecv_req_test");
@@ -534,7 +530,7 @@ typedef struct {
 
 static inline struct fid_domain* sendrecv_endpoint_get_ofi_domain(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	return domain->domain;
 }
 
@@ -803,7 +799,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
@@ -894,7 +890,7 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
@@ -949,7 +945,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain, "recv");
 
@@ -1049,7 +1045,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
  */
 static inline void sendrecv_endpoint_abort(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	nccl_net_ofi_domain_t *base_domain = &sendrecv_endpoint_get_domain(ep)->base;
+	nccl_net_ofi_domain_t *base_domain = &ep->sendrecv_endpoint_get_domain()->base;
 
 	pthread_wrapper domain_lock(&base_domain->domain_lock);
 
@@ -1077,8 +1073,6 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return ret;
 	}
-
-	nccl_net_ofi_ep_t *base_ep = &ep->base;
 
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
@@ -1119,7 +1113,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 
 	free(recv_comm);
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
  exit:
 	return ret;
 }
@@ -1142,9 +1136,9 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
 	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(r_comm->base.base.ep);
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
-	pthread_wrapper domain_lock(&domain->base.domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "flush");
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
+	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain_ptr, "flush");
 
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
@@ -1241,7 +1235,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = sendrecv_cq_process(domain->cq);
+			ret = sendrecv_cq_process(domain_ptr->cq);
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		} else {
@@ -1383,7 +1377,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	}
 
 	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
-	r_comm->base.base.ep = &ep->base;
+	r_comm->base.base.ep = ep;
 	r_comm->base.base.dev_id = dev_id;
 	r_comm->base.regMr = sendrecv_recv_comm_reg_mr;
 	r_comm->base.deregMr = sendrecv_recv_comm_dereg_mr;
@@ -1489,7 +1483,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	}
 
 	nccl_net_ofi_sendrecv_domain_t *domain =
-		sendrecv_endpoint_get_domain(ep);
+		ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
@@ -1561,7 +1555,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		ep->base.ref_cnt++;
+		ep->increment_ref_cnt();
 
 		comm_state->comm = &r_comm->base.base;
 
@@ -1632,14 +1626,14 @@ static int sendrecv_listen_comm_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = l_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	nccl_net_ofi_ep_t *ep = l_comm->base.base.ep;
+	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto exit;
 	}
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
 	free(listen_comm);
  exit:
 	return ret;
@@ -1677,39 +1671,35 @@ static inline uint8_t *sendrecv_get_local_address(struct fid_ep *ep)
 	return local_ep_addr;
 }
 
-static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
-				    nccl_net_ofi_conn_handle_t *handle,
-				    nccl_net_ofi_listen_comm_t **listen_comm)
+int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
+				       nccl_net_ofi_listen_comm_t **listen_comm)
 {
-	uint8_t *local_ep_name = NULL;
+	uint8_t *local_ep_name = nullptr;
 	fi_addr_t local_ep_addr;
-	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = NULL;
+	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = nullptr;
 	int dev_id = 0;
 	int num_addrs;
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
-	pthread_wrapper domain_lock(&domain->base.domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "listen");
+	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain_ptr, "listen");
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain);
-	if (OFI_UNLIKELY(device == NULL)) {
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain_ptr);
+	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
 
 	dev_id = device->base.dev_id;
 
-	local_ep_name = sendrecv_get_local_address(ep->ofi_ep);
-	if (local_ep_name == NULL) {
+	local_ep_name = sendrecv_get_local_address(this->ofi_ep);
+	if (local_ep_name == nullptr) {
 		return -EINVAL;
 	}
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
-	num_addrs = fi_av_insert(ep->av, (void *)local_ep_name, 1,
-				 &local_ep_addr, 0, NULL);
+	num_addrs = fi_av_insert(this->av, (void *)local_ep_name, 1, &local_ep_addr, 0, NULL);
 
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
@@ -1723,21 +1713,21 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	l_comm = (nccl_net_ofi_sendrecv_listen_comm_t *)calloc(
 		1,
 		sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
-	if (OFI_UNLIKELY(l_comm == NULL)) {
+	if (OFI_UNLIKELY(l_comm == nullptr)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
 		return -ENOMEM;
 	}
 
 	/* Initialize listen communicator */
 	l_comm->base.base.type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->base.base.ep = base_ep;
+	l_comm->base.base.ep = this;
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = sendrecv_listen_comm_accept;
 	l_comm->base.close = sendrecv_listen_comm_close;
-	l_comm->local_ep = ep->ofi_ep;
+	l_comm->local_ep = this->ofi_ep;
 	l_comm->local_ep_addr = local_ep_addr;
 
-	l_comm->listener = domain->cm->listen();
+	l_comm->listener = domain_ptr->cm->listen();
 
 	/* Build handle */
 	*handle = l_comm->listener->get_handle();
@@ -1765,7 +1755,7 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
@@ -1793,7 +1783,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->base.domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain, "send");
 
@@ -1880,8 +1870,6 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 		return ret;
 	}
 
-	nccl_net_ofi_ep_t *base_ep = &ep->base;
-
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
 	if (s_comm->num_inflight_reqs > 0) {
@@ -1900,7 +1888,7 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 
 	free(send_comm);
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
 
 	return ret;
 }
@@ -1943,7 +1931,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
-	ret_s_comm->base.base.ep = &ep->base;
+	ret_s_comm->base.base.ep = ep;
 	ret_s_comm->base.base.dev_id = device->base.dev_id;
 	ret_s_comm->base.regMr = sendrecv_send_comm_reg_mr;
 	ret_s_comm->base.deregMr = sendrecv_send_comm_dereg_mr;
@@ -1961,7 +1949,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
 	   API releases it.
 	   Caller assumed to hold the domain lock. */
-	++(ep->base.ref_cnt);
+	ep->increment_ref_cnt();
 
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
@@ -1993,7 +1981,7 @@ out:
 	if (ret) {
 		/* Above code incremented the ep ref counter, so decrement it on
 		   failure */
-		--(ep->base.ref_cnt);
+		ep->decrement_ref_cnt();
 		free(ret_s_comm);
 	}
 
@@ -2057,27 +2045,23 @@ static inline int sendrecv_send_comm_process_conn_resp
 }
 
 
-static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
-				     nccl_net_ofi_conn_handle_t *handle,
-				     nccl_net_ofi_send_comm_t **send_comm,
-				     int trafficClass)
+int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
+					nccl_net_ofi_send_comm_t **send_comm,
+					int trafficClass)
 {
 	int ret = 0;
-	*send_comm = NULL;
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
+	*send_comm = nullptr;
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
+	assert(domain_ptr != nullptr);
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
-	assert(domain != nullptr);
-
-	pthread_wrapper domain_lock(&domain->base.domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "connect");
+	pthread_wrapper domain_lock(&domain_ptr->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain_ptr, "connect");
 
 	nccl_ofi_connection_info_t conn_info = { };
 	
 	/* Retrieve and validate devices */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain);
-	if (OFI_UNLIKELY(device == NULL)) {
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain_ptr);
+	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
 	}
@@ -2097,16 +2081,16 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 
 	if (s_comm == nullptr) {
 		/* Build send_comm */
-		ret = sendrecv_send_comm_create(handle, ep, &conn_info, &s_comm);
-		if (OFI_UNLIKELY(ret != 0 || s_comm == NULL)) {
+		ret = sendrecv_send_comm_create(handle, this, &conn_info, &s_comm);
+		if (OFI_UNLIKELY(ret != 0 || s_comm == nullptr)) {
 			return ret;
 		}
 
-		s_comm->connector = domain->cm->connect(*handle, &conn_info, sizeof(conn_info));
+		s_comm->connector = domain_ptr->cm->connect(*handle, &conn_info, sizeof(conn_info));
 	}
 
 	/* Progress our engine to get completions */
-	ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
+	ret = sendrecv_cq_process(this->sendrecv_endpoint_get_domain()->cq);
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(s_comm);
 		return ret;
@@ -2132,7 +2116,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 	auto conn_resp_msg = static_cast<const nccl_ofi_connection_info_t *>
 		(data_pair.first);
 
-	ret = sendrecv_send_comm_process_conn_resp(s_comm, ep, dev_id,
+	ret = sendrecv_send_comm_process_conn_resp(s_comm, this, dev_id,
 						   *conn_resp_msg);
 	if (ret != 0) {
 		free(s_comm);
@@ -2149,45 +2133,47 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 }
 
 
-static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
+int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 {
 	int ret = 0;
-	nccl_net_ofi_sendrecv_device_t *device = NULL;
+	this->called_cleanup_resources = true;
+	nccl_net_ofi_sendrecv_device_t *device = nullptr;
 
 	/* Validate device */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t*)base_ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
-	}
-
-	/* Validate device */
-	device = sendrecv_endpoint_get_device(ep);
-	if (OFI_UNLIKELY(device == NULL)) {
-		ret = -EINVAL;
+	device = sendrecv_endpoint_get_device(this);
+	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+		ret = -EINVAL;
+	} else {
+		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->base.dev_id);
+		this->ofi_ep = nullptr;
+		this->av = nullptr;		
 	}
-	
-	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, device->base.dev_id);
-	ep->ofi_ep = NULL;
-	ep->av = NULL;
 
-	free(ep);
+	assert(ret == 0);
 
- exit:
 	return ret;
 }
 
 
+nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
+{
+	int ret = 0;
+	if (!this->called_cleanup_resources) {
+		ret = this->cleanup_resources();
+	}
+
+	if (ret != 0) {
+		NCCL_OFI_WARN("SENDRECV transport endpoint destructor failed");
+	}
+}
+
+
 static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *base_domain,
-							nccl_net_ofi_ep_t **base_ep)
+							nccl_net_ofi_ep_t **new_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
-	nccl_net_ofi_sendrecv_device_t *device;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_domain_t *domain =
@@ -2197,45 +2183,36 @@ static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *b
 		return -EINVAL;
 	}
 
-	device = sendrecv_domain_get_device(domain);
-	assert(device != NULL);
-
 	/* Allocate endpoint */
-	ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
-	if (!ep) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to allocate sendrecv endpoint");
-		return -ENOMEM;
-	}
-
-	ret = nccl_net_ofi_endpoint_init(&domain->base, &ep->base);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing endpoint base failed");
-		return ret;
-	}
-
-	/* Initialize base endpoint */
-	ep->base.listen = sendrecv_endpoint_listen;
-	ep->base.connect = sendrecv_endpoint_connect;
-	ep->base.free_ep = nccl_net_ofi_sendrecv_endpoint_free;
-
-	/* Initialize endpoint tag */
-	ep->tag = 0;
-	ep->max_tag = device->max_tag;
-
-	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
-	ret = nccl_ofi_ofiutils_init_connection(device->info,
-						ofi_domain,
-						&ep->ofi_ep,
-						&ep->av,
-						domain->cq);
-	if (ret != 0) {
-		return ret;
-	}
-
-	*base_ep = &ep->base;
+	ep = new nccl_net_ofi_sendrecv_ep_t(domain);
+	*new_ep = ep;
 
 	return ret;
+}
+
+
+nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg)
+	: nccl_net_ofi_ep_t(&domain_arg->base)
+{
+	int ret = 0;
+	nccl_net_ofi_sendrecv_device_t *device = nullptr;
+
+	device = sendrecv_domain_get_device(domain_arg);
+	assert(device != nullptr);
+
+	/* Initialize endpoint tag */
+	this->tag = 0;
+	this->max_tag = device->max_tag;
+
+	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(this);
+	ret = nccl_ofi_ofiutils_init_connection(device->info,
+						ofi_domain,
+						&this->ofi_ep,
+						&this->av,
+						domain_arg->cq);
+	if (ret != 0) {
+		throw std::runtime_error("sendrecv endpoint constructor: failed to init endpoint");
+	}
 }
 
 

@@ -176,11 +176,13 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_ep_t;
+
+struct nccl_net_ofi_rdma_domain;
 struct nccl_net_ofi_rdma_req;
-struct nccl_net_ofi_rdma_ep;
 struct nccl_net_ofi_ep_rail;
+typedef struct nccl_net_ofi_rdma_domain nccl_net_ofi_rdma_domain_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
-typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
@@ -644,24 +646,54 @@ struct nccl_net_ofi_ep_rail {
 						      nccl_net_ofi_ep_rail_t *rail);
 };
 
-/*
+/**
  * @brief	RDMA Endpoint
  *
  * RDMA endpoint implements the nccl_net_ofi_ep_t interface
  * for the rdma protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-struct nccl_net_ofi_rdma_ep {
-	/* This base endpoint interface struct provides access to the
-	 * rdma endpoint's functions such as rdma_listen() and
-	 * rdma_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
+class nccl_net_ofi_rdma_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up endpoint rails and freelists. 
+	 */
+	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain);
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, releases endpoint rails
+	 * and freelists.
+	 */
+	~nccl_net_ofi_rdma_ep_t() override;
+
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+
+	/**
+	 * @brief	Execute the connect functionality from listen/connect/accept
+	 *		connection establishment
 	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+	 * The connect functionality does the following: (a) create send communicator
+	 * (b) call CM connect() operation to send connect message to remote and receive
+	 * for the connect response message, and (e) calls finish_connect.
+	 *
+	 * The `finish_connect' method completes the initialization of the remaining
+	 * communicator rails using the received connect responce message.
+	 */
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm_t **send_comm,
+		    int trafficClass) override;
+
+	int release_ep(bool skip_lock, bool force_cleanup) override;
+
+	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
+	{
+		return (nccl_net_ofi_rdma_domain_t *)this->domain;
+	}
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -670,24 +702,24 @@ struct nccl_net_ofi_rdma_ep {
 	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *rails;
+	nccl_net_ofi_ep_rail_t *rails = nullptr;
 
 	/* Array of `num_control_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *control_rails;
+	nccl_net_ofi_ep_rail_t *control_rails = nullptr;
 
 	bool use_long_rkeys;
 
 	/* Pending requests queue */
-	std::deque<nccl_net_ofi_rdma_req_t *> *pending_reqs_queue;
+	std::deque<nccl_net_ofi_rdma_req_t *> *pending_reqs_queue = nullptr;
 	/* Lock for `pending_reqs_queue` */
 	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist_t *ctrl_rx_buff_fl;
+	nccl_ofi_freelist_t *ctrl_rx_buff_fl = nullptr;
 	/* Free list of eager rx buffers */
-	nccl_ofi_freelist_t *eager_rx_buff_fl;
+	nccl_ofi_freelist_t *eager_rx_buff_fl = nullptr;
 	/* Free list of rx buffer requests */
-	nccl_ofi_freelist_t *rx_buff_reqs_fl;
+	nccl_ofi_freelist_t *rx_buff_reqs_fl = nullptr;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely
@@ -711,6 +743,9 @@ struct nccl_net_ofi_rdma_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
+
+protected:
+	int cleanup_resources() override;
 };
 
 /*

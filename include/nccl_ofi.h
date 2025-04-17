@@ -119,10 +119,11 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+class nccl_net_ofi_ep_t;
+
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;
 struct nccl_net_ofi_domain;
-struct nccl_net_ofi_ep;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_mr_handle;
 struct nccl_net_ofi_comm;
@@ -133,7 +134,6 @@ struct nccl_net_ofi_recv_comm;
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
 typedef struct nccl_net_ofi_domain nccl_net_ofi_domain_t;
-typedef struct nccl_net_ofi_ep nccl_net_ofi_ep_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
@@ -471,9 +471,16 @@ struct nccl_net_ofi_domain {
  * call to get_ep() or during initialization is left to the
  * implementation.
  */
-struct nccl_net_ofi_ep {
-	/* Backpointer to the domain associated with this ep. */
-	nccl_net_ofi_domain_t *domain;
+class nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the endpoint base class.
+	 * Expectation is that this will be called by a transport's endpoint
+	 * constructor 
+	 */
+	nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain);
 
 	/* Create a receiving object and provide a handle to it.
 	 *
@@ -485,9 +492,8 @@ struct nccl_net_ofi_ep {
 	 * The callee has to guarantee that the state stage of the
 	 * handle is set to COMM_CREATE_START.
 	 */
-	int (*listen)(nccl_net_ofi_ep_t *ep,
-			       nccl_net_ofi_conn_handle_t *handle,
-			       nccl_net_ofi_listen_comm_t **listen_comm);
+	virtual int listen(nccl_net_ofi_conn_handle_t *handle,
+			   nccl_net_ofi_listen_comm_t **listen_comm) = 0;
 
 	/* Create a connection to a process that has called
 	 * listen().
@@ -504,20 +510,17 @@ struct nccl_net_ofi_ep {
 	 *
 	 * The callee must allocate memory for send_comm.
 	 */
-	int (*connect)(nccl_net_ofi_ep_t *ep,
-				nccl_net_ofi_conn_handle_t *handle,
-				nccl_net_ofi_send_comm_t **send_comm,
-				int trafficClass);
+	virtual int connect(nccl_net_ofi_conn_handle_t *handle,
+			    nccl_net_ofi_send_comm_t **send_comm,
+			    int trafficClass) = 0;
 
-	/*
+	/**
 	 * @brief	Release nccl_ofi_ep.
 	 *
 	 * Decrease reference counter. Release resources and free
 	 * endpoint if reference counter becomes zero. Must be
 	 * protected by lock stored in base_dev.
 	 *
-	 * @param	ep
-	 * 		The endpoint (itself) to be released.
 	 * @param 	skip_lock
 	 * 		false, taking domain lock by default.
 	 * 		ture, not taking domain lock when caller takes it.
@@ -525,14 +528,54 @@ struct nccl_net_ofi_ep {
 	 * 		false, not release when endpoint has ref count.
 	 * 		true, release no matter endpoint has ref count or not.
 	 */
-	int (*release_ep)(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup);
+	virtual int release_ep(bool skip_lock, bool force_cleanup);
 
-/* private */
-	/* pure virtual function called when resources associated with
-	 * the ep should be destroyed.  Device lock will be held when
+	/**
+	 * @brief	Increments the base endpoint reference count.
+	 */
+	inline void increment_ref_cnt() {
+		ref_cnt++;
+	}
+
+	/**
+	 * @brief	Decrements the base endpoint reference count.
+	 */
+	inline void decrement_ref_cnt() {
+		ref_cnt--;
+	}
+
+protected:
+	/**
+	 * @brief	Virtual destructor.
+	 * Virtual function called when resources associated with
+	 * the ep should be destroyed. Device lock will be held when
 	 * this function is called.
 	 */
-	int (*free_ep)(nccl_net_ofi_ep_t *ep);
+	virtual ~nccl_net_ofi_ep_t() = default;
+
+	/**
+	 * @brief	Cleanup endpoint resources.
+	 * 
+	 * Virtual function to clean up and release each transport type's endpoint resources.
+	 * Should not throw exceptions, and instead returns an error code on success or failure
+	 * to make it safe to call in endpoint destructors. Set called_cleanup_resources to true
+	 * at the start of the function to make sure it is only called once per endpoint
+	 * instance.
+	 * 
+	 * @return	0 if successfully, negative error code on failure.
+	 */
+	virtual int cleanup_resources() = 0;
+
+	/* Backpointer to the domain associated with this ep. */
+	nccl_net_ofi_domain_t *domain = nullptr;
+
+	/** 
+	 * Track whether the cleanup_resources function was already called to avoid calling
+	 * multiple time on the same endpoint instance. It being set to true does not 
+	 * indicate that the endpoint resources were successfully released since this is set
+	 * to true regardless of whether cleanup_resources finished successfully or not.
+	 */ 
+	bool called_cleanup_resources = false;
 
 	/* Endpoint reference counter for resource management.
 	 * sendrecv_get_ep()/sendrecv_release_ep() must be called in
@@ -705,23 +748,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/* base implementation of endpoint release.  endpoint_init() will set
- * the release pointer to this function, although transports can
- * override that function pointer and later call this function
- * directly.
- */
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool force_cleanup);
-
-/* initialize resources associated with the endpoint base class.
- * Expectation is that this will be called by a transport's endpoint
- * creation function */
-int nccl_net_ofi_endpoint_init(nccl_net_ofi_domain_t *domain, nccl_net_ofi_ep_t *ep);
-
-/* free resources associated with the endpoint base class.
- * Expectation is that this will be called by a transport's endpoint
- * free function. */
-int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep);
 
 /* initialize resources associated with the domain base class.
  * Expectation is that this will be called by a transport's domain
