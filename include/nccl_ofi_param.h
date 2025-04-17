@@ -330,7 +330,7 @@ OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUF
  * Whether to spread the control message across multiple rails in round robin fashion or
  * send it consistenly on one rail.
  */
-OFI_NCCL_PARAM_INT(rdma_rr_ctrl_msg, "RR_CTRL_MSG", 1);
+OFI_NCCL_PARAM_INT(rdma_rr_ctrl_msg, "RR_CTRL_MSG", 0);
 
 /*
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
