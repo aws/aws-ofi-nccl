@@ -328,6 +328,24 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		ret = -ENOTSUP;
 		goto exit;
 	}
+	/* Force SIMPLE protocol when using a provider that does not support
+	 * GDR. NCCL disables the LL128 protocol in this case, but leaves the
+	 * LL protocol enabled. Without GDR, the LL protocol polls on host
+	 * memory for completion flags. In addition to being slow, this assumes
+	 * that host memory is updated in 8 byte segments. However, most
+	 * providers that do not support HMEM (like the tcp or sockets
+	 * providers) do not make any guarantees about data delivery ordering.
+	 * There is not a good way to ask Libfabric providers about their data
+	 * delivery support in the general case, so take a conservative
+	 * approach and force the simple protocol whenever using a provider
+	 * that does not support HMEM.
+	 */
+	if (support_gdr != GDR_SUPPORTED) {
+		ret = nccl_net_ofi_configure_nccl_proto_simple("GDR");
+		if (ret != 0) {
+			goto exit;
+		}
+	}
 
 	*plugin_p = plugin;
 
@@ -578,11 +596,42 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 
 	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
 
-
 	props->dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
 		FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
 		nccl_ofi_dmabuf_viable()
 		;
+	if (props->dmabuf_support && strncmp("efa", nic_prov->fabric_attr->prov_name, strlen("efa")) == 0) {
+		// Generations 1-3 of EFA have a firmware issue that can result
+		// in communication failures with MRs that cover a large number
+		// of page entries.  This is not usually a problem, because page
+		// merging greatly reduces the number of page entries in the MR.
+		// However, the RDMA subsystem in the Linux kernel did not
+		// properly execute page merging for dmabuf entries until a
+		// recent patch
+		// (https://web.git.kernel.org/pub/scm/linux/kernel/git/rdma/rdma.git/commit/?id=486055f5e09df9),
+		// and the lack of page merging increased the probability of
+		// hitting the EFA issue.  Testing for the fixed kernel version
+		// is effectively impossible (the issue can also be fixed in the
+		// EFA kmod itself, and backports are likely, so a simple kernel
+		// version check is insufficient), so instead we only support
+		// dmabuf by default in Generation 4 of EFA.  When the
+		// communication failure issue is resolved in previous
+		// generations, this code will be removed and dmabuf will be
+		// available by default everywhere.
+		if (nic_prov->nic == NULL || nic_prov->nic->device_attr == NULL) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "DMA-BUF disabled due to missing nic data");
+			props->dmabuf_support = false;
+		} else if (strcmp("0xefa0", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa1", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa2", nic_prov->nic->device_attr->device_id) == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "DMA-BUF disabled due to EFA device id %s",
+				       nic_prov->nic->device_attr->device_id);
+			props->dmabuf_support = false;
+		}
+	}
+
 	if (props->dmabuf_support) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
 	}
@@ -885,8 +934,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 	domain_num = device->domain_table->size();
 	assert(domain_num > 0);
 	for (auto domain_iter = device->domain_table->begin() ;
-	     domain_iter != device->domain_table->end() ;
-	     ++domain_iter) {
+	     domain_iter != device->domain_table->end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
@@ -904,6 +952,11 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 			ep = NULL;
 		}
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+
+		/* The call to domain->release() below will remove this domain
+		   from the table, invalidating domain_iter. So increment it
+		   here first. */
+		++domain_iter;
 
 		/* domain->release takes the domain lock, and removes itself
 		 * from domain_table. Skipping device lock here.*/
@@ -1042,15 +1095,10 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 				size_t_bits);
 			return -EINVAL;
 		}
-		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 1 << shift);
+		domain->mr_rkey_pool = new nccl_ofi_idpool_t(1 << shift);
 	} else {
 		/* Mark key pool as not in use */
-		ret = nccl_ofi_idpool_init(&domain->mr_rkey_pool, 0);
-	}
-	if (ret != 0) {
-		NCCL_OFI_WARN("Creating MR id pool failed: %s",
-			      strerror(-ret));
-		return -ret;
+		domain->mr_rkey_pool = new nccl_ofi_idpool_t(0);
 	}
 
 exit:
@@ -1064,8 +1112,10 @@ int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
 		nccl_ofi_mr_cache_finalize(domain->mr_cache);
 	}
 
-	nccl_ofi_idpool_fini(&domain->mr_rkey_pool);
-
+	if (domain->mr_rkey_pool != NULL) {
+		delete domain->mr_rkey_pool;
+		domain->mr_rkey_pool = NULL;
+	}
 	return 0;
 }
 
@@ -1153,4 +1203,23 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 #else
 	return -FI_ENOPROTOOPT;
 #endif
+}
+
+
+int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason)
+{
+	int ret;
+
+	if (getenv("NCCL_PROTO") == NULL) {
+		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO='simple' to prevent data corruption (reason: %s not supported)",
+			      log_reason);
+		ret = setenv("NCCL_PROTO", "simple", 1);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
+				      strerror(errno));
+			return -errno;
+		}
+	}
+
+	return 0;
 }

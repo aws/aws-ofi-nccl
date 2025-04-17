@@ -15,8 +15,8 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, msg_seq_num, request, nccl_req); \
 } while (0)
 
-#define NCCL_OFI_TRACE_RECV_SENDRECV(dev, tag, size, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req); \
+#define NCCL_OFI_TRACE_RECV_SENDRECV(dev, comm, size, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, size, request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_FLUSH_SENDRECV(request, nccl_req) do { \
@@ -34,7 +34,8 @@
 	NCCL_OFI_TRACE_SEND_NVTX(dev, size, comm, msg_seq_num, request, nccl_req); \
 } while(0)
 
-#define NCCL_OFI_TRACE_SEND_END(request) do { \
+#define NCCL_OFI_TRACE_SEND_END(dev, comm, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, SendEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_SEND_END_NVTX(request); \
 } while(0)
 
@@ -73,17 +74,18 @@
 	NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV(dev, tag, size, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, tag, size, request, nccl_req); \
-	NCCL_OFI_TRACE_RECV_NVTX(dev, tag, size, request, nccl_req); \
+#define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, size, request, nccl_req); \
+	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_END(request) do { \
+#define NCCL_OFI_TRACE_RECV_END(dev, comm, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, RecvEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_RECV_END_NVTX(request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, size, request, msg_seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, size, request, msg_seq_num); \
+#define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, comm, size, request, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, comm, size, request, msg_seq_num); \
 	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request, msg_seq_num); \
 } while(0)
 

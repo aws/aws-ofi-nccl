@@ -1,15 +1,5 @@
 #!/bin/bash
 
-fmt=" \
-tagname=%(refname:short) \
-tagger_name=%(taggername:mailmap) \
-tagger_email=%(taggeremail:mailmap) \
-tagger_when=%(taggerdate) \
-committer_name=%(committername:mailmap) \
-committer_email=%(committeremail:mailmap) \
-committer_when=%(committerdate) \
-"
-
 if [ $# -eq 0 ]; then
 	tag=HEAD
 else
@@ -22,7 +12,8 @@ if [ $? -ne 0 ]; then
 	exit 0
 fi
 
-git for-each-ref --shell --sort=-v:refname --format "$fmt" --merged "$tag" | {
+git log --use-mailmap --no-walk --format="tagname='%D' tagger_name='%aN' tagger_email='<%aE>' tagger_when='%ad' committer_name='%cN' committer_email='<%cE>' committer_when='%cd'" \
+    --date="format:%a %b %-d %T %Y %z" $(git tag --merged "$tag") | sed "s/tagname='tag: \([^,']*\)'/tagname='\1'/" | {
 	while read line; do
 		eval $line
 		(echo ${tagname} | grep -qE '^v[0-9]') || continue

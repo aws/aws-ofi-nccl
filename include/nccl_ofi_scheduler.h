@@ -19,7 +19,7 @@
  */
 typedef struct nccl_net_ofi_xfer_info {
 	/* Id of the rail */
-	int rail_id;
+	uint16_t rail_id;
 	/* Offset of the stripe into the message */
 	size_t offset;
 	/* Size of the stripe in bytes */
@@ -89,9 +89,12 @@ typedef struct nccl_net_ofi_scheduler {
 typedef struct nccl_net_ofi_threshold_scheduler {
 	nccl_net_ofi_scheduler_t base;
 	/* Round robin counter */
+	unsigned int rr_small_counter;
 	unsigned int rr_counter;
 	/* Lock for round robin counter */
 	pthread_mutex_t rr_lock;
+	/* threshold for small messages */
+	size_t max_small_msg_size;
 	/* Minimum size of the message in bytes before message is
 	 * multiplexed */
 	size_t min_stripe_size;
@@ -108,13 +111,11 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
  *
  * @param	num_rails
  *		Number of rails
- * @param min_stripe_size
- * 		Minimum size of a message in bytes before message is multiplexed
  * @return	Scheduler, on success
  *		NULL, on error
  * @return	0, on success
  *		non-zero, on error
  */
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, size_t min_stripe_size, nccl_net_ofi_scheduler_t **scheduler);
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_t **scheduler);
 
 #endif // End NCCL_OFI_SCHEDULER_H_

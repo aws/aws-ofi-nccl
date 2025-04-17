@@ -157,6 +157,43 @@ struct nccl_net_ofi_req {
 	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
 };
 
+/**
+ * Struct enclosing the context parameter we pass to every Libfabric operation.
+ * Contains callback function members to be invoked upon completion of the
+ * corresponding request.
+ */
+struct nccl_net_ofi_context {
+	/**
+	 * Libfabric context object. A pointer to this context is passed to all
+	 * Libfabric operations
+	 */
+	struct fi_context2 ofi_ctx;
+
+	/**
+	 * Callback to be invoked upon completion of the request
+	 *
+	 * @param ctx: ptr to this context object
+	 * @param cq_entry: cq entry from Libfabric
+	 * @param rail_id: the rail on which the cq entry arrived.
+	 * 		   Ignored in SENDRECV protocol
+	 */
+	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
+			       uint16_t rail_id);
+
+	/**
+	 * Callback to be invoked upon completion-with-error of the request
+	 *
+	 * @param ctx: ptr to this context object
+	 * @param cq: Libfabric completion queue
+	 * @param err_entry: err entry from Libfabric
+	 * @param rail_id: the rail on which the cq err entry arrived.
+	 * 		   Ignored in SENDRECV protocol
+	 */
+	int (*handle_error_entry)(struct nccl_net_ofi_context *ctx, struct fid_cq *cq,
+				  struct fi_cq_err_entry *err_entry, uint16_t rail_id);
+};
+typedef struct nccl_net_ofi_context nccl_net_ofi_context_t;
+
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
@@ -348,7 +385,7 @@ struct nccl_net_ofi_domain {
 	nccl_ofi_mr_cache_t *mr_cache;
 
 	/* Memory registration key pool */
-	nccl_ofi_idpool_t mr_rkey_pool;
+	nccl_ofi_idpool_t *mr_rkey_pool;
 
 	pthread_mutex_t domain_lock;
 
@@ -753,5 +790,18 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
  * return       thread id of the current thread (always succeeds)
  */
 long nccl_net_ofi_gettid(void);
+
+ /*
+ * @brief   Configures NCCL_PROTO environment variable to "simple".
+ *
+ * @details If NCCL_PROTO is not set, configures it to "simple" protocol.
+ *          If NCCL_PROTO is already set, skip the configuration.
+ *
+ * @input   log reason string
+ *
+ * @return  0 on success or when warning is issued
+ *          -errno in case of any failure
+ */
+int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason);
 
 #endif // End NCCL_OFI_H_

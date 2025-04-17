@@ -27,6 +27,7 @@
  * scaling). The default is set to 4 to support 4 different rails per
  * NCCL comm structure. */
 #define MAX_NUM_RAILS (4)
+static_assert(MAX_NUM_RAILS <= UINT16_MAX);
 
 #define NCCL_OFI_RDMA_CTRL_TYPE_BITS (4)
 
@@ -120,7 +121,7 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  * allocate a RDMA memory registration handle with `num_rails`+`num_control_rails` rails.
  */
 typedef struct nccl_net_ofi_rdma_mr_handle {
-	int num_rails;
+	uint16_t num_rails;
 
 	/* value of mr key id, if keys must be requested */
 	uint64_t mr_key;
@@ -162,7 +163,7 @@ static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
 #define NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key[0] ))
 #define NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->long_buff_mr_key[0] ))
 
-static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(size_t num_rails, bool use_long_rkeys)
+static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(uint16_t num_rails, bool use_long_rkeys)
 {
 	size_t rkey_len = (use_long_rkeys) ? NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE : NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE;
 	return offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) + num_rails * rkey_len;
@@ -216,9 +217,6 @@ typedef struct {
 	uint64_t remote_buff;
 	/* Remote MR key */
 	uint64_t remote_mr_key;
-	/* Number of rails where we have successfully posted the network xfer.
-	 * Used mostly when the network xfer is sliced across multiple rails */
-	uint64_t xferred_rail_id;
 	/* Application-provided local src/dst buffer */
 	void *buff;
 	/* Length of application-provided buffer */
@@ -230,6 +228,9 @@ typedef struct {
 	/* Total number of completions. Expect one completion for receiving the
 	 * control message and one completion for each send segment. */
 	int total_num_compls;
+	/* Number of rails where we have successfully posted the network xfer.
+	 * Used mostly when the network xfer is sliced across multiple rails */
+	uint16_t xferred_rail_id;
 } rdma_req_rma_op_data_t;
 
 typedef struct {
@@ -243,9 +244,6 @@ typedef struct {
 	uint64_t remote_mr_key[MAX_NUM_RAILS];
 	/* Write immediate data */
 	uint64_t wdata;
-	/* Number of rails where we have successfully posted the network xfer.
-	 * Used mostly when the network xfer is sliced across multiple rails */
-	uint64_t xferred_rail_id;
 	/* Application-provided local src/dst buffer */
 	void *buff;
 	/* Length of application-provided buffer */
@@ -258,6 +256,9 @@ typedef struct {
 	/* Total number of completions. Expect one completion for receiving the
 	 * control message and one completion for each send segment. */
 	int total_num_compls;
+	/* Number of rails where we have successfully posted the network xfer.
+	 * Used mostly when the network xfer is sliced across multiple rails */
+	uint16_t xferred_rail_id;
 	/* 
 	 * Flag to indicate target side early completion, so that sender side
 	 * uses the corresponding RMA write operation.
@@ -354,14 +355,13 @@ typedef struct {
 	int total_num_compls;
 } rdma_req_flush_data_t;
 
-
 /*
  * @brief	RDMA request
  */
 typedef struct nccl_net_ofi_rdma_req {
 	nccl_net_ofi_req_t base;
 
-	struct fi_context2 ctx[MAX_NUM_RAILS];
+	nccl_net_ofi_context_t ctx[MAX_NUM_RAILS];
 
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
@@ -509,9 +509,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nccl_ofi_msgbuff_t *msgbuff;
 
 	/* Number of rails */
-	int num_rails;
+	uint16_t num_rails;
 	/* Number of rails */
-	int num_control_rails;
+	uint16_t num_control_rails;
 
 	/* Number of initialized rails. The function
 	 * `create_send_comm()' creates a send communicator with one
@@ -606,9 +606,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	uint64_t n_ctrl_delivered;
 
 	/* Number of rails */
-	int num_rails;
+	uint16_t num_rails;
 	/* Number of control rails */
-	int num_control_rails;
+	uint16_t num_control_rails;
 
 	bool comm_active;
 
@@ -655,7 +655,7 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
  * specific rail.
  */
 struct nccl_net_ofi_ep_rail {
-	int rail_id;
+	uint16_t rail_id;
 
 	/* Local libfabric endpoint handle */
 	struct fid_ep *ofi_ep;
@@ -710,10 +710,10 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_net_ofi_ep_t base;
 
 	/* Number of rails */
-	int num_rails;
+	uint16_t num_rails;
 
 	/* Number of control rails */
-	int num_control_rails;
+	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
 	nccl_net_ofi_ep_rail_t *rails;
@@ -806,7 +806,7 @@ typedef struct nccl_net_ofi_rdma_device {
 	nccl_net_ofi_scheduler_t *scheduler;
 
 	/* Number of rails */
-	int num_rails;
+	uint16_t num_rails;
 
 	/* Array of 'num_rails' device rails */
 	nccl_net_ofi_rdma_device_rail_t *device_rails;
@@ -830,6 +830,8 @@ typedef struct nccl_net_ofi_rdma_device {
 
 
 typedef struct nccl_net_ofi_rdma_domain_rail {
+	uint16_t rail_id;
+
 	/* Access domain handles */
 	struct fid_domain *domain;
 
@@ -840,7 +842,7 @@ typedef struct nccl_net_ofi_rdma_domain_rail {
 typedef struct nccl_net_ofi_rdma_domain {
 	nccl_net_ofi_domain_t base;
 
-	int num_rails;
+	uint16_t num_rails;
 	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
 
 	/* The flush buffer */

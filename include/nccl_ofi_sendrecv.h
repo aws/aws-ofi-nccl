@@ -11,6 +11,11 @@
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
 
+/* This is the initial value of mr_key. At key deregisteration time,
+ * it is used to validate if a key was generated and needed to be freed or not.
+ */
+#define MR_KEY_INIT_VALUE FI_KEY_NOTAVAIL
+
 typedef enum nccl_net_ofi_sendrecv_req_state {
 	NCCL_OFI_SENDRECV_REQ_CREATED = 0,
 	NCCL_OFI_SENDRECV_REQ_PENDING,
@@ -23,6 +28,11 @@ typedef enum nccl_net_ofi_sendrecv_req_direction {
 	NCCL_OFI_SENDRECV_SEND = 1,
 	NCCL_OFI_SENDRECV_RECV,
 } nccl_net_ofi_sendrecv_req_direction_t;
+
+typedef struct nccl_net_ofi_sendrecv_mr_handle {
+	uint64_t mr_key;
+	struct fid_mr *mr;
+} nccl_net_ofi_sendrecv_mr_handle_t;
 
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	/* This base listen communicator must be the first member of
@@ -64,7 +74,7 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 	void *host_buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */
-	struct fid_mr *mr_handle;
+	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
 typedef struct nccl_net_ofi_sendrecv_recv_comm {
@@ -186,8 +196,8 @@ typedef struct nccl_net_ofi_sendrecv_req {
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
 
-	/* Associated OFI Context */
-	struct fi_context ctx[2];
+	/* Associated context */
+	nccl_net_ofi_context_t ctx;
 
 	/* Associated Device ID */
 	int dev_id;
