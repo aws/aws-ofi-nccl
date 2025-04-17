@@ -253,7 +253,7 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
-	nccl_net_ofi_ep_t *base_ep = NULL;
+	nccl_net_ofi_ep_t *ep = NULL;
 	nccl_net_ofi_listen_comm_t **listen_comm =
 		(nccl_net_ofi_listen_comm_t **)lComm;
 
@@ -275,18 +275,16 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 	}
 
 	/* Retrieve and validate endpoint */
-	device->get_ep(device, &base_ep);
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	device->get_ep(device, &ep);
+	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
 		return check_return(ncclInternalError);
 	}
 
-	ret = base_ep->listen(base_ep,
-						  (nccl_net_ofi_conn_handle_t *)handle,
-						  listen_comm);
+	ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), listen_comm);
 
 	if (ret != 0) {
-		base_ep->release_ep(base_ep, false, false);
+		ep->release_ep(false, false);
 	}
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -361,7 +359,7 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = NULL;
+	nccl_net_ofi_ep_t *ep = NULL;
 	bool created_ep = false;
 	if (ofi_handle->state.comm == nullptr) {
 		nccl_net_ofi_device_t *device = plugin->get_device(plugin, dev_id);
@@ -370,14 +368,14 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 			return check_return(ncclInternalError);
 		}
 
-		int ret = device->get_ep(device, &base_ep);
+		int ret = device->get_ep(device, &ep);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return nccl_net_ofi_retval_translate(ret);
 		}
 		created_ep = true;
 	} else {
-		base_ep = ofi_handle->state.comm->ep;
-		if (OFI_UNLIKELY(base_ep == NULL)) {
+		ep = ofi_handle->state.comm->ep;
+		if (OFI_UNLIKELY(ep == NULL)) {
 			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
 			return check_return(ncclInternalError);
 		}
@@ -386,15 +384,16 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 	/* Connect */
 	nccl_net_ofi_send_comm_t **send_comm =
 		(nccl_net_ofi_send_comm_t **)sComm;
-	int ret = base_ep->connect(base_ep, (nccl_net_ofi_conn_handle_t *)handle, send_comm, trafficClass);
+	int ret = ep->connect(static_cast<nccl_net_ofi_conn_handle_t *>(handle), send_comm,
+			      trafficClass);
 
 	if (created_ep) {
 		/**
 		 * Release the ep if we acquired one before calling
-		 * base_ep->connect(). The protocol should have acquired its own
+		 * ep->connect(). The protocol should have acquired its own
 		 * endpoint when creating the communictor.
 		 */
-		base_ep->release_ep(base_ep, false, false);
+		ep->release_ep(false, false);
 	}
 
 	return nccl_net_ofi_retval_translate(ret);
@@ -467,7 +466,7 @@ ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 			ret = -EINVAL;
 			goto error;
 		}
-		ep->release_ep(ep, false, false);
+		ep->release_ep(false, false);
 	}
 
 error:
