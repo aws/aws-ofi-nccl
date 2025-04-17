@@ -5,6 +5,8 @@
 #include "config.h"
 
 #include <algorithm>
+#include <stdexcept>
+
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -40,7 +42,7 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 
 static nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain(nccl_net_ofi_sendrecv_ep_t *ep)
 {
-	return (nccl_net_ofi_sendrecv_domain_t*)ep->base.domain;
+	return (nccl_net_ofi_sendrecv_domain_t*)ep->domain;
 }
 
 
@@ -1177,8 +1179,8 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = r_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	nccl_net_ofi_ep_t *ep = r_comm->base.base.ep;
+	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto exit;
@@ -1208,7 +1210,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
  exit:
 	return ret;
 }
@@ -1476,7 +1478,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	}
 
 	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
-	r_comm->base.base.ep = &ep->base;
+	r_comm->base.base.ep = ep;
 	r_comm->base.base.dev_id = dev_id;
 	r_comm->base.regMr = sendrecv_recv_comm_reg_mr;
 	r_comm->base.deregMr = sendrecv_recv_comm_dereg_mr;
@@ -1589,7 +1591,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * called.
 		 */
 		nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
-		ep->base.ref_cnt++;
+		ep->increment_ref_cnt();
 		nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
 
 		/* Prepare receive request to accept connections */
@@ -1696,14 +1698,14 @@ static int sendrecv_listen_comm_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = l_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	nccl_net_ofi_ep_t *ep = l_comm->base.base.ep;
+	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto exit;
 	}
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
 	free(listen_comm);
  exit:
 	return ret;
@@ -1741,21 +1743,17 @@ static inline char *sendrecv_get_local_address(struct fid_ep *ep)
 	return local_ep_addr;
 }
 
-static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
-				    nccl_net_ofi_conn_handle_t *handle,
-				    nccl_net_ofi_listen_comm_t **listen_comm)
+int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
+				       nccl_net_ofi_listen_comm_t **listen_comm)
 {
 	char *local_ep_name = NULL;
 	fi_addr_t local_ep_addr;
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = NULL;
-	uint64_t tag;
 	int dev_id = 0;
 	int num_addrs;
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(this);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -1767,27 +1765,26 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	memset(handle, 0, sizeof(nccl_net_ofi_conn_handle_t));
 
 	/* Increase tag ID */
-	if (ep->tag + 1 >=
+	if (this->tag + 1 >=
 	    device->max_tag) {
 		NCCL_OFI_WARN("Cannot open more connection for device ID %d."
 			      " Maximum is %ld",
 			      dev_id, device->max_tag);
 		return -ENOSPC;
 	}
-	tag = ++ep->tag;
+	++this->tag;
 
 	/* Build handle */
-	local_ep_name = sendrecv_get_local_address(ep->ofi_ep);
+	local_ep_name = sendrecv_get_local_address(this->ofi_ep);
 	if (local_ep_name == NULL) {
 		return -EINVAL;
 	}
 
 	memcpy(handle->ep_name, local_ep_name, MAX_EP_ADDR);
-	handle->comm_id = (uint32_t)tag;
+	handle->comm_id = (uint32_t)this->tag;
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
-	num_addrs = fi_av_insert(ep->av, (void *)local_ep_name, 1,
-				 &local_ep_addr, 0, NULL);
+	num_addrs = fi_av_insert(this->av, (void *)local_ep_name, 1, &local_ep_addr, 0, NULL);
 
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
@@ -1806,12 +1803,12 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 
 	/* Initialize listen communicator */
 	l_comm->base.base.type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->base.base.ep = base_ep;
+	l_comm->base.base.ep = this;
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = sendrecv_listen_comm_accept;
 	l_comm->base.close = sendrecv_listen_comm_close;
-	l_comm->tag = tag;
-	l_comm->local_ep = ep->ofi_ep;
+	l_comm->tag = this->tag;
+	l_comm->local_ep = this->ofi_ep;
 	l_comm->accepted = false;
 	l_comm->local_ep_addr = local_ep_addr;
 
@@ -1972,8 +1969,8 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *base_ep = s_comm->base.base.ep;
-	if (OFI_UNLIKELY(base_ep == NULL)) {
+	nccl_net_ofi_ep_t *ep = s_comm->base.base.ep;
+	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto exit;
@@ -1981,12 +1978,12 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 
 	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
 	if (s_comm->conn_info != NULL) {
-		nccl_ofi_freelist_entry_free(((nccl_net_ofi_sendrecv_ep_t *)base_ep)->conn_msg_fl,
+		nccl_ofi_freelist_entry_free(((nccl_net_ofi_sendrecv_ep_t *)ep)->conn_msg_fl,
 					     s_comm->conn_info);
 	}
 	free(send_comm);
 
-	ret = base_ep->release_ep(base_ep, false, false);
+	ret = ep->release_ep(false, false);
  exit:
 	return ret;
 }
@@ -2054,7 +2051,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
-	ret_s_comm->base.base.ep = &ep->base;
+	ret_s_comm->base.base.ep = ep;
 	ret_s_comm->base.base.dev_id = device->base.dev_id;
 	ret_s_comm->base.regMr = sendrecv_send_comm_reg_mr;
 	ret_s_comm->base.deregMr = sendrecv_send_comm_dereg_mr;
@@ -2187,19 +2184,16 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 	return rc;
 }
 
-static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
-				     nccl_net_ofi_conn_handle_t *handle,
-				     nccl_net_ofi_send_comm_t **send_comm)
+int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
+					nccl_net_ofi_send_comm_t **send_comm)
 {
 	int ret = 0;
 	ssize_t rc = 0;
 	*send_comm = NULL;
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 	nccl_ofi_connection_info_t *conn_info = NULL;
 	
 	/* Retrieve and validate devices */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(this);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
@@ -2229,7 +2223,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		assert(s_comm == NULL);
 
 		/* Build send_comm */
-		ret = sendrecv_send_comm_create(handle, ep, &s_comm);
+		ret = sendrecv_send_comm_create(handle, this, &s_comm);
 		if (OFI_UNLIKELY(ret != 0 || s_comm == NULL)) {
 			return ret;
 		}
@@ -2246,7 +2240,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		fallthrough;
 	case COMM_SEND_CONN:
 		/* Send "connect" message to remote EP */
-		rc = sendrecv_send_comm_send_connect_message(s_comm, device, ep, req);
+		rc = sendrecv_send_comm_send_connect_message(s_comm, device, this, req);
 		if (rc == -FI_EAGAIN) {
 			/* Save connection state */
 			comm_state->comm = &s_comm->base.base;
@@ -2272,7 +2266,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Progress our engine to get completions */
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(this->cq);
 		if (OFI_UNLIKELY(ret != 0)) {
 			assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
@@ -2305,7 +2299,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 	conn_info = (nccl_ofi_connection_info_t *)s_comm->conn_info->ptr;
 	if (conn_info->connect_to_self != 1) {
 		sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
-		nccl_ofi_freelist_entry_free(ep->conn_msg_fl, s_comm->conn_info);
+		nccl_ofi_freelist_entry_free(this->conn_msg_fl, s_comm->conn_info);
 		s_comm->conn_info = NULL;
 	}
 
@@ -2313,52 +2307,38 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 }
 
 
-static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
+nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_device_t *device = NULL;
 
 	/* Validate device */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t*)base_ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
-	}
-
-	/* Validate device */
-	device = sendrecv_endpoint_get_device(ep);
+	device = sendrecv_endpoint_get_device(this);
 	if (OFI_UNLIKELY(device == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid device provided");
-		goto exit;
+		std::runtime_error("sendrecv endpoint destructor: failed to get device");
 	}
 
-	ret = nccl_ofi_freelist_fini(ep->conn_msg_fl);
+	ret = nccl_ofi_freelist_fini(this->conn_msg_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("nccl_ofi_freelist_fini failed: %d", ret);
+		std::runtime_error("sendrecv endpoint destructor: tearing down freelist failed");
 	}
 	
-	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, ep->cq,
+	nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, this->cq,
 				     device->base.dev_id);
-	ep->ofi_ep = NULL;
-	ep->av = NULL;
-	ep->cq = NULL;
-
-	free(ep);
-
- exit:
-	return ret;
+	this->ofi_ep = NULL;
+	this->av = NULL;
+	this->cq = NULL;
 }
 
 
 static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *base_domain,
-							nccl_net_ofi_ep_t **base_ep)
+							nccl_net_ofi_ep_t **new_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
-	nccl_net_ofi_sendrecv_device_t *device;
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_domain_t *domain =
@@ -2368,53 +2348,43 @@ static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *b
 		return -EINVAL;
 	}
 
-	device = sendrecv_domain_get_device(domain);
+	/* Allocate endpoint */
+	ep = new nccl_net_ofi_sendrecv_ep_t(domain);
+	*new_ep = ep;
+
+	return ret;
+}
+
+
+nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg)
+	: nccl_net_ofi_ep_t(&domain_arg->base) {
+	int ret = 0;
+	nccl_net_ofi_sendrecv_device_t *device = NULL;
+
+	device = sendrecv_domain_get_device(domain_arg);
 	assert(device != NULL);
 
-	/* Allocate endpoint */
-	ep = (nccl_net_ofi_sendrecv_ep_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_ep_t));
-	if (!ep) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to allocate sendrecv endpoint");
-		return -ENOMEM;
-	}
-
-	ret = nccl_net_ofi_endpoint_init(&domain->base, &ep->base);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing endpoint base failed");
-		return ret;
-	}
-
-	/* Initialize base endpoint */
-	ep->base.listen = sendrecv_endpoint_listen;
-	ep->base.connect = sendrecv_endpoint_connect;
-	ep->base.free_ep = nccl_net_ofi_sendrecv_endpoint_free;
-
 	/* Initialize endpoint tag */
-	ep->tag = 0;
-	ep->max_tag = device->max_tag;
+	this->tag = 0;
+	this->max_tag = device->max_tag;
 
-	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(ep);
+	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain(this);
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
 						ofi_domain,
-						&ep->ofi_ep,
-						&ep->av, &ep->cq);
+						&this->ofi_ep,
+						&this->av, &this->cq);
 	if (ret != 0) {
-		return ret;
+		throw std::runtime_error("sendrecv endpoint constructor: failed to init endpoint");
 	}
 
 	ret = nccl_ofi_freelist_init_mr(sizeof(nccl_ofi_connection_info_t),
 					4, 4, 0,
 					NULL, NULL,
 					sendrecv_freelist_regmr_host_fn, sendrecv_freelist_deregmr_host_fn,
-					ep, sizeof(void *), &ep->conn_msg_fl);
+					this, sizeof(void *), &this->conn_msg_fl);
 	if (ret != 0) {
-		return ret;
+		throw std::runtime_error("sendrecv endpoint constructor: failed to init freelist");
 	}
-	
-	*base_ep = &ep->base;
-
-	return ret;
 }
 
 

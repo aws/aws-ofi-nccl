@@ -94,6 +94,10 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
+/* Forward declarations needed for sendrecv transport endpoint type */
+struct nccl_net_ofi_sendrecv_domain;
+typedef struct nccl_net_ofi_sendrecv_domain nccl_net_ofi_sendrecv_domain_t;
+
 /**
  * @brief	Sendrecv Endpoint
  *
@@ -101,17 +105,32 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
  * for the sendrecv protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-typedef struct nccl_net_ofi_sendrecv_ep {
-	/* This base endpoint interface struct provides access to the
-	 * sendrecv endpoint's functions such as sendrecv_listen() and
-	 * sendrecv_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
-	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+class nccl_net_ofi_sendrecv_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up freelist and endpoint resources.   
+	 */
+	nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg);
+
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, releases freelist and 
+	 * endpoint resources.
+	 */
+	~nccl_net_ofi_sendrecv_ep_t() override;
+
+
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+
+
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm_t **send_comm) override;
+
 
 	/* Current available tag ID */
 	uint64_t tag;
@@ -120,17 +139,17 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	uint64_t max_tag;
 
 	/* Endpoint handle to communicate to */
-	struct fid_ep *ofi_ep;
+	struct fid_ep *ofi_ep = NULL;
 
 	/* Address vector handle */
-	struct fid_av *av;
+	struct fid_av *av = NULL;
 
 	/* Completion Queue handle */
-	struct fid_cq *cq;
+	struct fid_cq *cq = NULL;
 
 	/* free list for control messages */
-	nccl_ofi_freelist_t *conn_msg_fl;
-} nccl_net_ofi_sendrecv_ep_t;
+	nccl_ofi_freelist_t *conn_msg_fl = NULL;
+};
 
 
 /*
