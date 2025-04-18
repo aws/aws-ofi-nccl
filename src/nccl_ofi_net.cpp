@@ -413,7 +413,6 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	 */
 	props->port_number = 1;
 	props->max_communicators = 0;
-	props->guid = dev_id;
 
 	props->latency = net_latency >= .0 ? net_latency : .0;
 
@@ -455,8 +454,12 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
 	const char *platform_type = NULL;
+	nccl_net_ofi_device *device = NULL;
 
 	memset(props, 0, sizeof(*props));
+
+	device = plugin->get_device(plugin, dev_id);
+	props->guid = device->guid;
 
 	ret = set_nic_props_default(dev_id, nic_prov, props);
 	if (ret != 0) {
@@ -856,7 +859,6 @@ unlock:
 	return ret;
 }
 
-
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
 			     int device_index, struct fi_info *ofi_info)
 {
@@ -869,6 +871,12 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		NCCL_OFI_WARN("Unable to allocate device name");
 		ret = -ENOMEM;
 		goto exit;
+	}
+
+	if (platform_device_set_guid) {
+		platform_device_set_guid(ofi_info, device);
+	} else {
+		nccl_net_ofi_device_set_guid(ofi_info, device);
 	}
 
 	device->get_properties = NULL;
