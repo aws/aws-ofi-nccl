@@ -13,6 +13,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
+
+#include <fstream>
+#include <cstdint>
+#include <system_error>
+#include <map>
+#include <mutex>
+#include <string>
+
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
@@ -132,6 +140,12 @@ static struct ec2_platform_data platform_data_map[] = {
 	},
 };
 
+/*
+ * We need to cache the fields that we grabbed for each device so we don't go
+ * read sysfs for each field that we need.
+ */
+static std::map<std::string, struct platform_aws_node_guid> guid_cache;
+static std::mutex cache_mutex;
 
 struct ec2_platform_data *platform_aws_get_platform_map(size_t *len)
 {
@@ -768,51 +782,67 @@ exit:
 	return ret;
 }
 
-static int get_rail_vf_idx(struct fi_info *info)
+static struct platform_aws_node_guid get_node_guid_fields(struct fi_info *info)
 {
-	char *node_guid_filename = NULL;
-	FILE *fp = NULL;
-	int vf_idx;
-	int ret;
+	struct platform_aws_node_guid node_guid_fields;
+	uint64_t raw_value = 0;
 
-	ret = asprintf(&node_guid_filename, "/sys/class/infiniband/%s/node_guid",
-		       info->nic->device_attr->name);
-	if (ret < 0) {
-		vf_idx = -errno;
-		goto cleanup;
-	}
-	fp = fopen(node_guid_filename, "r");
-	if (fp == NULL) {
-		NCCL_OFI_WARN("Error opening file: %s", node_guid_filename);
-		vf_idx = -errno;
-		goto cleanup;
+	if (!info || !info->nic || !info->nic->device_attr || !info->nic->device_attr->name) {
+		throw std::runtime_error("Unable to get device attributes from fi_info object");
 	}
 
-	/**
-	 * GUID is a 64-bit hex number with format:
-	 *
-	 * XXXX:XXXX:XXXX:XXXX
-	 *
-	 * The lowest 8 bits are the VF id.
+	std::string device_name = info->nic->device_attr->name;
+
+	/* Check to see if we've already parsed the fields for this RDMA device */
+	{
+		std::lock_guard<std::mutex> lock(cache_mutex);
+		auto it = guid_cache.find(device_name);
+		if (it != guid_cache.end()) {
+			return it->second;
+		}
+	}
+
+	std::string filepath = "/sys/class/infiniband/";
+	filepath += info->nic->device_attr->name;
+	filepath += "/node_guid";
+
+	std::ifstream file(filepath, std::ios::in | std::ios::binary);
+	if (!file.is_open()) {
+		throw std::system_error(errno, std::system_category(), 
+			"Failed to open " + filepath);
+	}
+
+	file.read(reinterpret_cast<char*>(&raw_value), sizeof(raw_value));
+	if (file.fail()) {
+		throw std::runtime_error("Failed to read data from " + filepath);
+	}
+
+	/*
+	 * +---------------------+------------------+------------+------------+
+	 * |63                 24|23              16|15         8|7          0|
+	 * +---------------------+------------------+------------+------------+
+	 * | func_mac high bytes | per-card pci_bus | vf pci_bus |  func_idx  |
+	 * +---------------------+------------------+------------+------------+
 	 */
-	ret = fscanf(fp, "%*x:%*x:%*x:%*2x%2x", &vf_idx);
-	if (ret != 1) {
-		NCCL_OFI_WARN("GUID parsing failed, got %d, expected 1", ret);
-		vf_idx = -EIO;
-		goto cleanup;
+	node_guid_fields.func_idx = raw_value & 0xFF;
+	node_guid_fields.vf_pci_bus = (raw_value >> 8) & 0xFF;
+	node_guid_fields.per_card_pci_bus = (raw_value >> 16) & 0xFF;
+	node_guid_fields.func_mac_high_bytes = (raw_value >> 24);
+
+	/* Stash in the guid fields cache */
+	{
+		std::lock_guard<std::mutex> lock(cache_mutex);
+		guid_cache[device_name] = node_guid_fields;
 	}
 
-cleanup:
-	if (node_guid_filename) {
-		free(node_guid_filename);
-	}
-	if (fp != NULL) {
-		fclose(fp);
-	}
-
-	return vf_idx;
+	return node_guid_fields;
 }
 
+static int get_rail_vf_idx(struct fi_info *info)
+{
+	struct platform_aws_node_guid fields = get_node_guid_fields(info);
+	return fields.func_idx;
+}
 
 /*
  * On P5/P5e, there are up to 32 EFA devices.  Each pair of EFA
