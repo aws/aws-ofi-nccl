@@ -7,6 +7,13 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/types.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <netdb.h>
+#include <cstring>
+#include <arpa/inet.h>
+#include <cstdint>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_pthread.h"
@@ -15,6 +22,68 @@
 #ifndef SYSFS_PRODUCT_NAME_STR
 #define SYSFS_PRODUCT_NAME_STR "/sys/devices/virtual/dmi/id/product_name"
 #endif
+
+uint32_t nccl_ofi_get_unique_node_id(void)
+{
+	struct ifaddrs *ifaddr = nullptr;
+	struct ifaddrs *ifa = nullptr;
+	struct in6_addr ipv6_addr;
+	char host[NI_MAXHOST] = {0};
+	uint32_t ip_addr = 0;
+	bool found_ipv6 = false;
+
+	if (getifaddrs(&ifaddr) == -1) {
+		throw std::runtime_error("Failed to get interface addresses");
+	}
+
+	/* Look for non-loopback IPv4 addresses first */
+	for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == nullptr) {
+			continue;
+		}
+
+		if (ifa->ifa_addr->sa_family == AF_INET && !(ifa->ifa_flags & IFF_LOOPBACK)) {
+			if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in),
+					host, NI_MAXHOST, nullptr, 0, NI_NUMERICHOST) == 0) {
+				struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
+				ip_addr = ntohl(sin->sin_addr.s_addr);
+				freeifaddrs(ifaddr);
+				return ip_addr;
+			}
+		}
+	}
+
+	/* IPv4 no bueno. Find a non-loopback IPv6 interface */
+	for (ifa = ifaddr; ifa != nullptr; ifa = ifa->ifa_next) {
+		if (ifa->ifa_addr == nullptr) {
+			continue;
+		}
+
+		if (ifa->ifa_addr->sa_family == AF_INET6 && !(ifa->ifa_flags & IFF_LOOPBACK)) {
+			if (getnameinfo(ifa->ifa_addr, sizeof(struct sockaddr_in6),
+					host, NI_MAXHOST, nullptr, 0, NI_NUMERICHOST) == 0) {
+				struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+				ipv6_addr = sin6->sin6_addr;
+				found_ipv6 = true;
+				break;
+			}
+		}
+	}
+
+	if (found_ipv6) {
+		/* Beat it into a 32-bit field so the caller doesn't have to */
+		uint32_t *addr_parts = (uint32_t *)ipv6_addr.s6_addr;
+		ip_addr = ntohl(addr_parts[0] ^ addr_parts[1] ^ addr_parts[2] ^ addr_parts[3]);
+	}
+
+	freeifaddrs(ifaddr);
+
+	if (!found_ipv6) {
+		throw std::runtime_error("No suitable IPv4 or IPv6 interface found");
+	}
+
+	return ip_addr;
+}
 
 const char *nccl_net_ofi_get_product_name(void)
 {
