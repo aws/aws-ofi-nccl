@@ -2959,7 +2959,7 @@ static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 		goto error;
 	}
 
-    if (key_pool->get_size() != 0) {
+	if (key_pool->get_size() != 0) {
 		auto key = key_pool->allocate_id();
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("MR key allocation failed");

@@ -25,7 +25,10 @@ sources = \
 	nccl_ofi_dmabuf.cpp \
 	nccl_ofi_ep_addr_list.cpp \
 	nccl_ofi_param.cpp \
-	tracepoint.cpp
+	tracepoint.cpp \
+	cm/nccl_ofi_cm_comms.cpp \
+	cm/nccl_ofi_cm_reqs.cpp \
+	cm/nccl_ofi_cm.cpp
 
 if WANT_PLATFORM_AWS
 sources += platform-aws.cpp

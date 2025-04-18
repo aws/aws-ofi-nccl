@@ -192,6 +192,7 @@ AS_IF([test "${enable_picky_compiler}" != "no"], [
     dnl them. TODO: explicitly annotate those functions, rather than setting this
     dnl globally.
     ADD_PICKY_FLAGS([-Wno-unused-parameter])
+    ADD_PICKY_FLAGS([-Wno-invalid-offsetof])
 
     dnl warn when a variable shadows another variable.
     ADD_PICKY_FLAGS([-Wshadow])

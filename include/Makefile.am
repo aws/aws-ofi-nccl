@@ -40,4 +40,9 @@ noinst_HEADERS = \
 	nccl_ofi_ep_addr_list.h \
 	platform-aws.h \
 	stats/histogram.h \
-	stats/histogram_binner.h
+	stats/histogram_binner.h \
+	cm/nccl_ofi_cm_comms.h \
+	cm/nccl_ofi_cm_mr.h \
+	cm/nccl_ofi_cm_reqs.h \
+	cm/nccl_ofi_cm_types.h \
+	cm/nccl_ofi_cm.h
