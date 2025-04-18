@@ -107,6 +107,18 @@ uint32_t nccl_ofi_get_unique_node_id(void)
 	return ip_addr;
 }
 
+void nccl_net_ofi_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device)
+{
+        uint32_t node_id = nccl_ofi_get_unique_node_id();
+
+        /*
+         * Use device_index as lower 8 bits
+         * Use node_id as next 32 bits (bits 8-39)
+         * Upper 24 bits remain 0
+         */
+        device->guid = (static_cast<uint64_t>(node_id) << 8) | device->dev_id;
+}
+
 const char *nccl_net_ofi_get_product_name(void)
 {
 	char file[] = SYSFS_PRODUCT_NAME_STR;

@@ -278,6 +278,12 @@ struct nccl_net_ofi_device {
 	int dev_id;
 
 	/*
+	 * Globally unique identifier for the device. An opaque identifier
+	 * returned to NCCL without assumptions about individual platforms.
+	 */
+	uint64_t guid;
+
+	/*
 	 * name of the device - should include the provider name, but may be
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
