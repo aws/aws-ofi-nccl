@@ -49,6 +49,15 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep *ep) __attribut
  */
 void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) __attribute__((weak));
 
+/*
+ * Platform-specific guid property setter
+ *
+ * This overrides the default guid setter (nccl_net_ofi_device_set_guid()) which
+ * is based on network device index and IP address. Platforms can set
+ * device->guid to be any 64-bit value as they seem fit to uniquely identify the
+ * network device.
+ */
+void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device) __attribute__((weak));
 
 /*
  * does the platform have an opinion on domain_per_thread configuration?
