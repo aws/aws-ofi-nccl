@@ -8109,7 +8109,17 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	* - Provider must use FI_PROGRESS_AUTO data progress model
 	*/
 	if (ofi_nccl_early_completion() < 0) {
-		early_completion = data_progress_auto;
+		if (!data_progress_auto) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Early completion disabled due to progress model");
+			early_completion = false;
+		} else if (ofi_nccl_eager_max_size() >= 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "Early completion disabled because eager is enabled");
+			early_completion = false;
+		} else {
+			early_completion = true;
+		}
 	} else if (ofi_nccl_early_completion() == 0) {
 		early_completion = false;
 	} else {
