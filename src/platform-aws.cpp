@@ -1,4 +1,5 @@
 /*
+
  * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
@@ -13,6 +14,14 @@
 #include <string.h>
 #include <unistd.h>
 #include <inttypes.h>
+
+#include <fstream>
+#include <cstdint>
+#include <system_error>
+#include <map>
+#include <mutex>
+#include <string>
+
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
 #endif
@@ -132,6 +141,12 @@ static struct ec2_platform_data platform_data_map[] = {
 	},
 };
 
+/*
+ * We need to cache the fields that we grabbed for each device so we don't go
+ * read sysfs for each field that we need.
+ */
+static std::unordered_map<std::string, struct platform_aws_node_guid> guid_cache;
+static std::mutex cache_mutex;
 
 struct ec2_platform_data *platform_aws_get_platform_map(size_t *len)
 {
@@ -261,7 +276,7 @@ static int validate_rdma_write(struct fid_ep *ep)
 		ret = -EINVAL;
 		goto exit;
 	}
-	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d", 
+	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Get endpoint option FI_OPT_EFA_EMULATED_WRITE. optval: %d",
 		       optval);
 #else
 	NCCL_OFI_WARN("FI_OPT_EFA_EMULATED_WRITE not declared when the communication protocol is RDMA write.");
@@ -533,7 +548,7 @@ int platform_init(const char **provider_filter)
 #endif
 
 	/*
-	 * Update topology if platform topology is available and 
+	 * Update topology if platform topology is available and
 	 * environment variable NCCL_TOPO_FILE is not set.
 	 */
 	if (getenv("NCCL_TOPO_FILE")) {
@@ -753,51 +768,103 @@ exit:
 	return ret;
 }
 
-static int get_rail_vf_idx(struct fi_info *info)
+static const struct platform_aws_node_guid* get_node_guid_fields(struct fi_info *info)
 {
-	char *node_guid_filename = NULL;
-	FILE *fp = NULL;
-	int vf_idx;
-	int ret;
-
-	ret = asprintf(&node_guid_filename, "/sys/class/infiniband/%s/node_guid",
-		       info->nic->device_attr->name);
-	if (ret < 0) {
-		vf_idx = -errno;
-		goto cleanup;
-	}
-	fp = fopen(node_guid_filename, "r");
-	if (fp == NULL) {
-		NCCL_OFI_WARN("Error opening file: %s", node_guid_filename);
-		vf_idx = -errno;
-		goto cleanup;
+	if (!info->nic || !info->nic->device_attr || !info->nic->device_attr->name) {
+		NCCL_OFI_WARN("fi_nic attributes not available.");
+		return nullptr;
 	}
 
-	/**
-	 * GUID is a 64-bit hex number with format:
-	 *
-	 * XXXX:XXXX:XXXX:XXXX
-	 *
-	 * The lowest 8 bits are the VF id.
+	std::string device_name = info->nic->device_attr->name;
+
+	/* Check to see if we've already parsed the fields for this RDMA device */
+	{
+		std::lock_guard<std::mutex> lock(cache_mutex);
+		auto it = guid_cache.find(device_name);
+		if (it != guid_cache.end()) {
+			return &(it->second);
+		}
+	}
+
+	std::string filepath = "/sys/class/infiniband/";
+	filepath += info->nic->device_attr->name;
+	filepath += "/node_guid";
+
+	std::ifstream file(filepath);
+	if (!file.is_open()) {
+		throw std::system_error(errno, std::system_category(),
+			"Failed to open " + filepath);
+	}
+
+	std::string guid_str;
+	if (!std::getline(file, guid_str)) {
+		throw std::runtime_error("Failed to read data from " + filepath);
+	}
+
+	/* Parse the GUID string in XXXX:XXXX:XXXX:XXXX format */
+	unsigned int a, b, c, d;
+	if (sscanf(guid_str.c_str(), "%4x:%4x:%4x:%4x", &a, &b, &c, &d) != 4) {
+		throw std::runtime_error("Invalid GUID format in " + filepath);
+	}
+
+	/* Reconstruct the 64-bit value */
+	uint64_t raw_value = ((uint64_t)a << 48) |
+			    ((uint64_t)b << 32) |
+			    ((uint64_t)c << 16) |
+			    ((uint64_t)d);
+
+	NCCL_OFI_INFO(NCCL_INIT, "GUID of %s: %016lx", info->nic->device_attr->name, raw_value);
+
+	/*
+	 * +--------------------+---------------------+------------------+------------+
+	 * |63                32|31                 16|15               8|7          0|
+	 * +--------------------+---------------------+------------------+------------+
+	 * | func_mac_low_bytes | per_card_pci_domain | per_card_pci_bus |  func_idx  |
+	 * +--------------------+---------------------+------------------+------------+
 	 */
-	ret = fscanf(fp, "%*x:%*x:%*x:%*2x%2x", &vf_idx);
-	if (ret != 1) {
-		NCCL_OFI_WARN("GUID parsing failed, got %d, expected 1", ret);
-		vf_idx = -EIO;
-		goto cleanup;
-	}
+	struct platform_aws_node_guid node_guid_fields;
+	node_guid_fields.func_idx = raw_value & 0xFF;
+	node_guid_fields.per_card_pci_bus = (raw_value >> 8) & 0xFF;
+	node_guid_fields.per_card_pci_domain = (raw_value >> 16) & 0xFF;
+	node_guid_fields.func_mac_low_bytes = (raw_value >> 32);
 
-cleanup:
-	if (node_guid_filename) {
-		free(node_guid_filename);
+	/* Stash in the guid fields cache */
+	{
+		std::lock_guard<std::mutex> lock(cache_mutex);
+		guid_cache[device_name] = node_guid_fields;
+		return &(guid_cache[device_name]);
 	}
-	if (fp != NULL) {
-		fclose(fp);
-	}
-
-	return vf_idx;
 }
 
+static int get_rail_vf_idx(struct fi_info *info)
+{
+	const struct platform_aws_node_guid* fields = get_node_guid_fields(info);
+	if (fields == nullptr) {
+		NCCL_OFI_WARN("Failed to get node GUID fields");
+		return -EIO;
+	}
+	return fields->func_idx;
+}
+
+void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device)
+{
+	const struct platform_aws_node_guid* fields = get_node_guid_fields(info);
+	uint32_t node_id = nccl_ofi_get_unique_node_id();
+
+	if (!fields ||
+	    strcmp("0xefa0", info->nic->device_attr->device_id) == 0 ||
+	    strcmp("0xefa1", info->nic->device_attr->device_id) == 0 ||
+	    strcmp("0xefa2", info->nic->device_attr->device_id) == 0) {
+
+		device->guid = (static_cast<uint64_t>(node_id) << 32) | device->dev_id;
+	} else {
+		device->guid = (static_cast<uint64_t>(node_id) << 32) |
+			       (fields->per_card_pci_domain << 8) |
+				fields->per_card_pci_bus;
+	}
+
+	NCCL_OFI_INFO(NCCL_INIT, "GUID for dev[%d]: %032lx", device->dev_id, device->guid);
+}
 
 /*
  * On P5/P5e, there are up to 32 EFA devices.  Each pair of EFA
