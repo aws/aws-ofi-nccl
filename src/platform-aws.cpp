@@ -1,4 +1,5 @@
 /*
+
  * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  */
@@ -843,6 +844,20 @@ static int get_rail_vf_idx(struct fi_info *info)
 	struct platform_aws_node_guid fields = get_node_guid_fields(info);
 	return fields.func_idx;
 }
+
+void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device)
+{
+	struct platform_aws_node_guid fields = get_node_guid_fields(info);
+	uint32_t node_id = nccl_ofi_get_unique_node_id();
+
+	/*
+	 * Use per_card_pci_bus as lower 8 bits
+	 * Use node_id as next 32 bits (bits 8-39)
+	 * Upper 24 bits remain 0
+	 */
+	device->guid = (static_cast<uint64_t>(node_id) << 8) | fields.per_card_pci_bus;
+}
+
 
 /*
  * On P5/P5e, there are up to 32 EFA devices.  Each pair of EFA
