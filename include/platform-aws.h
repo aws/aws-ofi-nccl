@@ -23,6 +23,13 @@ struct ec2_platform_data {
 };
 
 
+struct platform_aws_node_guid {
+	uint8_t func_idx;
+	uint8_t vf_pci_bus;
+	uint8_t per_card_pci_bus;
+	uint64_t func_mac_high_bytes;
+};
+
 /*
  * @brief        Get the platform data map
  *
