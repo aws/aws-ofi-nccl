@@ -185,11 +185,19 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_ep_t;
+
+struct nccl_net_ofi_rdma_device;
+struct nccl_net_ofi_rdma_device_rail;
+struct nccl_net_ofi_rdma_domain;
+struct nccl_net_ofi_rdma_domain_rail;
 struct nccl_net_ofi_rdma_req;
-struct nccl_net_ofi_rdma_ep;
 struct nccl_net_ofi_ep_rail;
+typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
+typedef struct nccl_net_ofi_rdma_device_rail nccl_net_ofi_rdma_device_rail_t;
+typedef struct nccl_net_ofi_rdma_domain nccl_net_ofi_rdma_domain_t;
+typedef struct nccl_net_ofi_rdma_domain_rail nccl_net_ofi_rdma_domain_rail_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
-typedef struct nccl_net_ofi_rdma_ep nccl_net_ofi_rdma_ep_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
 typedef struct {
@@ -690,24 +698,174 @@ struct nccl_net_ofi_ep_rail {
 						      nccl_net_ofi_ep_rail_t *rail);
 };
 
-/*
+/**
  * @brief	RDMA Endpoint
  *
  * RDMA endpoint implements the nccl_net_ofi_ep_t interface
  * for the rdma protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-struct nccl_net_ofi_rdma_ep {
-	/* This base endpoint interface struct provides access to the
-	 * rdma endpoint's functions such as rdma_listen() and
-	 * rdma_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
+class nccl_net_ofi_rdma_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up endpoint rails and freelists. 
+	 */
+	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain);
+
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, releases endpoint rails
+	 * and freelists.
+	 */
+	~nccl_net_ofi_rdma_ep_t() override;
+
+
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+
+
+	/**
+	 * @brief	Execute the connect functionality from listen/connect/accept
+	 *		connection establishment
 	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+	 * The connect functionality does the following: (a) create send communicator
+	 * with only the first communicator rail being initalized, (b) post send
+	 * operation to send connect message to remote, containing local endpoint
+	 * addresses, (c) wait until message is delivered, (d) waits for the connect
+	 * response message, and (e) calls finish_connect.
+	 *
+	 * The `finish_connect' method completes the initialization of the remaining
+	 * communicator rails using the received connect responce message.
+	 */
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm_t **send_comm) override;
+
+
+	int release_ep(bool skip_lock, bool force_cleanup) override;
+
+
+	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain();
+
+
+	inline nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device();
+
+
+	/**
+	 * @brief Return endpoint rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_rail(uint16_t rail_id);
+
+
+	/**
+	 * @brief Return control endpoint rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_control_rail(uint16_t rail_id);
+
+
+	/**
+	 * @brief	Re-post a rx buffer that has not yet been removed from active
+	 * 		count
+	 */
+	inline int repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req);
+
+
+	/**
+	 * Attempt to post all requests in the pending requests queue.
+	 *
+	 * Requests are put in the pending reqs queue when the network is busy, i.e., a
+	 * Libfabric operation returns FI_EAGAIN.
+	 *
+	 * @return zero on success, negative errno value on non-success.
+	 */
+	int process_pending_reqs();
+
+
+	/**
+	 * @brief	Process completion entries for the given completion queue.
+	 *		This also updates several request fileds like size, status, etc
+	 *
+	 * @return	0, on success
+	 *		error, on others
+	 */
+	int ofi_process_cq();
+
+
+	/**
+	 * @brief	Post rx buffers for all rails until each is at max
+	 */
+	inline int post_rx_buffs();
+
+
+	/**
+	 * Checks the given ep's pending completions queue. If non-empty, calls ofi_process_cq
+	 *
+	 * @return	zero on success
+	 * 		-EIO, error from ofi_process_cq
+	 * 		-EAGAIN, the queue is still non-empty after this call
+	 */
+	int process_cq_if_pending();
+
+
+	/**
+	 * @brief	Populate connect response message with endpoint names
+	 *
+	 * @param	dev_id
+	 *		Device ID
+	 *
+	 * @return	Connect response message, on success
+	 *		NULL, on others
+	 * @return	0, on success
+	 *		-EINVAL, on others
+	 */
+	int prepare_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm, int dev_id);
+
+
+	/**
+	 * @brief	Allocate and initialize connection information
+	 *
+	 * Allocate connect message. Set endpoint names for each rail.
+	 *
+	 * @param	dev_id
+	 *		Device ID
+	 * @param	handle
+	 *		Handle received from remote
+	 *
+	 * @return	Connection information, on success
+	 *		NULL, on others
+	 */
+	void prepare_send_connect_message(int dev_id, uint32_t local_comm_id,
+					  uint32_t remote_comm_id,
+					  nccl_net_ofi_conn_handle_t *handle,
+					  nccl_ofi_rdma_connection_info_t *conn_msg);
+
+
+	/**
+	 * Post all rx buffers for a rail if we don't have enough
+	 */
+	inline int check_post_rx_buffers_rail(nccl_net_ofi_ep_rail_t *rail);
+
+
+	inline int post_rx_buffs_on_rail(nccl_net_ofi_ep_rail_t *rail);
+
+
+	/**
+	 * @brief	Decrement the number of rx buffers posted for the rail
+	 *		corresponding to rx_buff_req
+	 */
+	inline int decrease_rx_buff_cnt(nccl_net_ofi_ep_rail_t *rail);
+
+
+	int ofi_process_cq_rail(nccl_net_ofi_ep_rail_t *rail);
+
+
+	inline int handle_rx_eagain(nccl_net_ofi_ep_rail_t *rail,
+				    nccl_net_ofi_rdma_req_t *req,
+				    size_t num_buffs_failed);
+
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -716,26 +874,26 @@ struct nccl_net_ofi_rdma_ep {
 	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *rails;
+	std::vector<nccl_net_ofi_ep_rail_t> rails;
 
 	/* Array of `num_control_rails` endpoint rails */
-	nccl_net_ofi_ep_rail_t *control_rails;
+	std::vector<nccl_net_ofi_ep_rail_t> control_rails;
 
 	bool use_long_rkeys;
 
 	/* Pending requests queue */
-	std::deque<nccl_net_ofi_rdma_req_t *> *pending_reqs_queue;
+	std::deque<nccl_net_ofi_rdma_req_t *> pending_reqs_queue;
 	/* Lock for `pending_reqs_queue` */
 	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist_t *ctrl_rx_buff_fl;
+	nccl_ofi_freelist_t *ctrl_rx_buff_fl = NULL;
 	/* Free list of eager rx buffers */
-	nccl_ofi_freelist_t *eager_rx_buff_fl;
+	nccl_ofi_freelist_t *eager_rx_buff_fl = NULL;
 	/* Free list of rx buffer requests */
-	nccl_ofi_freelist_t *rx_buff_reqs_fl;
+	nccl_ofi_freelist_t *rx_buff_reqs_fl = NULL;
 	/* Free list for connection messages */
-	nccl_ofi_freelist_t *conn_msg_fl;
+	nccl_ofi_freelist_t *conn_msg_fl = NULL;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely
@@ -759,6 +917,47 @@ struct nccl_net_ofi_rdma_ep {
 	/* thread id of the thread that called get_ep().  Used as the
 	   hash key for the endpoint hash */
 	long creating_thread_id;
+
+private:
+	/**
+	 * @brief	Initialize rx buffer data of endpoint
+	 *
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	inline int init_rx_buffers();
+
+
+	/**
+	 * @brief	Initialize libfabric resources of endpoint rails
+	 */
+	int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
+				    nccl_net_ofi_rdma_domain_t *domain);
+
+
+	int ep_rail_init(int dev_id, uint16_t rail_id,
+			 nccl_net_ofi_rdma_device_rail_t *dev_rail,
+			 nccl_net_ofi_rdma_domain_rail_t *domain_rail,
+			 nccl_net_ofi_ep_rail_t *ep_rail,
+			 uint32_t tclass);
+
+
+	/**
+	 * @brief	Finalize rx buffer data of endpoint
+	 *
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	inline int fini_rx_buffers();
+
+
+	/**
+	 * @brief	Release libfabric resources of rdma endpoint
+	 */
+	void release_rdma_ep_resources(int dev_id);
+
+
+	void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id, struct fid_cq *cq);
 };
 
 /*
