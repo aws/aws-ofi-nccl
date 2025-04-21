@@ -13,6 +13,7 @@
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi.h"
 #include "test-logger.h"
+#include "nccl_ofi_param.h"
 
 static inline int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
 {
@@ -130,9 +131,9 @@ static inline int test_threshold_scheduler()
 	int ret = 0;
 
 	size_t min_stripe_size = 4096;
-	setenv("OFI_NCCL_MIN_STRIPE_SIZE", "4096", 1);
 
-	setenv("OFI_NCCL_SCHED_MAX_SMALL_RR_SIZE", "64", 1);
+	ofi_nccl_min_stripe_size.set(4096);
+	ofi_nccl_sched_max_small_msg_size.set(64);
 
 	nccl_net_ofi_scheduler_t *scheduler;
 	if (nccl_net_ofi_threshold_scheduler_init(num_rails, &scheduler)) {
