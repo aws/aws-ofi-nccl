@@ -4,6 +4,8 @@
 
 #include "config.h"
 
+#include <cassert>
+#include <cstring>
 #include <math.h>
 
 #include "tuner/nccl_ofi_tuner_region.h"
