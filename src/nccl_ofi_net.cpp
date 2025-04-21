@@ -63,9 +63,6 @@ bool data_progress_auto = false;
 /* Selected communication protocol. */
 const char *nccl_ofi_selected_protocol = NULL;
 
-/* Internode network latency. */
-float net_latency = .0;
-
 /* Size of a memory page */
 size_t system_page_size = 0;
 
@@ -174,7 +171,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	/* configuration parameters */
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
-	net_latency = (float)ofi_nccl_net_latency();
 	cq_read_count = ofi_nccl_cq_read_count();
 
 	if (platform_init) {
@@ -414,7 +410,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	props->port_number = 1;
 	props->max_communicators = 0;
 
-	props->latency = net_latency >= .0 ? net_latency : .0;
+	props->latency = ofi_nccl_net_latency.get();
 
 	/*
 	 * Maximum number of grouped receives. Currently, we set it to 1 to
