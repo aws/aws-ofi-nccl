@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <cassert>
 #include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
