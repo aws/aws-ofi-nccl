@@ -597,9 +597,9 @@ int platform_init(const char **provider_filter)
 	if (nic_dup_conns == 0 && platform_data)
 		nic_dup_conns = platform_data->default_dup_conns;
 
-	if (ofi_nccl_net_latency() < 0) {
+	if (ofi_nccl_net_latency.get_source() == ParamSource::DEFAULT) {
 		if (platform_data && platform_data->latency >= 0.0) {
-			net_latency = platform_data->latency;
+			ofi_nccl_net_latency.set(platform_data->latency);
 		} else {
 			/*
 			 * Empirical testing on P5 had shown that NCCL's
@@ -608,10 +608,10 @@ int platform_init(const char **provider_filter)
 			 * generations of EFA, using it as the fall-through
 			 * default for undefined platforms.
 			 */
-			net_latency = 75.0;
+			ofi_nccl_net_latency.set(75.0);
 		}
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
-				net_latency);
+			      ofi_nccl_net_latency.get());
 	}
 
 	if (select_efa && ofi_nccl_protocol() == NULL && platform_data) {

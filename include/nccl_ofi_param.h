@@ -247,7 +247,7 @@ OFI_NCCL_PARAM_INT(rdma_rr_ctrl_msg, "RR_CTRL_MSG", 1);
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
  * platform sets a specific value.
  */
-OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
+OFI_NCCL_PARAM(float, net_latency, "NET_LATENCY", 0.0);
 
 /*
  * Eager message size limit when using RDMA protocol. Message sizes greater than
