@@ -116,18 +116,6 @@ extern bool virt_addr_mr;
 /* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
 extern bool data_progress_auto;
 
-/* Selected communication protocol.
- *
- * Until the protocol environment variable is checked in init(), this
- * is the protocol that the plugin will try to initialize; it can be
- * overridden by platform_init().  After init(), this is the protocol
- * that was selected.
- *
- * Valid values are SENDRECV and RDMA; default is SENDRECV (set by the
- * param OFI_NCCL_PROTOCOL)
- */
-extern const char *nccl_ofi_selected_protocol;
-
 /* Size of system memory pages */
 extern size_t system_page_size;
 
