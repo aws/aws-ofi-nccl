@@ -138,10 +138,10 @@ OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
- * SENDRECV and RDMA, with SENDRECV the default.  Default param is
- * NULL so that we can determine if user set the option.
+ * SENDRECV and RDMA.  Default to a nonsense name, as protocol
+ * selection is based on rail config and system support.
  */
-OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
+OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", "default");
 
 /*
  * Override the platform default for domain allocation, with

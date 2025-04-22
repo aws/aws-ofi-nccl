@@ -18,7 +18,9 @@ static ncclResult_t init_v4(ncclDebugLogger_t logFunction)
 	 * this RDMA protocol behaviour is incompatible with v4 `connect()`
 	 * API.
 	 */
-	setenv("OFI_NCCL_PROTOCOL", "SENDRECV", 0);
+	if (ofi_nccl_protocol.get_source() != ParamSource::ENVIRONMENT) {
+		ofi_nccl_protocol.set("SENDRECV");
+	}
 	return nccl_net_ofi_init_v2(logFunction);
 }
 
