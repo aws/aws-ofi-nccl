@@ -575,13 +575,19 @@ ncclResult_t nccl_net_ofi_isend_v2(void* sendComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v5(void *sComm, void* data, int size,
-				   int tag, void *mhandle, void** req)
+ncclResult_t nccl_net_ofi_isend_v5(void *sendComm, void* data, int size,
+				   int tag, void *mhandle, void** request)
+{
+	return nccl_net_ofi_isend_v9(sendComm, data, static_cast<size_t>(size), tag, mhandle, request);
+}
+
+ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
+				   int tag, void* mhandle, void** request)
 {
 	nccl_net_ofi_send_comm_t *send_comm =
-		(nccl_net_ofi_send_comm_t *)sComm;
+		(nccl_net_ofi_send_comm_t *)sendComm;
 	nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)request;
 
 	/* Validate send_comm */
 	if (OFI_UNLIKELY(send_comm == NULL)) {
@@ -604,19 +610,6 @@ ncclResult_t nccl_net_ofi_isend_v5(void *sComm, void* data, int size,
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-
-ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
-				   int tag, void* mhandle, void** request)
-{
-	ncclResult_t validation_result = msg_length_verify_max_size(&size, 1);
-	if (validation_result != ncclSuccess) {
-		return check_return(validation_result);
-	}
-
-	return nccl_net_ofi_isend_v5(sendComm, data, (int)size, tag, mhandle, request);
-}
-
-
 ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size,
 				   void* mhandle, void** request)
 {
@@ -626,13 +619,37 @@ ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size,
 }
 
 
-ncclResult_t nccl_net_ofi_irecv_v5(void* rComm, int n, void** buffers, int* sizes,
-				   int *tags, void** mhandles, void** req)
+ncclResult_t nccl_net_ofi_irecv_v5(void* recvComm, int n, void** data, int* sizes,
+				   int *tags, void** mhandles, void** request)
 {
+	size_t castedSizes[NCCL_OFI_MAX_RECVS] = {0};
+	for (int i = 0; i < n; i++) {
+		castedSizes[i] = static_cast<size_t>(sizes[i]);
+	}
+
+	return nccl_net_ofi_irecv_v9(recvComm, n, data, castedSizes, tags, mhandles, request);
+}
+
+
+ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
+				   size_t* sizes, int* tags, void** mhandles, void** request)
+{
+	if (OFI_UNLIKELY(recvComm == NULL || data == NULL ||
+				  sizes == NULL || tags == NULL ||
+				  mhandles == NULL || request == NULL)) {
+		NCCL_OFI_WARN("Invalid argument: NULL pointer detected");
+		return check_return(ncclInvalidArgument);
+	}
+
+	if (OFI_UNLIKELY(n <= 0 || n > NCCL_OFI_MAX_RECVS)) {
+		NCCL_OFI_WARN("Invalid number of receives: %d (max: %d)", n, NCCL_OFI_MAX_RECVS);
+		return check_return(ncclInvalidArgument);
+	}
+
 	nccl_net_ofi_recv_comm_t *recv_comm =
-		(nccl_net_ofi_recv_comm_t *)rComm;
+		(nccl_net_ofi_recv_comm_t *)recvComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)request;
 
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
@@ -661,39 +678,9 @@ ncclResult_t nccl_net_ofi_irecv_v5(void* rComm, int n, void** buffers, int* size
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->recv(recv_comm, n, buffers, sizes, tags, handles, base_req);
+	int ret = recv_comm->recv(recv_comm, n, data, sizes, tags, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
-
-
-ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
-				   size_t* sizes, int* tags, void** mhandles, void** request)
-{
-	if (OFI_UNLIKELY(recvComm == NULL || data == NULL ||
-					sizes == NULL || tags == NULL ||
-					mhandles == NULL || request == NULL)) {
-		NCCL_OFI_WARN("Invalid argument: NULL pointer detected");
-		return check_return(ncclInvalidArgument);
-	}
-
-	if (OFI_UNLIKELY(n <= 0 || n > NCCL_OFI_MAX_RECVS)) {
-		NCCL_OFI_WARN("Invalid number of receives: %d (max: %d)", n, NCCL_OFI_MAX_RECVS);
-		return check_return(ncclInvalidArgument);
-	}
-
-	ncclResult_t validation_result = msg_length_verify_max_size(sizes, n);
-	if (validation_result != ncclSuccess) {
-		return check_return(validation_result);
-	}
-
-	int sizesInt[NCCL_OFI_MAX_RECVS] = {0};
-	for (int i = 0; i < n; i++) {
-		sizesInt[i] = (int)sizes[i];
-	}
-
-	return nccl_net_ofi_irecv_v5(recvComm, n, data, sizesInt, tags, mhandles, request);
-}
-
 
 ncclResult_t nccl_net_ofi_test_v2(void* req, int* done, int* size)
 {
