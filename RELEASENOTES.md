@@ -5,6 +5,30 @@
 - Amazon Linux 2 and Amazon Linux 2023
 - Ubuntu 20.04 LTS, 22.04 LTS and 24.04 LTS.
 
+# v1.14.2 (2025-04)
+
+This is a general release that is broadly applicable and is designed to be 
+used with any network that can satisfy the network capabilities the plugin 
+requires, as expressed through the Libfabric API's provider discovery mechanism.
+We are expanding our test coverage to continue making general releases going
+forward. If you would like to facilitate this effort to get coverage for
+networks you intend to use the plugin with, please reach out to us.
+
+With this release, building with platform-aws requires
+[Libfabric v1.22.0amzn4.0](https://github.com/aws/libfabric/commits/v1.22.0amzn4.0)
+or greater. And it is currently tested with versions
+up to [Libfabric 2.1.0](https://github.com/ofiwg/libfabric/releases/tag/v2.1.0)
+
+The 1.14.x release series supports
+[NCCL 2.26.2-1](https://github.com/NVIDIA/nccl/releases/tag/v2.26.2-1)
+while maintaining backward compatibility with older NCCL versions
+([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+Improvements:
+
+  - Enable DMA-BUF by default, but blocklist DMA-BUF on EFA versions 1-3 due to
+    a known issue on those platforms.
+
 # v1.14.1 (2025-04)
 
 This is a general release that is broadly applicable and is designed to be 
