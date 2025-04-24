@@ -3524,7 +3524,7 @@ static int process_cq_if_pending(nccl_net_ofi_rdma_ep_t *ep)
 }
 
 static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
-			 int *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles,
+			 size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles,
 			 nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
@@ -5854,7 +5854,7 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req)
  * @brief	Send a message. This "interface function" is called, indirectly, from
  *       	the application
  */
-static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
+static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
 			 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
