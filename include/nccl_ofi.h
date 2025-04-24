@@ -558,7 +558,7 @@ struct nccl_net_ofi_send_comm {
 	 */
 	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
+	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
 			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
 
 	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
@@ -591,7 +591,7 @@ struct nccl_net_ofi_recv_comm {
 	 */
 	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
-	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes, int *tags,
+	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, size_t *sizes, int *tags,
 			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
 
 	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
