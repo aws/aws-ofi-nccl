@@ -1070,6 +1070,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 	domain->release = nccl_net_ofi_domain_release;
 	domain->endpoint = NULL;
 	domain->creating_thread_id = 0;
+	domain->domain_active = true;
 
 	domain->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {

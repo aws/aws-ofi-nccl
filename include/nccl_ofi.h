@@ -413,6 +413,9 @@ struct nccl_net_ofi_domain {
 	/* thread id of the thread that called get_domain().  Used as
 	   the hash key for the domain hash */
 	long creating_thread_id;
+
+	/* Domain state that indicates if tearing down is needed */
+	bool domain_active;
 };
 
 
