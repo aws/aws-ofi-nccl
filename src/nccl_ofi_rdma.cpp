@@ -159,21 +159,6 @@ static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_devi
 	return (nccl_net_ofi_rdma_plugin_t*)device->base.plugin;
 }
 
-
-static nccl_net_ofi_rdma_ep_t *rdma_req_get_ep(nccl_net_ofi_rdma_req_t *req)
-{
-	/* TODO: this function doesn't work for rx buffers, which have no
-	   associated comm */
-	assert(req->comm);
-	return (nccl_net_ofi_rdma_ep_t *)req->comm->ep;
-}
-
-
-static nccl_net_ofi_rdma_device_t *rdma_req_get_device(nccl_net_ofi_rdma_req_t *req)
-{
-	return (nccl_net_ofi_rdma_device_t *)rdma_req_get_ep(req)->base.domain->device;
-}
-
 /*
  * @brief	Get endpoint communicator with given ID
  */
@@ -905,7 +890,9 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	assert(ep != NULL);
 
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
+	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
 
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
@@ -2200,8 +2187,11 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 	}
 
 	if (send_data->schedule) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
-		nccl_net_ofi_release_schedule(device->scheduler, send_data->schedule);
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+		assert(ep != NULL);
+		nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+		assert(domain != NULL);
+		nccl_net_ofi_release_schedule(domain->scheduler, send_data->schedule);
 		send_data->schedule = NULL;
 	}
 
@@ -2278,8 +2268,11 @@ static inline int free_send_ctrl_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_ctrl_data_t *send_ctrl_data = get_send_ctrl_data(req);
 
 	if (send_ctrl_data->ctrl_schedule != NULL) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
-		nccl_net_ofi_release_schedule(device->scheduler, send_ctrl_data->ctrl_schedule);
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		assert(ep != NULL);
+		nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+		assert(domain != NULL);
+		nccl_net_ofi_release_schedule(domain->scheduler, send_ctrl_data->ctrl_schedule);
 		send_ctrl_data->ctrl_schedule = NULL;
 	}
 
@@ -2304,8 +2297,11 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_device_t *device = rdma_req_get_device(req);
-		nccl_net_ofi_release_schedule(device->scheduler, send_close_data->ctrl_schedule);
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		assert(ep != NULL);
+		nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+		assert(domain != NULL);
+		nccl_net_ofi_release_schedule(domain->scheduler, send_close_data->ctrl_schedule);
 		send_close_data->ctrl_schedule = NULL;
 	}
 
@@ -3269,8 +3265,10 @@ static inline int insert_send_ctrl_req(
 				nccl_net_ofi_rdma_req_t *recv_req,
 				bool recv_completion_optional)
 {
-	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
+	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
 	nccl_net_ofi_rdma_req_t *send_ctrl_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(send_ctrl_req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI send control request for device %d",
@@ -5311,7 +5309,9 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(ep);
-	nccl_net_ofi_scheduler_t *scheduler = device->scheduler;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	assert(domain != NULL);
+	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
@@ -7397,6 +7397,13 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	}
 	free(domain->domain_rails);
 
+	if (domain->scheduler) {
+		ret = domain->scheduler->fini(domain->scheduler);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of device failed, scheduler_fini returned %s",
+					strerror(-ret));
+		}
+	}
 	if (domain->ep_addr_list) {
 		delete domain->ep_addr_list;
 		domain->ep_addr_list = NULL;
@@ -7496,6 +7503,13 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
+
+	/* Create scheduler */
+	ret = nccl_net_ofi_threshold_scheduler_init(domain->num_rails, &domain->scheduler);
+	if (ret != 0) {
+		goto error;
+	}
+	assert(domain->scheduler);
 
 error:
 	if (ret != 0) {
@@ -7658,17 +7672,6 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		free(device->device_rails);
 	}
 
-	if (device->scheduler) {
-		ret = device->scheduler->fini(device->scheduler);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Cleanup of device failed, scheduler_fini returned %s",
-				      strerror(-ret));
-			if (first_error == 0) {
-				first_error = ret;
-			}
-		}
-	}
-
 	if (device->comms) {
 		free(device->comms);
 		device->comms = NULL;
@@ -7785,13 +7788,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	} else {
 		NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails", length);
 	}
-
-	/* Create scheduler */
-	ret = nccl_net_ofi_threshold_scheduler_init(length, &device->scheduler);
-	if (ret != 0) {
-		goto error;
-	}
-	assert(device->scheduler);
 
 	/* Set NIC information */
 	device->num_rails = length;
