@@ -802,9 +802,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	 * and its base struct. */
 	nccl_net_ofi_device_t base;
 
-	/* Message scheduler */
-	nccl_net_ofi_scheduler_t *scheduler;
-
 	/* Number of rails */
 	uint16_t num_rails;
 
@@ -850,6 +847,9 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t *ep_addr_list;
+
+	/* Message scheduler */
+	nccl_net_ofi_scheduler_t *scheduler;
 } nccl_net_ofi_rdma_domain_t;
 
 
