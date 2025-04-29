@@ -7316,6 +7316,11 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		return -EINVAL;
 	}
 
+	if (OFI_UNLIKELY(domain->base.domain_active == false)) {
+		NCCL_OFI_WARN("Domain is inactive");
+		return -EINVAL;
+	}
+
 	device = rdma_domain_get_device(domain);
 	assert(device != NULL);
 
@@ -7417,6 +7422,10 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 	if (ret == 0) {
 		ret = init_max_write_inline_size_if_not_initialized(device, ep);
 	}
+	
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+	++domain->base.ref_cnt;
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 error:
 	if (ret != 0) {

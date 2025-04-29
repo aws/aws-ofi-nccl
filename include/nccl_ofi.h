@@ -416,6 +416,8 @@ struct nccl_net_ofi_domain {
 
 	/* Domain state that indicates if tearing down is needed */
 	bool domain_active;
+
+	size_t ref_cnt;
 };
 
 

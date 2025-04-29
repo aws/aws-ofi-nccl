@@ -1071,6 +1071,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 	domain->endpoint = NULL;
 	domain->creating_thread_id = 0;
 	domain->domain_active = true;
+	domain->ref_cnt = 0;
 
 	domain->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {
@@ -1137,6 +1138,7 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool fo
 
 	if (ep->ref_cnt == 0 || force_cleanup) {
 		domain->endpoint = NULL;
+		domain->ref_cnt--;
 
 		if (force_cleanup && ep->ref_cnt != 0) {
 			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
@@ -1158,7 +1160,7 @@ cleanup:
 
 	/* Skip domain->release when handled by device->release_all_domain_and_ep()
 	 * to avoid domain lock issue after the domain freed */
-	if (!force_cleanup && ret == 0) {
+	if (!force_cleanup && ret == 0 && domain->ref_cnt == 0) {
 		ret = domain->release(domain, skip_lock, false);
 	}
 
