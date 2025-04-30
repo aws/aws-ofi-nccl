@@ -125,9 +125,6 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 	/* Address vector handle */
 	struct fid_av *av;
 
-	/* Completion Queue handle */
-	struct fid_cq *cq;
-
 	/* free list for control messages */
 	nccl_ofi_freelist_t *conn_msg_fl;
 } nccl_net_ofi_sendrecv_ep_t;
@@ -143,6 +140,10 @@ typedef struct nccl_net_ofi_sendrecv_domain {
 
 	/* Access Domain handle */
 	struct fid_domain *domain;
+
+	/* Completion Queue handle */
+	struct fid_cq *cq;
+
 } nccl_net_ofi_sendrecv_domain_t;
 
 
