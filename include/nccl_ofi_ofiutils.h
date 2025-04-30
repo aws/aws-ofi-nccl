@@ -15,18 +15,19 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 /*
  * @brief	Allocates and initialises libfabric endpoint and AV.
  *
+ * @param cq:	Completion queue to which the new endpoint will be bound
  * @return	Endpoint ep
  * @return	Address vector av
  */
 int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *domain,
 				      struct fid_ep **ep,   struct fid_av **av,
-				      struct fid_cq **cq);
+				      struct fid_cq *cq);
 
 /*
  * @brief	Release libfabric endpoint and address vector
  */
 void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av,
-				  struct fid_cq *cq, int dev_id);
+				  int dev_id);
 
 /*
  * @brief	Free libfabric NIC info list.

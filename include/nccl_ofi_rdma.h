@@ -669,9 +669,6 @@ struct nccl_net_ofi_ep_rail {
 	/* Address vector handle */
 	struct fid_av *av;
 
-	/* Completion Queue handle */
-	struct fid_cq *cq;
-
 	/*
 	 * Rx buffer management
 	 */

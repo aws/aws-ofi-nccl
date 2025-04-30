@@ -499,7 +499,7 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -597,7 +597,7 @@ static int sendrecv_recv_conn_post(nccl_net_ofi_sendrecv_listen_comm_t *l_comm,
 		 * Process completions so that you have enough
 		 * resources for posting receive buffer
 		 */
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 		if (OFI_UNLIKELY(ret != 0))
 			return ret;
 	}
@@ -1106,7 +1106,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	}
 
 	/* Progress NCCL OFI */
-	ret = sendrecv_cq_process(ep->cq);
+	ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -1321,12 +1321,12 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 		if (rc == 0) {
 			break;
 		} else if (rc == -FI_EAGAIN) {
-			/* Retrieve and validate endpoint */
-			nccl_net_ofi_sendrecv_ep_t *ep =
-				(nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
-			if (OFI_UNLIKELY(ep == NULL)) {
+			/* Retrieve and validate domain */
+			auto domain = reinterpret_cast<nccl_net_ofi_sendrecv_domain_t *>
+				(r_comm->base.base.ep->domain);
+			if (OFI_UNLIKELY(domain == NULL)) {
 				ret = -EINVAL;
-				NCCL_OFI_WARN("Invalid endpoint provided");
+				NCCL_OFI_WARN("Invalid domain provided");
 				goto error;
 			}
 
@@ -1334,7 +1334,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = sendrecv_cq_process(ep->cq);
+			ret = sendrecv_cq_process(domain->cq);
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		} else {
@@ -1633,7 +1633,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(domain->cq);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(req);
 			return ret;
@@ -1897,7 +1897,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 					       self_req,
 					       sendrecv_req_state_get_string(self_req->state));
 
-				ret = sendrecv_cq_process(ep->cq);
+				ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 
 				*base_req = NULL;
 				goto exit;
@@ -1936,7 +1936,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		      s_comm->remote_ep, s_comm->tag, sendrecv_req_get_ofi_context(req));
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 		/* Return NULL request */
 		*base_req = NULL;
 		goto error;
@@ -2176,7 +2176,7 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 		 * Process completions so that you have enough
 		 * resources for sending connect message
 		 */
-		int res = sendrecv_cq_process(ep->cq);
+		int res = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 		if (res != 0)
 			return res;
 	} else if (rc != 0) {
@@ -2272,7 +2272,7 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Progress our engine to get completions */
-		ret = sendrecv_cq_process(ep->cq);
+		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
 		if (OFI_UNLIKELY(ret != 0)) {
 			assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 			sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
@@ -2340,11 +2340,9 @@ static int nccl_net_ofi_sendrecv_endpoint_free(nccl_net_ofi_ep_t *base_ep)
 		NCCL_OFI_WARN("nccl_ofi_freelist_fini failed: %d", ret);
 	}
 	
-	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, ep->cq,
-				     device->base.dev_id);
+	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, device->base.dev_id);
 	ep->ofi_ep = NULL;
 	ep->av = NULL;
-	ep->cq = NULL;
 
 	free(ep);
 
@@ -2398,7 +2396,8 @@ static int nccl_net_ofi_sendrecv_domain_create_endpoint(nccl_net_ofi_domain_t *b
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
 						ofi_domain,
 						&ep->ofi_ep,
-						&ep->av, &ep->cq);
+						&ep->av,
+						domain->cq);
 	if (ret != 0) {
 		return ret;
 	}
@@ -2423,6 +2422,14 @@ static int nccl_net_ofi_sendrecv_domain_free(nccl_net_ofi_domain_t *base_domain)
 	int ret;
 	nccl_net_ofi_sendrecv_domain_t *domain = (nccl_net_ofi_sendrecv_domain_t *)base_domain;
 
+	if (domain->cq) {
+		ret = fi_close(&domain->cq->fid);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to cleanup cq: %d", ret);
+		}
+		domain->cq = nullptr;
+	}
+
 	ret = nccl_net_ofi_domain_fini(base_domain);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to cleanup base domain: %d", ret);
@@ -2442,6 +2449,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_ne
 	int ret;
 	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
 	nccl_net_ofi_sendrecv_domain_t *domain = NULL;
+	struct fi_cq_attr cq_attr = {};
 
 	domain = (nccl_net_ofi_sendrecv_domain_t*)calloc(1, sizeof(nccl_net_ofi_sendrecv_domain_t));
 	if (domain == NULL) {
@@ -2461,6 +2469,15 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_ne
 			&domain->domain, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
+			      ret, fi_strerror(-ret));
+		goto exit;
+	}
+
+	/* Create a domain-shared completion queue */
+	cq_attr.format = FI_CQ_FORMAT_TAGGED;
+	ret = fi_cq_open(domain->domain, &cq_attr, &domain->cq, NULL);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
 		goto exit;
 	}
