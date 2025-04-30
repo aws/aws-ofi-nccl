@@ -220,11 +220,10 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 
 
 int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *domain,
-				      struct fid_ep **ep, struct fid_av **av, struct fid_cq **cq)
+				      struct fid_ep **ep, struct fid_av **av, struct fid_cq *cq)
 {
 	int ret = 0;
 	struct fi_av_attr av_attr = {};
-	struct fi_cq_attr cq_attr = {};
 
 	/* Create transport level communication endpoint(s) */
 	ret = fi_endpoint(domain, info, ep, NULL);
@@ -232,21 +231,6 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 		NCCL_OFI_WARN("Couldn't allocate endpoint. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
 		goto error;
-	}
-
-	if (*cq == NULL) {
-		if (info->caps & FI_TAGGED) {
-			cq_attr.format = FI_CQ_FORMAT_TAGGED;
-		} else {
-			cq_attr.format = FI_CQ_FORMAT_DATA;
-		}
-
-		ret = fi_cq_open(domain, &cq_attr, cq, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			goto error;
-		}
 	}
 
 	/* Open AV */
@@ -258,7 +242,7 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 	}
 
 	/* Bind CQ to endpoint */
-	ret = fi_ep_bind(*ep, &((*cq)->fid), FI_SEND | FI_RECV);
+	ret = fi_ep_bind(*ep, &(cq->fid), FI_SEND | FI_RECV);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't bind EP-CQ. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
@@ -396,27 +380,19 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 		*av = NULL;
 	}
 
-	if (*cq) {
-		fi_close((fid_t)*cq);
-		*cq = NULL;
-	}
-
 	return ret;
 }
 
 /*
  * @brief	Release libfabric endpoint, address vector, and completion queue
  */
-void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av, struct fid_cq *cq, int dev_id)
+void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av, int dev_id)
 {
 	if (ep)
 		fi_close((fid_t)ep);
 
 	if (av)
 		fi_close((fid_t)av);
-
-	if (cq)
-		fi_close((fid_t)cq);
 
 	NCCL_OFI_TRACE(NCCL_NET, "Libfabric endpoint and address vector of dev #%d is released", dev_id);
 }

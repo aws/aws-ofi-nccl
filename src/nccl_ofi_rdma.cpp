@@ -1993,7 +1993,7 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 }
 
 
-static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_t *rail)
+static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_rdma_domain_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	ssize_t rc = 0;
@@ -2003,7 +2003,7 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_ep_t *ep, nccl_net_ofi_ep_rail_
 		/* Receive completions for the given endpoint */
 		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
 		if (rc > 0) {
-			ret = rdma_process_completions(cqe_buffers, rc, rdma_endpoint_get_device(ep), rail->rail_id);
+			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
@@ -2058,10 +2058,13 @@ static int ofi_process_cq(nccl_net_ofi_rdma_ep_t *ep)
 {
 	int ret;
 
-	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_rail(ep, rail_id);
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain);
 
-		ret = ofi_process_cq_rail(ep, rail);
+	for (uint16_t rail_id = 0; rail_id != domain->num_rails; ++rail_id) {
+		nccl_net_ofi_rdma_domain_rail_t *rail = rdma_domain_get_rail(domain, rail_id);
+
+		ret = ofi_process_cq_rail(device, rail);
 		if (ret != 0) {
 			goto exit;
 		}
@@ -5957,10 +5960,11 @@ retry:
 	/* look for control messages and then retry the message search
 	   to avoid unnecessary polling / queueing. */
 	if (OFI_UNLIKELY(!polled_cq && !have_ctrl)) {
-		for (uint16_t rail_id = 0; rail_id != ep->num_control_rails; ++rail_id) {
-			nccl_net_ofi_ep_rail_t *rail = rdma_endpoint_get_control_rail(ep, rail_id);
+		for (uint16_t rail_id = 0; rail_id != s_comm->num_control_rails; ++rail_id) {
+			nccl_net_ofi_rdma_domain_rail_t *rail =
+				rdma_domain_get_rail(domain, rail_id);
 
-			ret = ofi_process_cq_rail(ep, rail);
+			ret = ofi_process_cq_rail(rdma_domain_get_device(domain), rail);
 			if (OFI_UNLIKELY(ret != 0)) {
 				goto error;
 			}
@@ -6943,20 +6947,12 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 }
 
 
-static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id, struct fid_cq *cq)
+static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
 {
-	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		/* when using an endpoint per communicator with a shared cq
-		(instead of a cq per endpoint), set the rail->cq pointer to NULL
-		here so	that the cq isn't actually released in ep_release().
-		The cq will be released when the domain is cleaned up */
-		cq = NULL;
-	}
 	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
-				     cq, dev_id);
+				     dev_id);
 	rail->ofi_ep = NULL;
 	rail->av = NULL;
-	rail->cq = NULL;
 }
 
 
@@ -6969,12 +6965,12 @@ static void release_rdma_ep_resources(nccl_net_ofi_rdma_ep_t *ep, int dev_id)
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_control_rails; ++rail_id) {
 		rail = rdma_endpoint_get_control_rail(ep, rail_id);
-		ep_rail_release(rail, dev_id, NULL);
+		ep_rail_release(rail, dev_id);
 	}
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
 		rail = rdma_endpoint_get_rail(ep, rail_id);
-		ep_rail_release(rail, dev_id, rail->cq);
+		ep_rail_release(rail, dev_id);
 	}
 }
 
@@ -7021,25 +7017,6 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 	int ret = 0;
 	struct fi_info *rail_info = dev_rail->info;
 
-	if (ep_rail->cq == NULL) {
-		/* cq will be NULL most of the time, but there's a
-		   hack in init_rail_ofi_resources to have the control
-		   rails share the data rail's cq.  So respect that
-		   override for now.
-
-		   domain_rail->cq will be NULL if we're not using an endpoint
-		   per communicator, in which case, init_connection() below
-		   will allocate us a CQ */
-		ep_rail->cq = domain_rail->cq;
-	}
-
-#ifndef NDEBUG
-	if (ofi_nccl_endpoint_per_communicator() != 0) {
-		assert(ep_rail->cq != NULL);
-		assert(domain_rail->cq != NULL);
-	}
-#endif
-
 	if (tclass != FI_TC_UNSPEC) {
 		rail_info = fi_dupinfo(rail_info);
 		if (rail_info == NULL) {
@@ -7054,7 +7031,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 						domain_rail->domain,
 						&ep_rail->ofi_ep,
 						&ep_rail->av,
-						&ep_rail->cq);
+						domain_rail->cq);
 	if (tclass != FI_TC_UNSPEC) {
 		fi_freeinfo(rail_info);
 	}
@@ -7066,7 +7043,7 @@ static int ep_rail_init(nccl_net_ofi_rdma_ep_t *ep,
 
 	ret = set_local_address(ep_rail->ofi_ep, ep_rail);
 	if (ret != 0) {
-		ep_rail_release(ep_rail, dev_id, ep_rail->cq);
+		ep_rail_release(ep_rail, dev_id);
 		return ret;
 	}
 
@@ -7109,7 +7086,6 @@ static int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 		rail = rdma_endpoint_get_rail(ep, rail_id);
 		control_rail = rdma_endpoint_get_control_rail(ep, rail_id);
 
-		control_rail->cq = rail->cq;
 		ret = ep_rail_init(ep, dev_id, rail_id, rail_dev, domain_rail, control_rail, tc);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing control rail %d failed", rail_id);
@@ -7479,21 +7455,17 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 			goto error;
 		}
 
-		/* need the shared CQ here as well */
-		if (ofi_nccl_endpoint_per_communicator() != 0) {
-			/* Create device-shared completion queue */
-			struct fi_cq_attr cq_attr = {};
-			cq_attr.format = FI_CQ_FORMAT_DATA;
-			ret = fi_cq_open(domain_rail->domain, &cq_attr, &domain_rail->cq, NULL);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-					      ret, fi_strerror(-ret));
-				goto error;
-			}
-			assert(domain_rail->cq != NULL);
-		} else {
-			domain_rail->cq = NULL;
+		/* Create a shared completion queue for all Libfabric endpoints
+		   opened on this domain rail */
+		struct fi_cq_attr cq_attr = {};
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+		ret = fi_cq_open(domain_rail->domain, &cq_attr, &domain_rail->cq, NULL);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			goto error;
 		}
+		assert(domain_rail->cq != NULL);
 	}
 
 	/*
