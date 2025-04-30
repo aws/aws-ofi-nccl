@@ -44,14 +44,16 @@ public:
 	void set_conn_resp_msg_data(const void *data);
 
 	/**
-	 * Test whether the connection is complete. This will return ready=true
+	 * Test whether the connection is complete. This will return 1
 	 * when the connect response message has been delivered and the
 	 * connection is ready to use
 	 *
-	 * @param ready: set to true when connection is complete
-	 * @return: negative errno code on network-related error
+	 * @return:
+	 *      1: connection complete
+	 *      0: connection not yet complete (try again later)
+	 *      negative errno code: on network-related error
 	 */
-	int test_ready(bool *ready);
+	int test_ready();
 
 	~nccl_ofi_cm_receiver() = default;
 
@@ -146,20 +148,25 @@ class nccl_ofi_cm_send_connector
 {
 public:
 	/**
-	 * Test whether the connection is complete. This will return ready=true
-	 * when the connect message has been delivered and the connect response
-	 * message has been received.
+	 * Test whether the connection is complete. This will return 1 when the
+	 * connect message has been delivered and the connect response message
+	 * has been received.
 	 *
-	 * @param ready: set to true when connection complete
-	 * @return: negative errno code on network-related error
+	 * @return:
+	 *      1: connection complete
+	 *      0: connection not yet complete (try again later)
+	 *      negative errno code: on network-related error
 	 */
-	int test_ready(bool *ready);
+	int test_ready();
 
 	/**
 	 * Pointer to transport-specific data returned from receiver side in the
 	 * connect response message, once connection is complete. This returns a
 	 * pointer to memory owned by this object, and is invalidated when
 	 * send_connector is destroyed.
+	 *
+	 * This function should not be called until the connection is complete
+	 * (test_ready returns 1); otherwise an error will occur
 	 */
 	const void *get_conn_resp_msg();
 

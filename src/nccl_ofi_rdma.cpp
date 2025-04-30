@@ -4715,8 +4715,6 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	int dev_id = device->base.dev_id;
 
-	bool ready = false;
-
 	if (l_comm->stage == COMM_CONNECTED) {
 		NCCL_OFI_WARN("listenComm %p object already has an active connection (%d).",
 			      l_comm, l_comm->stage);
@@ -4842,15 +4840,19 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 			goto exit;
 		}
 
-		ret = r_comm->receiver->test_ready(&ready);
-		if (ret != 0) {
+		ret = r_comm->receiver->test_ready();
+		if (ret < 0) {
+			/* Error case */
 			goto exit;
 		}
 
 		/* Wait until connect response message is delivered */
-		if (!ready) {
+		if (ret == 0) {
 			return 0;
 		}
+
+		/* If we make it here, receiver is ready. */
+		ret = 0;
 
 		/* Free the receiver object */
 		delete r_comm->receiver;
@@ -6317,8 +6319,6 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 
-	bool ready = false;
-
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
@@ -6389,10 +6389,13 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 		}
 
 		/* Check if the connection is complete */
-		ret = s_comm->connector->test_ready(&ready);
-		if (ret != 0 || !ready) {
+		ret = s_comm->connector->test_ready();
+		if (ret <= 0) {
 			return ret;
 		}
+
+		/* If we make it here, connector is ready */
+		ret = 0;
 
 		ret = finish_connect(s_comm);
 		if (OFI_UNLIKELY(ret != 0)) {

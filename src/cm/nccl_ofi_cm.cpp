@@ -114,7 +114,7 @@ void nccl_ofi_cm_receiver::set_conn_resp_msg_data(const void *data)
 }
 
 
-int nccl_ofi_cm_receiver::test_ready(bool *ready)
+int nccl_ofi_cm_receiver::test_ready()
 {
 	int ret = 0;
 
@@ -135,9 +135,13 @@ int nccl_ofi_cm_receiver::test_ready(bool *ready)
 		conn_resp_msg_sent = true;
 	}
 
-	*ready = conn_resp_msg_delivered;
+	ret = resources.pending_reqs_queue.process_pending_reqs();
+	if (ret != 0) {
+		return ret;
+	}
 
-	return resources.pending_reqs_queue.process_pending_reqs();
+	ret = conn_resp_msg_delivered ? 1 : 0;
+	return ret;
 }
 
 void nccl_ofi_cm_receiver::set_conn_resp_msg_delivered()
@@ -206,7 +210,7 @@ void nccl_ofi_cm_send_connector::process_conn_resp_msg(const nccl_ofi_cm_conn_ms
 }
 
 
-int nccl_ofi_cm_send_connector::test_ready(bool *ready)
+int nccl_ofi_cm_send_connector::test_ready()
 {
 	int ret = 0;
 
@@ -222,9 +226,14 @@ int nccl_ofi_cm_send_connector::test_ready(bool *ready)
 		conn_msg_sent = true;
 	}
 
-	*ready = (conn_msg_delivered && conn_resp_msg_data);
+	ret = resources.pending_reqs_queue.process_pending_reqs();
+	if (ret != 0) {
+		return ret;
+	}
 
-	return resources.pending_reqs_queue.process_pending_reqs();
+	ret = (conn_msg_delivered && conn_resp_msg_data) ? 1 : 0;
+
+	return ret;
 }
 
 
