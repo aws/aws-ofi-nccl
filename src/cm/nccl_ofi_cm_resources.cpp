@@ -1,6 +1,7 @@
 #include "cm/nccl_ofi_cm_resources.h"
 
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_param.h"
 
 using namespace nccl_ofi_cm;
 
@@ -126,8 +127,12 @@ cm_resources::cm_resources(fi_info *info, fid_domain *domain, fid_cq *cq,
 	next_connector_id(0),
 	rx_reqs()
 {
-	/* TODO make param */
-	const size_t num_rx_reqs = 1;
+	const size_t num_rx_reqs = ofi_nccl_cm_num_rx_buffers();
+
+	if (num_rx_reqs < 1) {
+		NCCL_OFI_WARN("Invalid value for OFI_NCCL_CM_NUM_RX_BUFFERS: %zu", num_rx_reqs);
+		throw std::runtime_error("Invalid value for OFI_NCCL_CM_NUM_RX_BUFFERS");
+	}
 
 	rx_reqs.reserve(num_rx_reqs);
 	for (size_t i = 0; i < num_rx_reqs; ++i) {
