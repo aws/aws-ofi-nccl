@@ -4715,13 +4715,6 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	int dev_id = device->base.dev_id;
 
-	if (l_comm->stage == COMM_CONNECTED) {
-		NCCL_OFI_WARN("listenComm %p object already has an active connection (%d).",
-			      l_comm, l_comm->stage);
-		ret = -EINVAL;
-		goto exit;
-	}
-
 	/* Set return receive communicator to NULL until accept finalizes */
 	*recv_comm = NULL;
 
@@ -4879,6 +4872,9 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
 	++num_open_comms;
 	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
+
+	/* Reset l_comm stage for the next accept() */
+	l_comm->stage = { };
 
  exit:;
 	/* Close receive communicator in case listen operation failed */

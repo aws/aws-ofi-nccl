@@ -1561,7 +1561,9 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		return -EINVAL;
 	}
 
-	comm_state->comm = &r_comm->base.base;
+	/* Reset comm state for next accept() call */
+	(*comm_state) = { };
+
 	*recv_comm = &r_comm->base;
 
 	return ret;
