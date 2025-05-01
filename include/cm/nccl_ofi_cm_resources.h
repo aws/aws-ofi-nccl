@@ -8,6 +8,7 @@
 #include <rdma/fabric.h>
 
 #include <deque>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 
@@ -236,6 +237,8 @@ private:
 class cm_resources
 {
 public:
+	/* Mutex guarding all CM operations */
+	std::mutex cm_mutex;
 	/* Endpoint for CM operations */
 	endpoint ep;
 private:
