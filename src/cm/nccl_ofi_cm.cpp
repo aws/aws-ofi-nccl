@@ -12,10 +12,9 @@
 #include "cm/nccl_ofi_cm.h"
 
 nccl_ofi_connection_manager::nccl_ofi_connection_manager
-	(fi_info *info, fid_domain *domain, fid_cq *cq,
-	 nccl_ofi_idpool_t &mr_key_pool, size_t conn_msg_data_size) :
+	(nccl_net_ofi_domain_t &domain, size_t conn_msg_data_size) :
 
-	resources(info, domain, cq, mr_key_pool, conn_msg_data_size)
+	resources(domain, conn_msg_data_size)
 {
 }
 

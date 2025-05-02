@@ -2255,8 +2255,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_ne
 		goto exit;
 	}
 
-	domain->cm = new nccl_ofi_connection_manager(device->info, domain->domain, domain->cq,
-						     *(domain->base.mr_rkey_pool),
+	domain->cm = new nccl_ofi_connection_manager(domain->base,
 						     sizeof(nccl_ofi_connection_info_t));
 
 exit:

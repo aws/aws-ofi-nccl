@@ -6,11 +6,12 @@
 using namespace nccl_ofi_cm;
 
 
-endpoint::endpoint(fi_info *info, fid_domain *_domain, nccl_ofi_idpool_t &_mr_key_pool,
-		   fid_cq *cq) :
-	ofi_domain(_domain),
-	mr_key_pool(_mr_key_pool)
+endpoint::endpoint(nccl_net_ofi_domain_t &domain) :
+	ofi_domain(domain.get_ofi_domain(&domain)),
+	mr_key_pool(*(domain.mr_rkey_pool))
 {
+	fi_info *info = domain.device->get_info(domain.device);
+	fid_cq *cq = domain.get_cq(&domain);
 	int ret = nccl_ofi_ofiutils_init_connection(info, ofi_domain, &this->ofi_ep, &this->av, cq);
 	if (ret != 0) {
 		/* We can't return an error. If not caught, this is going to propagate up and
@@ -116,9 +117,8 @@ int pending_requests_queue::process_pending_reqs()
 }
 
 
-cm_resources::cm_resources(fi_info *info, fid_domain *domain, fid_cq *cq,
-			   nccl_ofi_idpool_t &mr_key_pool, size_t _conn_msg_data_size) :
-	ep(info, domain, mr_key_pool, cq),
+cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_size) :
+	ep(domain),
 	conn_msg_data_size(_conn_msg_data_size),
 	buff_mgr(ep, get_conn_msg_size()),
 	listener_map(),

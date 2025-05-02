@@ -227,27 +227,18 @@ public:
 	 * Initializes the CM system state. Creates an endpoint and posts
 	 * initial buffer pool
 	 *
-	 * @param info, domain:
-	 *      Libfabric info and domain objects against which the CM endpoint
-	 *      will be created
-	 *
-	 * @param cq:
-	 *      the completion queue to bind the new endpoint to. Ops submitted
-	 *      through the CM code will have a context pointer to
+	 * @param domain:
+	 *      OFI domain object to which the CM endpoint will be bound.
+	 *      The CM will create its own endpoint, bound to the domain's CQ.
+	 *      Ops submitted through the CM code will have a context pointer to
 	 *      nccl_net_ofi_context_t, with appropriate completion handling
 	 *      functions
-	 *
-	 * @param mr_key_pool:
-	 *      caller's mr_key_pool associated with domain. This ensures CM's
-	 *      memory registrations use unique MR keys that don't conflict with
-	 *      other parts of the code
 	 *
 	 * @param conn_msg_data_size:
 	 *      size of transport-specific part of connect and connect response
 	 *      messages
 	 */
-	nccl_ofi_connection_manager(fi_info *info, fid_domain *domain, fid_cq *cq,
-				    nccl_ofi_idpool_t &mr_key_pool, size_t conn_msg_data_size);
+	nccl_ofi_connection_manager(nccl_net_ofi_domain_t &domain, size_t conn_msg_data_size);
 
 	/**
 	 * Destructor. Finalizes CM endpoint and other state.

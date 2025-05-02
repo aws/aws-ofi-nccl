@@ -6966,15 +6966,8 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 	assert(domain->scheduler);
 
 	/* Connection manager for this domain */
-	assert(device->num_rails > 0);
-	{
-		nccl_net_ofi_rdma_device_rail_t *device_rail = rdma_device_get_rail(device, 0);
-		nccl_net_ofi_rdma_domain_rail_t *domain_rail = rdma_domain_get_rail(domain, 0);
-		domain->cm = new nccl_ofi_connection_manager
-			(device_rail->info, domain_rail->domain,
-			domain_rail->cq, *(domain->base.mr_rkey_pool),
-			sizeof(nccl_ofi_rdma_connection_info_t));
-	}
+	domain->cm = new nccl_ofi_connection_manager
+		(domain->base, sizeof(nccl_ofi_rdma_connection_info_t));
 
 error:
 	if (ret != 0) {
