@@ -306,6 +306,13 @@ struct nccl_net_ofi_device {
 	 */
 	nccl_net_ofi_domain_t *(*get_domain)(nccl_net_ofi_device_t *dev);
 
+	/**
+	 * Retrieve an fi_info object associated with this device. There may be
+	 * more than one info per device, depending on the transport; in that
+	 * case, this will be the info object associated with the "leader NIC"
+	 */
+	struct fi_info *(*get_ofi_info)(nccl_net_ofi_device_t *dev);
+
 	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
 		      nccl_net_ofi_ep_t **ep);
 
@@ -394,6 +401,21 @@ struct nccl_net_ofi_domain {
 	nccl_ofi_idpool_t *mr_rkey_pool;
 
 	pthread_mutex_t domain_lock;
+
+	/**
+	 * Retrieve an fid_domain object associated with this domain. There may
+	 * be more than one fid_domain per domain, depending on the transport;
+	 * in that case, this will be the domain object associated with the
+	 * "leader NIC"
+	 */
+	struct fid_domain *(*get_ofi_domain)(nccl_net_ofi_domain_t *domain);
+
+	/**
+	 * Retrieve an fid_cq object associated with this domain. There may be
+	 * more than one cq per domain, depending on the transport; in that
+	 * case, this will be the info object associated with the "leader NIC"
+	 */
+	struct fid_cq *(*get_ofi_cq)(nccl_net_ofi_domain_t *domain);
 
 /* Private */
 	/* pure virtual function called when resources associated with
