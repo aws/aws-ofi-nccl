@@ -7422,6 +7422,16 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 
 	domain->base.free = nccl_net_ofi_rdma_domain_free;
 	domain->base.create_endpoint = nccl_net_ofi_rdma_domain_create_endpoint;
+	domain->base.get_ofi_domain = [](nccl_net_ofi_domain_t *base_domain) {
+		auto _domain = reinterpret_cast<nccl_net_ofi_rdma_domain_t *>(base_domain);
+		auto domain_rail_0 = rdma_domain_get_rail(_domain, 0);
+		return domain_rail_0->domain;
+	};
+	domain->base.get_cq = [](nccl_net_ofi_domain_t *base_domain) {
+		auto _domain = reinterpret_cast<nccl_net_ofi_rdma_domain_t *>(base_domain);
+		auto domain_rail_0 = rdma_domain_get_rail(_domain, 0);
+		return domain_rail_0->cq;
+	};
 
 	domain->num_rails = device->num_rails;
 
@@ -7692,6 +7702,11 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	device->base.get_mr_key = get_mr_key;
 	device->base.release = nccl_net_ofi_rdma_device_release;
 	device->base.create_domain = nccl_net_ofi_rdma_device_create_domain;
+	device->base.get_info = [](nccl_net_ofi_device_t *dev) {
+		auto _device = reinterpret_cast<nccl_net_ofi_rdma_device_t *>(dev);
+		auto device_rail_0 = rdma_device_get_rail(_device, 0);
+		return device_rail_0->info;
+	};
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
