@@ -2447,6 +2447,18 @@ static int nccl_net_ofi_sendrecv_domain_free(nccl_net_ofi_domain_t *base_domain)
 }
 
 
+static inline struct fid_domain *sendrecv_domain_get_ofi_domain(nccl_net_ofi_domain_t *base_domain)
+{
+	return reinterpret_cast<nccl_net_ofi_sendrecv_domain_t *>(base_domain)->domain;
+}
+
+
+static inline struct fid_cq *sendrecv_domain_get_ofi_cq(nccl_net_ofi_domain_t *base_domain)
+{
+	return reinterpret_cast<nccl_net_ofi_sendrecv_domain_t *>(base_domain)->cq;
+}
+
+
 static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_net_ofi_device_t *base_device)
 {
 	int ret;
@@ -2461,6 +2473,8 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_ne
 
 	domain->base.free = nccl_net_ofi_sendrecv_domain_free;
 	domain->base.create_endpoint = nccl_net_ofi_sendrecv_domain_create_endpoint;
+	domain->base.get_ofi_domain = sendrecv_domain_get_ofi_domain;
+	domain->base.get_ofi_cq = sendrecv_domain_get_ofi_cq;
 
 	ret = nccl_net_ofi_domain_init(base_device, &domain->base);
 	if (ret != 0) {
@@ -2575,6 +2589,13 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 	return 0;
 }
 
+
+static inline struct fi_info *sendrecv_device_get_ofi_info(nccl_net_ofi_device_t *device)
+{
+	return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device)->info;
+}
+
+
 /**
  * Create a sendrecv device object
  */
@@ -2603,6 +2624,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	device->base.release = nccl_net_ofi_sendrecv_device_release;
 	device->base.get_mr_key = NULL;
 	device->base.create_domain = nccl_net_ofi_sendrecv_device_create_domain;
+	device->base.get_ofi_info = sendrecv_device_get_ofi_info;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
