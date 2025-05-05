@@ -64,16 +64,16 @@ public:
 	 *
 	 * @param req: used for the context of the operation
 	 */
-	int post_send(nccl_ofi_freelist_elem_t &send_elem, size_t size,
-		      fi_addr_t dest_addr, nccl_ofi_cm_req &req);
+	int send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+		 fi_addr_t dest_addr, nccl_ofi_cm_req &req);
 
 	/**
 	 * Post a recv to the endpoint, with given parameters
 	 *
 	 * @param req: used for the context of the operation
 	 */
-	int post_recv(nccl_ofi_freelist_elem_t &recv_elem, size_t size,
-		      nccl_ofi_cm_req &req);
+	int recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+		 nccl_ofi_cm_req &req);
 
 	/**
 	 * Close associated ofi_ep, while leaving other resources open

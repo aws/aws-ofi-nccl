@@ -81,7 +81,9 @@ nccl_ofi_cm_rx_req::~nccl_ofi_cm_rx_req()
 
 int nccl_ofi_cm_rx_req::progress()
 {
-	return resources.ep.post_recv(rx_elem, resources.get_conn_msg_size(), *this);
+	auto conn_msg = static_cast<nccl_ofi_cm_conn_msg *>(rx_elem.ptr);
+	auto mr_handle = static_cast<endpoint::mr_handle_t *>(rx_elem.mr_handle);
+	return resources.ep.recv(*conn_msg, resources.get_conn_msg_size(), *mr_handle, *this);
 }
 
 
@@ -104,7 +106,10 @@ nccl_ofi_cm_send_conn_req::~nccl_ofi_cm_send_conn_req()
 
 int nccl_ofi_cm_send_conn_req::progress()
 {
-	return resources.ep.post_send(send_elem, resources.get_conn_msg_size(), dest_addr, *this);
+	auto conn_msg = static_cast<nccl_ofi_cm_conn_msg *>(send_elem.ptr);
+	auto mr_handle = static_cast<endpoint::mr_handle_t *>(send_elem.mr_handle);
+	return resources.ep.send(*conn_msg, resources.get_conn_msg_size(), *mr_handle,
+				 dest_addr, *this);
 }
 
 int nccl_ofi_cm_send_conn_req::handle_completion()
@@ -162,8 +167,11 @@ nccl_ofi_cm_send_conn_resp_req::~nccl_ofi_cm_send_conn_resp_req()
 
 int nccl_ofi_cm_send_conn_resp_req::progress()
 {
-	int ret = resources.ep.post_send(send_elem, resources.get_conn_msg_size(),
-					dest_addr, *this);
+	auto conn_resp_msg = static_cast<nccl_ofi_cm_conn_msg *>(send_elem.ptr);
+	auto mr_handle = static_cast<endpoint::mr_handle_t *>(send_elem.mr_handle);
+	int ret = resources.ep.send(*conn_resp_msg, resources.get_conn_msg_size(), *mr_handle,
+				 dest_addr, *this);
+
 	if (ret == 0 && complete_immediately) {
 		/* Immediately report completion to the caller */
 		done_callback();

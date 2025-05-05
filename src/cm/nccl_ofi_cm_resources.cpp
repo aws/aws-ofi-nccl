@@ -258,13 +258,12 @@ error:
 	return ret;
 }
 
-int endpoint::post_send(nccl_ofi_freelist_elem_t &send_elem, size_t size,
-			fi_addr_t dest_addr, nccl_ofi_cm_req &req)
+int endpoint::send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+		   fi_addr_t dest_addr, nccl_ofi_cm_req &req)
 {
-	auto mr_handle = static_cast<mr_handle_t *>(send_elem.mr_handle);
-	void *desc = fi_mr_desc(mr_handle->mr);
+	void *desc = fi_mr_desc(mr_handle.mr);
 
-	ssize_t ret = fi_send(ofi_ep, send_elem.ptr, size, desc,
+	ssize_t ret = fi_send(ofi_ep, &conn_msg, size, desc,
 			      dest_addr, &req.ctx.ofi_ctx);
 	if (ret != 0 && ret != -FI_EAGAIN) {
 		NCCL_OFI_WARN("Error in call to fi_send. RC: %zd, Error: %s",
@@ -275,13 +274,12 @@ int endpoint::post_send(nccl_ofi_freelist_elem_t &send_elem, size_t size,
 	return static_cast<int>(ret);
 }
 
-int endpoint::post_recv(nccl_ofi_freelist_elem_t &recv_elem, size_t size,
-			nccl_ofi_cm_req &req)
+int endpoint::recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+		   nccl_ofi_cm_req &req)
 {
-	auto mr_handle = static_cast<mr_handle_t *>(recv_elem.mr_handle);
-	void *desc = fi_mr_desc(mr_handle->mr);
+	void *desc = fi_mr_desc(mr_handle.mr);
 
-	ssize_t ret = fi_recv(ofi_ep, recv_elem.ptr, size, desc,
+	ssize_t ret = fi_recv(ofi_ep, &conn_msg, size, desc,
 			      FI_ADDR_UNSPEC, &req.ctx.ofi_ctx);
 	if (ret != 0 && ret != -FI_EAGAIN) {
 		NCCL_OFI_WARN("Error posting rx buffer. RC: %zd, Error: %s",
