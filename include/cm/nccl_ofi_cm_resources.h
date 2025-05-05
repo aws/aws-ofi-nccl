@@ -131,25 +131,26 @@ private:
 };
 
 /**
- * Map from ID to references to the templated parameter.
+ * Map from ID to callback functions for connect (resp) msg rx events.
  *
- * Currently used to look up listeners and send_connectors. The map is needed
- * because we post generic rx buffers to the endpoint for all connectors.
+ * Each entry is a pair (id, callback), where id is a connector ID received
+ * in the connection message (nccl_ofi_cm_conn_msg) and callback will be
+ * called with the connect message as a parameter.
  *
  * Implemented using an unordered_map.
  */
-template <typename T>
-class connector_id_map
+class conn_msg_rx_callback_map
 {
 public:
+	using callback_fn_t = std::function<void(nccl_ofi_cm_conn_msg &conn_msg)>;
 	/**
-	 * Insert a new connector with the given ID
+	 * Insert a new callback with the given ID
 	 *
 	 * Throw an exception if the ID is already in use
 	 */
-	void insert_connector(uint64_t id, T& connector)
+	void insert_callback(uint64_t id, callback_fn_t connector_callback)
 	{
-		auto result = map.emplace(id, connector);
+		auto result = map.emplace(id, connector_callback);
 		if (result.second == false) {
 			NCCL_OFI_WARN("Attempt to insert duplicate id");
 			throw std::runtime_error("duplicate id insert");
@@ -157,11 +158,11 @@ public:
 	}
 
 	/**
-	 * Get the connector with given ID
+	 * Get the callback with given ID
 	 *
-	 * Throw an exception if no such connector exists
+	 * Throw an exception if no such ID exists
 	 */
-	T& get_connector(uint64_t id)
+	callback_fn_t get_callback(uint64_t id)
 	{
 		auto result = map.find(id);
 
@@ -176,9 +177,9 @@ public:
 	/**
 	 * Remove the given ID from the map
 	 *
-	 * Throw an exception if no such connector exists
+	 * Throw an exception if no such ID exists
 	 */
-	void remove_connector(uint64_t id)
+	void remove_callback(uint64_t id)
 	{
 		size_t n_removed = map.erase(id);
 		if (n_removed != 1) {
@@ -186,8 +187,9 @@ public:
 			throw std::runtime_error("id removal fail");
 		}
 	}
+
 private:
-	std::unordered_map<uint64_t, T&> map;
+	std::unordered_map<uint64_t, callback_fn_t> map;
 };
 
 /**
@@ -241,10 +243,8 @@ private:
 public:
 	/* Manages registered connect-message buffers */
 	conn_msg_buffer_manager buff_mgr;
-	/* Map from IDs to listeners */
-	connector_id_map<nccl_ofi_cm_listener> listener_map;
-	/* Map from IDs to send connectors */
-	connector_id_map<nccl_ofi_cm_send_connector> send_connector_map;
+	/* Map from IDs to conn msg callbacks */
+	conn_msg_rx_callback_map callback_map;
 
 	pending_requests_queue pending_reqs_queue;
 

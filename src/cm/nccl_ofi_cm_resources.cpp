@@ -121,8 +121,7 @@ cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_
 	ep(domain),
 	conn_msg_data_size(_conn_msg_data_size),
 	buff_mgr(ep, get_conn_msg_size()),
-	listener_map(),
-	send_connector_map(),
+	callback_map(),
 	pending_reqs_queue(),
 	next_connector_id(0),
 	rx_reqs()

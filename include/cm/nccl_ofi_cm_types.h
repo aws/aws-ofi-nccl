@@ -41,11 +41,11 @@ struct nccl_ofi_cm_conn_msg {
 		SEND_CONN_RESP_MSG
 	} type;
 
-	/* A comm identitifer that uniquely identifies the local side
+	/* An identitifer that uniquely identifies the local side connector
 	   (the sender of this conn msg).  */
 	uint64_t local_id;
 
-	/* A comm identitifer that uniquely identifies the comm on the remote side
+	/* An identitifer that uniquely identifies the remote side connector
 	   (the receiver of this conn msg) */
 	uint64_t remote_id;
 

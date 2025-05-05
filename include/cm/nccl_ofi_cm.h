@@ -78,6 +78,7 @@ private:
 	bool conn_resp_msg_sent;
 	bool conn_resp_msg_delivered;
 
+	/* For constructor */
 	friend class nccl_ofi_cm_listener;
 };
 
@@ -135,8 +136,6 @@ private:
 
 	/* For constructor */
 	friend class nccl_ofi_connection_manager;
-	/* For process_conn_msg */
-	friend class nccl_ofi_cm::nccl_ofi_cm_rx_req;
 };
 
 
@@ -206,8 +205,8 @@ private:
 
 	uint64_t send_connector_id;
 
+	/* For constructor */
 	friend class nccl_ofi_connection_manager;
-	friend class nccl_ofi_cm::nccl_ofi_cm_rx_req;
 };
 
 /**

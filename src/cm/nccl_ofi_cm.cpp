@@ -31,7 +31,9 @@ nccl_ofi_cm_listener::nccl_ofi_cm_listener(nccl_ofi_cm::cm_resources &_resources
 	resources(_resources),
 	listener_id(resources.get_next_connector_id())
 {
-	resources.listener_map.insert_connector(listener_id, *this);
+	resources.callback_map.insert_callback(listener_id, [&](nccl_ofi_cm_conn_msg &conn_msg) {
+		process_conn_msg(conn_msg);
+	});
 
 	/* Populate handle */
 	memset(&handle, 0, sizeof(handle));
@@ -48,7 +50,7 @@ nccl_ofi_cm_listener::nccl_ofi_cm_listener(nccl_ofi_cm::cm_resources &_resources
 nccl_ofi_cm_listener::~nccl_ofi_cm_listener()
 {
 	std::lock_guard<std::mutex> lock(resources.cm_mutex);
-	resources.listener_map.remove_connector(listener_id);
+	resources.callback_map.remove_callback(listener_id);
 }
 
 
@@ -167,7 +169,10 @@ nccl_ofi_cm_send_connector::nccl_ofi_cm_send_connector(nccl_ofi_cm::cm_resources
 	conn_msg_delivered(false),
 	send_connector_id(resources.get_next_connector_id())
 {
-	resources.send_connector_map.insert_connector(send_connector_id, *this);
+	resources.callback_map.insert_callback(send_connector_id,
+					       [&](nccl_ofi_cm_conn_msg &conn_resp_msg) {
+		this->process_conn_resp_msg(conn_resp_msg);
+	});
 
 	dest_addr = resources.ep.av_insert_address(handle.ep_name);
 
@@ -194,7 +199,7 @@ nccl_ofi_cm_send_connector::nccl_ofi_cm_send_connector(nccl_ofi_cm::cm_resources
 nccl_ofi_cm_send_connector::~nccl_ofi_cm_send_connector()
 {
 	std::lock_guard<std::mutex> lock(resources.cm_mutex);
-	resources.send_connector_map.remove_connector(send_connector_id);
+	resources.callback_map.remove_callback(send_connector_id);
 }
 
 void nccl_ofi_cm_send_connector::set_conn_msg_delivered()

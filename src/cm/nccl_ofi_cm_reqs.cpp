@@ -192,25 +192,9 @@ int nccl_ofi_cm_rx_req::handle_completion()
 {
 	std::lock_guard<std::mutex> lock(resources.cm_mutex);
 	nccl_ofi_cm_conn_msg *conn_msg = static_cast<nccl_ofi_cm_conn_msg *>(rx_elem.ptr);
-	switch(conn_msg->type) {
-	case nccl_ofi_cm_conn_msg::SEND_CONN_MSG: {
-		nccl_ofi_cm_listener &listener =
-			resources.listener_map.get_connector(conn_msg->remote_id);
+	auto callback = resources.callback_map.get_callback(conn_msg->remote_id);
 
-		listener.process_conn_msg(*conn_msg);
-		break;
-	}
-	case nccl_ofi_cm_conn_msg::SEND_CONN_RESP_MSG: {
-
-
-		nccl_ofi_cm_send_connector &connector =
-			resources.send_connector_map.get_connector(conn_msg->remote_id);
-
-		connector.process_conn_resp_msg(*conn_msg);
-		break;
-	}
-
-	}
+	callback(*conn_msg);
 
 	/* Repost buffer */
 	return this->progress();
