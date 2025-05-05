@@ -206,22 +206,20 @@ typedef enum nccl_ofi_comm_stage {
 
 typedef struct save_comm_state {
 	nccl_net_ofi_comm_t *comm;
-	nccl_net_ofi_req_t *req;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 
 typedef struct nccl_ofi_connection_info {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t ep_namelen;
-	uint64_t connect_to_self;
-	nccl_net_ofi_req_t* req;
+	uint64_t tag;
 } nccl_ofi_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_connection_info_t) == 80, "Wrong size for SENDRECV connect message");
+static_assert(sizeof(nccl_ofi_connection_info_t) == 72, "Wrong size for SENDRECV connect message");
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
-	uint32_t comm_id;
+	uint64_t comm_id;
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
@@ -299,6 +297,13 @@ struct nccl_net_ofi_device {
 	 * description below).
 	 */
 	nccl_net_ofi_domain_t *(*get_domain)(nccl_net_ofi_device_t *dev);
+
+	/**
+	 * Retrieve an fi_info object associated with this device. There may be
+	 * more than one info per device, depending on the transport; in that
+	 * case, this will be the info object associated with the "leader NIC"
+	 */
+	struct fi_info *(*get_info)(nccl_net_ofi_device_t *dev);
 
 	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
 		      nccl_net_ofi_ep_t **ep);
@@ -388,6 +393,21 @@ struct nccl_net_ofi_domain {
 	nccl_ofi_idpool_t *mr_rkey_pool;
 
 	pthread_mutex_t domain_lock;
+
+	/**
+	 * Retrieve an fid_domain object associated with this domain. There may
+	 * be more than one fid_domain per domain, depending on the transport;
+	 * in that case, this will be the domain object associated with the
+	 * "leader NIC"
+	 */
+	fid_domain *(*get_ofi_domain)(nccl_net_ofi_domain_t *domain);
+
+	/**
+	 * Retrieve an fid_cq object associated with this domain. There may be
+	 * more than one cq per domain, depending on the transport; in that
+	 * case, this will be the info object associated with the "leader NIC"
+	 */
+	fid_cq *(*get_cq)(nccl_net_ofi_domain_t *domain);
 
 /* Private */
 	/* pure virtual function called when resources associated with

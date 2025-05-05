@@ -5,6 +5,10 @@
 #
 
 noinst_HEADERS = \
+	cm/nccl_ofi_cm_reqs.h \
+	cm/nccl_ofi_cm_resources.h \
+	cm/nccl_ofi_cm_types.h \
+	cm/nccl_ofi_cm.h \
 	nccl_ofi.h \
 	nccl_ofi_api.h \
 	nccl_ofi_config_bottom.h \
