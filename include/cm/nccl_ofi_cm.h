@@ -197,11 +197,12 @@ private:
 
 	fi_addr_t dest_addr;
 
-	std::optional<std::vector<uint8_t>> conn_resp_msg_data;
+	std::vector<uint8_t> conn_resp_msg_data;
 	nccl_ofi_cm::nccl_ofi_cm_send_conn_req *send_conn_req;
 
-	bool conn_msg_sent;
-	bool conn_msg_delivered;
+	bool conn_msg_sent : 1;
+	bool conn_msg_delivered : 1;
+	bool conn_resp_msg_received : 1;
 
 	uint64_t send_connector_id;
 

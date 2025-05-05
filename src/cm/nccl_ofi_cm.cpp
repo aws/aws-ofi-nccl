@@ -167,6 +167,7 @@ nccl_ofi_cm_send_connector::nccl_ofi_cm_send_connector(nccl_ofi_cm::cm_resources
 	send_conn_req(nullptr),
 	conn_msg_sent(false),
 	conn_msg_delivered(false),
+	conn_resp_msg_received(false),
 	send_connector_id(resources.get_next_connector_id())
 {
 	resources.callback_map.insert_callback(send_connector_id,
@@ -213,10 +214,11 @@ void nccl_ofi_cm_send_connector::process_conn_resp_msg(const nccl_ofi_cm_conn_ms
 {
 	/* Copy transport data to this object's storage */
 	size_t data_size = resources.get_conn_msg_data_size();
-	conn_resp_msg_data.emplace(data_size);
+	conn_resp_msg_data.resize(data_size);
 	/* Transport data comes after the conn response message */
 	const void *arg_data = (&conn_resp_msg + 1);
-	memcpy(conn_resp_msg_data->data(), arg_data, data_size);
+	memcpy(conn_resp_msg_data.data(), arg_data, data_size);
+	conn_resp_msg_received = true;
 }
 
 
@@ -242,7 +244,7 @@ int nccl_ofi_cm_send_connector::test_ready()
 		return ret;
 	}
 
-	ret = (conn_msg_delivered && conn_resp_msg_data) ? 1 : 0;
+	ret = (conn_msg_delivered && conn_resp_msg_received) ? 1 : 0;
 
 	return ret;
 }
@@ -251,12 +253,12 @@ int nccl_ofi_cm_send_connector::test_ready()
 const void *nccl_ofi_cm_send_connector::get_conn_resp_msg()
 {
 	std::lock_guard<std::mutex> lock(resources.cm_mutex);
-	if (!conn_resp_msg_data) {
+	if (!conn_resp_msg_received) {
 		NCCL_OFI_WARN("Called get_conn_resp_msg on send_connector before connection complete");
 		return nullptr;
 	}
 
-	return conn_resp_msg_data->data();
+	return conn_resp_msg_data.data();
 }
 
 
