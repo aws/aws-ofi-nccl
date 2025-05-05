@@ -3931,6 +3931,59 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 	return 0;
 }
 
+
+/**
+ * Make progress on a closing recv communicator
+ *
+ * @param r_comm: the communicator to progress
+ * @return: 1 if the recv comm is ready to be destroyed
+ *          0 if the recv comm is not ready to be destroyed
+ *          negative errno code on error
+ */
+static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm)
+{
+	if (r_comm->send_close_req == NULL) {
+		/* Waiting for all ctrls to complete */
+		nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
+		bool all_ctrl_msgs_delivered =
+			(r_comm->n_ctrl_delivered == r_comm->n_ctrl_sent);
+		nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
+
+		if (all_ctrl_msgs_delivered) {
+			/* Send close message */
+
+			int ret = recv_comm_insert_send_close_req(r_comm);
+			if (ret != 0) {
+				return ret;
+			}
+
+			ret = receive_progress(r_comm->send_close_req, true);
+			if (ret != 0) {
+				return ret;
+			}
+		}
+
+	} else /* (r_comm->send_close_req != NULL) */ {
+
+		/* Waiting for close message delivery */
+		nccl_net_ofi_mutex_lock(&r_comm->send_close_req->req_lock);
+		nccl_net_ofi_rdma_req_state_t state = r_comm->send_close_req->state;
+		nccl_net_ofi_mutex_unlock(&r_comm->send_close_req->req_lock);
+
+		if (state == NCCL_OFI_RDMA_REQ_ERROR) {
+			NCCL_OFI_WARN("Send close message complete with error");
+			return -EIO;
+
+		} else if (state == NCCL_OFI_RDMA_REQ_COMPLETED) {
+			/* Ready to destroy */
+			return 1;
+		}
+	}
+
+	return 0;
+}
+
+
 /**
  * Iterate the list of r_comm's that are pending cleanup, make progress
  * on each one, and destroy resources if the close message and required
@@ -3956,48 +4009,18 @@ static int recv_comm_process_all_finalizing(void)
 			goto exit;
 		}
 
-		if (r_comm->send_close_req == NULL) {
-			/* Waiting for all ctrls to complete */
-			nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
-			bool all_ctrl_msgs_delivered =
-				(r_comm->n_ctrl_delivered == r_comm->n_ctrl_sent);
-			nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
-
-			if (all_ctrl_msgs_delivered) {
-				/* Send close message */
-
-				ret = recv_comm_insert_send_close_req(r_comm);
-				if (ret != 0) {
-					goto exit;
-				}
-
-				ret = receive_progress(r_comm->send_close_req, true);
-				if (ret != 0) {
-					goto exit;
-				}
-			}
-
-			++it;
-		} else /* (r_comm->send_close_req != NULL) */ {
-
-			/* Waiting for close message delivery */
-			nccl_net_ofi_mutex_lock(&r_comm->send_close_req->req_lock);
-			nccl_net_ofi_rdma_req_state_t state = r_comm->send_close_req->state;
-			nccl_net_ofi_mutex_unlock(&r_comm->send_close_req->req_lock);
-
-			if (state == NCCL_OFI_RDMA_REQ_ERROR) {
-				NCCL_OFI_WARN("Send close message complete with error");
-				ret = -EIO;
+		ret = progress_closing_recv_comm(r_comm);
+		if (ret < 0) {
+			goto exit;
+		}
+		if (ret == 1) {
+			it = r_comm_cleanup_list->erase(it);
+			ret = recv_comm_destroy(r_comm);
+			if (ret != 0) {
 				goto exit;
-			} else if (state == NCCL_OFI_RDMA_REQ_COMPLETED) {
-				it = r_comm_cleanup_list->erase(it);
-				ret = recv_comm_destroy(r_comm);
-				if (ret != 0) {
-					goto exit;
-				}
-			} else {
-				++it;
 			}
+		} else {
+			++it;
 		}
 	}
 
