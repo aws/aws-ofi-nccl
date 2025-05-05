@@ -21,5 +21,6 @@ virtual machine.
     <pci busid="0000:00:1b.0"/>
     <pci busid="0000:00:1c.0"/>
     <pci busid="0000:00:1d.0"/>
+    <pci busid="0000:00:15.0"/>
   </cpu>
 </system>
