@@ -198,6 +198,10 @@ static inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(nccl_net_
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)
 		rdma_device_get_comm(device, local_comm_id);
+	if (OFI_UNLIKELY(s_comm == nullptr)) {
+		/* Received a ctrl message for a non-existent send comm */
+		return nullptr;
+	}
 	assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
 	return s_comm;
 }
@@ -1214,7 +1218,12 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *rx_buff_req)
 		rx_get_close_msg(rx_buff_data);
 
 	nccl_net_ofi_rdma_send_comm_t *s_comm = rdma_device_get_send_comm(device, close_msg->send_comm_id);
-	assert(s_comm);
+	if (s_comm == nullptr) {
+		/* We already destroyed this s_comm. */
+		NCCL_OFI_WARN("Received close message for non-existent send comm id %u",
+			      close_msg->send_comm_id);
+		return -EINVAL;
+	}
 
 	nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 
@@ -1336,6 +1345,13 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 
 		ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
 		s_comm = rdma_device_get_send_comm(device, ctrl_msg->remote_comm_id);
+		if (OFI_UNLIKELY(s_comm == nullptr)) {
+			/* We already destroyed this s_comm. */
+			NCCL_OFI_WARN("Received ctrl message for non-existent send comm id %u",
+				      ctrl_msg->remote_comm_id);
+			ret = -EINVAL;
+			goto exit;
+		}
 
 		NCCL_OFI_TRACE_SEND_CTRL_RECV(s_comm->base.base.dev_id, rail_id, s_comm, ctrl_msg->msg_seq_num);
 
@@ -3945,12 +3961,20 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 	if (r_comm->send_close_req == NULL) {
 		/* Waiting for all ctrls to complete */
 		nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
+		uint64_t n_ctrl_sent = r_comm->n_ctrl_sent;
 		bool all_ctrl_msgs_delivered =
-			(r_comm->n_ctrl_delivered == r_comm->n_ctrl_sent);
+			(r_comm->n_ctrl_delivered == n_ctrl_sent);
 		nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
 
 		if (all_ctrl_msgs_delivered) {
-			/* Send close message */
+			/* Send close message, only if we sent any control
+			   messages. Otherwise, destroy the recv comm
+			   immediately */
+			/* TODO: this workaround will not be needed with the new
+			   CM code when data_progress_auto is true */
+			if (n_ctrl_sent == 0) {
+				return 1;
+			}
 
 			int ret = recv_comm_insert_send_close_req(r_comm);
 			if (ret != 0) {
@@ -4116,8 +4140,21 @@ static int send_comm_process_all_finalizing(void)
 
 		nccl_net_ofi_mutex_lock(&s_comm->ctrl_recv_lock);
 
-		bool ready_to_destroy = (s_comm->received_close_message) &&
-			(s_comm->n_ctrl_received == s_comm->n_ctrl_expected);
+		/**
+		 * We claim the send communicator is safe to destroy if one of
+		 * the following is true:
+		 *
+		 * 1. We have received the close message from the receiver, and
+		 *    have received all control messages that were sent by the
+		 *    receiver
+		 * 2. We did not receive any control messages from the receiver.
+		 *    In this case, we assume that the receive communicator was
+		 *    never established, and we will never receive a close
+		 *    message.
+		 */
+		bool ready_to_destroy = (s_comm->received_close_message) ?
+					(s_comm->n_ctrl_received == s_comm->n_ctrl_expected) :
+					(s_comm->n_ctrl_received == 0);
 
 		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
