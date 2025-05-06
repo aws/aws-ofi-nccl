@@ -9,7 +9,6 @@
 if ENABLE_UNIT_TESTS
 AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
-AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/uthash/include
 LDADD = $(top_builddir)/src/libinternal_net_plugin.la
 noinst_HEADERS = test-common.h
 
