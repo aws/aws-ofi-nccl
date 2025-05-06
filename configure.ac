@@ -164,6 +164,23 @@ AS_IF([test "${enable_tests}" != "no" -a "${have_device_interface}" = "neuron" ]
 AM_CONDITIONAL([ENABLE_UNIT_TESTS], [test "$build_unit_tests" == "yes"])
 AM_CONDITIONAL([ENABLE_FUNC_TESTS], [test "$build_func_tests" == "yes"])
 
+build_func_nccl_tests=no
+AC_ARG_ENABLE([functional-nccl-tests],
+   [AS_HELP_STRING([--enable-functional-nccl-tests], [Enable build of functional tests that use NCCL])])
+AS_IF([test "${enable_functional_nccl_tests}" == "yes"],
+      [build_func_nccl_tests=yes])
+
+# Don't build functional nccl tests without other tests
+AS_IF([test "${enable_tests}" == "no"],
+      [build_func_nccl_tests=no])
+
+AS_IF([test "$build_func_nccl_tests" == "yes"],
+      [CHECK_PKG_NCCL([],
+                      [AC_MSG_WARN("Could not find NCCL. Disabling functional NCCL tests")
+                       build_func_nccl_tests=no])])
+
+AM_CONDITIONAL([ENABLE_NCCL_FUNC_TESTS], [test "$build_func_nccl_tests" == "yes"])
+
 # Enable output at the TRACE level for unit tests.
 AC_ARG_ENABLE([trace],
    [AS_HELP_STRING([--enable-trace], [Enable printing trace messages in test programs])])
@@ -267,6 +284,7 @@ AC_CONFIG_FILES([Makefile
                  src/Makefile
                  tests/Makefile
                  tests/functional/Makefile
+		 tests/functional_nccl/Makefile
                  tests/unit/Makefile
                  topology/Makefile])
 AC_OUTPUT

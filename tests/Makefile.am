@@ -4,4 +4,4 @@
 # See LICENSE.txt for license information
 #
 
-SUBDIRS = functional unit
+SUBDIRS = functional functional_nccl unit
