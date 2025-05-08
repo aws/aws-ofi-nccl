@@ -7699,14 +7699,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	/* at this point, we can safely call the destructor to clean
 	 * up */
 
-	/* Ensure that number of rails are the same across devices */
-	length = ofi_info_list_length(info_list);
-	if (topo->max_group_size != length) {
-		NCCL_OFI_WARN("Wrong number of NICs for device %i. Expected %i but got %i",
-			      dev_id, topo->max_group_size, length);
-		goto error;
-	}
-
 	/* allow the user to force the number of rails used by the
 	 * device.  If the target number is smaller than the number of
 	 * rails, just pick the first target_length rails.  If the
@@ -7719,6 +7711,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	 * between NICs, rather than sending target_length/length
 	 * messages on the same NIC before moving to the next NIC.
 	 */
+	length = ofi_info_list_length(info_list);
 	target_length = ofi_nccl_force_num_rails();
 	if (target_length != 0) {
 		int original_length = length;
