@@ -6595,6 +6595,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	uint16_t rail_id = 0;
 	nccl_net_ofi_ep_rail_t *first_control_rail = rdma_endpoint_get_control_rail(ep, 0);
 	nccl_net_ofi_rdma_send_comm_rail_t *first_comm_control_rail;
+	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 
 	*s_comm = NULL;
 
@@ -6635,6 +6636,13 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->received_close_message = false;
 	ret_s_comm->n_ctrl_received = 0;
 	ret_s_comm->n_ctrl_expected = 0;
+
+	/* The connect() API function acquired the endpoint we are using via
+	   get_ep(). Increase the refcnt so the endpoint is not freed when the
+	   API releases it. */
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+	++(ep->base.ref_cnt);
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
@@ -6728,6 +6736,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 			device->comm_idpool->free_id(ret_s_comm->local_comm_id);
 		}
 		nccl_net_ofi_mutex_destroy(&ret_s_comm->ctrl_recv_lock);
+		ep->base.release_ep(&ep->base, false, false);
 		free_rdma_send_comm(ret_s_comm);
 	}
 
