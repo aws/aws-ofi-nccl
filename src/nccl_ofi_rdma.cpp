@@ -7432,7 +7432,8 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 
 error:
 	if (ret != 0) {
-		ep->base.release_ep(&(ep->base), false, false);
+		nccl_net_ofi_rdma_endpoint_free(&(ep->base));
+		*base_ep = nullptr;
 	}
 
 	return ret;
@@ -7589,7 +7590,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 
 error:
 	if (ret != 0) {
-		domain->base.release(&(domain->base), false, false);
+		nccl_net_ofi_rdma_domain_free(&domain->base);
 		domain = NULL;
 	}
 
