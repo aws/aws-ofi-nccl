@@ -285,7 +285,7 @@ OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
  */
-OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
+OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (64 * 1024));
 
 /*
  * The round robin scheduler has two round robin counts, for small (likely
