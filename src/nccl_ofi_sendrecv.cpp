@@ -2024,6 +2024,8 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+
 	max_tag = device->max_tag;
 
 	/* Get tag and remote name from handle */
@@ -2066,6 +2068,13 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->local_ep = ep->ofi_ep;
 	ret_s_comm->remote_ep = remote_addr;
 
+	/* The connect() API function acquired the endpoint we are using via
+	   get_ep(). Increase the refcnt so the endpoint is not freed when the
+	   API releases it. */
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+	++(ep->base.ref_cnt);
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
 	ret_s_comm->conn_info = nccl_ofi_freelist_entry_alloc(ep->conn_msg_fl);
 	if (ret_s_comm->conn_info == NULL) {
 		NCCL_OFI_WARN("Could not allocate connect connection info");
@@ -2105,8 +2114,10 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 
 	*s_comm = ret_s_comm;
 out:
-	if (ret)
+	if (ret) {
+		ep->base.release_ep(&ep->base, false, false);
 		free(ret_s_comm);
+	}
 
 	return ret;
 }
