@@ -30,6 +30,17 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
+/**
+ * Check if domain is active
+ *
+ * Caller is assumed to hold the domain lock
+ */
+#define CHECK_DOMAIN_ACTIVE(domain, fn_name) \
+	if (OFI_UNLIKELY(!domain->base.domain_active)) { \
+		NCCL_OFI_WARN("Called " fn_name " on request with inactive domain"); \
+		return -EINVAL; \
+	} \
+
 /* Indicates if provider supports FI_RMA */
 bool support_fi_rma = false;
 
@@ -484,22 +495,25 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm = req->comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid comm object provided");
-		goto exit;
+		return -EINVAL;
 	}
 
 	/* Retrieve and validate endpoint */
 	ep = (nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto exit;
+		return -EINVAL;
 	}
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+
+	CHECK_DOMAIN_ACTIVE(domain, "sendrecv_req_test");
 
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
+		ret = sendrecv_cq_process(domain->cq);
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -889,6 +903,10 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
 	assert(domain != NULL);
 
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+
+	CHECK_DOMAIN_ACTIVE(domain, "mr_base_reg");
+
 	int dev_id = device->base.dev_id;
 
 	int ret = 0;
@@ -1083,10 +1101,13 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	/* Retrieve and validate endpoint */
 	ep = (nccl_net_ofi_sendrecv_ep_t *)r_comm->base.base.ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto error;
+		return -EINVAL;
 	}
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "recv");
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
 	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
@@ -1106,7 +1127,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	}
 
 	/* Progress NCCL OFI */
-	ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
+	ret = sendrecv_cq_process(domain->cq);
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -1230,6 +1251,11 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	int flush_n = -1;
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
+	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(r_comm->base.base.ep);
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "flush");
+
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
 
@@ -1321,15 +1347,6 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 		if (rc == 0) {
 			break;
 		} else if (rc == -FI_EAGAIN) {
-			/* Retrieve and validate domain */
-			auto domain = reinterpret_cast<nccl_net_ofi_sendrecv_domain_t *>
-				(r_comm->base.base.ep->domain);
-			if (OFI_UNLIKELY(domain == NULL)) {
-				ret = -EINVAL;
-				NCCL_OFI_WARN("Invalid domain provided");
-				goto error;
-			}
-
 			/*
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
@@ -1554,6 +1571,10 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		sendrecv_endpoint_get_domain(ep);
 	assert(domain != NULL);
 
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "accept");
+
+
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
 		sendrecv_endpoint_get_device(ep);
@@ -1588,9 +1609,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&(domain->base.domain_lock));
 		ep->base.ref_cnt++;
-		nccl_net_ofi_mutex_unlock(&(domain->base.domain_lock));
 
 		/* Prepare receive request to accept connections */
 		req = sendrecv_recv_req_prepare(l_comm);
@@ -1754,8 +1773,14 @@ static int sendrecv_endpoint_listen(nccl_net_ofi_ep_t *base_ep,
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "listen");
+
+
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
@@ -1862,10 +1887,14 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)s_comm->base.base.ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
-		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
-		goto error;
+		return -EINVAL;
 	}
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "send");
+
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
@@ -1897,7 +1926,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 					       self_req,
 					       sendrecv_req_state_get_string(self_req->state));
 
-				ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
+				ret = sendrecv_cq_process(domain->cq);
 
 				*base_req = NULL;
 				goto exit;
@@ -1936,7 +1965,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		      s_comm->remote_ep, s_comm->tag, sendrecv_req_get_ofi_context(req));
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = sendrecv_cq_process(sendrecv_endpoint_get_domain(ep)->cq);
+		ret = sendrecv_cq_process(domain->cq);
 		/* Return NULL request */
 		*base_req = NULL;
 		goto error;
@@ -2024,8 +2053,6 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
-
 	max_tag = device->max_tag;
 
 	/* Get tag and remote name from handle */
@@ -2070,10 +2097,9 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 
 	/* The connect() API function acquired the endpoint we are using via
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
-	   API releases it. */
-	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+	   API releases it.
+	   Caller assumed to hold the domain lock. */
 	++(ep->base.ref_cnt);
-	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 	ret_s_comm->conn_info = nccl_ofi_freelist_entry_alloc(ep->conn_msg_fl);
 	if (ret_s_comm->conn_info == NULL) {
@@ -2209,9 +2235,15 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 	nccl_net_ofi_sendrecv_ep_t *ep =
 		(nccl_net_ofi_sendrecv_ep_t *)base_ep;
 	nccl_ofi_connection_info_t *conn_info = NULL;
+
+	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
+
+	pthread_wrapper domain_lock(&domain->base.domain_lock);
+	CHECK_DOMAIN_ACTIVE(domain, "connect");
+
 	
 	/* Retrieve and validate devices */
-	nccl_net_ofi_sendrecv_device_t *device = sendrecv_endpoint_get_device(ep);
+	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
