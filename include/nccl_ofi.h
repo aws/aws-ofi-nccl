@@ -417,6 +417,14 @@ struct nccl_net_ofi_domain {
 	 */
 	struct fid_cq *(*get_ofi_cq)(nccl_net_ofi_domain_t *domain);
 
+	/* Domain reference counter for resource management.
+	 *
+	 * In some modes (right now, endpoint_per_communicator), we create
+	 * multiple endpoints per domain. This counter tracks the number
+	 * of endpoints created on this domain. When it reaches 0, the
+	 * domain can be destroyed. */
+	size_t ref_cnt;
+
 /* Private */
 	/* pure virtual function called when resources associated with
 	 * the ep should be destroyed.  Device lock will be held when
