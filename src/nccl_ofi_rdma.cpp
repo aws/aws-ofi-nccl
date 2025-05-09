@@ -4710,6 +4710,14 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 			new_ep->is_endpoint_per_communicator_ep = true;
 
+			/**
+			 * Since we bypassed domain->get_ep, increment domain
+			 * refcnt.
+			 */
+			nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+			domain->base.ref_cnt++;
+			nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+
 			ep_for_addr = &new_ep->base;
 
 			ret = domain->ep_addr_list->insert(ep_for_addr, remote_rail0_ep_name->ep_name,
@@ -7219,10 +7227,12 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep, bool s
 			nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
 		}
 
-		if ((--ep->base.ref_cnt) == 0 || force_cleanup) {
-			if (force_cleanup && ep->base.ref_cnt != 0 ) {
+		int ep_ref_cnt = (--ep->base.ref_cnt);
+
+		if (ep_ref_cnt == 0 || force_cleanup) {
+			if (force_cleanup && ep_ref_cnt != 0 ) {
 				NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
-					      ep, ep->base.ref_cnt);
+					      ep, ep_ref_cnt);
 			}
 			ret = domain->ep_addr_list->remove(&ep->base);
 			if (ret != 0) {
@@ -7240,6 +7250,11 @@ static int nccl_net_ofi_rdma_endpoint_release(nccl_net_ofi_ep_t *base_ep, bool s
  unlock:
 		if (!skip_lock) {
 			nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
+		}
+		if (!force_cleanup && ret == 0 && ep_ref_cnt == 0) {
+			/* Release the domain as well */
+			/* Note: this logic mirrors nccl_net_ofi_endpoint_release */
+			ret = domain->base.release(&domain->base, skip_lock, false);
 		}
 	} else {
 		ret = nccl_net_ofi_endpoint_release(&ep->base, skip_lock, force_cleanup);

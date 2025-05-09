@@ -1007,6 +1007,7 @@ static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
 		}
 
 		domain->endpoint = ep;
+		domain->ref_cnt++;
 
 		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created",
 			       ep, domain);
@@ -1032,7 +1033,14 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_
 
 	nccl_net_ofi_mutex_lock(&domain->domain_lock);
 
-	if (domain->endpoint == NULL || force_cleanup) {
+	domain->ref_cnt--;
+
+	if (domain->ref_cnt == 0 || force_cleanup) {
+
+		/* If domain ref_cnt is 0, then there should be no remaining
+		   endpoints */
+		assert(domain->ref_cnt != 0 || domain->endpoint == nullptr);
+
 		// The caller takes device_lock when force_cleanup.
 		if (!skip_device_lock) {
 			nccl_net_ofi_mutex_lock(&device->device_lock);
@@ -1078,6 +1086,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 	domain->release = nccl_net_ofi_domain_release;
 	domain->endpoint = NULL;
 	domain->creating_thread_id = 0;
+	domain->ref_cnt = 0;
 
 	domain->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {
@@ -1140,12 +1149,16 @@ int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep, bool skip_lock, bool fo
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
 	}
 
-	ep->ref_cnt--;
+	int ep_ref_cnt = (--ep->ref_cnt);
 
-	if (ep->ref_cnt == 0 || force_cleanup) {
-		domain->endpoint = NULL;
+	if (ep_ref_cnt == 0 || force_cleanup) {
+		/* If this was the endpoint we stored in domain for connection
+		   management, remove that reference as well */
+		if (domain->endpoint == ep) {
+			domain->endpoint = nullptr;
+		}
 
-		if (force_cleanup && ep->ref_cnt != 0) {
+		if (force_cleanup && ep_ref_cnt != 0) {
 			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
 			      ep, ep->ref_cnt);
 		}
@@ -1163,9 +1176,12 @@ cleanup:
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 	}
 
-	/* Skip domain->release when handled by device->release_all_domain_and_ep()
+	/* If we freed the endpoint (ep_ref_cnt == 0), also release the domain
+	 * (decrement its ref_cnt)
+	 *
+	 * Skip domain->release when handled by device->release_all_domain_and_ep()
 	 * to avoid domain lock issue after the domain freed */
-	if (!force_cleanup && ret == 0) {
+	if (!force_cleanup && ret == 0 && ep_ref_cnt == 0) {
 		ret = domain->release(domain, skip_lock, false);
 	}
 
