@@ -311,9 +311,16 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rai
 	return &r_comm->control_rails[rail_id];
 }
 
+
 static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
 	return (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+}
+
+
+static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm_t *s_comm)
+{
+	return (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
 }
 
 
@@ -2736,6 +2743,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 #define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
 
+
 static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
 	int ret = 0;
@@ -2754,6 +2762,12 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
 	assert(ep != NULL);
+
+	if (ep->endpoint_active == false) {
+		NCCL_OFI_WARN("Called test on a communicator from an inactive endpoint");
+		ret = -EINVAL;
+		goto exit;
+	}
 
 	/* Process more completions unless the current request is
 	 * completed */
@@ -3585,6 +3599,13 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	domain = rdma_endpoint_get_domain(ep);
 	assert(domain != NULL);
 
+	if (ep->endpoint_active == false) {
+		/* endpoint of this comm is closed, return error code to NCCL to issue close comm calls */
+		NCCL_OFI_WARN("Called irecv on a communicator from an inactive endpoint");
+		ret = -EINVAL;
+		goto error;
+	}
+
 	device = rdma_endpoint_get_device(ep);
 	assert(device != NULL);
 
@@ -4227,9 +4248,20 @@ static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 
 	/* Make sure all requests are finished */
 	if (r_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Attempt to call recv_close_deferred with outstanding requests!");
-		ret = -EINVAL;
-		goto exit;
+		nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
+		assert(ep != NULL);
+
+		ep->endpoint_active = false;
+
+		nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+		assert(domain != NULL);
+
+		domain->base.domain_active = false;
+
+		int res = ofi_process_cq(ep);
+		if (OFI_UNLIKELY(res != 0)) {
+			goto exit;
+		}
 	}
 
 	r_comm->comm_active = false;
@@ -5955,6 +5987,13 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 
 	domain = rdma_endpoint_get_domain(ep);
 	assert(domain != NULL);
+	
+	if (ep->endpoint_active == false) {
+		/* endpoint of this comm is closed, return error code to NCCL to issue close comm calls */
+		NCCL_OFI_WARN("Called isend on a communicator from an inactive endpoint");
+		ret = -EINVAL;
+		goto error;
+	}
 
 	ret = process_cq_if_pending(ep);
 	if (ret == -EAGAIN) {
@@ -6150,12 +6189,23 @@ static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		(nccl_net_ofi_rdma_send_comm_t *)send_comm;
 
-	/* Make sure all requests are finished */
+	/* If not all requests are finished, something is off and we need to properly cleanup all the comms in the same endpoint */
 	if (s_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Attempt to call send_close_deferred with outstanding requests!");
-		ret = -EINVAL;
-		goto exit;
+		nccl_net_ofi_rdma_ep_t *ep = rdma_send_comm_get_ep(s_comm);
+		assert(ep != NULL);
+
+		ep->endpoint_active = false;
+
+		nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
+		assert(domain != NULL);
+
+		domain->base.domain_active = false;
+		int res = ofi_process_cq(ep);
+		if (OFI_UNLIKELY(res != 0)) {
+			goto exit;
+		}
 	}
+
 	assert (s_comm->num_inflight_writes == 0);
 
 	s_comm->comm_active = false;
@@ -7302,6 +7352,11 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		return -EINVAL;
 	}
 
+	if (OFI_UNLIKELY(domain->base.domain_active == false)) {
+		NCCL_OFI_WARN("Domain is inactive");
+		return -EINVAL;
+	}
+
 	device = rdma_domain_get_device(domain);
 	assert(device != NULL);
 
@@ -7375,6 +7430,7 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 		EAGER_RX_BUFFER_ALIGNMENT : ep->eager_send_size;
 
 	ep->is_endpoint_per_communicator_ep = false;
+	ep->endpoint_active = true;
 
 	ret = init_rail_ofi_resources(device, domain, ep);
 	if (ret != 0) {
@@ -7402,6 +7458,10 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 	if (ret == 0) {
 		ret = init_max_write_inline_size_if_not_initialized(device, ep);
 	}
+	
+	nccl_net_ofi_mutex_lock(&domain->base.domain_lock);
+	++domain->base.ref_cnt;
+	nccl_net_ofi_mutex_unlock(&domain->base.domain_lock);
 
 error:
 	if (ret != 0) {
