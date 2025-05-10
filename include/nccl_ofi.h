@@ -472,7 +472,8 @@ struct nccl_net_ofi_ep {
 	 */
 	int (*connect)(nccl_net_ofi_ep_t *ep,
 				nccl_net_ofi_conn_handle_t *handle,
-				nccl_net_ofi_send_comm_t **send_comm);
+				nccl_net_ofi_send_comm_t **send_comm,
+				int trafficClass);
 
 	/*
 	 * @brief	Release nccl_ofi_ep.
@@ -544,6 +545,7 @@ struct nccl_net_ofi_listen_comm {
 
 struct nccl_net_ofi_send_comm {
 	nccl_net_ofi_comm_t base;
+	// TODO: Potentially store this here: int trafficClass;
 
 	/*
 	 * @brief	Register memory region on send communicator (both Host and CUDA)

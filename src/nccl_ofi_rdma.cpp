@@ -6833,8 +6833,9 @@ static int post_send_conn(nccl_net_ofi_rdma_send_comm_t *s_comm,
  * communicator rails using the received connect responce message.
  */
 static int connect(nccl_net_ofi_ep_t *base_ep,
-			    nccl_net_ofi_conn_handle_t *handle,
-			    nccl_net_ofi_send_comm_t **send_comm)
+		   nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_send_comm_t **send_comm,
+		   int trafficClass)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_req_state_t conn_resp_req_state;
@@ -7001,6 +7002,8 @@ static int connect(nccl_net_ofi_ep_t *base_ep,
 	++num_open_comms;
 	nccl_net_ofi_mutex_unlock(&comm_cleanup_list_lock);
 
+	// TODO: Integrate the trafficClass by potentially storing it in the send_comm
+	// structure or a endpoint structure.
 	*send_comm = &s_comm->base;
 
 	return ret;
