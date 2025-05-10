@@ -8,6 +8,69 @@
 #include "nccl_ofi_api.h"
 
 
+static ncclResult_t nccl_net_ofi_init_v10(ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
+{
+	// TODO: Implement ncclProfilerCallback_t functionality.
+	return nccl_net_ofi_init_v2(logFunction);
+}
+
+
+static ncclResult_t getProperties_v10(int dev_id, ncclNetProperties_v10_t* props)
+{
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_CUDA;
+	}
+	if (ofi_properties.dmabuf_support) {
+		props->ptrSupport |= NCCL_PTR_DMABUF;
+	}
+
+	/**
+	 * When net-plugin returns regIsGlobal=1 to NCCL (As part of
+	 * net-plugin getProperties() API), it signals to NCCL that
+	 * registered MRs are global, in the sense that they can be
+	 * used by all communicators. In addition, it also signals to
+	 * NCCL that the net-plugin have a fast MR cache such that
+	 * calling regMr() on same buffer (address and size), will
+	 * quickly return a previously globally registered MR on same
+	 * buffer.
+	 *
+	 * When user registers a buffer with NCCL by using
+	 * ncclCommRegister() API, if net-plugin supports
+	 * regIsGlobal=1, NCCL will register the buffer globally once
+	 * (On each net device) with regMr() API. When the net
+	 * proxy-thread starts to execute a communication task on a
+	 * previously registered user buffer, it will call the
+	 * net-plugin regMr() to quickly fetch the previously globally
+	 * registered MR from the plugin managed MR cache.
+	 */
+	props->regIsGlobal = ofi_properties.regIsGlobal;
+
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->latency = ofi_properties.latency;
+	props->maxComms = ofi_properties.max_communicators;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	props->netDeviceType = NCCL_NET_DEVICE_HOST;
+	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+	props->vProps.ndevs = 1;
+	props->vProps.devs[0] = dev_id;
+	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
+	props->maxCollBytes = ofi_properties.max_coll_bytes;
+
+	return ncclSuccess;
+}
+
+
 static ncclResult_t getProperties_v9(int dev_id, ncclNetProperties_v9_t* props)
 {
 	nccl_ofi_properties_t ofi_properties;
@@ -246,6 +309,13 @@ static ncclResult_t nccl_net_ofi_connect_v9(int dev, void* handle, void** sendCo
 }
 
 
+static ncclResult_t nccl_net_ofi_connect_v10(int dev, ncclNetCommConfig_v10_t* config,
+					     void* handle, void** sendComm, ncclNetDeviceHandle_v10_t** sendDevComm)
+{
+	return nccl_net_ofi_connect_v10(dev, handle, sendComm, config->trafficClass);
+}
+
+
 static ncclResult_t nccl_net_ofi_accept_v7(void* listenComm, void** recvComm,
 					   ncclNetDeviceHandle_v7_t** recvDevComm)
 {
@@ -433,6 +503,29 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .makeVDevice = NULL,
 };
 
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
+        .name = "Libfabric",
+        .init = nccl_net_ofi_init_v10,
+        .devices = nccl_net_ofi_devices_v2,
+        .getProperties = getProperties_v10,
+        .listen = nccl_net_ofi_listen_v5,
+        .connect = nccl_net_ofi_connect_v10,
+        .accept = nccl_net_ofi_accept_v9,
+        .regMr = nccl_net_ofi_regMr_v8,
+        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
+        .deregMr = nccl_net_ofi_deregMr_v2,
+        .isend = nccl_net_ofi_isend_v10,
+        .irecv = nccl_net_ofi_irecv_v10,
+        .iflush = nccl_net_ofi_iflush_v5,
+        .test = nccl_net_ofi_test_v2,
+        .closeSend = nccl_net_ofi_closeSend_v2,
+        .closeRecv = nccl_net_ofi_closeRecv_v2,
+        .closeListen = nccl_net_ofi_closeListen_v2,
+        .getDeviceMr = NULL,
+        .irecvConsumed = NULL,
+        .makeVDevice = NULL,
+};
+
 } /* extern "C" */
 
 
@@ -456,6 +549,7 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 		ncclNetPlugin_v7.name = "AWS Libfabric";
 		ncclNetPlugin_v8.name = "AWS Libfabric";
 		ncclNetPlugin_v9.name = "AWS Libfabric";
+		ncclNetPlugin_v10.name = "AWS Libfabric";
 	} else if (net_env != NULL && 0 == strcasecmp(net_env, "OFI")) {
 		ncclNetPlugin_v2.name = "OFI";
 		ncclNetPlugin_v3.name = "OFI";
@@ -465,5 +559,6 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 		ncclNetPlugin_v7.name = "OFI";
 		ncclNetPlugin_v8.name = "OFI";
 		ncclNetPlugin_v9.name = "OFI";
+		ncclNetPlugin_v10.name = "OFI";
 	}
 }
