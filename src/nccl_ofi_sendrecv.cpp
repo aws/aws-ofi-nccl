@@ -2189,7 +2189,8 @@ static ssize_t sendrecv_send_comm_send_connect_message(nccl_net_ofi_sendrecv_sen
 
 static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 				     nccl_net_ofi_conn_handle_t *handle,
-				     nccl_net_ofi_send_comm_t **send_comm)
+				     nccl_net_ofi_send_comm_t **send_comm,
+				     int trafficClass)
 {
 	int ret = 0;
 	ssize_t rc = 0;
@@ -2300,6 +2301,8 @@ static int sendrecv_endpoint_connect(nccl_net_ofi_ep_t *base_ep,
 		return -EINVAL;
 	};
 
+	// TODO: Integrate the trafficClass by potentially storing it in the send_comm
+	// structure or a endpoint structure.
 	*send_comm = &s_comm->base;
 	assert((nccl_net_ofi_comm_t *)s_comm == req->comm);
 	conn_info = (nccl_ofi_connection_info_t *)s_comm->conn_info->ptr;
