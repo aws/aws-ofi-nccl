@@ -22,6 +22,7 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev, void* handle, void **listenComm);
 // here, we just declare them in the nvidia interface file to keep this list sane.
 ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void **sendComm);
 ncclResult_t nccl_net_ofi_connect_v5(int dev, void* handle, void **sendComm);
+ncclResult_t nccl_net_ofi_connect_v10(int dev, void *handle, void **sendComm, int trafficClass);
 ncclResult_t nccl_net_ofi_accept_v2(void *listenComm, void **recvComm);
 ncclResult_t nccl_net_ofi_accept_v5(void* listenComm, void** recvComm);
 ncclResult_t nccl_net_ofi_regMr_v2(void *comm, void *data, int size, int type,
@@ -37,12 +38,16 @@ ncclResult_t nccl_net_ofi_isend_v5(void *sendComm, void* data, int size, int tag
 				   void** request);
 ncclResult_t nccl_net_ofi_isend_v9(void *sendComm, void* data, size_t size, int tag, void *mhandle,
 				   void** request);
+ncclResult_t nccl_net_ofi_isend_v10(void* sendComm, void* data, size_t size, int tag, void* mhandle,
+                                    void* phandle, void** request);
 ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size, void* mhandle,
 				   void** request);
 ncclResult_t nccl_net_ofi_irecv_v5(void* recvComm, int n, void** buffers, int* sizes, int *tags,
 				   void** mhandles, void** request);
 ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** buffers, size_t* sizes, int *tags,
 				   void** mhandles, void** request);
+ncclResult_t nccl_net_ofi_irecv_v10(void* recvComm, int n, void** data, size_t* sizes, int* tags,
+                                    void** mhandles, void** phandles, void** request);
 ncclResult_t nccl_net_ofi_test_v2(void *request, int *done, int *size);
 ncclResult_t nccl_net_ofi_flush_v2(void* recvComm, void* data, int size, void* mhandle);
 ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size, void* mhandle,

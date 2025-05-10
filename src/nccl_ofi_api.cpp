@@ -289,6 +289,12 @@ ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void** sendComm)
 }
 
 
+ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
+{
+    return nccl_net_ofi_connect_v10(dev_id, handle, sComm, -1);
+}
+
+
 /*
  * @brief	Non-blocking connect which returns sComm as NULL
  *		with an expectation that it will be called again until 
@@ -313,7 +319,7 @@ ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void** sendComm)
  * @return	0, on success
  * 		error, on others
  */
-ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
+ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, int trafficClass)
 {
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
@@ -353,7 +359,7 @@ ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
 	/* Connect */
 	nccl_net_ofi_send_comm_t **send_comm =
 		(nccl_net_ofi_send_comm_t **)sComm;
-	int ret = base_ep->connect(base_ep, (nccl_net_ofi_conn_handle_t *)handle, send_comm);
+	int ret = base_ep->connect(base_ep, (nccl_net_ofi_conn_handle_t *)handle, send_comm, trafficClass);
 
 	if (ret != 0) {
 		base_ep->release_ep(base_ep, false, false);
@@ -610,6 +616,15 @@ ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
 	return nccl_net_ofi_retval_translate(ret);
 }
 
+
+ncclResult_t nccl_net_ofi_isend_v10(void* sendComm, void* data, size_t size,
+					int tag, void* mhandle, void* phandle, void** request)
+{
+	// TODO: Add support for network profiling events via pHandles.
+	return nccl_net_ofi_isend_v9(sendComm, data, size, tag, mhandle, request);
+}
+
+
 ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size,
 				   void* mhandle, void** request)
 {
@@ -681,6 +696,15 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 	int ret = recv_comm->recv(recv_comm, n, data, sizes, tags, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
+
+
+ncclResult_t nccl_net_ofi_irecv_v10(void* recvComm, int n, void** data, size_t* sizes, int* tags,
+				   void** mhandles, void** phandles, void** request)
+{
+	// TODO: Add support for network profiling events via pHandles.
+	return nccl_net_ofi_irecv_v9(recvComm, n, data, sizes, tags, mhandles, request);
+}
+
 
 ncclResult_t nccl_net_ofi_test_v2(void* req, int* done, int* size)
 {
