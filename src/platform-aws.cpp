@@ -498,16 +498,19 @@ int platform_init(const char **provider_filter)
 	if ((platform_data && !platform_data->net_flush_required) &&
 	    NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
 
-		/* Hopper GPUs do not require a network flush, but NCCL versions <2.19.1
-		* still enable flush by default on any GPU type.
-		* For GPU generations earlier than Hopper, NCCL always enables flush, while
-		* for Hopper GPUs flush is enabled or disabled depending on the value of
-		* the NCCL_NET_FORCE_FLUSH environment variable. The default value for this
-		* variable is 1 for NCCL versions <2.19.1, which forces flush when it is not
-		* needed, so it is safe to set it to 0 if it is not explicitly set.
-		*/
+		/*
+		 * Certain GPU architectures do not require a network flush, but
+		 * NCCL versions <2.19.1 still enable flush by default on any
+		 * GPU type.  For GPU generations earlier than Hopper, NCCL
+		 * always enables flush, while for Hopper GPUs flush is enabled
+		 * or disabled depending on the value of the
+		 * NCCL_NET_FORCE_FLUSH environment variable. The default value
+		 * for this variable is 1 for NCCL versions <2.19.1, which
+		 * forces flush when it is not needed, so it is safe to set it
+		 * to 0 if it is not explicitly set.
+		 */
 
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 for Hopper GPUs");
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 since this platform does not require a network flush.");
 		ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
