@@ -7522,6 +7522,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_of
 		   opened on this domain rail */
 		struct fi_cq_attr cq_attr = {};
 		cq_attr.format = FI_CQ_FORMAT_DATA;
+		cq_attr.size = ofi_nccl_cq_size();
 		ret = fi_cq_open(domain_rail->domain, &cq_attr, &domain_rail->cq, NULL);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
