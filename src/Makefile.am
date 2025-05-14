@@ -18,6 +18,7 @@ sources = \
 	nccl_ofi_topo.cpp \
 	nccl_ofi_mr.cpp \
 	nccl_ofi_msgbuff.cpp \
+	nccl_ofi_nccl_compat.cpp \
 	nccl_ofi_freelist.cpp \
 	nccl_ofi_idpool.cpp \
 	nccl_ofi_ofiutils.cpp \

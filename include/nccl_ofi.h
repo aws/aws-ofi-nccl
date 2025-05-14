@@ -810,4 +810,9 @@ long nccl_net_ofi_gettid(void);
  */
 int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason);
 
+/*
+ * generate host hash for topology file
+ */
+uint64_t getHostHash(void);
+
 #endif // End NCCL_OFI_H_
