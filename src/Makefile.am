@@ -67,6 +67,7 @@ else
   lib_LTLIBRARIES = libnccl-net-ofi.la
   libnccl_net_ofi_la_SOURCES =
   libnccl_net_ofi_la_LIBADD = libinternal_net_plugin.la
+  libnccl_net_ofi_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_ofi_la_LDFLAGS = -module -avoid-version
 
 
