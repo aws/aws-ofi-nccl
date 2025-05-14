@@ -11,7 +11,9 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <cinttypes>
 
+#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
@@ -1284,13 +1286,21 @@ static int write_cpu_opening_tag(hwloc_obj_t node, FILE *file, int indent)
 
 	/* Write NUMA node opening tag including `numaid` and
 	 * `affinity`. Fields `arch`, `vendor`, `familyid`, and
-	 * `modelid` are added by NCCL later. */
+	 * `modelid` are added by NCCL later.
+	 *
+	 * The host_hash field is required here because NCCL 2.21 (which
+	 * introduced host_hash) through at least NCCL 2.26 does not merge the
+	 * NCCL host_hash field into our minimal topo file, resulting in the
+	 * field being missing.  This breaks Multi-Node NVL in rather unexpected
+	 * ways.
+	 */
 	if (fprintf(file,
 		    "%*s"
 		    "<cpu "
+		    "host_hash=\"0x%" PRIx64 "\" "
 		    "numaid=\"%u\""
 		    ">\n",
-		    indent, "", node->os_index) < 0) {
+		    indent, "", getHostHash(), node->os_index) < 0) {
 		NCCL_OFI_WARN("Failed to print opening CPU tag. ERROR: %s",
 			      strerror(errno));
 		return -errno;
