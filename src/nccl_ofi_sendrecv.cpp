@@ -2478,6 +2478,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_ne
 
 	/* Create a domain-shared completion queue */
 	cq_attr.format = FI_CQ_FORMAT_TAGGED;
+	cq_attr.size = ofi_nccl_cq_size();
 	ret = fi_cq_open(domain->domain, &cq_attr, &domain->cq, NULL);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",

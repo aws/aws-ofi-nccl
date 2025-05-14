@@ -225,6 +225,11 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
  */
 OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
 
+/* 
+ * Completion queue size. Defaults to EFA RDM path size.
+ */
+OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
+
 /*
  * Protocol to use for send/recv operations.  Valid options are
  * SENDRECV and RDMA, with SENDRECV the default.  Default param is
