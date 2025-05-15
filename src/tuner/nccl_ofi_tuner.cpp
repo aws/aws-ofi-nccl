@@ -47,7 +47,6 @@ static ncclResult_t nccl_ofi_tuner_destroy(void *context)
 static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
 	const char *platform_type = NULL;
-	const char *tuner_force_type = NULL;
 	ncclResult_t ret = ncclSuccess;
 	*context = NULL;
 	nccl_ofi_tuner_context_t *ctx = NULL;
@@ -69,17 +68,14 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		goto exit;
 	}
 
-	tuner_force_type = ofi_nccl_tuner_force_type();
-	if (tuner_force_type != NULL) {
-		if (strcmp(tuner_force_type, "Internal") == 0) {
-			/* fallback to NCCL internal tuner */
-			NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
-				      "NCCL_OFI_TUNER_TYPE is Internal, Fall back to NCCL's tuner for platform : %s",
-				      platform_type);
-			goto exit;
-		} else if (strcmp(tuner_force_type, "Model") == 0) {
-			is_force_type_model = 1;
-		}
+	if (strcmp(ofi_nccl_tuner_force_type.get(), "Internal") == 0) {
+		/* fallback to NCCL internal tuner */
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
+			      "NCCL_OFI_TUNER_TYPE is Internal, Fall back to NCCL's tuner for platform : %s",
+			      platform_type);
+		goto exit;
+	} else if (strcmp(ofi_nccl_tuner_force_type.get(), "Model") == 0) {
+		is_force_type_model = 1;
 	}
 
 	if (strcmp(platform_type, "p5.48xlarge") == 0 || strcmp(platform_type, "p5e.48xlarge") == 0) {
