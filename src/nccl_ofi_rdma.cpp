@@ -5532,7 +5532,8 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 					send_data->remote_mr_key[rail_id], rdma_req_get_ofi_context(req, rail_id));
 	}
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("fi_writedata failed; RC: %zd, Error: %s",
+		NCCL_OFI_WARN("%s failed; RC: %zd, Error: %s",
+			      no_target_completion ? "fi_write" : "fi_writedata",
 			      rc, fi_strerror(-rc));
 	} else if (rc == 0) {
 		NCCL_OFI_TRACE_SEND_WRITE_SEG_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
