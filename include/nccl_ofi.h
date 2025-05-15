@@ -395,6 +395,26 @@ struct nccl_net_ofi_domain {
 
 	pthread_mutex_t domain_lock;
 
+	/* Domain reference counter for resource management.
+	 *
+	 * In some modes (right now, endpoint_per_communicator), we create
+	 * multiple endpoints per domain. This counter tracks the number
+	 * of endpoints created on this domain. When it reaches 0, the
+	 * domain can be destroyed. */
+	int ref_cnt;
+
+	/*
+	 * Boolean flag indicating whether the domain is still valid and usable
+	 *
+	 * When a communicator is closed with inflight requests, the domain is
+	 * marked inactive, preventing further use of communicators on the
+	 * domain. Transports should check the domain_active flag before using
+	 * OFI resources associated with the domain (CQs, endpoints, AVs)
+	 *
+	 * This flag is protected by domain_lock
+	 */
+	bool domain_active;
+
 /* Private */
 	/* pure virtual function called when resources associated with
 	 * the ep should be destroyed.  Device lock will be held when

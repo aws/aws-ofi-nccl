@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_PTHREAD_H
 #define NCCL_OFI_PTHREAD_H
 
+#include <cassert>
 #include <errno.h>
 #include <pthread.h>
 #include <string.h>
@@ -98,5 +99,64 @@ nccl_net_ofi_mutex_unlock_impl(pthread_mutex_t *mutex, const char *file, size_t 
 	}
 }
 #define nccl_net_ofi_mutex_unlock(mutex) nccl_net_ofi_mutex_unlock_impl(mutex, __FILE__, __LINE__);
+
+
+/**
+ * RAII-style locking functionality for pthread locks
+ *
+ * Until we have converted the rest of the codebase to C++, we are stuck with
+ * pthread mutexes instead of std::mutex (and std::lock_guard). Hence, this
+ * convenience class.
+ */
+class pthread_lock_guard {
+public:
+	/**
+	 * Default constructor. Does not take ownership of any mutex.
+	 */
+	pthread_lock_guard() : mutex(nullptr) { }
+
+	/**
+	 * Constructor. Take ownership of the mutex and lock it.
+	 */
+	pthread_lock_guard(pthread_mutex_t *_mutex) : mutex(_mutex)
+	{
+		assert(mutex);
+		nccl_net_ofi_mutex_lock(mutex);
+	}
+
+	/**
+	 * Take ownership of the mutex provided and lock it
+	 */
+	void lock(pthread_mutex_t *_mutex)
+	{
+		assert(!mutex);
+		mutex = _mutex;
+		nccl_net_ofi_mutex_lock(mutex);
+	}
+
+	/**
+	 * Manually unlock the mutex. After this function is called, the mutex
+	 * is no longer owned by this class.
+	 */
+	void unlock()
+	{
+		assert(mutex);
+		nccl_net_ofi_mutex_unlock(mutex);
+		mutex = nullptr;
+	}
+
+	/**
+	 * Destructor. Unlock the owned mutex (if any).
+	 */
+	~pthread_lock_guard()
+	{
+		if (mutex) {
+			nccl_net_ofi_mutex_unlock(mutex);
+		}
+	}
+private:
+	pthread_mutex_t *mutex;
+};
+
 
 #endif // End NCCL_OFI_PTHREAD_H
