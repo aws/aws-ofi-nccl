@@ -1,0 +1,85 @@
+# docker/base/Dockerfile.ubuntu
+FROM ubuntu:22.04
+
+# Accept build arguments
+ARG CC_TYPE=gcc
+ARG CC_VARIANT=latest
+ARG CC_VERSION
+ARG ENABLE_TRACING=false
+ARG ENABLE_CUDA=false
+ARG EFA_INSTALLER_VERSION=latest
+
+# Enable all Ubuntu repositories and install base packages
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    software-properties-common && \
+    add-apt-repository universe && \
+    add-apt-repository multiverse && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl wget git build-essential gcc-multilib \
+    libhwloc-dev make sudo lsb-release pciutils \
+    libevent-core-2.1-7 libevent-pthreads-2.1-7 \
+    udev dmidecode ethtool iproute2 \
+    environment-modules tcl \
+    libnl-3-200 libnl-3-dev \
+    libnl-route-3-200 libnl-route-3-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install EFA
+RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-*.tar.gz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y --skip-kmod && \
+    cd .. && \
+    rm -rf aws-efa-installer*
+
+# Install compiler based on arguments
+RUN apt-get update && \
+    if [ "$CC_TYPE" = "clang" ]; then \
+        if [ "$CC_VARIANT" = "latest" ]; then \
+            wget https://apt.llvm.org/llvm.sh && \
+            chmod +x llvm.sh && \
+            ./llvm.sh ${CC_VERSION} && \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            clang-${CC_VERSION} clang++-${CC_VERSION} && \
+            update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${CC_VERSION} 100 && \
+            update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${CC_VERSION} 100; \
+        else \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            clang-14 lldb-14 lld-14 && \
+            update-alternatives --install /usr/bin/clang clang /usr/bin/clang-14 100 && \
+            update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-14 100; \
+        fi; \
+    elif [ "$CC_TYPE" = "gcc" ]; then \
+        if [ "$CC_VARIANT" = "latest" ]; then \
+            add-apt-repository -y ppa:ubuntu-toolchain-r/test && \
+            apt-get update && \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-${CC_VERSION} g++-${CC_VERSION} && \
+            update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${CC_VERSION} 100 && \
+            update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${CC_VERSION} 100; \
+        else \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y gcc g++; \
+        fi; \
+        update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 100 && \
+        update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 100; \
+    fi && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install CUDA if enabled
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
+        wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
+        dpkg -i cuda-keyring_1.1-1_all.deb && \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Install lttng if enabled
+RUN if [ "$ENABLE_TRACING" = "true" ]; then \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+WORKDIR /workspace

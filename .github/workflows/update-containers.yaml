@@ -1,0 +1,124 @@
+name: Update CI Containers
+on:
+  schedule:
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+jobs:
+  build-amazonlinux-containers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sdk: [cuda, neuron]
+        efainstaller: [latest, 1.25.0]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Build and push amazonlinux containers
+        uses: docker/build-push-action@v4
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile.al2023
+          push: true
+          tags: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
+          build-args: |
+            ENABLE_CUDA=${{ matrix.sdk == 'cuda' }}
+            EFA_INSTALLER_VERSION=${{ matrix.efainstaller }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-ubuntu-containers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        cc-variant: [latest, legacy]
+        cc: [gcc, clang]
+        tracing: [lttng, none]
+        sdk: [cuda, neuron]
+        include:
+          - cc-variant: latest
+            cc: clang
+            cc-version: 18
+          - cc-variant: latest
+            cc: gcc
+            cc-version: 13
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Build and push ubuntu containers
+        uses: docker/build-push-action@v4
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile.ubuntu
+          push: true
+          tags: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
+          build-args: |
+            CC_TYPE=${{ matrix.cc }}
+            CC_VARIANT=${{ matrix.cc-variant }}
+            CC_VERSION=${{ matrix.cc-version }}
+            ENABLE_TRACING=${{ matrix.tracing == 'lttng' }}
+            ENABLE_CUDA=${{ matrix.sdk == 'cuda' }}
+            EFA_INSTALLER_VERSION=latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-codechecker-containers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        sdk: [cuda, neuron]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Build and push CodeChecker containers
+        uses: docker/build-push-action@v4
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile.codechecker
+          push: true
+          tags: ghcr.io/${{ github.repository }}/aws-ofi-nccl-codechecker:${{ matrix.sdk }}-latest
+          build-args: |
+            LLVM_VERSION=18
+            CODECHECKER_VERSION=v6.23.1
+            ENABLE_CUDA=${{ matrix.sdk == 'cuda' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
