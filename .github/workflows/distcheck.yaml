@@ -1,4 +1,5 @@
 name: PR CI
+
 on:
   workflow_dispatch:
   push:
@@ -28,12 +29,6 @@ on:
       - "topology/**"
       - ".github/workflows/**"
 env:
-  APT_PACKAGES: >-
-    build-essential
-    git
-    libhwloc-dev
-    make
-
   # note, related to issue around actions/checkout@v4, linked below. This
   # environment variable is also now needed, as of july 2024.
   # ref: https://github.com/actions/runner/issues/2906#issuecomment-2208546951
@@ -42,6 +37,7 @@ env:
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
+
 jobs:
   amazonlinux:
     strategy:
@@ -49,8 +45,6 @@ jobs:
         sdk:
           - cuda
           - neuron
-        container:
-          - public.ecr.aws/amazonlinux/amazonlinux:2023
         efainstaller:
           - latest
           - 1.34.0
@@ -71,40 +65,11 @@ jobs:
           - efainstaller: 1.25.0
             platform-aws: disable
 
-          - container: public.ecr.aws/amazonlinux/amazonlinux:2023
-            displayname: al2023
-            efainstallerdir: ALINUX2023
-            nvidiadistro: amzn2023
-            configmanager: dnf config-manager
-            cudapackages: cuda-cudart-devel-12-6 cuda-crt-12-6
-
     runs-on: ubuntu-latest
-    container: ${{ matrix.container }}
-    name: ${{ matrix.displayname }}/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
+    name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
     steps:
-      - run: |
-          yum -y update && yum -y install git tar util-linux findutils yum-utils
-      # note, do not bump to v4: https://github.com/actions/checkout/issues/1590
       - uses: actions/checkout@v3
-      - name: Fetch and Install EFA Installer Dependencies
-        run: |
-          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz
-          tar -xf aws-efa-installer-*.tar.gz
-          cd aws-efa-installer/RPMS/${{ matrix.efainstallerdir }}/x86_64
-          find . | grep rpm$ | xargs yum -y localinstall
-
-      - name: Install hwloc, utilities.
-        run: |
-          yum -y install hwloc-devel autoconf automake libtool gcc gcc-c++ git make
-
-      - name: Install CUDA
-        if: matrix.sdk == 'cuda'
-        run: |
-          ${{ matrix.configmanager }} --add-repo \
-             http://developer.download.nvidia.com/compute/cuda/repos/${{ matrix.nvidiadistro }}/x86_64/cuda-${{ matrix.nvidiadistro }}.repo \
-             --save
-          yum -y clean expire-cache
-          yum -y install ${{ matrix.cudapackages }}
 
       - name: Call `autoreconf -ivf`
         run: |
@@ -112,7 +77,7 @@ jobs:
 
       - name: Run Configure
         run: |
-          if [ "${{ matrix.sdk }}" == "neuron" ]; then
+          if [ "${{ matrix.sdk }}" = "neuron" ]; then
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
                         --enable-tests=yes \
@@ -158,7 +123,6 @@ jobs:
         sdk:
           - cuda
           - neuron
-
         include:
           - cc-variant: latest
             cc: clang
@@ -168,77 +132,17 @@ jobs:
             cc-version: 13
 
     name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Configure Compilers
-        run: |
-          if [ "${{ matrix.cc }}" == "clang" ]; then
-            if [ "${{ matrix.cc-variant }}" == "latest" ]; then
-              wget https://apt.llvm.org/llvm.sh
-              chmod +x llvm.sh
-              sudo ./llvm.sh ${{ matrix.cc-version }}
-              sudo update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${{ matrix.cc-version }} 10
-              sudo update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${{ matrix.cc-version }} 10
-            else
-              sudo apt-get install -y clang
-            fi
-            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/clang 10
-            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/clang++ 10
-          fi
-
-          if [ "${{ matrix.cc }}" == "gcc" ]; then
-            if [ "${{ matrix.cc-variant }}" == "latest" ]; then
-              sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
-              sudo apt-get install -y gcc-${{ matrix.cc-version }} g++-${{ matrix.cc-version }}
-              sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-${{ matrix.cc-version }} 10
-              sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-${{ matrix.cc-version }} 10
-            else
-              sudo apt-get install -y gcc g++
-            fi
-            sudo update-alternatives --install /usr/bin/cc cc /usr/bin/gcc 10
-            sudo update-alternatives --install /usr/bin/c++ c++ /usr/bin/g++ 10
-          fi
-
-      - name: Install Base Dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ env.APT_PACKAGES }}
-
-      - name: Install CUDA SDK
-        if: matrix.sdk == 'cuda'
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
-          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
-          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update -y
-          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
-
-      - name: Install lttng
-        if: matrix.tracing == 'lttng'
-        run: |
-          sudo apt-get install -y liblttng-ust-dev
-
-      - name: Fetch and Install EFA Installer Dependencies
-        run: |
-          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
-          tar -xf aws-efa-installer-*.tar.gz
-          pushd aws-efa-installer/
-              sudo ./efa_installer.sh -y --skip-kmod
-          popd
 
       - name: Build Plugin
         run: |
           set -x
-
           export CC="cc"
           export CXX="c++"
-
-          # actions/checkout@v4 would drop the plugin source in $PWD,
-          # so go ahead and build it.
           ./autogen.sh
-          if [ "${{ matrix.sdk }}" == "neuron" ]
+          if [ "${{ matrix.sdk }}" = "neuron" ]
           then
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -285,44 +189,15 @@ jobs:
         sdk:
           - cuda
           - neuron
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-codechecker:${{ matrix.sdk }}-latest
     name: CodeChecker - ${{ matrix.sdk }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.9'
-
-      - name: Install Base Dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ env.APT_PACKAGES }}
-
-      - name: Install CUDA SDK
-        if: matrix.sdk == 'cuda'
-        run: |
-          sudo apt-get update -y && sudo apt-get install -y wget lsb-release
-          repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')"
-          wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb
-          sudo dpkg -i cuda-keyring_1.1-1_all.deb
-          sudo apt-get update -y
-          sudo apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6
-
-      - name: Install cppcheck
-        run: |
-          sudo apt-get install -y cppcheck
-
-      - name: Fetch and Install EFA Installer Dependencies
-        run: |
-          curl -O https://efa-installer.amazonaws.com/aws-efa-installer-latest.tar.gz
-          tar -xf aws-efa-installer-*.tar.gz
-          pushd aws-efa-installer/
-              sudo ./efa_installer.sh -y --skip-kmod
-          popd
 
       - name: Run Configure
         run: |
           ./autogen.sh
-          if [ "${{ matrix.sdk }}" == "neuron" ]; then
+          if [ "${{ matrix.sdk }}" = "neuron" ]; then
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
                         --enable-tests=yes \
@@ -341,25 +216,50 @@ jobs:
           fi
 
       - name: Run CodeChecker
-        uses: whisperity/codechecker-analysis-action@v1
-        id: codechecker
-        with:
-          build-command: make
-          ctu: true
-          config: .github/codechecker.yaml
-          install-custom: true
-          version: v6.23.1
-          llvm-version: '18'
+        env:
+          CC: clang
+          CXX: clang++
+        run: |
+          # Ensure exit on real errors, but continue on exit code 2
+          set +e
+          
+          # Create directories first
+          mkdir -p /workspace/codechecker_Results
+          mkdir -p /workspace/codechecker_Results_HTML
+          mkdir -p ./codechecker_Results_HTML
 
-      - name: Save CodeChecker HTML output.
-        uses: actions/upload-artifact@v4
+          # Step 1: Log command
+          CodeChecker log \
+            -o /workspace/codechecker_Results.json \
+            -b "make V=1"
+          if [ $? -ne 0 ]; then exit 1; fi
+
+          # Step 2: Analyze command
+          CodeChecker analyze \
+            /workspace/codechecker_Results.json \
+            -o /workspace/codechecker_Results \
+            --jobs "$(nproc)" \
+            --config .github/codechecker.yaml \
+            --ctu \
+            --ctu-all
+          if [ $? -ne 0 ]; then exit 1; fi
+
+          # Step 3: Parse command - allow exit code 2
+          CodeChecker parse \
+            /workspace/codechecker_Results \
+            --export html \
+            --output /workspace/codechecker_Results_HTML
+          parse_exit=$?
+          if [ $parse_exit -ne 0 ] && [ $parse_exit -ne 2 ]; then
+            exit 1
+          fi
+
+          # Copy results to a location accessible outside container
+          cp -r /workspace/codechecker_Results_HTML/* ./codechecker_Results_HTML/
+          exit 0
+
+      - uses: actions/upload-artifact@v4
         with:
           name: CodeChecker Bug Reports for ${{ matrix.sdk }}
-          path: ${{ steps.codechecker.outputs.result-html-dir }}/*.html
-
-      - name: CodeChecker Pass Or Fail?
-        if: steps.codechecker.outputs.warnings-in-diff == 'true'
-        shell: bash
-        run: |
-          echo "::error title=Static Analyzers Failed::Analysed commit(s) caused static analysis warnings"
-          exit 0
+          path: |
+            codechecker_Results_HTML/*.html
