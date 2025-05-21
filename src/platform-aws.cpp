@@ -45,6 +45,31 @@
  * name is evaluated as a POSIX regex, so entries like "p5.*" is
  * valid.  First match found wins, even if there is a more specific
  * match later in the array.
+ *
+ * Notes on the environment:
+ *
+ *  * Certain GPU architectures do not require a network flush, but
+ *    NCCL versions <2.19.1 still enable flush by default on any
+ *    GPU type.  For GPU generations earlier than Hopper, NCCL
+ *    always enables flush, while for Hopper GPUs flush is enabled
+ *    or disabled depending on the value of the
+ *    NCCL_NET_FORCE_FLUSH environment variable. The default value
+ *    for this variable is 1 for NCCL versions <2.19.1, which
+ *    forces flush when it is not needed, so it is safe to set it
+ *    to 0 if it is not explicitly set.
+ *
+ *  * NCCL v2.19.3 reduced the chunk size used when running NVLS Tree
+ *    algorithm on greater than 4 nodes to 64KiB. This drastically impacted
+ *    performance on AWS (Ref: https://github.com/NVIDIA/nccl/pull/1112/
+ *    for some data). NCCL v2.20.3 has made this a tunable. Based on
+ *    empirical testing, a max chunk size of 512KiB recovers from the
+ *    regression and was also observed to be the default in v2.19.3.
+ *    Setting this unconditionally without relying on ncclGetVersion symbol
+ *    being available, since the parameter did not exist in versions prior
+ *    to v2.20.
+ *
+ *    The NVLSTree chunk size can not be larger than the NVLS chunk size,
+ *    so we ensure both are set to 512KiB.
  */
 static struct ec2_platform_data platform_data_map[] = {
 	{
@@ -57,6 +82,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -68,6 +97,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -79,6 +112,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "p-series",
@@ -95,6 +129,13 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = false,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+		},
 	},
 	{
 		.name = "p5/p5e",
@@ -106,6 +147,13 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = false,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+		},
 	},
 	{
 		.name = "g5.48xlarge",
@@ -117,6 +165,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "trn1",
@@ -128,6 +177,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "trn2",
@@ -139,6 +189,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "inf",
@@ -150,6 +201,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 };
 
@@ -454,6 +506,10 @@ int platform_init(const char **provider_filter)
 		select_efa = true;
 	}
 
+	if (platform_data != NULL) {
+		env_manager::getInstance().insert_envvars(platform_data->env);
+	}
+
 #if HAVE_CUDA
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
@@ -494,38 +550,6 @@ int platform_init(const char **provider_filter)
 		NCCL_OFI_WARN("Unable to configure NVLS option");
 		goto exit;
 	}
-
-	if (platform_data && !platform_data->net_flush_required) {
-		/*
-		 * Certain GPU architectures do not require a network flush, but
-		 * NCCL versions <2.19.1 still enable flush by default on any
-		 * GPU type.  For GPU generations earlier than Hopper, NCCL
-		 * always enables flush, while for Hopper GPUs flush is enabled
-		 * or disabled depending on the value of the
-		 * NCCL_NET_FORCE_FLUSH environment variable. The default value
-		 * for this variable is 1 for NCCL versions <2.19.1, which
-		 * forces flush when it is not needed, so it is safe to set it
-		 * to 0 if it is not explicitly set.
-		 */
-		env_manager::getInstance().insert_envvar("NCCL_NET_FORCE_FLUSH", "0", false);
-	}
-
-	/*
-	 * NCCL v2.19.3 reduced the chunk size used when running NVLS Tree
-	 * algorithm on greater than 4 nodes to 64KiB. This drastically impacted
-	 * performance on AWS (Ref: https://github.com/NVIDIA/nccl/pull/1112/
-	 * for some data). NCCL v2.20.3 has made this a tunable. Based on
-	 * empirical testing, a max chunk size of 512KiB recovers from the
-	 * regression and was also observed to be the default in v2.19.3.
-	 * Setting this unconditionally without relying on ncclGetVersion symbol
-	 * being available, since the parameter did not exist in versions prior
-	 * to v2.20.
-	 *
-	 * The NVLSTree chunk size can not be larger than the NVLS chunk size,
-	 * so we ensure both are set to 512KiB.
-	 */
-	env_manager::getInstance().insert_envvar("NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288", false);
-	env_manager::getInstance().insert_envvar("NCCL_NVLS_CHUNKSIZE", "524288", false);
 #endif
 
 	/*
