@@ -10,6 +10,9 @@
 #ifndef PLATFORM_AWS_H_
 #define PLATFORM_AWS_H_
 
+#include <map>
+#include <string>
+
 struct ec2_platform_data {
 	const char* name;
 	const char* regex;
@@ -20,6 +23,7 @@ struct ec2_platform_data {
 	bool net_flush_required;
 	const char *default_protocol;
 	int domain_per_thread;
+	std::map<std::string, std::string> env;
 };
 
 

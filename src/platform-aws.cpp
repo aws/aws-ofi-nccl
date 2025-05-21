@@ -57,6 +57,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -68,6 +72,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -79,6 +87,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "p-series",
@@ -95,6 +104,12 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = false,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "g5.48xlarge",
@@ -106,6 +121,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "trn1",
@@ -117,6 +133,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "trn2",
@@ -128,6 +145,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "inf",
@@ -139,6 +157,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 };
 
@@ -441,6 +460,10 @@ int platform_init(const char **provider_filter)
 		select_efa = true;
 	} else if (0 == strcmp(fi_provider, "efa")) {
 		select_efa = true;
+	}
+
+	if (platform_data != NULL) {
+		env_manager::getInstance().insert_envvars(platform_data->env);
 	}
 
 #if HAVE_CUDA
