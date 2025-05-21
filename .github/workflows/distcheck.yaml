@@ -54,6 +54,10 @@ jobs:
         efainstaller:
           - latest
           - 1.25.0
+        exclude:
+          # Neuron requires platform-aws, which requires newer EFA installer
+          - efainstaller: 1.25.0
+            sdk: neuron
         include:
           - efainstaller: latest
             platform-aws: enable
