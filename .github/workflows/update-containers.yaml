@@ -5,12 +5,25 @@ on:
   workflow_dispatch:
 
 jobs:
+  get-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      amazonlinux: ${{ steps.set-matrix.outputs.amazonlinux }}
+      ubuntu: ${{ steps.set-matrix.outputs.ubuntu }}
+      codechecker: ${{ steps.set-matrix.outputs.codechecker }}
+    steps:
+      - uses: actions/checkout@v3
+      - id: set-matrix
+        run: |
+          echo "amazonlinux=$(jq -c '.matrix_config.amazonlinux' .github/matrix-config.json)" >> $GITHUB_OUTPUT
+          echo "ubuntu=$(jq -c '.matrix_config.ubuntu' .github/matrix-config.json)" >> $GITHUB_OUTPUT
+          echo "codechecker=$(jq -c '.matrix_config.codechecker' .github/matrix-config.json)" >> $GITHUB_OUTPUT
+
   build-amazonlinux-containers:
+    needs: get-matrix
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        sdk: [cuda, neuron]
-        efainstaller: [latest, 1.25.0]
+      matrix: ${{fromJson(needs.get-matrix.outputs.amazonlinux)}}
     permissions:
       contents: read
       packages: write
@@ -41,20 +54,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-ubuntu-containers:
+    needs: get-matrix
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        cc-variant: [latest, legacy]
-        cc: [gcc, clang]
-        tracing: [lttng, none]
-        sdk: [cuda, neuron]
-        include:
-          - cc-variant: latest
-            cc: clang
-            cc-version: 18
-          - cc-variant: latest
-            cc: gcc
-            cc-version: 13
+      matrix: ${{fromJson(needs.get-matrix.outputs.ubuntu)}}
     permissions:
       contents: read
       packages: write
@@ -89,10 +92,10 @@ jobs:
           cache-to: type=gha,mode=max
 
   build-codechecker-containers:
+    needs: get-matrix
     runs-on: ubuntu-latest
     strategy:
-      matrix:
-        sdk: [cuda, neuron]
+      matrix: ${{fromJson(needs.get-matrix.outputs.codechecker)}}
     permissions:
       contents: read
       packages: write
