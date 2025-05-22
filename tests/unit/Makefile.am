@@ -11,7 +11,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/uthash/include
 LDADD = $(top_builddir)/src/libinternal_net_plugin.la
-noinst_HEADERS = test-common.h
+noinst_HEADERS = test-logger.h
 
 noinst_PROGRAMS = \
 	freelist \
@@ -21,7 +21,8 @@ noinst_PROGRAMS = \
 	ep_addr_list \
 	mr \
 	histogram_binner \
-	histogram
+	histogram \
+	dlopen_c_test
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -47,6 +48,7 @@ mr_SOURCES = mr.cpp
 aws_platform_mapper_SOURCES = aws_platform_mapper.cpp
 histogram_binner_SOURCES = histogram_binner.cpp
 histogram_SOURCES = histogram.cpp
+dlopen_c_test_SOURCES = dlopen_c_test.c
 
 TESTS = $(noinst_PROGRAMS)
 endif

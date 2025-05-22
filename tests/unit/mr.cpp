@@ -6,7 +6,8 @@
 
 #include <stdlib.h>
 
-#include "test-common.h"
+#include "nccl_ofi.h"
+#include "test-logger.h"
 #include "nccl_ofi_mr.h"
 
 static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,

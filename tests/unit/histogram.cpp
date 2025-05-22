@@ -6,7 +6,8 @@
 
 #include <iostream>
 
-#include "test-common.h"
+#include "nccl_ofi.h"
+#include "test-logger.h"
 #include "stats/histogram.h"
 
 

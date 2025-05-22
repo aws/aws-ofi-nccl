@@ -4,7 +4,8 @@
 
 #include "config.h"
 
-#include "test-common.h"
+#include "nccl_ofi.h"
+#include "test-logger.h"
 #include <stdio.h>
 #include <string.h>
 

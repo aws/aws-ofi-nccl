@@ -6,7 +6,8 @@
 
 #include <stdio.h>
 
-#include "test-common.h"
+#include "nccl_ofi.h"
+#include "test-logger.h"
 #include "nccl_ofi_freelist.h"
 
 void *simple_base;
