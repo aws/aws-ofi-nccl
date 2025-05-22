@@ -8,3 +8,4 @@ region_based_tuner
 scheduler
 histogram
 histogram_binner
+dlopen_c_test

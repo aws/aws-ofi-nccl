@@ -11,7 +11,8 @@
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_scheduler.h"
-#include "test-common.h"
+#include "nccl_ofi.h"
+#include "test-logger.h"
 
 static inline int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
 {
