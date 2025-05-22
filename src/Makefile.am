@@ -54,6 +54,7 @@ if ENABLE_NEURON
   lib_LTLIBRARIES = libnccom-net.la
   libnccom_net_la_SOURCES =
   libnccom_net_la_LIBADD = libinternal_net_plugin.la
+  libnccom_net_la_LIBTOOLFLAGS = --tag=CXX
   libnccom_net_la_LDFLAGS = -module -avoid-version
 else
   noinst_LTLIBRARIES += libinternal_net_cudart_plugin.la
