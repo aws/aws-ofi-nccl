@@ -1,17 +1,11 @@
 /*
- * Copyright (c) 2020-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2020-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_PARAM_H_
 #define NCCL_OFI_PARAM_H_
 
-#include <assert.h>
-#include <errno.h>
-#include <pthread.h>
-#include <string.h>
-
-#include "nccl_ofi_log.h"
-#include "nccl_ofi_pthread.h"
+#include "nccl_ofi_param_impl.h"
 
 /*
  * This is an ugly hack.  The original implementation of
@@ -32,119 +26,31 @@
  */
 #ifndef OFI_NCCL_PARAM_DEFINE
 
+#define OFI_NCCL_PARAM(type, name, env, default_value) \
+	extern class ofi_nccl_param_impl<type> ofi_nccl_##name;
+
 #define OFI_NCCL_PARAM_UINT(name, env, default_value) \
-uint64_t ofi_nccl_##name(void)
+	OFI_NCCL_PARAM(long unsigned int, name, env, default_value)
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
-int64_t ofi_nccl_##name(void)
+	OFI_NCCL_PARAM(int, name, env, default_value)
 
 #define OFI_NCCL_PARAM_STR(name, env, default_value) \
-const char *ofi_nccl_##name(void)
+	OFI_NCCL_PARAM(const char *, name, env, default_value)
 
 #else
 
-#define OFI_NCCL_PARAM_UINT(name, env, default_value)                                                                       \
-	uint64_t ofi_nccl_##name(void);                                                                                     \
-	static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER;                                      \
-	uint64_t ofi_nccl_##name(void)                                                                                      \
-	{                                                                                                                   \
-		static bool initialized = false;                                                                            \
-		static uint64_t value = default_value;                                                                      \
-		if (initialized) {                                                                                          \
-			return value;                                                                                       \
-		}                                                                                                           \
-		nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name);                                                       \
-		uint64_t v;                                                                                                 \
-		char *str, *endptr;                                                                                         \
-		if (!initialized) {                                                                                         \
-			str = getenv("OFI_NCCL_" env);                                                                      \
-			if (str && strlen(str) > 0) {                                                                       \
-				errno = 0;                                                                                  \
-				v = strtoull(str, &endptr, 0);                                                              \
-				if (errno || str == endptr || *endptr != '\0') {                                            \
-					NCCL_OFI_INFO(                                                                      \
-						NCCL_INIT | NCCL_NET,                                                       \
-						"Invalid value %s provided for %s environment variable, using default %lu", \
-						str,                                                                        \
-						"OFI_NCCL_" env,                                                            \
-						value);                                                                     \
-				} else {                                                                                    \
-					value = v;                                                                          \
-					NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,                                                 \
-					              "Setting %s environment variable to %lu",                             \
-					              "OFI_NCCL_" env,                                                      \
-					              value);                                                               \
-				}                                                                                           \
-			}                                                                                                   \
-			initialized = true;                                                                                 \
-		}                                                                                                           \
-		nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name);                                                     \
-		return value;                                                                                               \
-	}
+#define OFI_NCCL_PARAM(type, name, env, default_value) \
+	class ofi_nccl_param_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value);
+
+#define OFI_NCCL_PARAM_UINT(name, env, default_value)	\
+	OFI_NCCL_PARAM(long unsigned int, name, env, default_value)
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
-int64_t ofi_nccl_##name(); \
-static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-int64_t ofi_nccl_##name() { \
-    static bool initialized = false; \
-    static int64_t value = default_value; \
-    if (initialized) { \
-	return value; \
-    } \
-    nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name); \
-    int64_t v; \
-    char *str, *endptr; \
-    if (!initialized) { \
-        str = getenv("OFI_NCCL_" env); \
-        if (str && strlen(str) > 0) { \
-            errno = 0; \
-            v = strtoll(str, &endptr, 0); \
-            if (errno || str == endptr || *endptr != '\0') { \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, \
-                    "Invalid value %s provided for %s environment variable, using default %lu", \
-                    str, "OFI_NCCL_" env, value); \
-            } else { \
-                value = v; \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting %s environment variable to %lu", \
-                              "OFI_NCCL_" env, value); \
-            } \
-        } \
-	initialized = true; \
-    } \
-    nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
-    return value; \
-}
+	OFI_NCCL_PARAM(int, name, env, default_value)
 
 #define OFI_NCCL_PARAM_STR(name, env, default_value) \
-const char *ofi_nccl_##name(); \
-static pthread_mutex_t ofi_nccl_param_lock_##name = PTHREAD_MUTEX_INITIALIZER; \
-const char *ofi_nccl_##name() { \
-    static bool initialized = false; \
-    static const char *value = default_value; \
-    if (initialized) { \
-	return value; \
-    } \
-    nccl_net_ofi_mutex_lock(&ofi_nccl_param_lock_##name); \
-    char *str; \
-    if (!initialized) { \
-        str = getenv("OFI_NCCL_" env); \
-        if (str) { \
-            value = strdup(str); \
-            if (value) { \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting %s environment variable to %s", \
-                              "OFI_NCCL_" env, value); \
-            } else { \
-		value = default_value; \
-                NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, \
-                    "Allocation error saving result for %s environment variable.  Falling back to default %s", \
-                    "OFI_NCCL_" env, value); \
-            } \
-        } \
-	initialized = true; \
-    } \
-    nccl_net_ofi_mutex_unlock(&ofi_nccl_param_lock_##name); \
-    return value; \
-}
+	OFI_NCCL_PARAM(const char *, name, env, default_value)
 
 #endif
 
@@ -232,10 +138,10 @@ OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
- * SENDRECV and RDMA, with SENDRECV the default.  Default param is
- * NULL so that we can determine if user set the option.
+ * SENDRECV and RDMA.  Default to a nonsense name, as protocol
+ * selection is based on rail config and system support.
  */
-OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", NULL);
+OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", "default");
 
 /*
  * Override the platform default for domain allocation, with
@@ -341,7 +247,7 @@ OFI_NCCL_PARAM_INT(rdma_rr_ctrl_msg, "RR_CTRL_MSG", 1);
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
  * platform sets a specific value.
  */
-OFI_NCCL_PARAM_INT(net_latency, "NET_LATENCY", -1);
+OFI_NCCL_PARAM(float, net_latency, "NET_LATENCY", 0.0);
 
 /*
  * Eager message size limit when using RDMA protocol. Message sizes greater than
@@ -385,7 +291,7 @@ OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
  * "Region" for NCCL OFI Region base tuner.
  * "Model" for NCCL OFI Model base tuner.
  */
-OFI_NCCL_PARAM_STR(tuner_force_type, "TUNER_TYPE", NULL);
+OFI_NCCL_PARAM_STR(tuner_force_type, "TUNER_TYPE", "Region");
 
 /*
  * The plugin interface lets us tune the number of channels as well, but that

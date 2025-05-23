@@ -586,9 +586,9 @@ int platform_init(const char **provider_filter)
 	if (nic_dup_conns == 0 && platform_data)
 		nic_dup_conns = platform_data->default_dup_conns;
 
-	if (ofi_nccl_net_latency() < 0) {
+	if (ofi_nccl_net_latency.get_source() == ParamSource::DEFAULT) {
 		if (platform_data && platform_data->latency >= 0.0) {
-			net_latency = platform_data->latency;
+			ofi_nccl_net_latency.set(platform_data->latency);
 		} else {
 			/*
 			 * Empirical testing on P5 had shown that NCCL's
@@ -597,14 +597,14 @@ int platform_init(const char **provider_filter)
 			 * generations of EFA, using it as the fall-through
 			 * default for undefined platforms.
 			 */
-			net_latency = 75.0;
+			ofi_nccl_net_latency.set(75.0);
 		}
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Internode latency set at %.1f us",
-				net_latency);
+			      ofi_nccl_net_latency.get());
 	}
 
-	if (select_efa && ofi_nccl_protocol() == NULL && platform_data) {
-		nccl_ofi_selected_protocol = platform_data->default_protocol;
+	if (select_efa && ofi_nccl_protocol.get_source() == ParamSource::DEFAULT && platform_data) {
+		ofi_nccl_protocol.set(platform_data->default_protocol);
 	}
 
 exit:
@@ -646,7 +646,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * emulated writes are disabled.
 	 */
 
-	if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol) &&
+	if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get()) &&
 	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
@@ -666,18 +666,18 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * was previously set and error if we can't set them the same
 	 * way later.
 	 */
-	if (0 == strcasecmp("SENDRECV", nccl_ofi_selected_protocol)) {
+	if (0 == strcasecmp("SENDRECV", ofi_nccl_protocol.get())) {
 #if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
 #endif
-	} else if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) {
+	} else if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
 #endif
 	} else {
-		NCCL_OFI_WARN("unkonwn transport %s", nccl_ofi_selected_protocol);
+		NCCL_OFI_WARN("unkonwn transport %s", ofi_nccl_protocol.get());
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -700,7 +700,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 */
 	if (!nccl_proto_configured) {
 		if ((NULL == getenv("NCCL_PROTO")) &&
-		    (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) &&
+		    (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) &&
 		    (0 == strcmp(nccl_net_ofi_get_product_name(), "p5en.48xlarge"))) {
 			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5en + RDMA");
 			need_ordering = false;
@@ -755,7 +755,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		}
 	}
 
-	if (0 == strcasecmp("RDMA", nccl_ofi_selected_protocol)) {
+	if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) {
 		ret = configure_ep_max_msg_size(endpoint);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unexpected failure setting max_msg_size %d", ret);
