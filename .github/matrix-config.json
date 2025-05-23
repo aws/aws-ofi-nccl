@@ -1,0 +1,29 @@
+{
+  "matrix_config": {
+    "amazonlinux": {
+      "sdk": ["cuda", "neuron"],
+      "efainstaller": ["latest", "1.34.0", "1.25.0"],
+      "exclude": [
+        {"efainstaller": "1.25.0", "sdk": "neuron"}
+      ],
+      "include": [
+        {"efainstaller": "latest", "platform-aws": "enable"},
+        {"efainstaller": "1.34.0", "platform-aws": "enable"},
+        {"efainstaller": "1.25.0", "platform-aws": "disable"}
+      ]
+    },
+    "ubuntu": {
+      "cc-variant": ["latest", "legacy"],
+      "cc": ["gcc", "clang"],
+      "tracing": ["lttng", "none"],
+      "sdk": ["cuda", "neuron"],
+      "include": [
+        {"cc-variant": "latest", "cc": "clang", "cc-version": 18},
+        {"cc-variant": "latest", "cc": "gcc", "cc-version": 13}
+      ]
+    },
+    "codechecker": {
+      "sdk": ["cuda", "neuron"]
+    }
+  }
+}
