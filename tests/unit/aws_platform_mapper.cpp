@@ -57,9 +57,10 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p3dn.24xlarge", "p3dn.24xlarge");
 	ret += check_value(platform_data_list, len, "p4d.24xlarge", "p4d.24xlarge");
 	ret += check_value(platform_data_list, len, "p4de.24xlarge", "p4de.24xlarge");
-	ret += check_value(platform_data_list, len, "p5.48xlarge", "p-series");
-	ret += check_value(platform_data_list, len, "p5e.48xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p5.48xlarge", "p5/p5e");
+	ret += check_value(platform_data_list, len, "p5e.48xlarge", "p5/p5e");
 	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p-series");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
 
