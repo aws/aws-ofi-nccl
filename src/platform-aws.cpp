@@ -82,11 +82,22 @@ static struct ec2_platform_data platform_data_map[] = {
 	{
 		.name = "p-series",
 		/*
-		 * we only want to match P5 and later, as earlier
+		 * we only want to match P5en and later, as earlier
 		 * platforms all either need to be ignored or special
 		 * cased.
 		 */
-		.regex = "^p([5-9]|[0-9]{2,}).*",
+		.regex = "^(p5en\\.48xlarge)|(^p([6-9]|[0-9]{2,}).*)",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.net_flush_required = false,
+		.default_protocol = "RDMA",
+		.domain_per_thread = 0,
+	},
+	{
+		.name = "p5/p5e",
+		.regex = "^p5(e?\\..*)",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
