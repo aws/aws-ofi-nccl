@@ -38,6 +38,7 @@ noinst_HEADERS = \
 	internal/tuner/nccl_defaults.h \
 	nccl_ofi_platform.h \
 	nccl_ofi_ep_addr_list.h \
+	nccl_ofi_util.h \
 	platform-aws.h \
 	stats/histogram.h \
 	stats/histogram_binner.h

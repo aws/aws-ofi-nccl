@@ -81,6 +81,7 @@ static struct ec2_platform_data test_map_1[] = {
 		.net_flush_required = false,
 		.default_protocol = NULL,
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "second",
@@ -92,6 +93,7 @@ static struct ec2_platform_data test_map_1[] = {
 		.net_flush_required = false,
 		.default_protocol = NULL,
 		.domain_per_thread = 0,
+		.env = {},
 	},
 };
 
