@@ -47,8 +47,9 @@ class NCCLProto(int, Enum):
     SIMPLE = 2
 
 class TunerPlatform(str, Enum):
-    P5en = "p5en.48xlarge"
-    P5 = "p5.48xlarge"
+#     P5en = "p5en.48xlarge"
+#     P5 = "p5.48xlarge"
+    P6 = "p6.48xlarge"
 
 
 class Tuner:
