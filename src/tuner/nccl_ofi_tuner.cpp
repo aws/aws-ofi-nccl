@@ -85,6 +85,8 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		tuner_platform = NCCL_OFI_TUNER_P5_P5E;
 	} else if (strcmp(platform_type, "p5en.48xlarge") == 0) {
 		tuner_platform = NCCL_OFI_TUNER_P5EN;
+	} else if (strcmp(platform_type, "p6-b200.48xlarge") == 0) {
+		tuner_platform = NCCL_OFI_TUNER_P6;
 	} else {
 		tuner_platform = NCCL_OFI_TUNER_UNKNOWN;
 	}
