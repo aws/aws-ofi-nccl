@@ -899,6 +899,273 @@ exit:
 }
 
 
+/**
+ * P6 platform specific Regions
+ */
+static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *region_ctx)
+{
+	ncclResult_t ret = ncclSuccess;
+	ncclFunc_t collType;
+	size_t nRanks = region_ctx->dims.num_ranks;
+	size_t nNodes = region_ctx->dims.num_nodes;
+
+	/* 0x0 All Gather and Reduce Scatter have some regions */
+	const nccl_ofi_tuner_region_t ag_and_rs_0x0_regions[] = {
+		{.algorithm = NCCL_ALGO_RING,
+			.protocol = NCCL_PROTO_LL,
+			.num_vertices = 5,
+			.vertices = {{0, 16},
+				{1048576, 16},
+				{106954752, 1024},
+				{107374182400, 1021978.297},
+				{0, 1048576}}},
+		{.algorithm = NCCL_ALGO_RING,
+			.protocol = NCCL_PROTO_LL128,
+			.num_vertices = 6,
+			.vertices = {{1048576, 16},
+				{268435456, 16},
+				{21474836480, 1024},
+				{107374182400, 5107.038},
+				{107374182400, 1021978.297},
+				{106954752, 1024}}},
+		{.algorithm = NCCL_ALGO_RING,
+			.protocol = NCCL_PROTO_SIMPLE,
+			.num_vertices = 3,
+			.vertices = {{268435456, 16},
+				{107374182400, 16},
+				{107374182400, 5107.038}}}};
+						
+	if (nRanks == 8 * nNodes) {
+		{
+			collType = ncclFuncAllReduce;
+			const nccl_ofi_tuner_region_t regions[] = {
+				{.algorithm = NCCL_ALGO_TREE,
+				 .protocol = NCCL_PROTO_LL,
+				 .num_vertices = 4,
+				 .vertices = {{0, 16},
+						{262144, 16},
+						{262144, 1024},
+						{262144, 1048576}}},
+				{.algorithm = NCCL_ALGO_TREE,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 11,
+				 .vertices = {{262144, 1048576},
+						{262144, 1024},
+						{262144, 16},
+						{55574528, 16},
+						{67108864, 32},
+						{465567744, 128},
+						{962592768, 256},
+						{1610612736, 512},
+						{2684354560, 1024},
+						{107374182400, 50944},
+						{107374182400, 1048576}}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 12,
+				 .vertices = {{55574528, 16},
+						{87031808, 16},
+						{562036736, 32},
+						{17179869184, 1024},
+						{107374182400, 6408.141},
+						{107374182400, 33962.667},
+						{3758096384, 1024},
+						{2147483648, 512},
+						{1610612736, 512},
+						{962592768, 256},
+						{465567744, 128},
+						{67108864, 32}}},
+				{.algorithm = NCCL_ALGO_NVLS_TREE,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 6,
+				 .vertices = {{1610612736, 512},
+						{2147483648, 512},
+						{3758096384, 1024},
+						{107374182400, 33962.667},
+						{107374182400, 50944},
+						{2684354560, 1024}}},
+				{.algorithm = NCCL_ALGO_NVLS_TREE,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 4,
+				 .vertices = {{87031808, 16},
+						{107374182400, 16},
+						{107374182400, 32},
+						{562036736, 32}}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 4,
+				 .vertices = {{562036736, 32},
+						{107374182400, 32},
+						{107374182400, 6408.141},
+						{17179869184, 1024}}}};
+			ret = set_regions(region_ctx, collType, sizeof(regions) / sizeof(regions[0]), regions);
+			if (ret != ncclSuccess) {
+				goto exit;
+			}
+		}
+		{
+			collType = ncclFuncAllGather;
+			ret = set_regions(region_ctx, collType, sizeof(ag_and_rs_0x0_regions) / sizeof(ag_and_rs_0x0_regions[0]), ag_and_rs_0x0_regions);
+			if (ret != ncclSuccess) {
+				goto exit;
+			}
+		}
+		{
+			collType = ncclFuncReduceScatter;
+			ret = set_regions(region_ctx, collType, sizeof(ag_and_rs_0x0_regions) / sizeof(ag_and_rs_0x0_regions[0]), ag_and_rs_0x0_regions);
+			if (ret != ncclSuccess) {
+				goto exit;
+			}
+		}
+	} else if (nRanks == nNodes) {
+		{
+			collType = ncclFuncAllReduce;
+			const nccl_ofi_tuner_region_t regions[] = {
+				{.algorithm = NCCL_ALGO_TREE,
+				 .protocol = NCCL_PROTO_LL,
+				 .num_vertices = 5,
+				 .vertices = {{0, 16},
+						{32768, 16},
+						{32768, 1024},
+						{32768, 1048576},
+						{0, 1048576},}},
+				{.algorithm = NCCL_ALGO_TREE,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 6,
+				 .vertices = {{32768, 16},
+						{131072, 16},
+						{8388608, 1024},
+						{8589934592, 1048576},
+						{32768, 1048576},
+						{32768, 1024},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 8,
+				 .vertices = {{131072, 16},
+						{3145728, 16},
+						{297795584, 1024},
+						{107374182400, 367333.352},
+						{107374182400, 478655.533},
+						{164626432, 1024},
+						{20971520, 384},
+						{3145728, 384},}},
+				{.algorithm = NCCL_ALGO_TREE,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 6,
+				 .vertices = {{3145728, 384},
+						{20971520, 384},
+						{164626432, 1024},
+						{107374182400, 478655.533},
+						{107374182400, 1048576},
+						{8589934592, 1048576},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 4,
+				 .vertices = {{3145728, 16},
+						{107374182400, 16},
+						{107374182400, 367333.352},
+						{297795584, 1024},}}};
+			ret = set_regions(region_ctx, collType, sizeof(regions) / sizeof(regions[0]), regions);
+			if (ret != ncclSuccess){
+				goto exit;
+			}
+		}
+		{
+			collType = ncclFuncAllGather;
+			const nccl_ofi_tuner_region_t regions[] = {
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL,
+				 .num_vertices = 3,
+				 .vertices = {{0, 16},
+						{65536, 16},
+						{65536, 32},}},
+				{.algorithm = NCCL_ALGO_PAT,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 8,
+				 .vertices = {{0, 16},
+						{65536, 32},
+						{1048576, 32},
+						{12582912, 384},
+						{88080384, 384},
+						{248512512, 1024},
+						{34359738368, 137101.386},
+						{0, 1048576},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 11,
+				 .vertices = {{65536, 16},
+						{2097152, 16},
+						{16777216, 64},
+						{291504128, 1024},
+						{34359738368, 120071.328},
+						{34359738368, 137101.386},
+						{248512512, 1024},
+						{88080384, 384},
+						{12582912, 384},
+						{1048576, 32},
+						{65536, 32},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 5,
+				 .vertices = {{2097152, 16},
+						{34359738368, 16},
+						{34359738368, 120071.328},
+						{291504128, 1024},
+						{16777216, 64},}}};
+			ret = set_regions(region_ctx, collType, sizeof(regions) / sizeof(regions[0]), regions);
+			if (ret != ncclSuccess) {
+				goto exit;
+			}
+		}
+		{
+			collType = ncclFuncReduceScatter;
+			const nccl_ofi_tuner_region_t regions[] = {
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL,
+				 .num_vertices = 3,
+				 .vertices = {{0, 16},
+						{65536, 16},
+						{65536, 32},}},
+				{.algorithm = NCCL_ALGO_PAT,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 7,
+				 .vertices = {{0, 16},
+						{65536, 32},
+						{1048576, 32},
+						{67108864, 384},
+						{106954752, 384},
+						{274877906944, 975424},
+						{0, 1048576},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_LL128,
+				 .num_vertices = 7,
+				 .vertices = {{65536, 16},
+						{2097152, 16},
+						{16777216, 64},
+						{106954752, 384},
+						{67108864, 384},
+						{1048576, 32},
+						{65536, 32},}},
+				{.algorithm = NCCL_ALGO_RING,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 5,
+				 .vertices = {{2097152, 16},
+						{274877906944, 16},
+						{274877906944, 975424},
+						{106954752, 384},
+						{16777216, 64},}}};
+			ret = set_regions(region_ctx, collType, sizeof(regions) / sizeof(regions[0]), regions);
+			if (ret != ncclSuccess) {
+				goto exit;
+			}
+		}
+	}
+exit:
+	return ret;
+}
+
+
+
 /*****************************************************************************
  *****************************************************************************
  *        functions that are called by common tuner code start here
@@ -907,7 +1174,7 @@ exit:
 
 bool is_region_supported(enum nccl_ofi_tuner_platform platform, size_t nRanks, size_t nNodes)
 {
-	if (platform == NCCL_OFI_TUNER_P5_P5E || platform == NCCL_OFI_TUNER_P5EN) {
+	if (platform == NCCL_OFI_TUNER_P5_P5E || platform == NCCL_OFI_TUNER_P5EN || platform == NCCL_OFI_TUNER_P6) {
 		return true;
 	}
 
@@ -1088,6 +1355,8 @@ ncclResult_t region_init_internal(nccl_ofi_tuner_context_t *ctx, enum nccl_ofi_t
 		ret = region_init_internal_p5_p5e(region_ctx);
 	} else if (platform == NCCL_OFI_TUNER_P5EN) {
 		ret = region_init_internal_p5en(region_ctx);
+	} else if (platform == NCCL_OFI_TUNER_P6) {
+		ret = region_init_internal_p6(region_ctx);
 	} else {
 		ret = ncclInternalError;
 		goto exit;
