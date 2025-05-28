@@ -485,16 +485,17 @@ static int set_mr_req_attr(uint64_t mr_key,
 	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
 	   for RDMA send/recv buffers */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
+	/* Add FI_READ (destination buffer for RMA read) and FI_REMOTE_READ
+	   (source buffer for RMA read) for buffers of both eager mode and flush. */
+	mr_attr->access |= (FI_READ | FI_REMOTE_READ);
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, mr_attr, flags);
 
 	switch (type) {
 	case NCCL_PTR_HOST:
-		mr_attr->access |= FI_READ;
 		mr_attr->iface = FI_HMEM_SYSTEM;
 		break;
 #if HAVE_CUDA
 	case NCCL_PTR_CUDA:
-		mr_attr->access |= FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_CUDA;
 
 		/* Get CUDA device ID */
@@ -508,7 +509,6 @@ static int set_mr_req_attr(uint64_t mr_key,
 #endif
 #if HAVE_NEURON
 	case NCCL_PTR_NEURON:
-		mr_attr->access |= FI_REMOTE_READ;
 		mr_attr->iface = FI_HMEM_NEURON;
 		/*
 		 * Store a sentinel; libfabric requires this to be initialized Libfabric
