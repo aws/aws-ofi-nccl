@@ -123,7 +123,7 @@ static inline ncclResult_t msg_length_verify_max_size(const size_t *sizes, const
 		}
 	}
 	return ncclSuccess;
-	}
+}
 
 
 static void nccl_net_ofi_fini(void)
@@ -163,6 +163,45 @@ ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
 	}
 
 	return ncclSuccess;
+}
+
+
+ncclResult_t nccl_net_ofi_init_no_atexit_fini_v6(ncclDebugLogger_t logFunction)
+{
+	int ret;
+
+	if (plugin != NULL) {
+		return check_return(ncclSystemError);
+	}
+
+	ofi_log_function = logFunction;
+
+	abort_on_error = (ofi_nccl_abort_on_error() != 0);
+
+	ret = nccl_net_ofi_create_plugin(&plugin);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Initializing plugin failed");
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	return ncclSuccess;
+}
+
+
+ncclResult_t nccl_net_ofi_fini_v6()
+{
+	ncclResult_t ret = ncclSuccess;
+	if (plugin == NULL) {
+		ret = check_return(ncclSystemError);
+	} else {
+		int rc = plugin->release_plugin(plugin);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Failure in plugin cleanup");
+			ret = nccl_net_ofi_retval_translate(rc);
+		}
+		plugin = NULL;
+	}
+	return ret;
 }
 
 

@@ -25,4 +25,5 @@ noinst_HEADERS = \
 	nccl/neuron/include/nccl/err.h \
 	nccl/neuron/include/nccl/net.h \
 	nccl/neuron/include/nccl/net_v4.h \
-	nccl/neuron/include/nccl/net_v5.h
+	nccl/neuron/include/nccl/net_v5.h \
+	nccl/neuron/include/nccl/net_v6.h

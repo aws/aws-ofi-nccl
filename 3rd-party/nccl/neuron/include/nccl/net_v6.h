@@ -1,26 +1,43 @@
 /*
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
- * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_NET_V5_H_
-#define NCCL_NET_V5_H_
+#ifndef NCCL_NET_V6_H_
+#define NCCL_NET_V6_H_
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef ncclNetProperties_v6_t ncclNetProperties_v5_t;
+typedef struct {
+  char* name;                      // Used mostly for logging.
+  char* pciPath;                   // Path to the PCI device in /sys.
+  uint64_t guid;                   // Unique identifier for the NIC chip. Important for
+                                   // cards with multiple PCI functions (Physical or virtual).
+  int ptrSupport;                  // [NCCL_PTR_HOST|NCCL_PTR_CUDA|NCCL_PTR_DMABUF]
+  int regIsGlobal;                 // regMr is not tied to a particular comm
+  int speed;                       // Port speed in Mbps.
+  int port;                        // Port number.
+  float latency;                   // Network latency
+  int maxComms;                    // Maximum number of comms we can create
+  int maxRecvs;                    // Maximum number of grouped receives.
+  size_t max_write_inline_size;       // Maximum size of buffer supported to be transfered via write inline RMA operation
+  size_t max_mr_key_size;          // Maximum size of the memory region remote access key in bytes
+  int rma_supported;              // Indicator whether RMA operations of NCCL Net API are supported
+} ncclNetProperties_v6_t;
 
 typedef struct {
   // Name of the network (mainly for logs)
   const char* name;
   // Initialize the network.
   ncclResult_t (*init)(ncclDebugLogger_t logFunction);
+  // Close the network.
+  ncclResult_t (*fini)();
   // Return the number of adapters.
   ncclResult_t (*devices)(int* ndev);
   // Get various device properties.
-  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v5_t* props);
+  ncclResult_t (*getProperties)(int dev, ncclNetProperties_v6_t* props);
   // Create a receiving object and provide a handle to connect to it. The
   // handle can be up to NCCL_NET_HANDLE_MAXSIZE bytes and will be exchanged
   // between ranks to create a connection.
@@ -60,17 +77,17 @@ typedef struct {
 
   // Return remote protection key associated with memory registration of handle
   // Function is only available if `rma_supported` flag is set in
-  // ncclNetProperties_v5_t properties.
+  // ncclNetProperties_v6_t properties.
   ncclResult_t (*getMrKey)(void* mhandle, uint64_t* mr_key);
   // Asynchronous RMA write to peer memory.
   // May return request == NULL if the call cannot be performed.
   // Function is only available if `rma_supported` flag is set in
-  // ncclNetProperties_v5_t properties.
+  // ncclNetProperties_v6_t properties.
   ncclResult_t (*iwrite)(void* sComm, void* src, size_t size, void* src_mhandle,
 			 uint64_t dest, uint64_t mr_key, void** request);
   // Asynchronous RMA write operation to peer memory.
   // Maximum message size is defined by `max_write_inline_size` field in
-  // ncclNetProperties_v5_t properties.
+  // ncclNetProperties_v6_t properties.
   // Message may be inlined.
   // May return request == NULL if the call cannot be performed.
   // Function is only available if `rma_supported` flag is set in properties.
@@ -79,10 +96,10 @@ typedef struct {
   // Asynchronous RMA read to peer memory.
   // May return request == NULL if the call cannot be performed.
   // Function is only available if `rma_supported` flag is set in
-  // ncclNetProperties_v5_t properties
+  // ncclNetProperties_v6_t properties
   ncclResult_t (*iread)(void* rComm, void* dest, size_t size, void* dest_mhandle,
 			uint64_t src, uint64_t mr_key, void** request);
-} ncclNet_v5_t;
+} ncclNet_v6_t;
 
 #ifdef __cplusplus
 } // End extern "C"
