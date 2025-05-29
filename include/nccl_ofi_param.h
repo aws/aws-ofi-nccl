@@ -451,4 +451,13 @@ OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
  */
 OFI_NCCL_PARAM_INT(disable_close_message, "DISABLE_CLOSE_MESSAGE", 1);
 
+/*
+ * Number of RX buffers to post for the connection manager endpoint (for
+ * connection establishment)
+ *
+ * Posting buffers will use more memory, but may make connection establishment
+ * complete more quickly, especially with large numbers of ranks.
+ */
+OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
+
 #endif // End NCCL_OFI_PARAM_H_

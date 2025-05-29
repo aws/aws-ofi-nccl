@@ -221,7 +221,7 @@ static_assert(sizeof(nccl_ofi_connection_info_t) == 80, "Wrong size for SENDRECV
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
-	uint32_t comm_id;
+	uint64_t comm_id;
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
