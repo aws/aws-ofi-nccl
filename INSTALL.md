@@ -26,6 +26,7 @@ dependencies with the following flags:
   --with-cuda=PATH        Path to non-standard CUDA installation
   --with-mpi=PATH         Path to non-standard MPI installation
   --with-hwloc=PATH       Path to non-standard HWLOC installation
+  --with-nccl=PATH        Path to non-standard NCCL installation
 ```
 
 By default, the configure script attempts to auto-detect whether it is running
