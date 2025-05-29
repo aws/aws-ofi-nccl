@@ -11,6 +11,7 @@
 #include <deque>
 
 #include "nccl_ofi.h"
+#include "cm/nccl_ofi_cm.h"
 #include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_idpool.h"
@@ -83,21 +84,11 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_EAGER_RX_BUFF,
 	/* Flush request */
 	NCCL_OFI_RDMA_FLUSH,
-	/* Connect message send request */
-	NCCL_OFI_RDMA_SEND_CONN,
-	/* Connect message receive request */
-	NCCL_OFI_RDMA_RECV_CONN,
-	/* Connect response message receive request */
-	NCCL_OFI_RDMA_RECV_CONN_RESP,
-	/* Connect response message send request */
-	NCCL_OFI_RDMA_SEND_CONN_RESP,
 	/* Invalid type */
 	NCCL_OFI_RDMA_INVALID_TYPE,
 } nccl_net_ofi_rdma_req_type_t;
 
 enum nccl_ofi_rdma_msg_type {
-	NCCL_OFI_RDMA_MSG_CONN = 0,
-	NCCL_OFI_RDMA_MSG_CONN_RESP,
 	NCCL_OFI_RDMA_MSG_CTRL,
 	NCCL_OFI_RDMA_MSG_EAGER,
 	NCCL_OFI_RDMA_MSG_CLOSE,
@@ -431,23 +422,13 @@ typedef struct nccl_ofi_rdma_ep_name {
  * connection information.
  */
 typedef struct nccl_ofi_rdma_connection_info {
-	/* Message type
-	 * either NCCL_OFI_RDMA_MSG_CONN or NCCL_OFI_RDMA_MSG_CONN_RESP
-	 */
-	uint16_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
-	uint16_t pad:(16 - NCCL_OFI_RDMA_CTRL_TYPE_BITS);
-
 	/* Number of rails */
 	uint16_t num_rails;
 	uint16_t num_control_rails;
 
 	/* A comm identitifer that uniquely identifies the comm on the sender
 	   side. The receiver must use this ID when sending messages to sender */
-	uint32_t local_comm_id;
-
-	/* A comm identitifer that uniquely identifies the comm
-	 * on the receiver side */
-	uint32_t remote_comm_id;
+	uint32_t comm_id;
 
 	/* Arrays of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
 	 * structs. The member `num_rails` and `num_control_rails` indicate
@@ -456,7 +437,7 @@ typedef struct nccl_ofi_rdma_connection_info {
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 528,
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 520,
 			  "Wrong size for RDMA connect message");
 
 /*
@@ -497,13 +478,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
-	/* Request to receive connect response message to finalize
-	 * connection establishment */
-	nccl_net_ofi_rdma_req_t *conn_resp_req;
-
-	/* free list item containing a nccl_ofi_rdma_connection_info_t */
-	nccl_ofi_freelist_elem_t *conn_msg;
-
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff_t *msgbuff;
@@ -512,15 +486,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	uint16_t num_rails;
 	/* Number of rails */
 	uint16_t num_control_rails;
-
-	/* Number of initialized rails. The function
-	 * `create_send_comm()' creates a send communicator with one
-	 * initialized control rail and sets `num_init_control_rails=1' after the
-	 * out-of-bounds message is received. After the connect
-	 * response message has been received, the remaining rails
-	 * will be initialized via function `init_send_comm_rails()'
-	 * and `num_init_control_rails' is adjusted. */
-	int num_init_control_rails;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -538,6 +503,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nccl_net_ofi_rdma_send_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_send_comm_rail_t *control_rails;
+
+	/* Connect manager send connector */
+	nccl_ofi_cm_send_connector *connector;
 
 } nccl_net_ofi_rdma_send_comm_t;
 
@@ -579,6 +547,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	 * struct and its base struct. */
 	nccl_net_ofi_recv_comm_t base;
 
+	/* CM receiver for connection establishment */
+	nccl_ofi_cm_receiver *receiver;
+
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
@@ -612,9 +583,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	bool comm_active;
 
-	/* free list item containing a nccl_ofi_rdma_connection_info_t */
-	nccl_ofi_freelist_elem_t *conn_msg;
-
 	/* Array of `num_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
@@ -627,25 +595,14 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 	 * struct and its base struct. */
 	nccl_net_ofi_listen_comm_t base;
 
-	/* Comm ID provided by local endpoint */
-	uint32_t comm_id;
+	/* Associated listener from connection manager */
+	nccl_ofi_cm_listener *listener;
 
 	/* Communicator created while accept routine is executed */
 	nccl_net_ofi_rdma_recv_comm_t *r_comm;
 
-	/* Reusable request for connect and connect response message */
-	nccl_net_ofi_rdma_req_t req;
-
 	/* Stage of connection establishment on listen side */
 	nccl_ofi_comm_stage_t stage;
-
-	/* Message struct send connect message and receive connect
-	 * response message
-	 *
-	 * TODO: This should really be a list of outstanding connect
-	 * messages to allow multiple connects per listen communicator.
-	 */
-	nccl_ofi_rdma_connection_info_t conn_msg;
 } nccl_net_ofi_rdma_listen_comm_t;
 
 /*
@@ -731,8 +688,6 @@ struct nccl_net_ofi_rdma_ep {
 	nccl_ofi_freelist_t *eager_rx_buff_fl;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl;
-	/* Free list for connection messages */
-	nccl_ofi_freelist_t *conn_msg_fl;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely
@@ -847,6 +802,9 @@ typedef struct nccl_net_ofi_rdma_domain {
 
 	/* Message scheduler */
 	nccl_net_ofi_scheduler_t *scheduler;
+
+	/* Associated connection manager */
+	nccl_ofi_connection_manager *cm;
 } nccl_net_ofi_rdma_domain_t;
 
 
