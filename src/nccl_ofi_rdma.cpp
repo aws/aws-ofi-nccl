@@ -6772,7 +6772,7 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Store communicator ID from handle in communicator */
 	if (OFI_UNLIKELY(handle->comm_id >= device->num_comm_ids)) {
-		NCCL_OFI_WARN("Received an invalid communicator ID %" PRIu32 " for device %d", handle->comm_id,
+		NCCL_OFI_WARN("Received an invalid communicator ID %" PRIu64 " for device %d", handle->comm_id,
 			      dev_id);
 		ret = -EINVAL;
 		goto error;
