@@ -432,4 +432,23 @@ OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
  */
 OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
 
+/*
+ * 1 to disable close message, 0 to enable it.
+ *
+ * The close message was intended to enable a future optimization to the
+ * plugin's eager protocol (not yet implemented) where sender will not wait to
+ * receive a control message from receiver before marking a send complete.
+ * Instead, sender waits for a close message when the communicator is closed,
+ * indicating it is safe to close the communicator resources.
+ *
+ * During testing of fault-tolerance (NCCL restart after abort), we found
+ * situations where the plugin hangs while waiting for a close message,
+ * specifically when some ranks enter an abort state (due to having inflight
+ * requests) and some don't.
+ *
+ * Until we have a long-term fix for this, we disable the close message by
+ * default.
+ */
+OFI_NCCL_PARAM_INT(disable_close_message, "DISABLE_CLOSE_MESSAGE", 1);
+
 #endif // End NCCL_OFI_PARAM_H_
