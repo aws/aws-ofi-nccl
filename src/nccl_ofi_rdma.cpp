@@ -3958,6 +3958,12 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
  */
 static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
+	/* If close message is not enabled, do not send the close message;
+	   destroy the communicator immediately */
+	if (ofi_nccl_disable_close_message() == 1) {
+		return 1;
+	}
+
 	if (r_comm->send_close_req == NULL) {
 		/* Waiting for all ctrls to complete */
 		nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
@@ -4151,10 +4157,12 @@ static int send_comm_process_all_finalizing(void)
 		 *    In this case, we assume that the receive communicator was
 		 *    never established, and we will never receive a close
 		 *    message.
+		 * 3. The close message is disabled by parameter.
 		 */
-		bool ready_to_destroy = (s_comm->received_close_message) ?
-					(s_comm->n_ctrl_received == s_comm->n_ctrl_expected) :
-					(s_comm->n_ctrl_received == 0);
+		bool ready_to_destroy = (ofi_nccl_disable_close_message() == 1) ||
+					((s_comm->received_close_message) ?
+					 (s_comm->n_ctrl_received == s_comm->n_ctrl_expected) :
+					 (s_comm->n_ctrl_received == 0));
 
 		nccl_net_ofi_mutex_unlock(&s_comm->ctrl_recv_lock);
 
