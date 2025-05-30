@@ -9,15 +9,6 @@
 # Multi-rail scheduler
 *scheduler*	@rauteric
 
-# Algorithm/protocol tuner
-/src/tuner/	@rajachan
-
 # autotools
 configure.ac	@bwbarrett
 /m4/		@bwbarrett
-
-# Github Workflows
-/.github/	@rajachan
-
-# AWS CI
-/.ci/aws	@a-szegel
