@@ -4702,6 +4702,12 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			}
 
 			nccl_net_ofi_rdma_ep_t *new_ep = (nccl_net_ofi_rdma_ep_t *)new_base_ep;
+
+			ret = post_rx_buffs(new_ep);
+			if (ret != 0) {
+				goto error;
+			}
+
 			new_ep->is_endpoint_per_communicator_ep = true;
 
 			ep_for_addr = &new_ep->base;
