@@ -74,6 +74,17 @@
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
+/**
+ * Check if domain is active
+ *
+ * Caller is assumed to hold the domain lock
+ */
+#define CHECK_DOMAIN_ACTIVE(domain, fn_name) \
+	if (OFI_UNLIKELY(!domain->base.domain_active)) { \
+		NCCL_OFI_WARN("Called " fn_name " on request with inactive domain"); \
+		return -EINVAL; \
+	} \
+
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
 extern enum gdr_support_level_t support_gdr;
@@ -416,6 +427,26 @@ struct nccl_net_ofi_domain {
 	 * case, this will be the info object associated with the "leader NIC"
 	 */
 	struct fid_cq *(*get_ofi_cq)(nccl_net_ofi_domain_t *domain);
+
+	/* Domain reference counter for resource management.
+	 *
+	 * In some modes (right now, endpoint_per_communicator), we create
+	 * multiple endpoints per domain. This counter tracks the number
+	 * of endpoints created on this domain. When it reaches 0, the
+	 * domain can be destroyed. */
+	size_t ref_cnt;
+
+	/*
+	 * Boolean flag indicating whether the domain is still valid and usable
+	 *
+	 * When a communicator is closed with inflight requests, the domain is
+	 * marked inactive, preventing further use of communicators on the
+	 * domain. Transports should check the domain_active flag before using
+	 * OFI resources associated with the domain (CQs, endpoints, AVs)
+	 *
+	 * This flag is protected by domain_lock
+	 */
+	bool domain_active;
 
 /* Private */
 	/* pure virtual function called when resources associated with
