@@ -37,6 +37,7 @@
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
+#include "nccl_ofi_util.h"
 
 
 /*
@@ -56,6 +57,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -67,6 +72,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -78,6 +87,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "p-series",
@@ -105,6 +115,12 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = false,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 0,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+		},
 	},
 	{
 		.name = "g5.48xlarge",
@@ -116,6 +132,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 0,
+		.env = {},
 	},
 	{
 		.name = "trn1",
@@ -127,6 +144,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "trn2",
@@ -138,6 +156,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "RDMA",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 	{
 		.name = "inf",
@@ -149,8 +168,10 @@ static struct ec2_platform_data platform_data_map[] = {
 		.net_flush_required = true,
 		.default_protocol = "SENDRECV",
 		.domain_per_thread = 1,
+		.env = {},
 	},
 };
+
 
 /*
  * We need to cache the fields that we grabbed for each device so we don't go
@@ -387,7 +408,6 @@ static int configure_nvls_option(void)
 	nccl_get_version_fn_t nccl_get_version = NULL;
 	int version = 0;
 	ncclResult_t nccl_ret;
-	int ret;
 
 	if (getenv("NCCL_NVLS_ENABLE") == NULL) {
 		nccl_get_version = (nccl_get_version_fn_t)dlsym(RTLD_DEFAULT, "ncclGetVersion");
@@ -408,11 +428,7 @@ static int configure_nvls_option(void)
 		/* 2.18.5 */
 		if (version < 21805) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Disabling NVLS support due to NCCL version %d", version);
-			ret = setenv("NCCL_NVLS_ENABLE", "0", 1);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Unable to set NCCL_NVLS_ENABLE");
-				return -errno;
-			}
+			env_manager::getInstance().insert_envvar("NCCL_NVLS_ENABLE", "0", false);
 		} else {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Not disabling NVLS support due to NCCL version %d", version);
 		}
@@ -457,6 +473,10 @@ int platform_init(const char **provider_filter)
 		select_efa = true;
 	}
 
+	if (platform_data != NULL) {
+		env_manager::getInstance().insert_envvars(platform_data->env);
+	}
+
 #if HAVE_CUDA
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
@@ -490,15 +510,7 @@ int platform_init(const char **provider_filter)
 		(FI_MAJOR(libversion) > 1 || (FI_MAJOR(libversion) == 1 && FI_MINOR(libversion) >= 13))
 		? "FI_EFA_FORK_SAFE"
 		: "RDMAV_FORK_SAFE";
-	if (!getenv(fork_safe_var_name)) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting %s environment variable to 1", fork_safe_var_name);
-		ret = setenv(fork_safe_var_name, "1", 1);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to set %s", fork_safe_var_name);
-			ret = -errno;
-			goto exit;
-		}
-	}
+	env_manager::getInstance().insert_envvar(fork_safe_var_name, "1", false);
 
 	ret = configure_nvls_option();
 	if (ret != 0) {
@@ -506,9 +518,7 @@ int platform_init(const char **provider_filter)
 		goto exit;
 	}
 
-	if ((platform_data && !platform_data->net_flush_required) &&
-	    NULL == getenv("NCCL_NET_FORCE_FLUSH")) {
-
+	if (platform_data && !platform_data->net_flush_required) {
 		/*
 		 * Certain GPU architectures do not require a network flush, but
 		 * NCCL versions <2.19.1 still enable flush by default on any
@@ -520,14 +530,7 @@ int platform_init(const char **provider_filter)
 		 * forces flush when it is not needed, so it is safe to set it
 		 * to 0 if it is not explicitly set.
 		 */
-
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NET_FORCE_FLUSH=0 since this platform does not require a network flush.");
-		ret = setenv("NCCL_NET_FORCE_FLUSH", "0", 0);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_NET_FORCE_FLUSH");
-			ret = -errno;
-			goto exit;
-		}
+		env_manager::getInstance().insert_envvar("NCCL_NET_FORCE_FLUSH", "0", false);
 	}
 
 	/*
@@ -544,21 +547,7 @@ int platform_init(const char **provider_filter)
 	 * The NVLSTree chunk size can not be larger than the NVLS chunk size,
 	 * so we ensure both are set to 512KiB.
 	 */
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NVLSTREE_MAX_CHUNKSIZE to 512KiB");
-	ret = setenv("NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288", 0);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to set NCCL_NVLSTREE_MAX_CHUNKSIZE");
-		ret = -errno;
-		goto exit;
-	}
-
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Setting NCCL_NVLS_CHUNKSIZE to 512KiB");
-	ret = setenv("NCCL_NVLS_CHUNKSIZE", "524288", 0);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to set NCCL_NVLS_CHUNKSIZE");
-		ret = -errno;
-		goto exit;
-	}
+	env_manager::getInstance().insert_envvar("NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288", false);
 #endif
 
 	/*
@@ -580,18 +569,13 @@ int platform_init(const char **provider_filter)
 			ret = -ENOMEM;
 			goto exit;
 		}
+		ret = 0;
 
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 				"Running on %s platform, Setting NCCL_TOPO_FILE environment variable to %s",
 				nccl_net_ofi_get_product_name(), topology_path);
 
-		ret = setenv("NCCL_TOPO_FILE", topology_path, 1);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE");
-			ret = -errno;
-			goto exit;
-		}
-
+		env_manager::getInstance().insert_envvar("NCCL_TOPO_FILE", topology_path, false);
 	}
 
 	if (nic_dup_conns == 0 && platform_data)

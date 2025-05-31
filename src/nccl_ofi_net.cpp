@@ -30,6 +30,7 @@
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
+#include "nccl_ofi_util.h"
 
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
@@ -346,6 +347,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			goto exit;
 		}
 	}
+
+	env_manager::getInstance().update_environment();
 
 	*plugin_p = plugin;
 
@@ -1216,17 +1219,10 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
 
 int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason)
 {
-	int ret;
-
 	if (getenv("NCCL_PROTO") == NULL) {
 		NCCL_OFI_INFO(NCCL_INIT, "Setting NCCL_PROTO='simple' to prevent data corruption (reason: %s not supported)",
 			      log_reason);
-		ret = setenv("NCCL_PROTO", "simple", 1);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Error setting NCCL_PROTO environment variable: %s",
-				      strerror(errno));
-			return -errno;
-		}
+		env_manager::getInstance().insert_envvar("NCCL_PROTO", "simple", true);
 	}
 
 	return 0;
