@@ -147,6 +147,7 @@ CHECK_ENABLE_MEMFD_CREATE()
 
 # do we want our tests?
 CHECK_PKG_MPI([found_mpi="yes"], [found_mpi="no"])
+CHECK_PKG_NCCL([found_nccl="yes"], [found_nccl="no"])
 
 AC_ARG_ENABLE([tests],
    [AS_HELP_STRING([--disable-tests], [Disable build of unit/functional test binaries])])
@@ -155,8 +156,8 @@ build_unit_tests=yes
 build_func_tests=yes
 AS_IF([test "${enable_tests}" == "no"],
       [build_unit_tests=no build_func_tests=no])
-AS_IF([test "${enable_tests}" != "no" -a "${found_mpi}" = "no" ],
-      [AC_MSG_WARN([Cannot build functional tests without MPI. Disabling functional tests.])
+AS_IF([test "${enable_tests}" != "no" -a \("${found_mpi}" = "no" -o "${found_nccl}" = "no"\)],
+      [AC_MSG_WARN([Cannot build functional tests without MPI or NCCL. Disabling functional tests.])
        build_func_tests=no])
 AS_IF([test "${enable_tests}" != "no" -a "${have_device_interface}" = "neuron" ],
       [AC_MSG_WARN([Functional tests not available on neuron, disabling.])

@@ -22,6 +22,9 @@
 /libtool
 **/.libs
 include/config.h*
+**/*.out
+/install/
+.vscode/
 
 # Below this line is an unmodified copy of
 # https://github.com/github/gitignore/blob/main/Autotools.gitignore
