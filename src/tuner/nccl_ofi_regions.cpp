@@ -463,7 +463,7 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 				 .protocol = NCCL_PROTO_SIMPLE,
 				 .num_vertices = 7,
 				 .vertices = {extended_tree_ll128,
-							  {1048576, 768},
+							  {1048576, 96},
 							  {524288, 8},
 							  {262144, 2},
 							  {8388608, 32},
