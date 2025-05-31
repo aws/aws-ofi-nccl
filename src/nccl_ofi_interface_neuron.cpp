@@ -75,6 +75,31 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v5_t* props)
 
 extern "C" {
 
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
+	.name = "AWS Libfabric",
+	.init = nccl_net_ofi_init_no_atexit_fini_v6,
+	.fini = nccl_net_ofi_fini_v6,
+	.devices = nccl_net_ofi_devices_v2,
+	.getProperties = getProperties_v5,
+	.listen = nccl_net_ofi_listen_v5,
+	.connect = nccl_net_ofi_connect_v5,
+	.accept = nccl_net_ofi_accept_v5,
+	.regMr = nccl_net_ofi_regMr_v8,
+	.regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
+	.deregMr = nccl_net_ofi_deregMr_v2,
+	.isend = nccl_net_ofi_isend_v5,
+	.irecv = nccl_net_ofi_irecv_v5,
+	.iflush = nccl_net_ofi_iflush_v5,
+	.test = nccl_net_ofi_test_v2,
+	.closeSend = nccl_net_ofi_closeSend_v2,
+	.closeRecv = nccl_net_ofi_closeRecv_v2,
+	.closeListen = nccl_net_ofi_closeListen_v2,
+	.getMrKey = nccl_net_ofi_get_mr_key_v5,
+	.iwrite = nccl_net_ofi_iwrite_v5,
+	.iwriteInline = nccl_net_ofi_iwrite_inline_v5,
+	.iread = nccl_net_ofi_iread_v5,
+};
+
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
 	.name = "AWS Libfabric",
 	.init = nccl_net_ofi_init_v2,
