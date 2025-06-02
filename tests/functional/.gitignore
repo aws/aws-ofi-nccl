@@ -1,3 +1,4 @@
+inflight_close
 nccl_connection
 nccl_message_transfer
 ring
