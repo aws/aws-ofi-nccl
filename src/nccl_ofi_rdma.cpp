@@ -94,6 +94,12 @@
 #define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
 	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
 
+/*
+ * Return value from some functions indicating that the communicator is
+ * ready to destroy
+ */
+#define COMM_READY_TO_DESTROY 1
+
 /** Global variables **/
 
 /* List of comms undergoing deferred cleanup */
@@ -3952,7 +3958,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
  * Make progress on a closing recv communicator
  *
  * @param r_comm: the communicator to progress
- * @return: 1 if the recv comm is ready to be destroyed
+ * @return: COMM_READY_TO_DESTROY (1) if the recv comm is ready to be destroyed
  *          0 if the recv comm is not ready to be destroyed
  *          negative errno code on error
  */
@@ -3961,7 +3967,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 	/* If close message is not enabled, do not send the close message;
 	   destroy the communicator immediately */
 	if (ofi_nccl_disable_close_message() == 1) {
-		return 1;
+		return COMM_READY_TO_DESTROY;
 	}
 
 	if (r_comm->send_close_req == NULL) {
@@ -3979,7 +3985,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 			/* TODO: this workaround will not be needed with the new
 			   CM code when data_progress_auto is true */
 			if (n_ctrl_sent == 0) {
-				return 1;
+				return COMM_READY_TO_DESTROY;
 			}
 
 			int ret = recv_comm_insert_send_close_req(r_comm);
@@ -4006,7 +4012,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 
 		} else if (state == NCCL_OFI_RDMA_REQ_COMPLETED) {
 			/* Ready to destroy */
-			return 1;
+			return COMM_READY_TO_DESTROY;
 		}
 	}
 
@@ -4043,7 +4049,8 @@ static int recv_comm_process_all_finalizing(void)
 		if (ret < 0) {
 			goto exit;
 		}
-		if (ret == 1) {
+
+		if (ret == COMM_READY_TO_DESTROY) {
 			it = r_comm_cleanup_list->erase(it);
 			ret = recv_comm_destroy(r_comm);
 			if (ret != 0) {
