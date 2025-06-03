@@ -13,7 +13,7 @@ Note: The PCI IDs of PCI switches and NICs needs to match the PCI IDs on the
 virtual machine.
 -->
 <system version="1">
-  <cpu numaid="0">
+  <cpu numaid="0" arch="x86_64" vendor="AuthenticAMD">
     <pci busid="0000:45:00.0">
       <pci busid="0000:4f:00.0" link_speed="32 GT/s PCIe/s" link_width="16"/>
       <pci busid="0000:50:00.0" link_speed="32 GT/s PCIe/s" link_width="16"/>
@@ -39,7 +39,7 @@ virtual machine.
       <pci busid="0000:85:00.0" link_speed="32 GT/s PCIe/s" link_width="16"/>
     </pci>
   </cpu>
-  <cpu numaid="1">
+  <cpu numaid="1" arch="x86_64" vendor="AuthenticAMD">
     <pci busid="0000:89:00.0">
       <pci busid="0000:93:00.0" link_speed="32 GT/s PCIe/s" link_width="16"/>
       <pci busid="0000:94:00.0" link_speed="32 GT/s PCIe/s" link_width="16"/>
