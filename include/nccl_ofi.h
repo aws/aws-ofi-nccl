@@ -193,8 +193,6 @@ typedef struct nccl_net_ofi_context nccl_net_ofi_context_t;
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
-	COMM_SEND_CONN,
-	COMM_RECV_CONN,
 	COMM_CONN_REQ_PENDING,
 	COMM_CONN_RESP_REQ_PENDING,
 	COMM_CONNECTED,
@@ -202,18 +200,16 @@ typedef enum nccl_ofi_comm_stage {
 
 typedef struct save_comm_state {
 	nccl_net_ofi_comm_t *comm;
-	nccl_net_ofi_req_t *req;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 
 typedef struct nccl_ofi_connection_info {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t ep_namelen;
-	uint64_t connect_to_self;
-	nccl_net_ofi_req_t* req;
+	uint64_t tag;
 } nccl_ofi_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_connection_info_t) == 80, "Wrong size for SENDRECV connect message");
+static_assert(sizeof(nccl_ofi_connection_info_t) == 72, "Wrong size for SENDRECV connect message");
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
