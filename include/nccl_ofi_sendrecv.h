@@ -7,6 +7,7 @@
 
 #include <rdma/fabric.h>
 
+#include "cm/nccl_ofi_cm.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
@@ -40,15 +41,12 @@ typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	 * struct and its base struct. */
 	nccl_net_ofi_listen_comm_t base;
 
-	uint64_t tag;
 	struct fid_ep *local_ep;
 	fi_addr_t local_ep_addr;
-	bool accepted;
 	/* Saves temporary state when creating receive communicator object */
 	save_comm_state_t state;
 
-	/* connecting peer information (nccl_ofi_connection_info_t) */
-	nccl_ofi_freelist_elem_t *conn_info;
+	nccl_ofi_cm_listener *listener;
 } nccl_net_ofi_sendrecv_listen_comm_t;
 
 typedef struct nccl_net_ofi_sendrecv_send_comm {
@@ -65,8 +63,7 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 	fi_addr_t local_ep_addr;
 	struct fid_ep *local_ep;
 
-	/* connecting peer information (nccl_ofi_connection_info_t) */
-	nccl_ofi_freelist_elem_t *conn_info;
+	nccl_ofi_cm_send_connector *connector;
 } nccl_net_ofi_sendrecv_send_comm_t;
 
 /* Metadata about dummy flush buffer */
@@ -92,6 +89,8 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	struct fid_ep *local_ep;
 
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
+
+	nccl_ofi_cm_receiver *receiver;
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /**
@@ -124,9 +123,6 @@ typedef struct nccl_net_ofi_sendrecv_ep {
 
 	/* Address vector handle */
 	struct fid_av *av;
-
-	/* free list for control messages */
-	nccl_ofi_freelist_t *conn_msg_fl;
 } nccl_net_ofi_sendrecv_ep_t;
 
 
@@ -143,6 +139,9 @@ typedef struct nccl_net_ofi_sendrecv_domain {
 
 	/* Completion Queue handle */
 	struct fid_cq *cq;
+
+	/* Connection manager for this domain */
+	nccl_ofi_connection_manager *cm;
 
 } nccl_net_ofi_sendrecv_domain_t;
 
