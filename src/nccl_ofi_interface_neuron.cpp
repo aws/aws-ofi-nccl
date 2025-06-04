@@ -77,7 +77,7 @@ extern "C" {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
 	.name = "AWS Libfabric",
-	.init = nccl_net_ofi_init_no_atexit_fini_v6,
+	.init = nccl_net_ofi_init_v6,
 	.fini = nccl_net_ofi_fini_v6,
 	.devices = nccl_net_ofi_devices_v2,
 	.getProperties = getProperties_v5,

@@ -126,68 +126,6 @@ static inline ncclResult_t msg_length_verify_max_size(const size_t *sizes, const
 }
 
 
-static void nccl_net_ofi_fini(void)
-{
-	if (plugin != NULL) {
-		int ret = plugin->release_plugin(plugin);
-		if (ret != 0) {
-			NCCL_OFI_INFO(NCCL_NET, "Failure in plugin cleanup");
-		}
-		plugin = NULL;
-	}
-}
-
-
-ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
-{
-	int ret;
-
-	if (plugin != NULL) {
-		return check_return(ncclSystemError);
-	}
-
-	ofi_log_function = logFunction;
-
-	abort_on_error = (ofi_nccl_abort_on_error() != 0);
-
-	ret = nccl_net_ofi_create_plugin(&plugin);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Initializing plugin failed");
-		return nccl_net_ofi_retval_translate(ret);
-	}
-
-	ret = atexit(nccl_net_ofi_fini);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Adding cleanup function failed");
-		return nccl_net_ofi_retval_translate(ret);
-	}
-
-	return ncclSuccess;
-}
-
-
-ncclResult_t nccl_net_ofi_init_no_atexit_fini_v6(ncclDebugLogger_t logFunction)
-{
-	int ret;
-
-	if (plugin != NULL) {
-		return check_return(ncclSystemError);
-	}
-
-	ofi_log_function = logFunction;
-
-	abort_on_error = (ofi_nccl_abort_on_error() != 0);
-
-	ret = nccl_net_ofi_create_plugin(&plugin);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Initializing plugin failed");
-		return nccl_net_ofi_retval_translate(ret);
-	}
-
-	return ncclSuccess;
-}
-
-
 ncclResult_t nccl_net_ofi_fini_v6()
 {
 	ncclResult_t ret = ncclSuccess;
@@ -201,6 +139,54 @@ ncclResult_t nccl_net_ofi_fini_v6()
 		}
 		plugin = NULL;
 	}
+	return ret;
+}
+
+
+static void nccl_net_ofi_fini_v2(void)
+{
+	nccl_net_ofi_fini_v6();
+}
+
+
+ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
+{
+	int ret;
+
+	if (plugin != NULL) {
+		return check_return(ncclSystemError);
+	}
+
+	ofi_log_function = logFunction;
+
+	abort_on_error = (ofi_nccl_abort_on_error() != 0);
+
+	ret = nccl_net_ofi_create_plugin(&plugin);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Initializing plugin failed");
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	return ncclSuccess;
+}
+
+
+ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
+{
+	int rc;
+	ncclResult_t ret;
+
+	ret = nccl_net_ofi_init_v6(logFunction);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		return ret;
+	}
+
+	rc = atexit(nccl_net_ofi_fini_v2);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Adding cleanup function failed");
+		return nccl_net_ofi_retval_translate(rc);
+	}
+
 	return ret;
 }
 
