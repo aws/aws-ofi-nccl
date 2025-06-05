@@ -19,6 +19,7 @@
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
+#include "nccl_ofi_environ.h"
 #include "nccl_ofi_ep_addr_list.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
@@ -449,15 +450,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	}
 
 	/* Set topology file path environment variable `NCCL_TOPO_FILE` */
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-		      "Setting NCCL_TOPO_FILE environment variable to %s",
-		      filename);
-	if (setenv("NCCL_TOPO_FILE", filename, 1) != 0) {
-		NCCL_OFI_WARN("Unable to set NCCL_TOPO_FILE. ERROR: %s",
-			      strerror(errno));
-		ret = -errno;
-		goto error;
-	}
+	env_manager::getInstance().insert_envvar("NCCL_TOPO_FILE", filename, true);
 
 	goto exit;
 
