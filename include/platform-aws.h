@@ -20,7 +20,6 @@ struct ec2_platform_data {
 	int default_dup_conns;
 	float latency;
 	bool gdr_required;
-	bool net_flush_required;
 	const char *default_protocol;
 	int domain_per_thread;
 	std::map<std::string, std::string> env;
