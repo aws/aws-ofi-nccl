@@ -2963,6 +2963,35 @@ static int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
 }
 
 
+/**
+ * Close any memory registrations that were deferred upon call to deregMr.
+ *
+ * See documentation of the deferred_deregistration_queue type for context.
+ *
+ * @param deferred_dereg_queue: will be deleted at the end of this function.
+ */
+static int rdma_deferred_dereg_fini(nccl_net_ofi_rdma_domain_t *domain,
+				    deferred_deregistration_queue *deferred_dereg_queue)
+{
+	/* Close any deferred memory registrations */
+	int ret = 0;
+	while (!(deferred_dereg_queue->empty())) {
+		void *mr = deferred_dereg_queue->front();
+		ret = dereg_mr
+			(static_cast<nccl_net_ofi_rdma_mr_handle_t *>(mr),
+			 domain);
+
+		if (ret != 0) {
+			return ret;
+		}
+		deferred_dereg_queue->pop_front();
+	}
+
+	delete deferred_dereg_queue;
+	return ret;
+}
+
+
 static inline int reg_mr_on_device(nccl_net_ofi_rdma_domain_t *domain,
 				   nccl_ofi_mr_ckey_ref ckey,
 				   int type,
@@ -3270,6 +3299,16 @@ static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 	assert(domain != NULL);
+
+	auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(recv_comm);
+	if (r_comm->num_inflight_reqs > 0) {
+		/* Defer memory deregistration to comm close time */
+		auto *deferred_dereg_queue =
+			r_comm->deferred_dereg_queue;
+		deferred_dereg_queue->push_back(mhandle);
+
+		return 0;
+	}
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	return dereg_mr(mr_handle, domain);
@@ -3927,6 +3966,9 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 		return ret;
 	}
 
+	auto *domain = reinterpret_cast<nccl_net_ofi_rdma_domain_t *>(ep->base.domain);
+	ret = rdma_deferred_dereg_fini(domain, r_comm->deferred_dereg_queue);
+
 	free_rdma_recv_comm(r_comm);
 
 	ret = ep->base.release_ep(&ep->base, false, false);
@@ -4156,6 +4198,9 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	if (ret != 0) {
 		return ret;
 	}
+
+	auto *domain = reinterpret_cast<nccl_net_ofi_rdma_domain_t *>(ep->base.domain);
+	ret = rdma_deferred_dereg_fini(domain, s_comm->deferred_dereg_queue);
 
 	free_rdma_send_comm(s_comm);
 
@@ -4958,6 +5003,8 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	}
 #endif
 
+	r_comm->deferred_dereg_queue = new deferred_deregistration_queue();
+
 	return r_comm;
 
  error:
@@ -4971,6 +5018,9 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			device->comm_idpool->free_id(r_comm->local_comm_id);
 		}
 		nccl_net_ofi_mutex_destroy(&r_comm->ctrl_counter_lock);
+		if (r_comm->deferred_dereg_queue) {
+			delete r_comm->deferred_dereg_queue;
+		}
 		free_rdma_recv_comm(r_comm);
 	}
 
@@ -5473,6 +5523,16 @@ static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(ep);
 	assert(domain != NULL);
+
+	auto *s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>(send_comm);
+	if (s_comm->num_inflight_reqs > 0) {
+		/* Defer memory deregistration to comm close time */
+		auto *deferred_dereg_queue =
+			s_comm->deferred_dereg_queue;
+		deferred_dereg_queue->push_back(mhandle);
+
+		return 0;
+	}
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
 		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
@@ -6859,6 +6919,9 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		ret_s_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
 	}
 #endif
+
+	ret_s_comm->deferred_dereg_queue = new deferred_deregistration_queue();
+
 	*s_comm = ret_s_comm;
 	return ret;
 
@@ -6870,6 +6933,9 @@ static inline int create_send_comm(nccl_net_ofi_conn_handle_t *handle,
 		}
 		nccl_net_ofi_mutex_destroy(&ret_s_comm->ctrl_recv_lock);
 		--(ep->base.ref_cnt);
+		if (ret_s_comm->deferred_dereg_queue) {
+			delete ret_s_comm->deferred_dereg_queue;
+		}
 		free_rdma_send_comm(ret_s_comm);
 	}
 

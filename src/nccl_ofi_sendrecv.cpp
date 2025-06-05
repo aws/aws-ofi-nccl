@@ -878,6 +878,35 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 }
 
 
+/**
+ * Close any memory registrations that were deferred upon call to deregMr.
+ *
+ * See documentation of the deferred_deregistration_queue type for context.
+ *
+ * @param deferred_dereg_queue: will be deleted at the end of this function.
+ */
+static int sendrecv_deferred_dereg_fini(nccl_net_ofi_domain_t *domain,
+					deferred_deregistration_queue *deferred_dereg_queue)
+{
+	/* Close any deferred memory registrations */
+	int ret = 0;
+	while (!(deferred_dereg_queue->empty())) {
+		void *mr = deferred_dereg_queue->front();
+		ret = sendrecv_comm_mr_base_dereg
+			(static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mr),
+			 domain->mr_rkey_pool, domain->mr_cache);
+
+		if (ret != 0) {
+			return ret;
+		}
+		deferred_dereg_queue->pop_front();
+	}
+
+	delete deferred_dereg_queue;
+	return ret;
+}
+
+
 static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 				     nccl_ofi_mr_ckey_ref ckey,
 				     int type,
@@ -993,6 +1022,16 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 
 	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
 	assert(domain != NULL);
+
+	auto *r_comm = reinterpret_cast<nccl_net_ofi_sendrecv_recv_comm_t *>(recv_comm);
+	if (r_comm->num_inflight_reqs > 0) {
+		/* Defer memory deregistration to comm close time */
+		auto *deferred_dereg_queue =
+			r_comm->deferred_dereg_queue;
+		deferred_dereg_queue->push_back(mhandle);
+
+		return 0;
+	}
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
 	return sendrecv_comm_mr_base_dereg(mr_handle, domain->base.mr_rkey_pool, domain->base.mr_cache);
@@ -1265,6 +1304,9 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		}
 		r_comm->flush_buff.host_buffer = MAP_FAILED;
 	}
+
+	ret = sendrecv_deferred_dereg_fini(base_ep->domain,
+					   r_comm->deferred_dereg_queue);
 
 	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
 	free(recv_comm);
@@ -1573,6 +1615,8 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 			return NULL;
 		}
 	}
+
+	r_comm->deferred_dereg_queue = new deferred_deregistration_queue();
 
 	return r_comm;
 }
@@ -1906,10 +1950,21 @@ static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
 	nccl_net_ofi_sendrecv_domain_t *domain = sendrecv_endpoint_get_domain(ep);
 	assert(domain != NULL);
 
+	auto *s_comm = reinterpret_cast<nccl_net_ofi_sendrecv_send_comm_t *>(send_comm);
+	if (s_comm->num_inflight_reqs > 0) {
+		/* Defer memory deregistration to comm close time */
+		auto *deferred_dereg_queue =
+			s_comm->deferred_dereg_queue;
+		deferred_dereg_queue->push_back(mhandle);
+
+		return 0;
+	}
+
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
 	return sendrecv_comm_mr_base_dereg(mr_handle, domain->base.mr_rkey_pool,
 				  domain->base.mr_cache);
 }
+
 
 static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
 				   nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
@@ -2034,6 +2089,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	return ret;
 }
 
+
 static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 {
 	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
@@ -2064,6 +2120,10 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 		nccl_ofi_freelist_entry_free(((nccl_net_ofi_sendrecv_ep_t *)base_ep)->conn_msg_fl,
 					     s_comm->conn_info);
 	}
+
+	ret = sendrecv_deferred_dereg_fini(base_ep->domain,
+					   s_comm->deferred_dereg_queue);
+
 	free(send_comm);
 
 	ret = base_ep->release_ep(base_ep, false, false);
@@ -2188,6 +2248,8 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 			      device->base.dev_id);
 		goto out;
 	}
+
+	ret_s_comm->deferred_dereg_queue = new deferred_deregistration_queue();
 
 	*s_comm = ret_s_comm;
 out:

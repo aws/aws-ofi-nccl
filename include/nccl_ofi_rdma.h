@@ -539,6 +539,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_send_comm_rail_t *control_rails;
 
+	deferred_deregistration_queue *deferred_dereg_queue;
+
 } nccl_net_ofi_rdma_send_comm_t;
 
 /*
@@ -619,6 +621,8 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
+
+	deferred_deregistration_queue *deferred_dereg_queue;
 } nccl_net_ofi_rdma_recv_comm_t;
 
 typedef struct nccl_net_ofi_rdma_listen_comm {

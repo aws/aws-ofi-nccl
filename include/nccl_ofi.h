@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_H_
 #define NCCL_OFI_H_
 
+#include <deque>
 #include <unordered_map>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
@@ -155,6 +156,23 @@ typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
 typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
 typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
 typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
+
+/**
+ * Typedef for queue of memory registrations undergoing deferred deregistration
+ *
+ * As part of NCCL's abort process, when it closes communicators with inflight
+ * requests, it first deregisters the memory backing the channel buffer, and
+ * only then closes the communicator. However, the Libfabric spec does not allow
+ * deregistering backing memory while an operation using that memory is in
+ * progress, as this may result in invalid memory access.
+ *
+ * As a workaround, when NCCL attempts to deregister memory on a communicator
+ * that still has inflight requests, add it to this deferred deregistration
+ * queue. These memory registrations will be deregistered after the communicator
+ * is closed, at which point the endpoint used by the communicator will be
+ * closed, and so it should be safe to deregister memory.
+ */
+typedef std::deque<nccl_net_ofi_mr_handle_t *> deferred_deregistration_queue;
 
 /**
  * Request - handle for an outstanding non-blocking communication

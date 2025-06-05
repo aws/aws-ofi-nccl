@@ -67,6 +67,8 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 
 	/* connecting peer information (nccl_ofi_connection_info_t) */
 	nccl_ofi_freelist_elem_t *conn_info;
+
+	deferred_deregistration_queue *deferred_dereg_queue;
 } nccl_net_ofi_sendrecv_send_comm_t;
 
 /* Metadata about dummy flush buffer */
@@ -92,6 +94,8 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	struct fid_ep *local_ep;
 
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
+
+	deferred_deregistration_queue *deferred_dereg_queue;
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /**
