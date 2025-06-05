@@ -11,6 +11,7 @@ noinst_HEADERS = \
 	nccl_ofi_config_bottom.h \
 	nccl_ofi_cuda.h \
 	nccl_ofi_dmabuf.h \
+	nccl_ofi_environ.h \
 	nccl_ofi_ep_addr_list.h \
 	nccl_ofi_freelist.h \
 	nccl_ofi_idpool.h \
