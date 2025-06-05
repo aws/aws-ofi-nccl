@@ -15,6 +15,7 @@ noinst_HEADERS = test-logger.h
 
 noinst_PROGRAMS = \
 	assert \
+	environ \
 	freelist \
 	msgbuff \
 	scheduler \
@@ -41,6 +42,7 @@ endif
 endif
 
 assert_SOURCES = assert.cpp
+environ_SOURCES = environ.cpp
 idpool_SOURCES = idpool.cpp
 freelist_SOURCES = freelist.cpp
 msgbuff_SOURCES = msgbuff.cpp
