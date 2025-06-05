@@ -18,10 +18,11 @@ CXX = $(MPICXX)
 if ENABLE_FUNC_TESTS
 noinst_HEADERS = test-common.h
 
-bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close
+bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm
 
 nccl_connection_SOURCES = nccl_connection.cpp
 nccl_message_transfer_SOURCES = nccl_message_transfer.cpp
 ring_SOURCES = ring.cpp
 inflight_close_SOURCES = inflight_close.cpp
+reuse_listen_comm_SOURCES = reuse_listen_comm.cpp
 endif
