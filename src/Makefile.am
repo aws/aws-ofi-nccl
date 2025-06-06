@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2024, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2025, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -9,6 +9,7 @@
 #
 sources = \
 	nccl_ofi_api.cpp \
+	nccl_ofi_assert.cpp \
 	nccl_ofi_compat.cpp \
 	nccl_ofi_net.cpp \
 	nccl_ofi_sendrecv.cpp \
