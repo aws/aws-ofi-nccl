@@ -9,7 +9,7 @@
 if ENABLE_UNIT_TESTS
 AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
-LDADD = $(top_builddir)/src/libinternal_net_plugin.la
+LDADD = $(top_builddir)/src/libinternal_plugin.la
 noinst_HEADERS = test-logger.h
 
 noinst_PROGRAMS = \
@@ -36,7 +36,6 @@ if WANT_PLATFORM_AWS
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += region_based_tuner
   region_based_tuner_SOURCES = region_based_tuner.cpp
-  region_based_tuner_LDADD = $(top_builddir)/src/libinternal_tuner_plugin.la
 endif
 endif
 

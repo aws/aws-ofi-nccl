@@ -25,7 +25,6 @@
 #include "tuner/nccl_ofi_tuner.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
-ncclDebugLogger_t ofi_log_function = NULL;
 
 static ncclResult_t nccl_ofi_tuner_destroy(void *context)
 {
@@ -54,7 +53,9 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 	int is_force_type_model = 0;
 	enum nccl_ofi_tuner_platform tuner_platform;
 
-	ofi_log_function = logFunction;
+	if (ofi_log_function == NULL) {
+		ofi_log_function = logFunction;
+	}
 
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 
