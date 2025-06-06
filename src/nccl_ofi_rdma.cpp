@@ -4871,6 +4871,100 @@ static int close_listen_recv_comm(nccl_net_ofi_rdma_listen_comm_t *l_comm)
 	return 0;
 }
 
+
+static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
+				      nccl_net_ofi_rdma_listen_comm_t *l_comm,
+				      nccl_net_ofi_rdma_recv_comm_t **r_comm_ptr)
+{
+	int dev_id = l_comm->base.base.dev_id;
+
+	/* Retrieve and validate endpoint */
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->base.base.ep;
+	assert(l_comm_ep != NULL);
+	nccl_net_ofi_rdma_ep_t *ep = nullptr;
+
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = nullptr;
+
+	/* Progress NCCL OFI engine so that connection is accepted */
+	int ret = ofi_process_cq(l_comm_ep);
+	if (OFI_UNLIKELY(ret != 0)) {
+		return ret;
+	}
+
+	/* Check if a connect message is received */
+	nccl_ofi_cm_receiver *receiver = l_comm->listener->accept();
+
+	/* Wait until connect message is received */
+	if (receiver == nullptr) {
+		return 0;
+	}
+
+	auto data_pair = receiver->get_conn_msg_data();
+	assert(data_pair.second == sizeof(nccl_ofi_rdma_connection_info_t));
+	auto *conn_msg = static_cast<const nccl_ofi_rdma_connection_info_t *>
+			 (data_pair.first);
+
+	/* Number of remote rails and number of local rails match */
+	if (conn_msg->num_rails != l_comm_ep->num_rails) {
+		NCCL_OFI_WARN("Unexpected number of remote rails for dev %d. Expected %i but got %i",
+				dev_id, l_comm_ep->num_rails,
+				conn_msg->num_rails);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	/* Number of remote control rails and number of local control rails match */
+	if (conn_msg->num_control_rails != l_comm_ep->num_control_rails) {
+		NCCL_OFI_WARN("Unexpected number of remote control rails for dev %d. Expected %i but got %i",
+				dev_id, l_comm_ep->num_control_rails,
+				conn_msg->num_control_rails);
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	/* Prepare receive communicator object for the received peer connection */
+	r_comm = prepare_recv_comm(domain, l_comm_ep, conn_msg);
+	if (OFI_UNLIKELY(r_comm == NULL)) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	r_comm->receiver = receiver;
+	receiver = nullptr;
+	l_comm->r_comm = r_comm;
+
+	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->base.base.ep);
+	assert(ep != NULL);
+
+	/*
+	 * The libfabric resources maintained by the endpoint
+	 * structure is passed from l_comm to r_comm so they can
+	 * then be used by nccl_net_ofi_irecv. We want to make
+	 * sure those resources are not freed up when we call
+	 * nccl_net_ofi_closeListen so we maintain an additional
+	 * refcnt and free it up when nccl_net_ofi_closeRecv is
+	 * called.
+	 */
+	ep->base.ref_cnt++;
+
+	/* Initialize connect response message */
+	nccl_ofi_rdma_connection_info_t conn_resp_msg;
+	prepare_conn_resp(ep, r_comm, dev_id, &conn_resp_msg);
+
+	r_comm->receiver->set_conn_resp_msg_data(&conn_resp_msg, sizeof(conn_resp_msg));
+
+	*r_comm_ptr = r_comm;
+	return ret;
+
+exit:
+	if (receiver) {
+		delete receiver;
+	}
+	*r_comm_ptr = nullptr;
+	return ret;
+}
+
+
 static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 			   nccl_net_ofi_recv_comm_t **recv_comm)
 {
@@ -4878,10 +4972,6 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	nccl_net_ofi_rdma_listen_comm_t *l_comm =
 		(nccl_net_ofi_rdma_listen_comm_t *)listen_comm;
-
-	nccl_ofi_cm_receiver *receiver = nullptr;
-
-	const nccl_ofi_rdma_connection_info_t *conn_msg = nullptr;
 
 	/* Extract communicator state from listen communicator object */
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = l_comm->r_comm;
@@ -4899,10 +4989,6 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_domain_t *domain = rdma_endpoint_get_domain(l_comm_ep);
 	assert(domain != NULL);
-	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain);
-	assert(device != NULL);
-
-	int dev_id = device->base.dev_id;
 
 	pthread_wrapper lock(&domain->base.domain_lock);
 
@@ -4930,76 +5016,18 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * i.e., create receive communicator and reset the previously
 		 * used request. */
 
-		/* Progress NCCL OFI engine so that connection is accepted */
-		ret = ofi_process_cq(l_comm_ep);
-		if (OFI_UNLIKELY(ret != 0)) {
+		assert(r_comm == nullptr);
+
+		ret = accept_wait_for_connection(domain, l_comm, &r_comm);
+		if (ret != 0) {
 			goto exit;
-		}
-
-		/* Check if a connect message is received */
-		receiver = l_comm->listener->accept();
-
-		/* Wait until connect message is received */
-		if (receiver == nullptr) {
+		} else if (r_comm == nullptr) {
+			/* Not ready yet */
 			return 0;
 		}
 
-		{
-			auto data_pair = receiver->get_conn_msg_data();
-			assert(data_pair.second == sizeof(nccl_ofi_rdma_connection_info_t));
-			conn_msg = static_cast<const nccl_ofi_rdma_connection_info_t *>
-				(data_pair.first);
-		}
-
-		/* Number of remote rails and number of local rails match */
-		if (conn_msg->num_rails != l_comm_ep->num_rails) {
-			NCCL_OFI_WARN("Unexpected number of remote rails for dev %d. Expected %i but got %i",
-				      dev_id, l_comm_ep->num_rails,
-				      conn_msg->num_rails);
-			ret = -EINVAL;
-			goto exit;
-		}
-
-		/* Number of remote control rails and number of local control rails match */
-		if (conn_msg->num_control_rails != l_comm_ep->num_control_rails) {
-			NCCL_OFI_WARN("Unexpected number of remote control rails for dev %d. Expected %i but got %i",
-				      dev_id, l_comm_ep->num_control_rails,
-				      conn_msg->num_control_rails);
-			ret = -EINVAL;
-			goto exit;
-		}
-
-		/* Prepare receive communicator object for the received peer connection */
-		r_comm = prepare_recv_comm(domain, l_comm_ep, conn_msg);
-		if (OFI_UNLIKELY(r_comm == NULL)) {
-			ret = -EINVAL;
-			goto exit;
-		}
-		r_comm->receiver = receiver;
-		receiver = nullptr;
-		l_comm->r_comm = r_comm;
-
-		/* prepare_recv_comm establishes the endpoint used for this r_comm,
-		   so set the pointer here. */
 		ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 		assert(ep != NULL);
-
-		/*
-		 * The libfabric resources maintained by the endpoint
-		 * structure is passed from l_comm to r_comm so they can
-		 * then be used by nccl_net_ofi_irecv. We want to make
-		 * sure those resources are not freed up when we call
-		 * nccl_net_ofi_closeListen so we maintain an additional
-		 * refcnt and free it up when nccl_net_ofi_closeRecv is
-		 * called.
-		 */
-		ep->base.ref_cnt++;
-
-		/* Initialize connect response message */
-		nccl_ofi_rdma_connection_info_t conn_resp_msg;
-		prepare_conn_resp(ep, r_comm, dev_id, &conn_resp_msg);
-
-		r_comm->receiver->set_conn_resp_msg_data(&conn_resp_msg, sizeof(conn_resp_msg));
 
 		l_comm->stage = COMM_CONN_RESP_REQ_PENDING;
 
