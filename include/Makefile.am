@@ -7,6 +7,7 @@
 noinst_HEADERS = \
 	nccl_ofi.h \
 	nccl_ofi_api.h \
+	nccl_ofi_assert.h \
 	nccl_ofi_config_bottom.h \
 	nccl_ofi_cuda.h \
 	nccl_ofi_dmabuf.h \

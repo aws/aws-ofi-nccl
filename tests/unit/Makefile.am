@@ -14,6 +14,7 @@ LDADD = $(top_builddir)/src/libinternal_net_plugin.la
 noinst_HEADERS = test-logger.h
 
 noinst_PROGRAMS = \
+	assert \
 	freelist \
 	msgbuff \
 	scheduler \
@@ -39,6 +40,7 @@ if WANT_PLATFORM_AWS
 endif
 endif
 
+assert_SOURCES = assert.cpp
 idpool_SOURCES = idpool.cpp
 freelist_SOURCES = freelist.cpp
 msgbuff_SOURCES = msgbuff.cpp
