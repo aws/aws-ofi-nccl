@@ -313,11 +313,13 @@ LTTNG_UST_TRACEPOINT_EVENT(
     LTTNG_UST_TP_ARGS(
 	    int, dev,
             void *, request,
+            int, req_type,
             void *, ctx
     ),
     LTTNG_UST_TP_FIELDS(
 	    lttng_ust_field_integer(int, dev, dev)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
+            lttng_ust_field_integer(int, req_type, req_type)
             lttng_ust_field_integer(uint64_t, ctx, (uint64_t)ctx)
     )
 )
