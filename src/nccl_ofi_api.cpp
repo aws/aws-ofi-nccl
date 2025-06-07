@@ -377,7 +377,7 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_ep_t *base_ep = NULL;
 	bool created_ep = false;
-	if (ofi_handle->state.stage == COMM_CREATE_START) {
+	if (ofi_handle->state.comm == nullptr) {
 		nccl_net_ofi_device_t *device = plugin->get_device(plugin, dev_id);
 		if (device == NULL) {
 			NCCL_OFI_WARN("Error accessing device %i.", dev_id);
