@@ -13,7 +13,7 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_pthread.h"
 
-nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width)
+nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width, uint16_t start_seq)
 {
 	int ret;
 	nccl_ofi_msgbuff_t *msgbuff = NULL;
@@ -37,8 +37,8 @@ nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_
 		goto error;
 	}
 
-	msgbuff->msg_last_incomplete = 0;
-	msgbuff->msg_next = 0;
+	msgbuff->msg_last_incomplete = start_seq;
+	msgbuff->msg_next = start_seq;
 	msgbuff->field_size = (uint16_t)(1 << bit_width);
 	msgbuff->field_mask = (uint16_t)(1 << bit_width) - 1;
 	msgbuff->max_inprogress = max_inprogress;

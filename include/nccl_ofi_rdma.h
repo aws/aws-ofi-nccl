@@ -47,6 +47,13 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
    runtime-expandable */
 #define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
 
+/* The control mailbox uses the msg_seq_num as the slot to
+ * indicate the presence of a control message. In order to avoid the scenario
+ * where msg_seq_num = 0(in slot 0) is assumed to be the presence of a valid control message
+ * we skip over the first slot for control mailbox the first time and start
+ * msg_seq_num from 1 */
+#define NCCL_OFI_RDMA_MSG_SEQ_NUM_START (1)
+
 /*
  * @brief	Number of bits used for message sequence number
  *
@@ -80,8 +87,6 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_SEND,
 	/* Receive request */
 	NCCL_OFI_RDMA_RECV,
-	/* Send control request. Subrequest of NCCL_OFI_RDMA_RECV */
-	NCCL_OFI_RDMA_SEND_CTRL,
 	/* Send close request. */
 	NCCL_OFI_RDMA_SEND_CLOSE,
 	/* Receive segments request. Subrequest of NCCL_OFI_RDMA_RECV */
@@ -145,44 +150,67 @@ struct nccl_net_ofi_rdma_mr_handle_t : nccl_net_ofi_mr_handle_t {
 	std::vector<struct fid_mr *> mr;
 };
 
+/* @brief Control message Flags
+ * Currently a single flag to set receive completion optional
+ */
+#define NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT (1 << 0)
 
-/* Contents of ctrl message sent from receiver to sender to advertise
-   destination buffer */
-typedef struct nccl_net_ofi_rdma_ctrl_msg {
-	/* Message type, must be NCCL_OFI_RDMA_MSG_CTRL */
-	uint32_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
+/*
+ * @brief Control messages
+ *
+ * The control message contains the destination buffer address, mr keys,
+ * message sequence number and padding to align it to cache line size.
+ * It is used by the receiver to post the control message to the sender.
+ */
+typedef struct nccl_net_ofi_ctrl_msg {
 
-	/* Message sequence number */
-	uint32_t msg_seq_num:NCCL_OFI_RDMA_SEQ_BITS;
-
-	/* A comm identitifer that uniquely identifies the comm
-	 * on the receiver side */
-	uint32_t remote_comm_id:NCCL_OFI_RDMA_COMM_ID_BITS;
-
-	uint32_t buff_len;
-
+	/* Destination buffer address */
 	uint64_t buff_addr;
 
-	union {
-		uint32_t short_buff_mr_key[MAX_NUM_RAILS];
-		uint64_t long_buff_mr_key[MAX_NUM_RAILS];
-	};
-} nccl_net_ofi_rdma_ctrl_msg_t;
-/* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 48,
-              "Wrong size for RDMA Control message");
-static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
-	       sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key) <= 32,
-	       "Short RDMA Control message larger than 32 bytes (EFA inline size)");
+	/* mr keys to write to the destination buffer.
+	* TODO: We are currently burning 32B for the mr_key and this needs to
+	* be reduced further to ensure that the control msg write is inlined */
+	uint64_t mr_key[MAX_NUM_RAILS];
 
-#define NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key[0] ))
-#define NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->long_buff_mr_key[0] ))
+	/* Destination buffer len */
+	uint32_t buff_len;
 
-static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(uint16_t num_rails, bool use_long_rkeys)
+	/* Flags to indicate if recv completion is optional or not */
+	uint16_t flags;
+
+	/* Control message sequence number. The is also used as the
+	* ready bit to indicate that the control message has been posted.
+	*/
+	uint16_t msg_seq_num;
+
+	/* Padding to ensure we are aligned to cache line*/
+	uint8_t cache_line_padding[16];
+} nccl_net_ofi_ctrl_msg_t;
+/* Assert to make sure that the control message on the wire
+ * is of cache line size */
+static_assert(sizeof(nccl_net_ofi_ctrl_msg_t) == 64,
+                "Wrong size for RDMA Control message");
+
+static inline size_t nccl_net_ofi_rdma_ctrl_msg_size()
 {
-	size_t rkey_len = (use_long_rkeys) ? NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE : NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE;
-	return offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) + num_rails * rkey_len;
+	return sizeof(nccl_net_ofi_ctrl_msg_t);
 }
+
+/*
+ * The ctrl mailbox size is set to 2 * NCCL_OFI_MAX_REQUESTS to ensure that
+ * the sender's mailobox is never overwritten. The logic is as follows:
+ *
+ * When the receiver sends control message 'i' it needs to make sure that the
+ * message '(i - 2 * max_requests)' is done on the sender side. This is true because
+ * for the receiver to send control message 'i', it needs to finish '(i - max_requests)'
+ * on the receiver side. For '(i - max_requests)' to be finished on receiver's side, they
+ * must have started on the sender's side, which implies that the sender has completed
+ * '(i - 2 * max_requests)' request.
+ * The sender uses both the control message and eager ack
+ * to mark the send complete, so the receiver only knows when the send has started and
+ * uses this information to post the next control message.
+ */
+#define NCCL_OFI_CTRL_MAILBOX_SIZE (2 * NCCL_OFI_MAX_REQUESTS)
 
 /* Message from receiver to sender indicating sender can close resources */
 typedef struct nccl_net_ofi_rdma_close_msg {
@@ -301,23 +329,6 @@ typedef struct {
 } rdma_req_send_data_t;
 
 /*
- * @brief	Data of request responsible for sending the control message
- */
-typedef struct {
-	/* Pointer to the allocated control buffer from freelist */
-	nccl_ofi_freelist_elem_t *ctrl_fl_elem;
-	/* Schedule used to transfer the control buffer. We save the
-	 * pointer to reference it when transferring the buffer over
-	 * network. */
-	nccl_net_ofi_schedule_t *ctrl_schedule;
-	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req_t *recv_req;
-#if HAVE_NVTX_TRACING
-	nvtxRangeId_t trace_id;
-#endif
-} rdma_req_send_ctrl_data_t;
-
-/*
  * @brief	Data of request responsible for sending the close message
  */
 typedef struct {
@@ -354,8 +365,6 @@ typedef struct {
 	size_t dst_len;
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
-	/* Pointer to send control message child request */
-	nccl_net_ofi_rdma_req_t *send_ctrl_req;
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req_t *recv_segms_req;
 	/* (Eager messages) pointer to eager local copy request */
@@ -369,6 +378,7 @@ typedef struct {
 	int total_num_compls;
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
+	nvtxRangeId_t write_ctrl_trace_id;
 #endif
 } rdma_req_recv_data_t;
 
@@ -410,7 +420,6 @@ typedef struct nccl_net_ofi_rdma_req {
 		rdma_req_rma_op_data_t rma_op_data;
 		rdma_req_send_data_t send_data;
 		rdma_req_recv_data_t recv_data;
-		rdma_req_send_ctrl_data_t send_ctrl_data;
 		rdma_req_send_close_data_t send_close_data;
 		rdma_req_eager_copy_data_t eager_copy_data;
 		rdma_req_recv_segms_data_t recv_segms_data;
@@ -475,9 +484,14 @@ typedef struct nccl_ofi_rdma_connection_info {
 	 * the number of entries that are in use. */
 	nccl_ofi_rdma_ep_name_t control_ep_names[MAX_NUM_RAILS];
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
+
+	/* Ctrl mailbox addr and its mr_key */
+	uint64_t ctrl_addr;
+	uint64_t ctrl_mr_key[MAX_NUM_RAILS];
+
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 520,
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 560,
 			  "Wrong size for RDMA connect message");
 
 /*
@@ -520,8 +534,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	uint16_t next_msg_seq_num;
 
-	nccl_ofi_msgbuff_t *msgbuff;
-
 	/* Number of rails */
 	uint16_t num_rails;
 	/* Number of rails */
@@ -531,7 +543,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
 
-	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
@@ -547,6 +558,11 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Connect manager send connector */
 	nccl_ofi_cm_send_connector *connector;
 
+	/* Pointer to the sender's control mailbox */
+	nccl_net_ofi_ctrl_msg_t *ctrl_mailbox;
+
+	/* Sender's control mailbox mr_handle */
+	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
 } nccl_net_ofi_rdma_send_comm_t;
 
 /*
@@ -615,7 +631,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_req_t *send_close_req;
 
 	/* Counters for total sent and received control messages */
-	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
 
@@ -630,6 +645,18 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
+
+	/* Pointer to Local control mailbox and mr_handle.
+	* Receiver will populate a slot in its ctrl mailbox to indicate the
+	* presence of a control message. The contents of this slot will then be
+	* written to the control mailbox on the sender side using
+	* remote_mailbox_addr */
+	nccl_net_ofi_ctrl_msg_t *ctrl_mailbox;
+	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
+
+	/* Addr and key of remote control mailbox */
+	uint64_t remote_mailbox_addr;
+	uint64_t remote_mr_key[MAX_NUM_RAILS];
 } nccl_net_ofi_rdma_recv_comm_t;
 
 typedef struct nccl_net_ofi_rdma_listen_comm {
@@ -1071,7 +1098,9 @@ public:
 	 *		Handle received from remote
 	 */
 	void prepare_send_connect_message(uint32_t local_comm_id,
-					  nccl_ofi_rdma_connection_info_t *conn_msg);
+						nccl_net_ofi_ctrl_msg_t *ctrl_msg,
+						nccl_net_ofi_rdma_mr_handle_t *ctrl_msg_mr_handle,
+					  	nccl_ofi_rdma_connection_info_t *conn_msg);
 
 	/**
 	 * Abort an endpoint when a communicator using it still has inflight requests
@@ -1116,8 +1145,6 @@ public:
 
 	/* Array of `num_control_rails` endpoint rails */
 	std::vector<nccl_net_ofi_ep_rail_t> control_rails;
-
-	bool use_long_rkeys;
 
 	/* Pending requests queue */
 	std::deque<nccl_net_ofi_rdma_req_t *> pending_reqs_queue;
@@ -1334,8 +1361,6 @@ public:
 
 	/* ID pool */
 	nccl_ofi_idpool_t comm_idpool;
-
-	bool use_long_rkeys;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];

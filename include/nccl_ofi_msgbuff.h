@@ -104,10 +104,11 @@ typedef struct {
  *                       the storage buffer
  * @param bit_width bit_width of the sequence numbers, which provides the range
  *                  of elements tracked by this msgbuff
+ * @param start_seq start of sequence numbers
  *
  * @return a new msgbuff, or NULL if initialization failed
  */
-nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width);
+nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width, uint16_t start_seq);
 
 /**
  * Destroy a message buffer (free memory used by buffer).

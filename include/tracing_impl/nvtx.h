@@ -102,27 +102,27 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while (0)
 
-#define NCCL_OFI_TRACE_SEND_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num) do { \
+#define NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num) do { \
 	nvtxDomainHandle_t handle; \
 	if (NCCL_OFI_NVTX_TRACE_PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_recv_comm_t *)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		get_send_ctrl_data(req)->trace_id = nvtx_start_domain(true, handle, "Send_ctrl_start", 0x00ffff); \
+		get_recv_data(req)->write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		get_send_ctrl_data(req)->trace_id = nvtx_start_domain(true, handle, "Send_ctrl_start", 0x00ffff); \
+		get_recv_data(req)->write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
 	} \
 } while (0)
 
-#define NCCL_OFI_TRACE_SEND_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num) do { \
+#define NCCL_OFI_TRACE_WRITE_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num) do { \
 	nvtxDomainHandle_t handle; \
 	if (NCCL_OFI_NVTX_TRACE_PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_recv_comm_t *)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, get_send_ctrl_data(req)->trace_id); \
+		nvtx_end_domain(handle, get_recv_data(req)->write_ctrl_trace_id); \
 	} \
 	if (NCCL_OFI_NVTX_TRACE_PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		nvtx_end_domain(handle, get_send_ctrl_data(req)->trace_id);\
+		nvtx_end_domain(handle, get_recv_data(req)->write_ctrl_trace_id);\
 	} \
 } while (0)
 
@@ -216,9 +216,8 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 #define NCCL_OFI_TRACE_SEND_END_NVTX(...)
 #define NCCL_OFI_TRACE_EAGER_SEND_START_NVTX(...)
 #define NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(...)
-#define NCCL_OFI_TRACE_SEND_CTRL_RECV_NVTX(...)
-#define NCCL_OFI_TRACE_SEND_CTRL_START_NVTX(...)
-#define NCCL_OFI_TRACE_SEND_CTRL_END_NVTX(...)
+#define NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(...)
+#define NCCL_OFI_TRACE_WRITE_CTRL_END_NVTX(...)
 #define NCCL_OFI_TRACE_SEND_WRITE_SEG_START_NVTX(...)
 #define NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE_NVTX(...)
 #define NCCL_OFI_TRACE_RECV_NVTX(...)
