@@ -68,13 +68,13 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		goto exit;
 	}
 
-	if (strcmp(ofi_nccl_tuner_force_type.get(), "Internal") == 0) {
+	if (strcasecmp(ofi_nccl_tuner_force_type.get(), "Internal") == 0) {
 		/* fallback to NCCL internal tuner */
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
 			      "NCCL_OFI_TUNER_TYPE is Internal, Fall back to NCCL's tuner for platform : %s",
 			      platform_type);
 		goto exit;
-	} else if (strcmp(ofi_nccl_tuner_force_type.get(), "Model") == 0) {
+	} else if (strcasecmp(ofi_nccl_tuner_force_type.get(), "Model") == 0) {
 		is_force_type_model = 1;
 	}
 
