@@ -49,19 +49,14 @@
 	NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while (0)
 
-#define NCCL_OFI_TRACE_SEND_CTRL_RECV(dev, rail_id, comm, msg_seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_recv, dev, rail_id, comm, msg_seq_num); \
-	NCCL_OFI_TRACE_SEND_CTRL_RECV_NVTX(dev, rail_id, comm, msg_seq_num); \
-} while (0)
-
-#define NCCL_OFI_TRACE_SEND_CTRL_START(dev, rail_id, comm, req, msg_seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_start, dev, rail_id, comm, req, msg_seq_num); \
-	NCCL_OFI_TRACE_SEND_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num); \
+#define NCCL_OFI_TRACE_WRITE_CTRL_START(dev, rail_id, comm, req, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Write_ctrl_start, dev, rail_id, comm, req, msg_seq_num); \
+	NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num); \
 } while (0);
 
-#define NCCL_OFI_TRACE_SEND_CTRL_END(dev, rail_id, comm, req, msg_seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send_ctrl_end, dev, rail_id, comm, req, msg_seq_num); \
-	NCCL_OFI_TRACE_SEND_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num); \
+#define NCCL_OFI_TRACE_WRITE_CTRL_END(dev, rail_id, comm, req, msg_seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Write_ctrl_end, dev, rail_id, comm, req, msg_seq_num); \
+	NCCL_OFI_TRACE_WRITE_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num); \
 } while (0);
 
 #define NCCL_OFI_TRACE_SEND_WRITE_SEG_START(dev, rail_id, size, comm, msg_seq_num, request) do { \
