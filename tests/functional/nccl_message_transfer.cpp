@@ -293,6 +293,9 @@ int main(int argc, char* argv[])
 				}
 			}
 
+			inflight_reqs = NUM_REQUESTS;
+			memset(req_completed, 0, sizeof(req_completed));
+
 			/* Test for completions */
 			while (inflight_reqs > 0) {
 				for (int idx = 0; idx < NUM_REQUESTS; idx++) {
@@ -303,6 +306,7 @@ int main(int argc, char* argv[])
 							exit);
 					if (done) {
 						inflight_reqs--;
+						req[idx] = nullptr;
 						req_completed[idx] = 1;
 
 						if ((size_t)received_size !=
