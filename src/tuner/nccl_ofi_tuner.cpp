@@ -78,6 +78,24 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		is_force_type_model = 1;
 	}
 
+	if (ofi_nccl_force_num_rails.get_source() != ParamSource::DEFAULT) {
+		// Because the tuner init is a local call, there is not a great
+		// way to determine if the job is running on homogeneous
+		// hardware. At some point, we should track this in the net
+		// plugin and if we detect heterogeneity, start returning the
+		// internal tuner defaults instead of our overrides. But for
+		// now, we can take advantage of the fact that each AWS platform
+		// has a different number of NICs per GPU and that a
+		// heterogeneous job will have OFI_NCCL_FORCE_NUM_RAILS set by
+		// the user as a key that this is a heterogeneous job. In that
+		// case, abort out of the OFI tuner and use the internal tuner
+		// (which does run after graph minimization, so will always
+		// return the same answer on every process).
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
+			      "Falling back to NCCL's tuner due to OFI_NCCL_FORCE_NUM_RAILS being set.");
+		goto exit;
+	}
+
 	if (strcmp(platform_type, "p5.48xlarge") == 0 || strcmp(platform_type, "p5e.48xlarge") == 0) {
 		tuner_platform = NCCL_OFI_TUNER_P5_P5E;
 	} else if (strcmp(platform_type, "p5en.48xlarge") == 0) {
