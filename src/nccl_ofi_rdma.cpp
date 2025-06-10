@@ -7058,6 +7058,11 @@ nccl_net_ofi_rdma_domain_free(nccl_net_ofi_domain_t *base_domain)
 	int ret;
 	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)base_domain;
 
+	if (domain->cm) {
+		delete domain->cm;
+		domain->cm = nullptr;
+	}
+
 	ret = dealloc_and_dereg_flush_buff(domain);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
