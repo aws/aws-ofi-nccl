@@ -228,6 +228,10 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		inflight_reqs = NUM_REQUESTS * 2;
+		memset(req_completed_send, 0, sizeof(req_completed_send));
+		memset(req_completed_recv, 0, sizeof(req_completed_recv));
+
 		/* Test all completions */
 		while (inflight_reqs > 0) {
 			/* Test for send completions */
@@ -239,6 +243,7 @@ int main(int argc, char *argv[])
 				if (done) {
 					inflight_reqs--;
 					req_completed_send[idx] = 1;
+					send_req[idx] = nullptr;
 					/* Deregister memory handle */
 					OFINCCLCHECKGOTO(extNet->deregMr((void *)sComm_next, send_mhandle[idx]), res, exit);
 				}
@@ -253,6 +258,7 @@ int main(int argc, char *argv[])
 				if (done) {
 					inflight_reqs--;
 					req_completed_recv[idx] = 1;
+					recv_req[idx] = nullptr;
 
 					/* Invoke flush operations unless user has explicitly disabled it */
 					if (buffer_type == NCCL_PTR_CUDA) {
