@@ -8,6 +8,7 @@
 #include <cstring>
 #include <math.h>
 
+#include "internal/tuner/nccl_defaults.h"
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "nccl_ofi_param.h"
 
@@ -23,6 +24,7 @@ typedef struct nccl_ofi_tuner_region_context {
 	struct nccl_ofi_tuner_region_dims dims;
 	size_t num_regions[NCCL_NUM_FUNCTIONS];
 	nccl_ofi_tuner_region_t *regions[NCCL_NUM_FUNCTIONS];
+	int log2_nnodes; /* log2 of number of nodes */
 } nccl_ofi_tuner_region_context_t;
 
 /* Vector subtraction */
@@ -1168,6 +1170,80 @@ exit:
 }
 
 
+static uint64_t calculateChunkSizeTreeLL128(uint64_t message_size, int nChannels, int log2_nnodes)
+{
+	const int ppn = 8;
+	/* Initial Buffer Size */
+	uint64_t buffSize = NCCL_OFI_TUNER_NCCL_LL128_ELEMS_PER_THREAD * 
+		NCCL_OFI_TUNER_NCCL_LL128_MAX_NTHREADS * 
+		NCCL_OFI_TUNER_NCCL_STEPS * sizeof(uint64_t);
+
+	uint64_t stepSize = buffSize / NCCL_OFI_TUNER_NCCL_STEPS;
+	uint64_t chunkSize = stepSize;
+
+	/* Adjust for Protocol Overhead */
+	chunkSize = (chunkSize / NCCL_OFI_TUNER_NCCL_LL128_LINEELEMS) * NCCL_OFI_TUNER_NCCL_LL128_DATAELEMS;
+
+	/* Estimate the number of communication steps needed for the tree algorithm,
+	 * based on the logarithmic nature of tree reduction (log2 of nodes) plus a 
+	 * small factor for processes per node (ppn) */
+	double nStepsLL128 = 1 + log2_nnodes + 0.1 * ppn;
+
+	/* Reduce chunk size when the message doesn't provide enough work per communication step
+	 * The ratios (64/ppn and 16/ppn) ensure sufficient parallelism - if there aren't enough
+	 * chunks to keep all processes busy during the tree steps, the chunk size is halved */
+	while (message_size/(nChannels*chunkSize) < nStepsLL128*64/ppn && 
+		chunkSize > 131072) {
+		chunkSize /= 2;
+	}
+	while (message_size/(nChannels*chunkSize) < nStepsLL128*16/ppn && 
+		chunkSize > 32768) {
+		chunkSize /= 2;
+	}
+
+	/* Calculate the protocol grain size (minimum processing unit) and aligns the chunk size to it.
+	 * The grain size represents how much data a warp processes efficiently in the LL128 protocol. */
+	uint64_t grainSize = (NCCL_OFI_TUNER_NCCL_WARP_SIZE * NCCL_OFI_TUNER_NCCL_LL128_SHMEM_ELEMS_PER_THREAD /
+		NCCL_OFI_TUNER_NCCL_LL128_LINEELEMS * NCCL_OFI_TUNER_NCCL_LL128_DATAELEMS * sizeof(uint64_t));
+	chunkSize = (chunkSize / grainSize) * grainSize;
+
+	uint64_t elementsPerGrain = grainSize / sizeof(float);
+	uint64_t chunkGrain = chunkSize / grainSize;
+	uint64_t nelem = chunkGrain * elementsPerGrain;
+
+	/* Wire format calculation
+	 * Convert from logical elements to the actual wire format size, accounting for the LL128 line structure
+	 * where some words are used for flags.
+	 * WireWordPerSlice defines the number of 64-bit words transmitted per slice in the LL128 protocol */
+	uint64_t WireWordPerSlice = NCCL_OFI_TUNER_NCCL_WARP_SIZE * NCCL_OFI_TUNER_NCCL_LL128_SHMEM_ELEMS_PER_THREAD;
+	/* DataEltPerSlice represents the actual data elements per slice after accounting for LL128's flag overhead: */
+	uint64_t DataEltPerSlice = (WireWordPerSlice - WireWordPerSlice/NCCL_OFI_TUNER_NCCL_LL128_LINEELEMS) * (sizeof(uint64_t)/sizeof(float));
+
+	uint64_t final_chunksize = ceil(static_cast<double>(nelem)/DataEltPerSlice) * 
+		WireWordPerSlice * sizeof(uint64_t);
+
+	return final_chunksize;
+}
+
+
+static int calculateBestNChannel(uint64_t message_size, int log2_nnodes) {
+    const int channels[] = {16, 24, 32};
+    int bestNChannel = 0;
+    uint64_t maxChunkSize = 0;
+
+    for (int channel : channels) {
+        uint64_t payload = calculateChunkSizeTreeLL128(message_size, channel, log2_nnodes);
+        
+        /* Update if payload is larger, or equal but with a larger channel number */
+        if (payload > maxChunkSize || (payload == maxChunkSize && channel > bestNChannel)) {
+            maxChunkSize = payload;
+            bestNChannel = channel;
+        }
+    }
+
+    return bestNChannel;
+}
+
 
 /*****************************************************************************
  *****************************************************************************
@@ -1310,8 +1386,22 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 
 	if (in_out < 0) {
 		NCCL_OFI_INFO(NCCL_TUNING, "Falling back to NCCL's tuner for coll %d size %ld.", collType, nBytes);
+		goto exit;
 	}
 
+	/* On P6 platform and only for TreeLL128 AR 0x0, we pick best nChannels that
+	 * results in largest chunkSize at 4-32MB. When same chunkSize is achieved with
+	 * different nChannels, we pick the largest nChannels. This is a general pattern
+	 * we validated with data that seen performance improvements, but with a few
+	 * message sizes being the outliers. */
+	if ((region_ctx->platform == NCCL_OFI_TUNER_P6) &&
+	    (nBytes >= 4 * 1024 * 1024) && (nBytes <= 32 * 1024 * 1024) &&
+	    (algorithm == NCCL_ALGO_TREE) && (protocol == NCCL_PROTO_LL128) &&
+	    (region_ctx->dims.num_nodes * 8 == region_ctx->dims.num_ranks)) {
+		*nChannels = calculateBestNChannel(nBytes, region_ctx->log2_nnodes);
+	}
+
+	NCCL_OFI_INFO(NCCL_TUNING, "Setting nChannels to %d at nBytes=%ld.", *nChannels, nBytes);
 exit:
 	return ret;
 }
@@ -1348,6 +1438,7 @@ ncclResult_t region_init_internal(nccl_ofi_tuner_context_t *ctx, enum nccl_ofi_t
 	region_ctx->dims.num_ranks = nRanks;
 	region_ctx->dims.num_nodes = nNodes;
 	region_ctx->platform = platform;
+	region_ctx->log2_nnodes = log2i(nNodes);
 
 	/* Define regions where a certain combination of algorithm and protocol
 	 * should be used. Any point not covered by any region would fall back
