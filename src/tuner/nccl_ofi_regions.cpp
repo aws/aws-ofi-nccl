@@ -991,13 +991,14 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 				 .num_vertices = 4,
 				 .vertices = {{87031808, 16},
 						{107374182400, 16},
-						{107374182400, 32},
-						{562036736, 32}}},
+						{107374182400, 16},
+						{87031808, 16}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 4,
+				 .num_vertices = 5,
 				 .vertices = {{562036736, 32},
-						{107374182400, 32},
+						{87031808, 16},
+						{107374182400, 16},
 						{107374182400, 6408.141},
 						{17179869184, 1024}}}};
 			ret = set_regions(region_ctx, collType, sizeof(regions) / sizeof(regions[0]), regions);
