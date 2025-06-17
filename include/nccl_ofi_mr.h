@@ -124,9 +124,22 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t off
 }
 #endif
 
+/**
+ * Create memory registration iovec cache key of a memory region
+ *
+ * Default expectation on this cache key is that memory region covers
+ * full pages. For this, memory region that do not cover full pages is
+ * implicitly extended to the beginning of its first page and to the
+ * end of its last page. On neuron platforms, this behavior is not
+ * desired and no extension is performed.
+ *
+ * @return cache key
+ */
 static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len)
 {
+#if !HAVE_NEURON
 	nccl_ofi_mr_ckey_round(&iov_len, &iov_base, "iovec");
+#endif
 	nccl_ofi_mr_ckey_t cache_key = {};
 	cache_key.iovec.iov_base = iov_base;
 	cache_key.iovec.iov_len = iov_len;

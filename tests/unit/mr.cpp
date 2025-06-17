@@ -151,9 +151,15 @@ int main(int argc, char *argv[])
 	}
 
 	/* Test of nccl_ofi_mr_ckey_mk_[vec|dmabuf] to build aligned keys */
+#if HAVE_NEURON
+	test_make_aligned_key(fake_page_size / 2, 16, fake_page_size / 2, 16);
+	test_make_aligned_key(fake_page_size / 2, fake_page_size, fake_page_size / 2, fake_page_size);
+	test_make_aligned_key(fake_page_size - 16, 17, fake_page_size - 16, 17);
+#else
 	test_make_aligned_key(fake_page_size / 2, 16, 0, fake_page_size);
 	test_make_aligned_key(fake_page_size / 2, fake_page_size, 0, fake_page_size * 2);
 	test_make_aligned_key(fake_page_size - 16, 17, 0, fake_page_size * 2);
+#endif
 
 	nccl_ofi_mr_cache_finalize(cache);
 
