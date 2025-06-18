@@ -909,7 +909,7 @@ int nccl_net_ofi_rdma_ep_t::check_post_rx_buffers_rail(nccl_net_ofi_ep_rail_t *r
 	/* Not taking lock here since we are only reading a value.
 	   If needed, post_rx_buffs_on_rail will take the lock. */
 	if (rail->num_rx_buff_posted < rail->min_rx_buff_posted) {
-		return this->post_rx_buffs_on_rail(rail);
+		return post_rx_buffs_on_rail(rail);
 	}
 
 	return 0;
@@ -924,9 +924,9 @@ int nccl_net_ofi_rdma_ep_t::repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	ret = send_progress(rx_buff_req);
 	if (ret == -FI_EAGAIN) {
 		/* Add to pending reqs queue */
-		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-		this->pending_reqs_queue->push_back(rx_buff_req);
-		nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+		pending_reqs_queue->push_back(rx_buff_req);
+		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		NCCL_OFI_TRACE_PENDING_INSERT(rx_buff_req);
 
 		return 0;
@@ -937,7 +937,7 @@ int nccl_net_ofi_rdma_ep_t::repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
 
 	/* Next, check the posted count and post more buffers if needed. */
-	return this->check_post_rx_buffers_rail(rx_buff_data->rail);
+	return check_post_rx_buffers_rail(rx_buff_data->rail);
 }
 
 
@@ -950,7 +950,7 @@ int nccl_net_ofi_rdma_ep_t::decrease_rx_buff_cnt(nccl_net_ofi_ep_rail_t *rail)
 
 	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
 
-	return this->check_post_rx_buffers_rail(rail);
+	return check_post_rx_buffers_rail(rail);
 }
 
 
@@ -1793,12 +1793,12 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 
 	while (true) {
 		nccl_net_ofi_rdma_req_t *req = NULL;
-		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-		if (!this->pending_reqs_queue->empty()) {
-			req = this->pending_reqs_queue->front();
-			this->pending_reqs_queue->pop_front();
+		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+		if (!pending_reqs_queue->empty()) {
+			req = pending_reqs_queue->front();
+			pending_reqs_queue->pop_front();
 		}
-		nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		if (req == NULL) { break; }
 
 		switch (req->type) {
@@ -1828,9 +1828,9 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 			break;
 		} else if (rc == -FI_EAGAIN) {
 			/* Put the request in the front of the queue and try again later */
-			nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-			this->pending_reqs_queue->push_front(req);
-			nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+			nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+			pending_reqs_queue->push_front(req);
+			nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 			rc = 0;
 			break;
 		}
@@ -1934,7 +1934,7 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 {
 	int ret;
 
-	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain_ptr);
 
 	for (uint16_t rail_id = 0; rail_id != domain_ptr->num_rails; ++rail_id) {
@@ -1947,7 +1947,7 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	}
 
 	/* Process any pending requests */
-	ret = this->process_pending_reqs();
+	ret = process_pending_reqs();
 	if (OFI_UNLIKELY(ret != 0 && ret != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Failed call to process_pending_reqs: %d", ret);
 	}
@@ -2314,9 +2314,9 @@ int nccl_net_ofi_rdma_ep_t::handle_rx_eagain(nccl_net_ofi_ep_rail_t *rail,
 					     size_t num_buffs_failed)
 {
 	/* Add to pending reqs queue */
-	nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-	this->pending_reqs_queue->push_back(req);
-	nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+	nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+	pending_reqs_queue->push_back(req);
+	nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
 	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
@@ -2362,7 +2362,7 @@ int nccl_net_ofi_rdma_ep_t::post_rx_buffs_on_rail(nccl_net_ofi_ep_rail_t *rail)
 			/* Update posted count */
 			/* We failed to post num_buffs_failed buffers that we promised above */
 			size_t num_buffs_failed = buffers_needed - i - 1;
-			ret = this->handle_rx_eagain(rail, req, num_buffs_failed);
+			ret = handle_rx_eagain(rail, req, num_buffs_failed);
 			if (ret != 0) return ret;
 
 			break;
@@ -2381,18 +2381,18 @@ int nccl_net_ofi_rdma_ep_t::post_rx_buffs()
 	int ret = 0;
 	nccl_net_ofi_ep_rail_t *rail;
 
-	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_rail(rail_id);
-		ret = this->post_rx_buffs_on_rail(rail);
+	for (uint16_t rail_id = 0; rail_id < num_rails; ++rail_id) {
+		rail = rdma_endpoint_get_rail(rail_id);
+		ret = post_rx_buffs_on_rail(rail);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed call to post_rx_buffs_on_rail");
 			goto exit;
 		}
 	}
 
-	for (uint16_t rail_id = 0; rail_id < this->num_control_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_control_rail(rail_id);
-		ret = this->post_rx_buffs_on_rail(rail);
+	for (uint16_t rail_id = 0; rail_id < num_control_rails; ++rail_id) {
+		rail = rdma_endpoint_get_control_rail(rail_id);
+		ret = post_rx_buffs_on_rail(rail);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed call to post_rx_buffs_on_rail(control_rail)");
 			goto exit;
@@ -3301,17 +3301,17 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm_
 int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 {
 	/* Process the CQ if there are any pending requests */
-	nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-	bool is_deque_empty = this->pending_reqs_queue->empty();
-	nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+	nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+	bool is_deque_empty = pending_reqs_queue->empty();
+	nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 	if (!is_deque_empty) {
-		int ret = this->ofi_process_cq();
+		int ret = ofi_process_cq();
 		if (ret != 0) {
 			return ret;
 		}
-		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-		is_deque_empty = this->pending_reqs_queue->empty();
-		nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+		nccl_net_ofi_mutex_lock(&pending_reqs_lock);
+		is_deque_empty = pending_reqs_queue->empty();
+		nccl_net_ofi_mutex_unlock(&pending_reqs_lock);
 		if (!is_deque_empty) {
 			/* Network is still busy. */
 			return -EAGAIN;
@@ -4057,12 +4057,12 @@ static int comm_close_handler(void)
 
 void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
 {
-	nccl_net_ofi_domain_t *base_domain = &this->rdma_endpoint_get_domain()->base;
+	nccl_net_ofi_domain_t *base_domain = &rdma_endpoint_get_domain()->base;
 	int dev_id = base_domain->device->dev_id;
 
 	pthread_wrapper domain_lock(&base_domain->domain_lock);
 
-	this->release_rdma_ep_resources(dev_id);
+	release_rdma_ep_resources(dev_id);
 
 	base_domain->domain_active = false;
 }
@@ -4733,13 +4733,13 @@ void nccl_net_ofi_rdma_ep_t::prepare_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_
 	conn_resp->comm_id = r_comm->local_comm_id;
 
 	/* Set number of rails to be sent back to remote for verification */
-	conn_resp->num_rails = this->num_rails;
-	conn_resp->num_control_rails = this->num_control_rails;
+	conn_resp->num_rails = num_rails;
+	conn_resp->num_control_rails = num_control_rails;
 
 	/* Set libfabric endpoint names for each rail */
-	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		rdma_ep_name = &conn_resp->ep_names[rail_id];
-		ep_rail = this->rdma_endpoint_get_rail(rail_id);
+		ep_rail = rdma_endpoint_get_rail(rail_id);
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
 		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
@@ -4748,9 +4748,9 @@ void nccl_net_ofi_rdma_ep_t::prepare_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_
 	}
 
 	/* Set libfabric endpoint names for each control rail */
-	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
+	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		rdma_ep_name = &conn_resp->control_ep_names[rail_id];
-		ep_rail = this->rdma_endpoint_get_control_rail(rail_id);
+		ep_rail = rdma_endpoint_get_control_rail(rail_id);
 
 		assert(sizeof(rdma_ep_name->ep_name) == sizeof(ep_rail->local_ep_name));
 		memcpy(rdma_ep_name->ep_name, ep_rail->local_ep_name,
@@ -5052,7 +5052,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	CHECK_DOMAIN_ACTIVE(domain_ptr, "listen");
 
-	ret = this->post_rx_buffs();
+	ret = post_rx_buffs();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Error posting rx buffers: %d", ret);
 		return ret;
@@ -5952,25 +5952,25 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 	conn_msg->comm_id = local_comm_id;
 
 	/* Set number of rails to be sent back to remote for verification */
-	conn_msg->num_rails = this->num_rails;
-	conn_msg->num_control_rails = this->num_control_rails;
+	conn_msg->num_rails = num_rails;
+	conn_msg->num_control_rails = num_control_rails;
 
 	/* Set libfabric endpoint names for each control rail */
-	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
+	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		memcpy(conn_msg->control_ep_names[rail_id].ep_name,
-		       this->control_rails[rail_id].local_ep_name,
-		       this->control_rails[rail_id].local_ep_name_len);
+		       control_rails[rail_id].local_ep_name,
+		       control_rails[rail_id].local_ep_name_len);
 		conn_msg->control_ep_names[rail_id].ep_name_len =
-			this->control_rails[rail_id].local_ep_name_len;
+			control_rails[rail_id].local_ep_name_len;
 	}
 
 	/* Set libfabric endpoint names for each rail */
-	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		memcpy(conn_msg->ep_names[rail_id].ep_name,
-		       this->rails[rail_id].local_ep_name,
-		       this->rails[rail_id].local_ep_name_len);
+		       rails[rail_id].local_ep_name,
+		       rails[rail_id].local_ep_name_len);
 		conn_msg->ep_names[rail_id].ep_name_len =
-			this->rails[rail_id].local_ep_name_len;
+			rails[rail_id].local_ep_name_len;
 	}
 }
 
@@ -6017,7 +6017,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 {
 	int ret = 0;
 	nccl_net_ofi_ep_rail_t *rail;
-	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 
 	/* This is a little bit of a heuristic, but we need as many requests as
 	   we have posted control messages, so that's as reasonable a starting
@@ -6025,38 +6025,38 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_rdma_req_t),
 				     ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 				     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
-				     &this->rx_buff_reqs_fl);
+				     &rx_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init rx_buff_reqs_fl");
 		return ret;
 	}
 
-	ret = nccl_ofi_freelist_init_mr(this->ctrl_rx_buff_size,
+	ret = nccl_ofi_freelist_init_mr(ctrl_rx_buff_size,
 					ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 					NULL, NULL,
 					freelist_regmr_host_fn, freelist_deregmr_host_fn,
-					domain_ptr, 1, &this->ctrl_rx_buff_fl);
+					domain_ptr, 1, &ctrl_rx_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to init ctrl_rx_buff_fl");
-		if (nccl_ofi_freelist_fini(this->rx_buff_reqs_fl))
+		if (nccl_ofi_freelist_fini(rx_buff_reqs_fl))
 			NCCL_OFI_WARN("Also failed to freelist_fini rx_buff_reqs_fl");
 		return ret;
 	}
 
-	if (this->eager_rx_buff_size > 0) {
-		ret = nccl_ofi_freelist_init_mr(this->eager_rx_buff_size,
+	if (eager_rx_buff_size > 0) {
+		ret = nccl_ofi_freelist_init_mr(eager_rx_buff_size,
 						ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
 						NULL, NULL,
 						freelist_regmr_host_fn, freelist_deregmr_host_fn,
-						domain_ptr, EAGER_RX_BUFFER_ALIGNMENT, &this->eager_rx_buff_fl);
+						domain_ptr, EAGER_RX_BUFFER_ALIGNMENT, &eager_rx_buff_fl);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to init eager_rx_buff_size");
-			nccl_ofi_freelist_fini(this->ctrl_rx_buff_fl);
-			nccl_ofi_freelist_fini(this->rx_buff_reqs_fl);
+			nccl_ofi_freelist_fini(ctrl_rx_buff_fl);
+			nccl_ofi_freelist_fini(rx_buff_reqs_fl);
 			return ret;
 		}
 	} else {
-		this->eager_rx_buff_fl = NULL;
+		eager_rx_buff_fl = NULL;
 	}
 
 	/*
@@ -6065,27 +6065,27 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 	 * The parameters account for all the rails, so scale down bounds to
 	 * what a single rail would need.
 	 */
-	for (uint16_t rail_id = 0; rail_id < this->num_control_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_control_rail(rail_id);
+	for (uint16_t rail_id = 0; rail_id < num_control_rails; ++rail_id) {
+		rail = rdma_endpoint_get_control_rail(rail_id);
 		rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_min_posted_control_buffers(), this->num_control_rails
+			ofi_nccl_rdma_min_posted_control_buffers(), num_control_rails
 		);
 		rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_max_posted_control_buffers(), this->num_control_rails
+			ofi_nccl_rdma_max_posted_control_buffers(), num_control_rails
 		);
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = ctrl_rx_buff_req_alloc;
 	}
 
-	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_rail(rail_id);
-		if (this->eager_rx_buff_size >= 0) {
+	for (uint16_t rail_id = 0; rail_id < num_rails; ++rail_id) {
+		rail = rdma_endpoint_get_rail(rail_id);
+		if (eager_rx_buff_size >= 0) {
 			rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-				ofi_nccl_rdma_min_posted_eager_buffers(), this->num_rails
+				ofi_nccl_rdma_min_posted_eager_buffers(), num_rails
 				);
 			rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-				ofi_nccl_rdma_max_posted_eager_buffers(), this->num_rails
+				ofi_nccl_rdma_max_posted_eager_buffers(), num_rails
 				);
 		} else {
 			rail->min_rx_buff_posted = 0;
@@ -6105,33 +6105,33 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 	int ret = 0;
 	nccl_net_ofi_ep_rail_t *rail;
 
-	ret = nccl_ofi_freelist_fini(this->ctrl_rx_buff_fl);
+	ret = nccl_ofi_freelist_fini(ctrl_rx_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to fini ctrl_rx_buff_fl");
 		return ret;
 	}
 
-	if (this->eager_rx_buff_fl != NULL) {
-		ret = nccl_ofi_freelist_fini(this->eager_rx_buff_fl);
+	if (eager_rx_buff_fl != NULL) {
+		ret = nccl_ofi_freelist_fini(eager_rx_buff_fl);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to fini eager_rx_buff_fl");
 			return ret;
 		}
 	}
 
-	ret = nccl_ofi_freelist_fini(this->rx_buff_reqs_fl);
+	ret = nccl_ofi_freelist_fini(rx_buff_reqs_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to fini rx_buff_reqs_fl");
 		return ret;
 	}
 
-	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_rail(rail_id);
+	for (uint16_t rail_id = 0; rail_id < num_rails; ++rail_id) {
+		rail = rdma_endpoint_get_rail(rail_id);
 		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
 	}
 
-	for (uint16_t rail_id = 0; rail_id < this->num_control_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_control_rail(rail_id);
+	for (uint16_t rail_id = 0; rail_id < num_control_rails; ++rail_id) {
+		rail = rdma_endpoint_get_control_rail(rail_id);
 		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
 	}
 
@@ -6269,7 +6269,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	*s_comm = NULL;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device");
 		return -EINVAL;
@@ -6313,7 +6313,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
 	   API releases it.
 	   Caller assumed to own domain lock. */
-	this->increment_ref_cnt();
+	increment_ref_cnt();
 
 	/* Allocate send communicator ID */
 	comm_id = device->comm_idpool->allocate_id();
@@ -6369,7 +6369,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 			device->comm_idpool->free_id(ret_s_comm->local_comm_id);
 		}
 		nccl_net_ofi_mutex_destroy(&ret_s_comm->ctrl_recv_lock);
-		this->decrement_ref_cnt();
+		decrement_ref_cnt();
 		free_rdma_send_comm(ret_s_comm);
 	}
 
@@ -6403,7 +6403,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
-	ret = this->post_rx_buffs();
+	ret = post_rx_buffs();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Error posting rx buffers: %d", ret);
 		return ret;
@@ -6413,7 +6413,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	 * Create the communicator if it has not yet been created.
 	 */
 	if (s_comm == nullptr) {
-		ret = this->create_send_comm(&s_comm);
+		ret = create_send_comm(&s_comm);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -6423,14 +6423,14 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		comm_state->comm = &s_comm->base.base;
 
 		nccl_ofi_rdma_connection_info_t conn_msg;
-		this->prepare_send_connect_message(s_comm->local_comm_id, &conn_msg);
+		prepare_send_connect_message(s_comm->local_comm_id, &conn_msg);
 
 		/* Create connector */
 		s_comm->connector = domain_ptr->cm->connect(*handle, &conn_msg, sizeof(conn_msg));
 	}
 
 	/* Progress our engine to get completions */
-	ret = this->ofi_process_cq();
+	ret = ofi_process_cq();
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
@@ -6490,13 +6490,13 @@ void nccl_net_ofi_rdma_ep_t::release_rdma_ep_resources(int dev_id)
 {
 	nccl_net_ofi_ep_rail_t *rail;
 
-	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_control_rail(rail_id);
+	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
+		rail = rdma_endpoint_get_control_rail(rail_id);
 		nccl_net_ofi_rdma_ep_t::ep_rail_release(rail, dev_id);
 	}
 
-	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_rail(rail_id);
+	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
+		rail = rdma_endpoint_get_rail(rail_id);
 		nccl_net_ofi_rdma_ep_t::ep_rail_release(rail, dev_id);
 	}
 }
@@ -6592,7 +6592,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 	for (uint16_t rail_id = 0; rail_id != device->num_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
 		domain_rail = rdma_domain_get_rail(domain_arg, rail_id);
-		rail = this->rdma_endpoint_get_rail(rail_id);
+		rail = rdma_endpoint_get_rail(rail_id);
 
 		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev, 
 							   domain_rail, rail, FI_TC_UNSPEC);
@@ -6603,11 +6603,11 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 	}
 
 	/* Initialize libfabric resources of endpoint control rails */
-	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
+	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		rail_dev = rdma_device_get_rail(device, rail_id);
 		domain_rail = rdma_domain_get_rail(domain_arg, rail_id);
-		rail = this->rdma_endpoint_get_rail(rail_id);
-		control_rail = this->rdma_endpoint_get_control_rail(rail_id);
+		rail = rdma_endpoint_get_rail(rail_id);
+		control_rail = rdma_endpoint_get_control_rail(rail_id);
 
 		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev,
 							   domain_rail, control_rail, tc);
@@ -6619,7 +6619,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 
  exit:
 	if (ret != 0) {
-		this->release_rdma_ep_resources(dev_id);
+		release_rdma_ep_resources(dev_id);
 	}
 
 	return ret;
@@ -6632,13 +6632,13 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 
 	called_cleanup_resources = true;
 
-	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
+	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device();
 
 	/* Ideally we would "un-post" the rx buffers, but this
 	   should be accomplished by closing the endpoint. */
-	this->release_rdma_ep_resources(device->base.dev_id);
+	release_rdma_ep_resources(device->base.dev_id);
 
-	err_code = this->fini_rx_buffers();
+	err_code = fini_rx_buffers();
 	if (err_code != 0) {
 		NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
 		ret = -EINVAL;
@@ -6858,12 +6858,12 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 
 	is_endpoint_per_communicator_ep = false;
 
-	ret = this->init_rail_ofi_resources(device, domain_arg);
+	ret = init_rail_ofi_resources(device, domain_arg);
 	if (ret != 0) {
 		throw std::runtime_error("rdma endpoint constructor: initializing rails failed");
 	}
 
-	ret = this->init_rx_buffers();
+	ret = init_rx_buffers();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Preparation of rx buffers failed");
 		throw std::runtime_error("rdma endpoint constructor: initializing rx_buffers failed");
