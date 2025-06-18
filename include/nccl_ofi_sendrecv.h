@@ -130,7 +130,7 @@ public:
 
 	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
 	{
-		return (nccl_net_ofi_sendrecv_domain_t *)this->domain;
+		return (nccl_net_ofi_sendrecv_domain_t *) domain;
 	}
 
 	/* Current available tag ID */
