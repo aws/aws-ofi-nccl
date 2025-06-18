@@ -734,7 +734,7 @@ public:
 
 	inline nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device()
 	{
-		return (nccl_net_ofi_rdma_device_t *)this->rdma_endpoint_get_domain()->base.device;
+		return (nccl_net_ofi_rdma_device_t *) rdma_endpoint_get_domain()->base.device;
 	}
 
 	/**
@@ -742,9 +742,9 @@ public:
 	 */
 	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_rail(uint16_t rail_id)
 	{
-		assert(this->rails);
-		assert(rail_id < this->num_rails);
-		return &this->rails[rail_id];
+		assert(rails);
+		assert(rail_id < num_rails);
+		return &rails[rail_id];
 	}
 
 	/**
@@ -752,9 +752,9 @@ public:
 	 */
 	inline nccl_net_ofi_ep_rail_t *rdma_endpoint_get_control_rail(uint16_t rail_id)
 	{
-		assert(this->control_rails);
-		assert(rail_id < this->num_control_rails);
-		return &this->control_rails[rail_id];
+		assert(control_rails);
+		assert(rail_id < num_control_rails);
+		return &control_rails[rail_id];
 	}
 
 	/**
