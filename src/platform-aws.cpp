@@ -461,6 +461,69 @@ static int configure_nvls_option(void)
 	return 0;
 }
 
+static int configure_tuner()
+{
+	// NCCL has a bug in their handling of the combined net/tuner dso (at
+	// least up to NCCL 2.27) where the tuner init does not open the net
+	// shared library but later tries to close it, meaning that the shared
+	// library gets closed and potentially unloaded from memory before NCCL
+	// is done using the net part of the interface, which results in obvious
+	// badness.
+	//
+	// If NCCL_TUNER_PLUGIN is set, NCCL will dlopen() the library whether
+	// or not it is the same underlying library as the NET plugin, meaning
+	// that we get the reference counting behavior we need.  So attempt to
+	// always set NCCL_TUNER_PLUGIN to prevent the dlopen refcount bug.
+	//
+	// When this bug is fixed, we should use the next api version bump as a
+	// way of shutting off this code.
+	if (getenv("NCCL_TUNER_PLUGIN") != NULL) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "NCCL_TUNER_PLUGIN set; skipping configuration");
+		return 0;
+	}
+
+	// if we know how the net plugin was found, use that value for the tuner
+	// plugin.  Skip the case where a list is provide, because parsing the
+	// list does not sound like a winning strategy and the only version of
+	// NCCL that currently supports a comma delineated list also doesn't
+	// support specifying full paths (meaning that the dladdr code below
+	// will work fine).
+	char *env_net_value = getenv("NCCL_NET_PLUGIN");
+	if (env_net_value != NULL && strchr(env_net_value, ',') == NULL) {
+		env_manager::getInstance().insert_envvar("NCCL_TUNER_PLUGIN", env_net_value, false);
+		return 0;
+	}
+
+	// NCCL found the net plugin without setting NCCL_NET_PLUGIN.  Need to
+	// figure out where we came from.
+	Dl_info info;
+	int rc = dladdr((void *)configure_tuner, &info);
+	if (rc != 0) {
+		// unlike every other call, rc == 0 is the error condition for
+		// dladdr().
+		//
+		// NCCL 2.27 NCCL_TUNER_PLUGIN must be just the basename, without a path.
+		const std::string net_pathname(info.dli_fname);
+		auto const pos = net_pathname.find_last_of('/');
+		if (pos == std::string::npos) {
+			NCCL_OFI_WARN("Failed to parse shared library info.  Not configuring NCCL_TUNER_PLUGIN.");
+			return -EINVAL;
+		}
+		const auto net_basename = net_pathname.substr(pos + 1);
+
+		env_manager::getInstance().insert_envvar("NCCL_TUNER_PLUGIN", net_basename, false);
+	} else {
+		NCCL_OFI_WARN("Failed to find shared library info. Not configuring NCCL_TUNER_PLUGIN.");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+
+
+
 #endif /* HAVE_CUDA */
 
 /*
@@ -539,6 +602,12 @@ int platform_init(const char **provider_filter)
 	ret = configure_nvls_option();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to configure NVLS option");
+		goto exit;
+	}
+
+	ret = configure_tuner();
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to configure tuner: %s", strerror(-ret));
 		goto exit;
 	}
 #endif
