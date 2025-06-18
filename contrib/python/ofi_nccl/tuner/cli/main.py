@@ -16,6 +16,7 @@ def show_all(library: pathlib.Path,
              min_nnodes: int = 2,
              max_nnodes: int = np.log2(2048),
              inc_nnodes: int = 2,
+             show_channels: bool = False,
              ):
     df = (
         pd.concat(
@@ -26,7 +27,7 @@ def show_all(library: pathlib.Path,
                 for platform in TunerPlatform
             ]
         )
-        .set_index(["nodes", "ranks", "message_size"])
+        .set_index(["nodes", "ranks", "message_size"] if not show_channels else ["nodes", "ranks", "message_size", "nchannels"])
         .sort_index()
         .dropna()
     )
