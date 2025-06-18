@@ -167,17 +167,18 @@ class Tuner:
 
         if result != 0:
             raise RuntimeError(f"Failed to get collective info. Error code: {result}")
-
-        decision = (np.nan, np.nan)
+        nchannels = nChannels.value
+        decision = (np.nan, np.nan, np.nan)
         for algo in NCCLAlgo:
             for proto in NCCLProto:
                 cost = cost_table_array[algo.value * len(NCCLProto) + proto.value]
                 if cost != float(1337):
-                    decision = (algo, proto)
+                    decision = (algo, proto, nchannels)
 
         return {
             "algo": decision[0],
             "proto": decision[1],
+            "nchannels": decision[2],
         }
 
     def analyze_message_range(self, coll_type: NCCLFunc, min_size: int, max_size: int):
@@ -206,6 +207,7 @@ class Tuner:
                     "message_size": size,
                     "algo": decision["algo"],
                     "proto": decision["proto"],
+                    "nchannels": decision["nchannels"],
                     "ranks": self.nranks,
                     "nodes": self.nnodes,
                     "platform": self.platform,
