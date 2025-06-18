@@ -5129,7 +5129,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	int ret = 0;
 	nccl_net_ofi_rdma_listen_comm_t *l_comm = nullptr;
 
-	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain_ptr);
@@ -6532,7 +6532,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		(nccl_net_ofi_rdma_send_comm_t *)comm_state->comm;
 
-	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
 
 	pthread_wrapper lock(&domain_ptr->base.domain_lock);
 
@@ -6778,7 +6778,7 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 	int ret = 0;
 	int err_code = 0;
 
-	this->called_cleanup_resources = true;
+	called_cleanup_resources = true;
 
 	nccl_net_ofi_rdma_device_t *device = rdma_endpoint_get_device(this);
 
@@ -6792,19 +6792,19 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 		ret = -EINVAL;
 	}
 
-	if (this->pending_reqs_queue) {
-		delete this->pending_reqs_queue;
-		this->pending_reqs_queue = nullptr;
+	if (pending_reqs_queue) {
+		delete pending_reqs_queue;
+		pending_reqs_queue = nullptr;
 	}
 
-	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
+	err_code = nccl_net_ofi_mutex_destroy(&pending_reqs_lock);
 	if (err_code != 0) {
 		NCCL_OFI_WARN("rdma endpoint destructor: destroying pending_reqs_lock mutex failed, rc %d", err_code);
 		ret = -EINVAL;
 	}
 
-	free(this->control_rails);
-	free(this->rails);
+	free(control_rails);
+	free(rails);
 
 	assert(ret == 0);
 
@@ -6821,10 +6821,10 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	 * different release mechanism depending on the endpoint
 	 * type.  Otherwise, we use the base code release function.
 	 */
-	if (this->is_endpoint_per_communicator_ep) {
+	if (is_endpoint_per_communicator_ep) {
 		nccl_net_ofi_rdma_domain_t *domain_ptr = nullptr;
 
-		domain_ptr = this->rdma_endpoint_get_domain();
+		domain_ptr = rdma_endpoint_get_domain();
 		if (OFI_UNLIKELY(domain_ptr == nullptr)) {
 			NCCL_OFI_WARN("Invalid domain provided");
 			return -EINVAL;
@@ -6834,10 +6834,10 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 			nccl_net_ofi_mutex_lock(&domain_ptr->base.domain_lock);
 		}
 
-		this->decrement_ref_cnt();
+		decrement_ref_cnt();
 
 		/* Store ref_cnt in local variable in case the endpoint gets deleted */
-		int local_ref_cnt = this->ref_cnt;
+		int local_ref_cnt = ref_cnt;
 
 		if (local_ref_cnt == 0 || force_cleanup) {
 			if (force_cleanup && local_ref_cnt != 0 ) {
@@ -6849,7 +6849,7 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
 				goto unlock;
 			}
-			ret = this->cleanup_resources();
+			ret = cleanup_resources();
 			delete this;
 		}
 
@@ -6874,8 +6874,8 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 {
 	int ret = 0;
-	if (!this->called_cleanup_resources) {
-		ret = this->cleanup_resources();
+	if (!called_cleanup_resources) {
+		ret = cleanup_resources();
 	}
 
 	if (ret != 0) {
@@ -6955,57 +6955,56 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 	int ret = 0;
 	nccl_net_ofi_rdma_device_t *device = rdma_domain_get_device(domain_arg);
 
-	this->num_rails = domain_arg->num_rails;
+	num_rails = domain_arg->num_rails;
 
 	if (ofi_nccl_rdma_rr_ctrl_msg()) {
 		/*
 		 * Round robin the control message across all rails by using dedicated
 		 * endpoints with CQs shared with the data endpoints.
 		 */
-		this->num_control_rails = domain_arg->num_rails;
+		num_control_rails = domain_arg->num_rails;
 	} else {
 		/*
 		 * Use a single rail for control messages, with a dedicated
 		 * endpoint and a CQ shared with the data endpoint.
 		 */
-		this->num_control_rails = 1;
+		num_control_rails = 1;
 	}
 
-	this->use_long_rkeys = device->use_long_rkeys;
+	use_long_rkeys = device->use_long_rkeys;
 
-	this->rails = (nccl_net_ofi_ep_rail_t *)calloc(this->num_rails,
-						       sizeof(nccl_net_ofi_ep_rail_t));
-	if (!this->rails) {
+	rails = (nccl_net_ofi_ep_rail_t *)calloc(num_rails,
+						 sizeof(nccl_net_ofi_ep_rail_t));
+	if (!rails) {
 		NCCL_OFI_WARN("Unable to allocate rdma rails");
 		throw std::runtime_error("rdma endpoint constructor: data rail allocation failed");
 	}
 
-	this->control_rails = (nccl_net_ofi_ep_rail_t *)calloc(this->num_control_rails,
-							       sizeof(nccl_net_ofi_ep_rail_t));
-	if (!this->control_rails) {
+	control_rails = (nccl_net_ofi_ep_rail_t *)calloc(num_control_rails,
+							 sizeof(nccl_net_ofi_ep_rail_t));
+	if (!control_rails) {
 		NCCL_OFI_WARN("Unable to allocate rdma control rails");
 		throw std::runtime_error("rdma endpoint constructor: control rail allocation failed");
 	}
 
-	this->pending_reqs_queue = new std::deque<nccl_net_ofi_rdma_req_t *>;
+	pending_reqs_queue = new std::deque<nccl_net_ofi_rdma_req_t *>;
 
-	ret = nccl_net_ofi_mutex_init(&this->pending_reqs_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&pending_reqs_lock, NULL);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
 		throw std::runtime_error("rdma endpoint constructor: mutex initialization failed");
 	}
 
-	this->ctrl_rx_buff_size = std::max({sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
-	    sizeof(nccl_ofi_rdma_connection_info_t),
-	    sizeof(nccl_net_ofi_rdma_close_msg_t)});
-	this->eager_send_size = ofi_nccl_eager_max_size();
+	ctrl_rx_buff_size = std::max({sizeof(nccl_net_ofi_rdma_ctrl_msg_t),
+				      sizeof(nccl_ofi_rdma_connection_info_t),
+				      sizeof(nccl_net_ofi_rdma_close_msg_t)});
+	eager_send_size = ofi_nccl_eager_max_size();
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
 	   posting 0 byte rx buffers.  Note that if eager_send_size is -1
 	   (disabled), eager_rx_buff_size will also be -1. */
-	this->eager_rx_buff_size = (this->eager_send_size == 0) ?
-		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size;
+	eager_rx_buff_size = (eager_send_size == 0) ? EAGER_RX_BUFFER_ALIGNMENT : eager_send_size;
 
-	this->is_endpoint_per_communicator_ep = false;
+	is_endpoint_per_communicator_ep = false;
 
 	ret = init_rail_ofi_resources(device, domain_arg, this);
 	if (ret != 0) {

@@ -692,7 +692,7 @@ public:
 
 	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
 	{
-		return (nccl_net_ofi_rdma_domain_t *)this->domain;
+		return (nccl_net_ofi_rdma_domain_t *) domain;
 	}
 
 	/* Number of rails */
