@@ -100,7 +100,10 @@ if ENABLE_NCCL_NET_SYMLINK
 symlink_files += libnccl-net.so
 endif
 if WANT_PLATFORM_AWS
-symlink_files += libnccl-ofi-tuner.so
+# NCCL standardized on the libnccl-tuner-<interface> format after we released a
+# plugin with the tuner named libnccl-ofi-tuner.so.  Since they're all symlinks
+# anyway, do both.
+symlink_files += libnccl-ofi-tuner.so libnccl-tuner-ofi.so
 endif
 
 install_plugin_symlinks = { \
