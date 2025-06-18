@@ -2119,7 +2119,7 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 	nccl_net_ofi_sendrecv_device_t *device = nullptr;
 
 	/* Validate device */
-	device = this->sendrecv_endpoint_get_device();
+	device = sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		ret = -EINVAL;
@@ -2183,7 +2183,7 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 	tag = 0;
 	max_tag = device->max_tag;
 
-	struct fid_domain *ofi_domain = this->sendrecv_endpoint_get_ofi_domain();
+	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain();
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
 						ofi_domain,
 						&ofi_ep,

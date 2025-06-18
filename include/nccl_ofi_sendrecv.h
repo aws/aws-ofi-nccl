@@ -158,7 +158,7 @@ public:
 
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
 	{
-		return (nccl_net_ofi_sendrecv_device_t *)this->sendrecv_endpoint_get_domain()->base.device;
+		return (nccl_net_ofi_sendrecv_device_t *) sendrecv_endpoint_get_domain()->base.device;
 	}
 
 	/**
@@ -168,7 +168,7 @@ public:
 	 */
 	inline struct fid_domain* sendrecv_endpoint_get_ofi_domain()
 	{
-		return this->sendrecv_endpoint_get_domain()->domain;
+		return sendrecv_endpoint_get_domain()->domain;
 	}
 
 	/* Current available tag ID */
