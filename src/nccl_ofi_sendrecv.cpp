@@ -190,7 +190,7 @@ static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 
 	nccl_net_ofi_sendrecv_req_t *req = container_of(ctx, nccl_net_ofi_sendrecv_req_t, ctx);
 
-	NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req, &ctx->ofi_ctx);
+	NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req->direction, req, &ctx->ofi_ctx);
 
 	if (cq_entry->flags & FI_RECV) {
 		sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry->len);
