@@ -23,8 +23,8 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, Flush, request, nccl_req); \
 } while(0)
 
-#define NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(dev,request,ctx) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, ProcessCompletions, dev,request,ctx); \
+#define NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(dev,req_direction,request,ctx) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, ProcessCompletionsSendRecv, dev,req_direction,request,ctx); \
 } while(0)
 
 /***** RDMA PROTOCL *****/
@@ -94,8 +94,8 @@
 	NCCL_OFI_TRACE_EAGER_RECV_NVTX(dev, rail_id, comm, msg_seq_num); \
 } while(0)
 
-#define NCCL_OFI_TRACE_COMPLETIONS(dev,request,ctx) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, ProcessCompletions, dev,request,ctx); \
+#define NCCL_OFI_TRACE_COMPLETIONS(dev,req_type,request,ctx) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, ProcessCompletionsRdma, dev,req_type,request,ctx); \
 } while(0)
 
 #define NCCL_OFI_TRACE_FLUSH(request, nccl_req) do { \
