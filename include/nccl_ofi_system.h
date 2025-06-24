@@ -19,13 +19,15 @@
  */
 uint32_t nccl_ofi_get_unique_node_id(void);
 
+/* Forward declaration of base device class for nccl_net_ofi_device_set_guid */
+class nccl_net_ofi_device_t;
 
 /*
  * @brief   Generic device GUID setter based on network device index and IP
  *          address of the host. Platforms can override with with
  *          platform_device_set_guid() as needed.
  */
-void nccl_net_ofi_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device);
+void nccl_net_ofi_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device);
 /*
  * @brief   Reads the product name from the DMI information.
  *          The caller must free the returned string.
