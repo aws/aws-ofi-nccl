@@ -492,26 +492,23 @@ static inline size_t ofi_info_list_length(struct fi_info *info_list)
 	return length;
 }
 
-static inline int get_properties(nccl_net_ofi_device_t *base_dev,
-				 nccl_ofi_properties_t *props)
+
+int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 {
-	nccl_net_ofi_rdma_device_t *device =
-		(nccl_net_ofi_rdma_device_t *)base_dev;
-	nccl_net_ofi_rdma_plugin_t *plugin = rdma_device_get_plugin(device);
-	int dev_id = device->dev_id;
 	int ret;
+	nccl_net_ofi_rdma_plugin_t *plugin_ptr = rdma_device_get_plugin(this);
+	assert(plugin_ptr != nullptr);
 
 	/* Retrieve NIC properties of first rail */
-	struct fi_info *info = device->device_rails[0].info;
-	size_t num_devices = plugin->base.get_num_devices(base_dev->plugin);
-	assert(plugin != NULL);
+	struct fi_info *info = this->device_rails[0].info;
+	size_t num_devices = plugin_ptr->base.get_num_devices(this->plugin);
 
-	ret =  nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, info, this->dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
-		props->port_speed *= plugin->topo->max_group_size;
+		props->port_speed *= plugin_ptr->topo->max_group_size;
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
@@ -6831,11 +6828,10 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 		(*this, sizeof(nccl_ofi_rdma_connection_info_t));
 }
 
-static nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_create_domain(nccl_net_ofi_device_t *base_dev)
+nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain()
 {
-	auto *device = (nccl_net_ofi_rdma_device_t *)base_dev;
 
-	auto *domain = new nccl_net_ofi_rdma_domain_t(device);
+	auto *domain = new nccl_net_ofi_rdma_domain_t(this);
 
 	return domain;
 }
@@ -6964,20 +6960,14 @@ error:
 /**
  * Destroy an rdma device object
  */
-static int
-nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
+int nccl_net_ofi_rdma_device_t::release()
 {
-	nccl_net_ofi_rdma_device_t *device = (nccl_net_ofi_rdma_device_t *)base_device;
 	int ret, first_error = 0;
 
-	if (device == NULL) {
-		return 0;
-	}
-
-	unsigned num_domains = device->domain_table->size();
-	if (num_domains > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
-		ret = base_device->release_all_domain_and_ep(base_device);
+	if (!this->domain_table->empty()) {
+		NCCL_OFI_INFO(NCCL_NET, "%zu domains still active at close",
+			      this->domain_table->size());
+		ret = this->release_all_domain_and_ep();
 		if (ret != 0) {
 			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
@@ -6987,22 +6977,23 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		}
 	}
 
-	if (device->device_rails != NULL) {
-		release_device_ofi_resources(device);
-		free(device->device_rails);
+	if (this->device_rails != nullptr) {
+		release_device_ofi_resources(this);
+		free(this->device_rails);
+		this->device_rails = nullptr;
 	}
 
-	if (device->comms) {
-		free(device->comms);
-		device->comms = NULL;
+	if (this->comms) {
+		free(this->comms);
+		this->comms = nullptr;
 	}
 
-	if (device->comm_idpool) {
-		delete device->comm_idpool;
-		device->comm_idpool = NULL;
+	if (this->comm_idpool) {
+		delete this->comm_idpool;
+		this->comm_idpool = nullptr;
 	}
 
-	ret = nccl_net_ofi_device_fini(base_device);
+	ret = nccl_net_ofi_device_t::release();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
 			      strerror(-ret));
@@ -7011,17 +7002,10 @@ nccl_net_ofi_rdma_device_release(nccl_net_ofi_device_t *base_device)
 		}
 	}
 
-	free(device);
+	free(this);
 
 	return first_error;
 }
-
-
-static inline struct fi_info *rdma_device_get_ofi_info(nccl_net_ofi_device_t *dev) {
-	auto device = reinterpret_cast<nccl_net_ofi_rdma_device_t *>(dev);
-	auto device_rail_0 = rdma_device_get_rail(device, 0);
-	return device_rail_0->info;
-};
 
 
 /**
@@ -7045,11 +7029,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
 		return NULL;
 	}
-
-	device->get_properties = get_properties;
-	device->release = nccl_net_ofi_rdma_device_release;
-	device->create_domain = nccl_net_ofi_rdma_device_create_domain;
-	device->get_ofi_info = rdma_device_get_ofi_info;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -7159,7 +7138,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	return device;
 
 error:
-	device->release(device);
+	device->release();
 
 	return NULL;
 }

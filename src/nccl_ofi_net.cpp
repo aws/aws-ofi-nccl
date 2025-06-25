@@ -290,11 +290,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	device = plugin->get_device(plugin, 0);
 
-	ret = device->get_ep(device, &ep);
-	if (ret != 0) {
+	ep = device->get_ep();
+	if (ep == nullptr) {
 		goto exit;
 	}
-	ret = device->get_properties(device, &properties);
+	ret = device->get_properties(&properties);
 	if (ret != 0) {
 		goto exit;
 	}
@@ -759,7 +759,7 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
 		if (plugin->p_devs[i] != NULL) {
-			plugin->p_devs[i]->release(plugin->p_devs[i]);
+			plugin->p_devs[i]->release();
 		}
 	}
 
@@ -818,7 +818,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 	if (domain_iter != device->domain_table->end()) {
 		domain = domain_iter->second;
 	} else {
-		domain = device->create_domain(device);
+		domain = device->create_domain();
 		if (domain == NULL) {
 			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
 				      device->name);
@@ -837,41 +837,35 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 }
 
 
-static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain(nccl_net_ofi_device_t *device)
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain()
 {
-	nccl_net_ofi_domain_t *domain;
+	nccl_net_ofi_domain_t *domain = nullptr;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
-	domain = nccl_net_ofi_device_get_domain_impl(device);
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+	pthread_wrapper scoped_device_lock(&this->device_lock);
+	domain = nccl_net_ofi_device_get_domain_impl(this);
 
 	return domain;
 }
 
 
-static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
-				      nccl_net_ofi_ep_t **ep_p)
+nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep()
 {
-	int ret = 0;
-	nccl_net_ofi_domain_t *domain = NULL;
+	nccl_net_ofi_domain_t *domain = nullptr;
+	nccl_net_ofi_ep_t *ep = nullptr;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	domain = nccl_net_ofi_device_get_domain_impl(device);
-	if (domain == NULL) {
-		ret = -EINVAL;
-		goto unlock;
+	domain = nccl_net_ofi_device_get_domain_impl(this);
+	if (domain == nullptr) {
+		return nullptr;
 	}
 
-	*ep_p = domain->get_ep();
-	if (ep_p == NULL) {
-		ret = -EINVAL;
-		goto unlock;
+	ep = domain->get_ep();
+	if (ep == nullptr) {
+		return nullptr;
 	}
-unlock:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
-	return ret;
+	return ep;
 }
 
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
@@ -894,12 +888,6 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		nccl_net_ofi_device_set_guid(ofi_info, device);
 	}
 
-	device->get_properties = NULL;
-	device->get_domain = nccl_net_ofi_device_get_domain;
-	device->get_ep = nccl_net_ofi_device_get_ep;
-	device->release = nccl_net_ofi_device_fini;
-	device->release_all_domain_and_ep = nccl_net_ofi_device_release_all_domain_and_ep;
-
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&device->device_lock, NULL);
 	if (ret != 0) {
@@ -917,7 +905,6 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 		return -ret;
 	}
 
-	device->create_domain = NULL;
 	device->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
 
 exit:
@@ -926,37 +913,32 @@ exit:
 }
 
 
-int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
+int nccl_net_ofi_device_t::release()
 {
-	if (device == NULL) {
-		return 0;
+        if (this->domain_table != nullptr) {
+		assert(this->domain_table->empty());
+		delete this->domain_table;
 	}
 
-        if (device->domain_table != NULL) {
-		delete device->domain_table;
-	}
-
-	if (device->name != NULL) {
-		free(device->name);
+	if (this->name != nullptr) {
+		free(this->name);
 	}
 
 	return 0;
 }
 
 
-int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
+int nccl_net_ofi_device_t::release_all_domain_and_ep()
 {
-	int ret, first_error = 0, domain_num;
+	int ret, first_error = 0;
 
-	assert(device != NULL);
 	nccl_net_ofi_ep_t *ep;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	domain_num = device->domain_table->size();
-	assert(domain_num > 0);
-	for (auto domain_iter = device->domain_table->begin() ;
-	     domain_iter != device->domain_table->end();) {
+	assert(!this->domain_table->empty());
+	for (auto domain_iter = this->domain_table->begin() ;
+	     domain_iter != this->domain_table->end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
@@ -971,7 +953,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 					first_error = ret;
 				}
 			}
-			ep = NULL;
+			ep = nullptr;
 		}
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 
@@ -989,24 +971,22 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 
 	}
 
-	if (device->unreleased_inactive_domain_counter > 0) {
+	if (this->unreleased_inactive_domain_counter > 0) {
 		NCCL_OFI_WARN("%zu inactive domains still open after cleanup",
-			      device->unreleased_inactive_domain_counter);
+			      this->unreleased_inactive_domain_counter);
 
 		if (first_error != 0) {
 			first_error = -FI_EBUSY; // Anything else than above
 		}
 	}
 
-	domain_num = device->domain_table->size();
-	if (OFI_UNLIKELY(domain_num > 0)) {
-		NCCL_OFI_WARN("%u domains still active after cleanup", domain_num);
+	if (OFI_UNLIKELY(!this->domain_table->empty())) {
+		NCCL_OFI_WARN("%zu domains still active after cleanup",
+			      this->domain_table->size());
 		if (first_error != 0) {
 			first_error = -FI_EBUSY; // Anything else than above
 		}
 	}
-
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 	return first_error;
 }
