@@ -131,7 +131,7 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
  */
 OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
 
-/* 
+/*
  * Completion queue size. Defaults to EFA RDM path size.
  */
 OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
@@ -332,7 +332,7 @@ OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
  * 1 to enable early completion, 0 to disable it.
- * Default at -1 to follow the data progress model, given that 
+ * Default at -1 to follow the data progress model, given that
  * early completion feature is contigent on FI_PROGRESS_AUTO data progress model
  * i.e. enabled when FI_PROGRESS_AUTO, otherwise disabled
  */
@@ -365,5 +365,11 @@ OFI_NCCL_PARAM_INT(disable_close_message, "DISABLE_CLOSE_MESSAGE", 1);
  * complete more quickly, especially with large numbers of ranks.
  */
 OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
+
+/*
+ * Progress mode requested.  Valid options are AUTO, MANUAL,
+ * and UNSPEC, with the default set to UNSPEC.
+ */
+OFI_NCCL_PARAM_STR(progress, "PROGRESS", "UNSPEC");
 
 #endif // End NCCL_OFI_PARAM_H_
