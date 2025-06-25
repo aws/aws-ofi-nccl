@@ -2427,9 +2427,12 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 
 	hints->domain_attr->threading = FI_THREAD_SAFE;
 
-	/* Set progress mode to unspec to use the provider's default mode. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	/* We hard poll for completion, but if a provider is faster with async
+	 * progress, then we don't really care and should let it do that. At
+	 * least one provider has an issue with progress manual and internal
+	 * acks during shutdown, so allow users to override requested model. */
+	hints->domain_attr->control_progress = nccl_ofi_translate_progress_enum(ofi_nccl_progress_model.get());
+	hints->domain_attr->data_progress = nccl_ofi_translate_progress_enum(ofi_nccl_progress_model.get());
 
 	/* Set MR mode bits to indicate FI_MR_BASIC registration */
 	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
