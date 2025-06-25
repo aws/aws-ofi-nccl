@@ -1166,6 +1166,19 @@ struct nccl_net_ofi_rdma_device_rail_t {
  */
 class nccl_net_ofi_rdma_device_t : public nccl_net_ofi_device_t {
 public:
+	/**
+	 * destructor - releases resources associated with device
+	 */
+	int release() override;
+
+	int get_properties(nccl_ofi_properties_t *props) override;
+
+	inline struct fi_info *get_ofi_info_for_cm() override
+	{
+		assert(device_rails);
+		return device_rails[0].info;
+	}
+
 	/* Number of rails */
 	uint16_t num_rails;
 
@@ -1187,6 +1200,9 @@ public:
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
+
+/* private */
+	nccl_net_ofi_domain_t *create_domain() override;
 };
 
 

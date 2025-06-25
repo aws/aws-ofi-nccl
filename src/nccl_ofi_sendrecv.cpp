@@ -75,30 +75,26 @@ static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_s
 }
 
 
-static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
-					  nccl_ofi_properties_t *props)
+int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)base_dev;
-	struct fi_info *info = device->info;
-	int dev_id = device->dev_id;
-	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
+	assert(this->plugin != nullptr);
+	
+	size_t num_devices = this->plugin->get_num_devices(this->plugin);
 	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin = sendrecv_device_get_plugin(device);
-	assert(plugin != NULL);
+	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = sendrecv_device_get_plugin(this);
 
 	/* Validate libfabric NIC info */
-	if (OFI_UNLIKELY(info == NULL)) {
+	if (OFI_UNLIKELY(this->info == nullptr)) {
 		NCCL_OFI_WARN("Error accessing libfabric NIC info. "
 			      "info has not been set.");
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, this->info, this->dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
-		props->max_communicators = std::min(device->max_tag, static_cast<uint64_t>(INT_MAX));
+		props->max_communicators = std::min(this->max_tag, static_cast<uint64_t>(INT_MAX));
 	}
 
 	props->rma_supported = 0;
@@ -2244,10 +2240,9 @@ nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_send
 }
 
 
-static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_net_ofi_device_t *base_device)
+nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_t::create_domain()
 {
-	auto *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
-	auto *domain = new nccl_net_ofi_sendrecv_domain_t(device);
+	auto *domain = new nccl_net_ofi_sendrecv_domain_t(this);
 
 	return domain;
 }
@@ -2287,20 +2282,14 @@ static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t
 /**
  * Destroy an rdma device object
  */
-static int
-nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
+int nccl_net_ofi_sendrecv_device_t::release()
 {
-	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
 	int ret, first_error = 0;
 
-	if (device == NULL) {
-		return 0;
-	}
-
-	unsigned num_domains = device->domain_table->size();
+	unsigned num_domains = this->domain_table->size();
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
-		ret = base_device->release_all_domain_and_ep(base_device);
+		ret = this->release_all_domain_and_ep();
 		if (ret != 0) {
 			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
@@ -2310,15 +2299,15 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		}
 	}
 
-	if (device->fabric) {
-		fi_close((fid_t)device->fabric);
+	if (this->fabric) {
+		fi_close((fid_t)this->fabric);
 	}
 
-	if (device->info != NULL) {
-		fi_freeinfo(device->info);
+	if (this->info != NULL) {
+		fi_freeinfo(this->info);
 	}
 
-	ret = nccl_net_ofi_device_fini(base_device);
+	ret = nccl_net_ofi_device_t::release();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
 			      strerror(-ret));
@@ -2327,15 +2316,9 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		}
 	}
 
-	free(device);
+	free(this);
 
 	return 0;
-}
-
-
-static inline struct fi_info *sendrecv_device_get_ofi_info(nccl_net_ofi_device_t *device)
-{
-	return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device)->info;
 }
 
 
@@ -2361,12 +2344,6 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
 		return NULL;
 	}
-
-
-	device->get_properties = sendrecv_get_properties;
-	device->release = nccl_net_ofi_sendrecv_device_release;
-	device->create_domain = nccl_net_ofi_sendrecv_device_create_domain;
-	device->get_ofi_info = sendrecv_device_get_ofi_info;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -2397,7 +2374,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	return device;
 
 error:
-	device->release(device);
+	device->release();
 
 	return NULL;
 }

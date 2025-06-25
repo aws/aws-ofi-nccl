@@ -268,6 +268,18 @@ protected:
  */
 class nccl_net_ofi_sendrecv_device_t : public nccl_net_ofi_device_t {
 public:
+	/**
+	 * destructor - releases resources associated with device
+	 */
+	int release() override;
+
+	int get_properties(nccl_ofi_properties_t *props) override;
+
+	inline struct fi_info *get_ofi_info_for_cm() override
+	{
+		return info;
+	}
+
 	/* Device provider */
 	struct fi_info *info;
 
@@ -283,6 +295,9 @@ public:
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
+
+/* private */
+	nccl_net_ofi_domain_t *create_domain() override;
 };
 	
 typedef struct nccl_net_ofi_sendrecv_req {
