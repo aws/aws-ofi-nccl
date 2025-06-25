@@ -5,6 +5,10 @@
 #ifndef NCCL_OFI_OFIUTILS_H
 #define NCCL_OFI_OFIUTILS_H
 
+#include <rdma/fabric.h>
+
+#include "nccl_ofi_param.h"
+
 int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    uint32_t required_version,
 				    struct fi_info *hints,
@@ -40,5 +44,24 @@ void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av,
 void nccl_ofi_ofiutils_free_info_list(struct fi_info *info_list);
 
 int nccl_ofi_mr_keys_need_own_key(struct fi_info* provider, bool *provide_own_mr_key);
+
+inline enum fi_progress nccl_ofi_translate_progress_enum(PROGRESS_MODEL model_type)
+{
+	enum fi_progress ret = FI_PROGRESS_UNSPEC;
+
+	switch (model_type) {
+	case PROGRESS_MODEL::UNSPEC:
+		ret = FI_PROGRESS_UNSPEC;
+		break;
+	case PROGRESS_MODEL::AUTO:
+		ret = FI_PROGRESS_AUTO;
+		break;
+	case PROGRESS_MODEL::MANUAL:
+		ret = FI_PROGRESS_MANUAL;
+		break;
+	}
+
+	return ret;
+}
 
 #endif

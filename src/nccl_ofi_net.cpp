@@ -181,6 +181,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			goto exit;
 	}
 
+	if (ofi_nccl_progress_model.get_source() != ParamSource::DEFAULT) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Requesting progress model %s",
+			      ofi_nccl_progress_model.get_string());
+	}
+
 	/* This is ugly, but here's the basic protocol selection
 	 * logic:
 	 *   1. if the user set NCCL_OFI_PROTOCOL, use that.
