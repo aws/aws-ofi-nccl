@@ -285,6 +285,31 @@ typedef struct nccl_ofi_properties {
  */
 class nccl_net_ofi_device_t {
 public:
+	/**
+	 * destructor - releases resources associated with device
+	 */
+	virtual int release();
+
+	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
+
+	/**
+	 * Retrieve an fi_info object associated with this device to be used for connection
+	 * management. There may be more than one info per device, depending on the 
+	 * transport; in that case, this will be the info object associated with the 
+	 * "leader NIC"
+	 */
+	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+
+	/** 
+	 * Retrieve a domain associated with this device.  There may
+	 * be more than one domain per device, depending on a number
+	 * of performance tradeoffs (be sure to read the domain
+	 * description below).
+	 */
+	nccl_net_ofi_domain_t *get_domain();
+
+	nccl_net_ofi_ep_t *get_ep();
+
 	struct nccl_net_ofi_plugin *plugin;
 
 	/* this device's index in the plugin's devices array */
@@ -309,53 +334,25 @@ public:
 	 */
 	bool need_mr_rkey_pool;
 
-	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
-			      nccl_ofi_properties_t *props);
-
-	/* Retrieve a domain associated with this device.  There may
-	 * be more than one domain per device, depending on a number
-	 * of performance tradeoffs (be sure to read the domain
-	 * description below).
-	 */
-	nccl_net_ofi_domain_t *(*get_domain)(nccl_net_ofi_device_t *dev);
-
-	/**
-	 * Retrieve an fi_info object associated with this device. There may be
-	 * more than one info per device, depending on the transport; in that
-	 * case, this will be the info object associated with the "leader NIC"
-	 */
-	struct fi_info *(*get_ofi_info)(nccl_net_ofi_device_t *dev);
-
-	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
-		      nccl_net_ofi_ep_t **ep);
-
-	int (*get_mr_key)(nccl_net_ofi_device_t *base_dev, void* mhandle,
-			  uint64_t* mr_key);
-
-	/**
-	 * destructor - releases resources associated with device
-	 */
-	int (*release)(nccl_net_ofi_device_t *device);
-
 	/* Lock for concurrency since domains can be shared by
 	 * multiple entities. */
 	pthread_mutex_t device_lock;
 
 /* private */
-	/*
+	/**
 	 * create a new domain.  This funcion is a private pure
 	 * virtual function, which is called from the base
 	 * implementation of get_domain() and should not be called
 	 * from the more general case.
 	 */
-	nccl_net_ofi_domain_t *(*create_domain)(nccl_net_ofi_device_t *dev);
+	virtual nccl_net_ofi_domain_t *create_domain() = 0;
 
-	/*
+	/**
 	 * release all domains and endpoints. This function is a private
 	 * function, which is called only during release() to free allocated
 	 * domains and endpoints.
 	 */
-	int (*release_all_domain_and_ep)(nccl_net_ofi_device_t *dev);
+	int release_all_domain_and_ep();
 
 	/*
 	 * hash table indexed by thread id of active domains.
@@ -855,17 +852,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
  */
 int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
 			     int device_index, struct fi_info *ofi_info);
-
-/**
- * Destructor for a device object
- */
-int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device);
-
-/* release all domains and their enpoints of a device. This is called
- * only by device->release() during plugin release to free all fabric
- * domain and QPs.
- */
-int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device);
 
 /*
  * Constructor for the nccl_net_ofi_plugin class
