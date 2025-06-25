@@ -242,7 +242,7 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 	}
 
 	/* Bind CQ to endpoint */
-	ret = fi_ep_bind(*ep, &(cq->fid), FI_SEND | FI_RECV);
+	ret = fi_ep_bind(*ep, &(cq->fid), FI_TRANSMIT | FI_RECV);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't bind EP-CQ. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
