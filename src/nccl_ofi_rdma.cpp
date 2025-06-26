@@ -361,9 +361,9 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 	 * file until the child process exits.
 	 */
 	if (getenv("NCCL_TOPO_FILE")) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "NCCL_TOPO_FILE environment variable is already set to %s",
-			       getenv("NCCL_TOPO_FILE"));
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "NCCL_TOPO_FILE environment variable is already set to %s",
+			      getenv("NCCL_TOPO_FILE"));
 		goto exit;
 	}
 
