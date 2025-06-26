@@ -79,7 +79,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 0,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
@@ -93,7 +93,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 0,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
@@ -107,7 +107,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 4,
 		.latency = 150.0,
 		.gdr_required = false,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 0,
 		.env = {},
 	},
@@ -123,7 +123,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 35.0,
 		.gdr_required = true,
-		.default_protocol = "RDMA",
+		.default_protocol = PROTOCOL::RDMA,
 		.domain_per_thread = 0,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
@@ -140,7 +140,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "RDMA",
+		.default_protocol = PROTOCOL::RDMA,
 		.domain_per_thread = 0,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
@@ -157,7 +157,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = false,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 0,
 		.env = {},
 	},
@@ -168,7 +168,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 1,
 		.env = {},
 	},
@@ -179,7 +179,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "RDMA",
+		.default_protocol = PROTOCOL::RDMA,
 		.domain_per_thread = 1,
 		.env = {},
 	},
@@ -190,7 +190,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = "SENDRECV",
+		.default_protocol = PROTOCOL::SENDRECV,
 		.domain_per_thread = 1,
 		.env = {},
 	},
@@ -703,7 +703,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * emulated writes are disabled.
 	 */
 
-	if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get()) &&
+	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA &&
 	    ofi_nccl_disable_native_rdma_check() == 0) {
 		ret = validate_rdma_write(endpoint);
 		if (ret != 0) {
@@ -723,18 +723,18 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 * was previously set and error if we can't set them the same
 	 * way later.
 	 */
-	if (0 == strcasecmp("SENDRECV", ofi_nccl_protocol.get())) {
+	if (ofi_nccl_protocol.get() == PROTOCOL::SENDRECV) {
 #if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
 #endif
-	} else if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) {
+	} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
 		optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
 		optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
 #endif
 	} else {
-		NCCL_OFI_WARN("unkonwn transport %s", ofi_nccl_protocol.get());
+		NCCL_OFI_WARN("unkonwn transport %s", ofi_nccl_protocol.get_string());
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -757,7 +757,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 	 */
 	if (!nccl_proto_configured) {
 		if ((NULL == getenv("NCCL_PROTO")) &&
-		    (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) &&
+		    (ofi_nccl_protocol.get() == PROTOCOL::RDMA) &&
 		    (0 == strcmp(nccl_net_ofi_get_product_name(), "p5en.48xlarge"))) {
 			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5en + RDMA");
 			need_ordering = false;
@@ -812,7 +812,7 @@ int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
 		}
 	}
 
-	if (0 == strcasecmp("RDMA", ofi_nccl_protocol.get())) {
+	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 		ret = configure_ep_max_msg_size(endpoint);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unexpected failure setting max_msg_size %d", ret);

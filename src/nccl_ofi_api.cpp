@@ -235,7 +235,7 @@ ncclResult_t nccl_net_ofi_listen_v2(int dev, void* handle, void** listenComm)
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 	ncclResult_t ret;
 
-	if (0 == strcasecmp(ofi_nccl_protocol.get(), "RDMA")) {
+	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 		NCCL_OFI_WARN("RDMA protocol does not support blocking listen interface");
 		return check_return(ncclInternalError);
 	}
@@ -295,7 +295,7 @@ ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void** sendComm)
 	ncclResult_t ret = ncclSuccess;
         nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
 
-	if (0 == strcasecmp(ofi_nccl_protocol.get(), "RDMA")) {
+	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 		NCCL_OFI_WARN("RDMA protocol does not support blocking connect interface");
 		return check_return(ncclInternalError);
 	}
@@ -404,7 +404,7 @@ ncclResult_t nccl_net_ofi_accept_v2(void* listenComm, void** recvComm)
 {
 	ncclResult_t ret = ncclInvalidArgument;
 
-	if (0 == strcasecmp(ofi_nccl_protocol.get(), "RDMA")) {
+	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 		NCCL_OFI_WARN("RDMA protocol does not support blocking accept interface.");
 		return check_return(ncclInternalError);
 	}
