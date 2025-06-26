@@ -8,6 +8,7 @@
 
 if ENABLE_UNIT_TESTS
 AM_CPPFLAGS = -I$(top_srcdir)/include
+AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 LDADD = $(top_builddir)/src/libinternal_plugin.la
 noinst_HEADERS = test-logger.h

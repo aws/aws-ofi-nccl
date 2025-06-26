@@ -5,6 +5,7 @@
 #
 
 AM_CPPFLAGS = -I$(abs_top_srcdir)/include
+AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 AM_CPPFLAGS += $(CUDA_CPPFLAGS)
 AM_CPPFLAGS += -DXML_DIR=\"${pkgdatadir}/xml\"
