@@ -803,14 +803,13 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 	if (domain_iter != device->domain_table->end()) {
 		domain = domain_iter->second;
 	} else {
-		domain = device->create_domain(device);
+		domain = device->create_domain(device, lookup_key);
 		if (domain == NULL) {
 			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
 				      device->name);
 			return NULL;
 		}
 
-		domain->creating_thread_id = lookup_key;
 		device->domain_table->insert(std::pair(lookup_key,  domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
@@ -838,7 +837,7 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain(nccl_net_ofi_device
 static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
 				      nccl_net_ofi_ep_t **ep_p)
 {
-	int ret;
+	int ret = 0;
 	nccl_net_ofi_domain_t *domain = NULL;
 
 	nccl_net_ofi_mutex_lock(&device->device_lock);
@@ -849,8 +848,11 @@ static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
 		goto unlock;
 	}
 
-	ret = domain->get_ep(domain, ep_p);
-
+	*ep_p = domain->get_ep();
+	if (ep_p == NULL) {
+		ret = -EINVAL;
+		goto unlock;
+	}
 unlock:
 	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
@@ -944,9 +946,9 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
-		if (domain->endpoint) {
-			ep = domain->endpoint;
-			domain->endpoint = NULL;
+		if (domain->get_base_endpoint_ptr()) {
+			ep = domain->get_base_endpoint_ptr();
+			domain->clear_base_endpoint_ptr();
 
 			ret = ep->release_ep(true, true);
 			if (ret != 0) {
@@ -966,7 +968,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 
 		/* domain->release takes the domain lock, and removes itself
 		 * from domain_table. Skipping device lock here.*/
-		ret = domain->release(domain, true, true);
+		ret = domain->release_domain(true, true);
 		if (ret != 0 && first_error != 0) {
 			first_error = ret;
 		}
@@ -986,115 +988,107 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 }
 
 
-static int nccl_net_ofi_domain_get_ep(nccl_net_ofi_domain_t *domain,
-				      nccl_net_ofi_ep_t **ep_p)
+nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 {
-	int ret = 0;
-	nccl_net_ofi_ep_t *ep = NULL;
+	nccl_net_ofi_ep_t *ep = nullptr;
 
-	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+	nccl_net_ofi_mutex_lock(&this->domain_lock);
 
-	ep = domain->endpoint;
+	ep = this->endpoint;
 
-	if (ep == NULL) {
-		ret = domain->create_endpoint(domain, &ep);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Creating new endpoint for domain %p failed: %s",
-				      domain, fi_strerror(-ret));
+	if (ep == nullptr) {
+		ep = this->create_endpoint();
+		if (ep == nullptr) {
+			NCCL_OFI_WARN("Creating new endpoint for domain %p failed",
+				      this);
 			goto unlock;
 		}
 
-		domain->endpoint = ep;
-		domain->ref_cnt++;
+		this->endpoint = ep;
+		this->increment_ref_cnt();
 
 		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created",
-			       ep, domain);
+			       ep, this);
 	}
 
 	ep->increment_ref_cnt();
-	*ep_p = ep;
 
 unlock:
-	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+	nccl_net_ofi_mutex_unlock(&this->domain_lock);
 
-	return ret;
+	return ep;
 }
 
 
-static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_device_lock, bool force_cleanup)
+int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_cleanup)
 {
 	int ret = 0;
-	nccl_net_ofi_device_t *device;
+	nccl_net_ofi_device_t *device_ptr = this->device;
 
-	assert(domain != NULL);
-	device = domain->device;
+	nccl_net_ofi_mutex_lock(&this->domain_lock);
 
-	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+	this->decrement_ref_cnt();
 
-	domain->ref_cnt--;
-
-	if (domain->ref_cnt == 0 || force_cleanup) {
+	if (this->ref_cnt == 0 || force_cleanup) {
 
 		/* If domain ref_cnt is 0, then there should be no remaining
 		   endpoints */
-		assert(domain->ref_cnt != 0 || domain->endpoint == nullptr);
+		assert(this->ref_cnt != 0 || this->endpoint == nullptr);
 
 		// The caller takes device_lock when force_cleanup.
 		if (!skip_device_lock) {
-			nccl_net_ofi_mutex_lock(&device->device_lock);
+			nccl_net_ofi_mutex_lock(&device_ptr->device_lock);
 		}
-		device->domain_table->erase(domain->creating_thread_id);
+		device_ptr->domain_table->erase(this->creating_thread_id);
 
 		// domain->free below is going to free the domain lock
 		// and we've removed the domain from the hash table,
 		// so no one should have a reference to the domain at
 		// this point and we can release the mutex.
-		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+		nccl_net_ofi_mutex_unlock(&this->domain_lock);
 
-		ret = domain->free(domain);
+		ret = this->cleanup_resources();
+		delete this;
+
 		if (!skip_device_lock) {
-			nccl_net_ofi_mutex_unlock(&device->device_lock);
+			nccl_net_ofi_mutex_unlock(&device_ptr->device_lock);
 		}
 		if (ret != 0) {
 			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
 			return ret;
 		}
 	} else {
-		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+		nccl_net_ofi_mutex_unlock(&this->domain_lock);
 	}
 
 	return 0;
 }
 
 
-int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain)
+nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
+					     long creating_thread_id_arg)
+	: domain_active(true),
+	  device(device_arg),
+	  creating_thread_id(creating_thread_id_arg),
+	  ref_cnt(0)
 {
 	int ret;
 
-	domain->device = device;
+	assert(this->device != nullptr);
 
-	ret = nccl_net_ofi_mutex_init(&domain->domain_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&this->domain_lock, nullptr);
 	if (ret != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to initialize domain mutex");
-		return -ret;
+		NCCL_OFI_WARN("Unable to initialize domain mutex");
+		throw std::runtime_error("base domain constructor: mutex init failed");
 	}
 
-	domain->get_ep = nccl_net_ofi_domain_get_ep;
-	domain->release = nccl_net_ofi_domain_release;
-	domain->endpoint = NULL;
-	domain->creating_thread_id = 0;
-	domain->ref_cnt = 0;
-	domain->domain_active = true;
-
-	domain->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {
-		domain->mr_cache =
+		this->mr_cache =
 			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
 					       system_page_size);
-		if (!domain->mr_cache) {
-			ret = -ENOMEM;
-			goto exit;
+		if (!this->mr_cache) {
+			NCCL_OFI_WARN("Unable to initialize domain mr cache");
+			throw std::runtime_error("base domain constructor: mr cache init failed");
 		}
 	}
 
@@ -1109,30 +1103,26 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 				"Provided mr keypool size of %lu must be less than %zu",
 				ofi_nccl_mr_key_size(),
 				size_t_bits);
-			return -EINVAL;
+			throw std::runtime_error("base domain constructor: invalid size for mr keypool");
 		}
-		domain->mr_rkey_pool = new nccl_ofi_idpool_t(1 << shift);
+		this->mr_rkey_pool = new nccl_ofi_idpool_t(1 << shift);
 	} else {
 		/* Mark key pool as not in use */
-		domain->mr_rkey_pool = new nccl_ofi_idpool_t(0);
+		this->mr_rkey_pool = new nccl_ofi_idpool_t(0);
 	}
-
-exit:
-	return ret;
 }
 
 
-int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain)
+nccl_net_ofi_domain_t::~nccl_net_ofi_domain_t()
 {
-	if (domain->mr_cache != NULL) {
-		nccl_ofi_mr_cache_finalize(domain->mr_cache);
+	if (mr_cache != nullptr) {
+		nccl_ofi_mr_cache_finalize(mr_cache);
 	}
 
-	if (domain->mr_rkey_pool != NULL) {
-		delete domain->mr_rkey_pool;
-		domain->mr_rkey_pool = NULL;
+	if (mr_rkey_pool != nullptr) {
+		delete mr_rkey_pool;
+		mr_rkey_pool = nullptr;
 	}
-	return 0;
 }
 
 
@@ -1153,8 +1143,8 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	if (local_ref_cnt == 0 || force_cleanup) {
 		/* If this was the endpoint we stored in domain for connection
 		   management, remove that reference as well */
-		if (domain_ptr->endpoint == this) {
-			domain_ptr->endpoint = nullptr;
+		if (domain_ptr->get_base_endpoint_ptr() == this) {
+			domain_ptr->clear_base_endpoint_ptr();
 		}
 
 		if (force_cleanup && local_ref_cnt != 0) {
@@ -1175,7 +1165,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	 * Skip domain->release when handled by device->release_all_domain_and_ep()
 	 * to avoid domain lock issue after the domain freed */
 	if (!force_cleanup && ret == 0 && local_ref_cnt == 0) {
-		ret = domain_ptr->release(domain_ptr, skip_lock, false);
+		ret = domain_ptr->release_domain(skip_lock, false);
 	}
 
 	return ret;
