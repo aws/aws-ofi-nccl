@@ -95,9 +95,7 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 
 /* Forward declarations needed for sendrecv transport endpoint type */
 struct nccl_net_ofi_sendrecv_device;
-struct nccl_net_ofi_sendrecv_domain;
 typedef struct nccl_net_ofi_sendrecv_device nccl_net_ofi_sendrecv_device_t;
-typedef struct nccl_net_ofi_sendrecv_domain nccl_net_ofi_sendrecv_domain_t;
 
 
 /*
@@ -105,19 +103,59 @@ typedef struct nccl_net_ofi_sendrecv_domain nccl_net_ofi_sendrecv_domain_t;
  * boundary for most Libfabric providers, given how the util cq
  * implementation works.
  */
-typedef struct nccl_net_ofi_sendrecv_domain {
-	nccl_net_ofi_domain_t base;
+class nccl_net_ofi_sendrecv_domain_t : public nccl_net_ofi_domain_t {
+public:
+	nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg);
+	
+	inline struct fid_domain *get_ofi_domain_for_cm() override
+	{
+		return domain;
+	}
+	
+	inline struct fid_cq *get_ofi_cq_for_cm() override
+	{
+		return cq;
+	}
+	
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device);
+	}
+
+	/* Caller must hold the device lock */
+	nccl_net_ofi_ep_t *create_endpoint() override;
 
 	/* Access Domain handle */
-	struct fid_domain *domain;
+	struct fid_domain *domain = nullptr;
 
 	/* Completion Queue handle */
-	struct fid_cq *cq;
+	struct fid_cq *cq = nullptr;
 
-	/* Connection manager for this domain */
-	nccl_ofi_connection_manager *cm;
+	/** 
+	 * Connection manager for this domain
+	 * 
+	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
+	 * safely be initialized in the domain constructor. Currently cm can't
+	 * be initialized in the domain constructor initializer list since it
+	 * expects the domain passed in as an argument to have already 
+	 * initialized Libfabric and ID pool resources. As well, cm can't be 
+	 * initialized at the end of the domain constructor since
+	 * nccl_ofi_connection_manager doesn't have a default constructor.
+	 */
+	nccl_ofi_connection_manager *cm = nullptr;
 
-} nccl_net_ofi_sendrecv_domain_t;
+protected:
+	/**
+	 * @brief	SENDRECV domain destructor.
+	 * 
+	 * Overrides base domain class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up SENDRECV domain resources before the
+	 * destructor was called.
+	 */	
+	~nccl_net_ofi_sendrecv_domain_t();
+
+	int cleanup_resources() override;
+};
 
 
 /**
@@ -158,7 +196,7 @@ public:
 
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
 	{
-		return (nccl_net_ofi_sendrecv_device_t *) sendrecv_endpoint_get_domain()->base.device;
+		return sendrecv_endpoint_get_domain()->sendrecv_domain_get_device();
 	}
 
 	/**

@@ -80,7 +80,7 @@
  * Caller is assumed to hold the domain lock
  */
 #define CHECK_DOMAIN_ACTIVE(domain, fn_name) \
-	if (OFI_UNLIKELY(!domain->base.domain_active)) { \
+	if (OFI_UNLIKELY(!domain->domain_active)) { \
 		NCCL_OFI_WARN("Called " fn_name " on request with inactive domain"); \
 		return -EINVAL; \
 	} \
@@ -119,11 +119,11 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_device;
-struct nccl_net_ofi_domain;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_mr_handle;
 struct nccl_net_ofi_comm;
@@ -133,7 +133,6 @@ struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
-typedef struct nccl_net_ofi_domain nccl_net_ofi_domain_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
@@ -366,24 +365,92 @@ struct nccl_net_ofi_device {
  * generally it is expected that calls into resources that share the
  * same domain will share the same lock.
  */
-struct nccl_net_ofi_domain {
-	/* Backpointer to the device associated with this domain. */
-	nccl_net_ofi_device_t *device;
-
-        /*
-	 * Retrieve an endpoint for this domain.  If a suitable
-	 * endpoint does not exist, call create_endpoint() to create
-	 * one and return that endpoint.  This function is a pure
-	 * virtual function that must be implemented by inheriting
-	 * classes.
+class nccl_net_ofi_domain_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the domain base class.
+	 * Expectation is that this will be called by a transport's domain
+	 * constructor 
+	 */	
+	nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg);
+	
+	/**
+	 * Retrieve an fid_domain object associated with this domain to be used for 
+	 * connection management. There may be more than one fid_domain per domain,
+	 * depending on the transport; in that case, this will be the domain object
+	 * associated with the "leader NIC".
 	 */
-	int (*get_ep)(nccl_net_ofi_domain_t *domain,
-		      nccl_net_ofi_ep_t **endpoint);
+	virtual struct fid_domain *get_ofi_domain_for_cm() = 0;
+
+	/**
+	 * Retrieve an fid_cq object associated with this domain to be used for 
+	 * connection management. There may be more than one fid_cq per domain, depending
+	 * on the transport; in that case, this will be the cq object associated with the
+	 * "leader NIC".
+	 */
+	virtual struct fid_cq *get_ofi_cq_for_cm() = 0;
+
+	/* Create a new endpoint
+	 *
+	 * Pure virtual function to allocate a new endpoint structure
+	 */
+	virtual nccl_net_ofi_ep_t *create_endpoint() = 0;
+
+	/**
+	 * @brief	Returns the base domain's device back-pointer.
+	 */
+	inline nccl_net_ofi_device_t *get_device()
+	{
+		return device;
+	}
+
+	/**
+	 * @brief	Directly returns the endpoint pointer
+	 * 
+	 * 		Returns the endpoint pointer without any changes. Different from
+	 * 		get_ep() since it does not create a new endpoint if the pointer is
+	 * 		nullptr, and does not increment the endpoint ref_cnt if the pointer
+	 * 		has an endpoint.
+	 */
+	inline nccl_net_ofi_ep_t *get_endpoint_ptr()
+	{
+		return endpoint;
+	}
+
+	/**
+	 * @brief	Set the endpoint pointer to nullptr.
+	 */
+	inline void clear_endpoint()
+	{
+		endpoint = nullptr;
+	}
+
+	/**
+	 * @brief	Increments the base domain reference count.
+	 */
+	inline void increment_ref_cnt() {
+		ref_cnt++;
+	}
+
+	/**
+	 * @brief	Decrements the base domain reference count.
+	 */
+	inline void decrement_ref_cnt() {
+		ref_cnt--;
+	}
 
 	/*
-	 * Destructor - release resources associated with the domain
-	 * @param	domain
-	 * 		The domain (itself) to be released.
+	 * Retrieve an endpoint for this domain.  If a suitable
+	 * endpoint does not exist, call create_endpoint() to create
+	 * one and return that endpoint.
+	 */
+	nccl_net_ofi_ep_t *get_ep();
+
+	/**
+	 * @brief 	Release resources associated with the domain
+	 * 
 	 * @param 	skip_device_lock
 	 * 		false, taking device lock by default.
 	 * 		ture, not taking device lock when caller takes it.
@@ -391,40 +458,17 @@ struct nccl_net_ofi_domain {
 	 * 		false, not release when endpoint exists.
 	 * 		true, release no matter endpoint exists nor not.
 	 */
-	int (*release)(nccl_net_ofi_domain_t *domain, bool skip_device_lock, bool force_cleanup);
+	int release_domain(bool skip_device_lock, bool force_cleanup);
 
 	/*
 	 * Protocol-agnostic MR cache for this device.
 	 */
-	nccl_ofi_mr_cache_t *mr_cache;
+	nccl_ofi_mr_cache_t *mr_cache = nullptr;
 
 	/* Memory registration key pool */
-	nccl_ofi_idpool_t *mr_rkey_pool;
+	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
 
 	pthread_mutex_t domain_lock;
-
-	/**
-	 * Retrieve an fid_domain object associated with this domain. There may
-	 * be more than one fid_domain per domain, depending on the transport;
-	 * in that case, this will be the domain object associated with the
-	 * "leader NIC"
-	 */
-	struct fid_domain *(*get_ofi_domain)(nccl_net_ofi_domain_t *domain);
-
-	/**
-	 * Retrieve an fid_cq object associated with this domain. There may be
-	 * more than one cq per domain, depending on the transport; in that
-	 * case, this will be the info object associated with the "leader NIC"
-	 */
-	struct fid_cq *(*get_ofi_cq)(nccl_net_ofi_domain_t *domain);
-
-	/* Domain reference counter for resource management.
-	 *
-	 * In some modes (right now, endpoint_per_communicator), we create
-	 * multiple endpoints per domain. This counter tracks the number
-	 * of endpoints created on this domain. When it reaches 0, the
-	 * domain can be destroyed. */
-	size_t ref_cnt;
 
 	/*
 	 * Boolean flag indicating whether the domain is still valid and usable
@@ -444,28 +488,52 @@ struct nccl_net_ofi_domain {
 	 *
 	 * Caller is assumed to hold domain_lock
 	 */
-	void (*invalidate)(nccl_net_ofi_domain_t *domain);
+	virtual void invalidate();
 
-/* Private */
-	/* pure virtual function called when resources associated with
-	 * the ep should be destroyed.  Device lock will be held when
-	 * this function is called.
+protected:
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Cleans up base domain resources.
 	 */
-	int (*free)(nccl_net_ofi_domain_t *domain);
+	virtual ~nccl_net_ofi_domain_t();
 
-	/* Create a new endpoint
-	 *
-	 * Pure virtual function to allocate a new endpoint structure
+	/**
+	 * @brief	Cleanup domain resources.
+	 * 
+	 * Virtual function to clean up and release each transport type's domain resources.
+	 * Set called_cleanup_resources to true at the start of the function to make sure
+	 * it is only called once per domain instance.
+	 * 
+	 * @return	0 if successfully, negative error code on failure.
 	 */
-	int (*create_endpoint)(nccl_net_ofi_domain_t *domain,
-			       nccl_net_ofi_ep_t **ep);
+	virtual int cleanup_resources() = 0;
+
+	/* Backpointer to the device associated with this domain. */
+	nccl_net_ofi_device_t *device = nullptr;
 
 	/* endpoint used for (at a minimum) receiving connection
 	   messages.  Send/Recv protocol uses this for all
 	   communication.  The rdma protocol uses this for all tx
 	   requests and all connection-establishment requests, but may
 	   have additional endpoints for the rx side of rdma writes. */
-	nccl_net_ofi_ep_t *endpoint;
+	nccl_net_ofi_ep_t *endpoint = nullptr;
+
+	/* Domain reference counter for resource management.
+	 *
+	 * In some modes (right now, endpoint_per_communicator), we create
+	 * multiple endpoints per domain. This counter tracks the number
+	 * of endpoints created on this domain. When it reaches 0, the
+	 * domain can be destroyed. */
+	size_t ref_cnt;
+
+	/** 
+	 * Track whether the cleanup_resources function was already called to avoid calling
+	 * multiple time on the same domain instance. It being set to true does not 
+	 * indicate that the domain resources were successfully released since this is set
+	 * to true regardless of whether cleanup_resources finished successfully or not.
+	 */
+	bool called_cleanup_resources = false;
 };
 
 
@@ -761,16 +829,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/* initialize resources associated with the domain base class.
- * Expectation is that this will be called by a transport's domain
- * creation routine */
-int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain);
-
-/* free resources associated with the domain base class.  Expectation
- * is that this will be called by a transport's domain free
- * function. */
-int nccl_net_ofi_domain_fini(nccl_net_ofi_domain_t *domain);
 
 /**
  * Constructor for a device object
