@@ -291,7 +291,8 @@ OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
  * "Region" for NCCL OFI Region base tuner.
  * "Model" for NCCL OFI Model base tuner.
  */
-OFI_NCCL_PARAM_STR(tuner_force_type, "TUNER_TYPE", "Region");
+OFI_NCCL_PARAM_VALUE_SET(TUNER_TYPE, (INTERNAL)(REGION)(MODEL))
+OFI_NCCL_PARAM(TUNER_TYPE, tuner_force_type, "TUNER_TYPE", TUNER_TYPE::REGION);
 
 /*
  * The plugin interface lets us tune the number of channels as well, but that
