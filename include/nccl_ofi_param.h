@@ -138,10 +138,10 @@ OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
- * SENDRECV and RDMA.  Default to a nonsense name, as protocol
- * selection is based on rail config and system support.
+ * SENDRECV and RDMA.
  */
-OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", "default");
+OFI_NCCL_PARAM_VALUE_SET(PROTOCOL, (SENDRECV)(RDMA))
+OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
 
 /*
  * Override the platform default for domain allocation, with

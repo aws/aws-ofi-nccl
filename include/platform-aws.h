@@ -13,6 +13,8 @@
 #include <map>
 #include <string>
 
+#include "nccl_ofi_param.h"
+
 struct ec2_platform_data {
 	const char* name;
 	const char* regex;
@@ -20,7 +22,7 @@ struct ec2_platform_data {
 	int default_dup_conns;
 	float latency;
 	bool gdr_required;
-	const char *default_protocol;
+	PROTOCOL default_protocol;
 	int domain_per_thread;
 	std::map<std::string, std::string> env;
 };

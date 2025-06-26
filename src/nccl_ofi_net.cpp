@@ -194,31 +194,27 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	if (ofi_nccl_protocol.get_source() == ParamSource::ENVIRONMENT) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (user set)",
-			      ofi_nccl_protocol.get());
+			      ofi_nccl_protocol.get_string());
 	} else if (ofi_nccl_protocol.get_source() == ParamSource::API) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (platform set)",
-			      ofi_nccl_protocol.get());
+			      ofi_nccl_protocol.get_string());
 	}
 
 	if (ofi_nccl_protocol.get_source() != ParamSource::DEFAULT) {
 		bool dummy;
 
-		if (0 == strcasecmp(ofi_nccl_protocol.get(), "SENDRECV")) {
+		if (ofi_nccl_protocol.get() == PROTOCOL::SENDRECV) {
 			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 				goto exit;
 			}
-		} else if (0 == strcasecmp(ofi_nccl_protocol.get(), "RDMA")) {
+		} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize rdma protocol");
 				goto exit;
 			}
-		} else {
-			NCCL_OFI_WARN("Unable to find plugin protocol %s", ofi_nccl_protocol.get());
-			ret = -ENOTSUP;
-			goto exit;
 		}
 	} else {
 		bool have_multiple_rails = false;
@@ -242,13 +238,13 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		}
 
 		if (have_multiple_rails && rdma_plugin != NULL) {
-			ofi_nccl_protocol.set("RDMA");
+			ofi_nccl_protocol.set(PROTOCOL::RDMA);
 			plugin = rdma_plugin;
 			if (sendrecv_plugin != NULL) {
 				sendrecv_plugin->release_plugin(sendrecv_plugin);
 			}
 		} else {
-			ofi_nccl_protocol.set("SENDRECV");
+			ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 			plugin = sendrecv_plugin;
 			if (rdma_plugin != NULL) {
 				rdma_plugin->release_plugin(rdma_plugin);
@@ -262,7 +258,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		}
 
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
-			      ofi_nccl_protocol.get());
+			      ofi_nccl_protocol.get_string());
 	}
 
 	if (ofi_nccl_domain_per_thread() != -1) {
@@ -279,7 +275,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	ret = plugin->complete_init(plugin);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to initialize %s protocol", ofi_nccl_protocol.get());
+		NCCL_OFI_WARN("Failed to initialize %s protocol", ofi_nccl_protocol.get_string());
 		goto exit;
 	}
 
