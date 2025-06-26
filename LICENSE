@@ -200,3 +200,8 @@
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+This code also includes files from Nvidia NCCL and the Boost C++ Library
+packages.  See 3rd-party/boost/LICENSE_1_0.txt and 3rd-party/nccl/LICENSE.txt in
+this source package for more information and license details.

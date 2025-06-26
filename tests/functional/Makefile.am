@@ -7,6 +7,7 @@
 # Please remember to update .gitignore in this directory.
 
 AM_CPPFLAGS = -I$(top_srcdir)/include
+AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 AM_CPPFLAGS += $(MPI_CPPFLAGS) $(CUDA_CPPFLAGS)
 AM_LDFLAGS = $(MPI_LDFLAGS) $(CUDA_LDFLAGS)
