@@ -19,7 +19,7 @@ static ncclResult_t init_v4(ncclDebugLogger_t logFunction)
 	 * API.
 	 */
 	if (ofi_nccl_protocol.get_source() != ParamSource::ENVIRONMENT) {
-		ofi_nccl_protocol.set("SENDRECV");
+		ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 	}
 	return nccl_net_ofi_init_v2(logFunction);
 }
