@@ -37,7 +37,7 @@ reports if that is the case.
 The plugin is regularly tested on the following operating systems:
 
 * Amazon Linux 2 and Amazon Linux 2023
-* Ubuntu 20.04 LTS, 22.04 LTS and 24.04 LTS.
+* Ubuntu 22.04 LTS and 24.04 LTS.
 
 Other operating systems are likely to work, but are not included in our regular
 regression testing. If you find an issue unique to another operating system,
