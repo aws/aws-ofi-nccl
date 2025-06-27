@@ -7517,12 +7517,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 
 	*found_multiple_rails = false;
 
-	if (ofi_nccl_deprecated_rdma_min_posted_bounce_buffers() != -1) {
+	if (ofi_nccl_deprecated_rdma_min_posted_bounce_buffers.get_source() != ParamSource::DEFAULT) {
 		NCCL_OFI_WARN("Use of OFI_NCCL_RDMA_MIN_POSTED_BOUNCE_BUFFERS is deprecated.\n"
 			      "Please use OFI_NCCL_RDMA_MIN_POSTED_CONTROL_BUFFERS or OFI_NCCL_RDMA_MIN_POSTED_EAGER_BUFFERS.");
 		return -EINVAL;
 	}
-	if (ofi_nccl_deprecated_rdma_max_posted_bounce_buffers() != -1) {
+	if (ofi_nccl_deprecated_rdma_max_posted_bounce_buffers.get_source() != ParamSource::DEFAULT) {
 		NCCL_OFI_WARN("Use of OFI_NCCL_RDMA_MAX_POSTED_BOUNCE_BUFFERS is deprecated.\n"
 			      "Please use OFI_NCCL_RDMA_MAX_POSTED_CONTROL_BUFFERS or OFI_NCCL_RDMA_MAX_POSTED_EAGER_BUFFERS.");
 		return -EINVAL;
