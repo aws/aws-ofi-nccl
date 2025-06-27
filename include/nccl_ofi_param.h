@@ -35,9 +35,6 @@
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 	OFI_NCCL_PARAM(int, name, env, default_value)
 
-#define OFI_NCCL_PARAM_STR(name, env, default_value) \
-	OFI_NCCL_PARAM(const char *, name, env, default_value)
-
 #else
 
 #define OFI_NCCL_PARAM(type, name, env, default_value) \
@@ -48,9 +45,6 @@
 
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 	OFI_NCCL_PARAM(int, name, env, default_value)
-
-#define OFI_NCCL_PARAM_STR(name, env, default_value) \
-	OFI_NCCL_PARAM(const char *, name, env, default_value)
 
 #endif
 
@@ -66,7 +60,7 @@ OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
  *
  * TODO: Remove lo after https://github.com/ofiwg/libfabric/issues/6127 is fixed
  */
-OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
+OFI_NCCL_PARAM(std::string, exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
 
 /*
  * Disable flush operation when using GPUDirect. Flush commands
