@@ -11,3 +11,4 @@ scheduler
 histogram
 histogram_binner
 dlopen_c_test
+param
