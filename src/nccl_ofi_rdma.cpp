@@ -7603,28 +7603,25 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
  	* - Eager msg mode is diabled: eager_max_size == -1
 	* - Provider must use FI_PROGRESS_AUTO data progress model
 	*/
-	if (ofi_nccl_early_completion() < 0) {
+	if (ofi_nccl_early_completion.get_source() == ParamSource::DEFAULT) {
 		if (!data_progress_auto) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 				       "Early completion disabled due to progress model");
-			early_completion = false;
+			ofi_nccl_early_completion.set(false);
 		} else if (ofi_nccl_eager_max_size() >= 0) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 				       "Early completion disabled because eager is enabled");
-			early_completion = false;
+			ofi_nccl_early_completion.set(false);
 		} else {
-			early_completion = true;
+			ofi_nccl_early_completion.set(true);
 		}
-	} else if (ofi_nccl_early_completion() == 0) {
-		early_completion = false;
-	} else {
-		if (!data_progress_auto) {
-			NCCL_OFI_WARN("Failed configuration of EARLY_COMPLETION due to provider data progress model is not FI_PROGRESS_AUTO");
-			ret = -ENOTSUP;
-			goto error;
-		}
-		early_completion = true;
+	} else if (ofi_nccl_early_completion.get_source() == ParamSource::ENVIRONMENT &&
+		   ofi_nccl_early_completion.get() && !data_progress_auto) {
+		NCCL_OFI_WARN("Failed configuration of EARLY_COMPLETION due to provider data progress model is not FI_PROGRESS_AUTO");
+		ret = -ENOTSUP;
+		goto error;
 	}
+	early_completion = ofi_nccl_early_completion.get();
 
 	if (early_completion && ofi_nccl_eager_max_size() != -1) {
 		NCCL_OFI_WARN("Conflicted configuration of EARLY_COMPLETION and EAGER_MAX_SIZE");
