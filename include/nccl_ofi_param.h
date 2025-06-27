@@ -141,12 +141,10 @@ OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
  * Override the platform default for domain allocation, with
  * respect to the process or thread.
  *
- * -1 (unset default): use the platform-specific configuration.
  * 0: Allocate one domain per process
  * 1: Allocate one domain per thread
  */
-
-OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
+OFI_NCCL_PARAM(bool, domain_per_thread, "DOMAIN_PER_THREAD", false);
 
 /*
  * Disable the native RDMA write support check when using the "RDMA" protocol
