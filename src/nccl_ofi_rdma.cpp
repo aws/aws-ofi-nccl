@@ -500,9 +500,9 @@ static int set_mr_req_attr(uint64_t mr_key,
 /*
  * @brief	Calculate length of libfabric NIC info list
  */
-static inline int ofi_info_list_length(struct fi_info *info_list)
+static inline size_t ofi_info_list_length(struct fi_info *info_list)
 {
-	int length = 0;
+	size_t length = 0;
 
 	while (info_list) {
 		info_list = info_list->next;
@@ -7209,7 +7209,7 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	nccl_net_ofi_plugin_t *plugin, int dev_id, struct fi_info *info_list, nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
-	int length = 0, target_length;
+	size_t length = 0, target_length;
 	nccl_net_ofi_rdma_device_t *device =
 		(nccl_net_ofi_rdma_device_t *)calloc(1, sizeof(nccl_net_ofi_rdma_device_t));
 	if (device == NULL) {
@@ -7248,18 +7248,18 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	length = ofi_info_list_length(info_list);
 	target_length = ofi_nccl_force_num_rails();
 	if (target_length != 0) {
-		int original_length = length;
+		size_t original_length = length;
 		if (length > target_length) {
 			length = target_length;
 		} else if (target_length % length != 0) {
-			NCCL_OFI_WARN("Number of forced rails (%d) not a multiple of numer of rails (%d)",
-				      (int)target_length, length);
+			NCCL_OFI_WARN("Number of forced rails (%zu) not a multiple of numer of rails (%zu)",
+				      target_length, length);
 			goto error;
 		} else if (target_length > length) {
 			struct fi_info *iter = info_list;
 			struct fi_info *new_list = NULL;
 			struct fi_info *prev = NULL;
-			for (int i = 0 ; i < target_length ; i++) {
+			for (size_t i = 0 ; i < target_length ; i++) {
 				struct fi_info *tmp = fi_dupinfo(iter);
 				if (tmp == NULL) {
 					NCCL_OFI_WARN("Error creating duplicate info");
@@ -7282,10 +7282,10 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
                         length = target_length;
 			info_list = new_list;
 		}
-		NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails (originally found %d rails)",
+		NCCL_OFI_INFO(NCCL_NET, "Created device with %zu rails (originally found %zu rails)",
 			      length, original_length);
 	} else {
-		NCCL_OFI_INFO(NCCL_NET, "Created device with %d rails", length);
+		NCCL_OFI_INFO(NCCL_NET, "Created device with %zu rails", length);
 	}
 
 	/* Set NIC information */
