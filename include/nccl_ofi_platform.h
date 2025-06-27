@@ -59,9 +59,4 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
  */
 void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device) __attribute__((weak));
 
-/*
- * does the platform have an opinion on domain_per_thread configuration?
- */
-bool platform_default_domain_per_thread(void) __attribute__((weak));
-
 #endif // End NCCL_OFI_PLATFORM_H_

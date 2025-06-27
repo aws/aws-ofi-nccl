@@ -23,7 +23,7 @@ struct ec2_platform_data {
 	float latency;
 	bool gdr_required;
 	PROTOCOL default_protocol;
-	int domain_per_thread;
+	bool domain_per_thread;
 	std::map<std::string, std::string> env;
 };
 

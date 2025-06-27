@@ -261,15 +261,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			      ofi_nccl_protocol.get_string());
 	}
 
-	if (ofi_nccl_domain_per_thread() != -1) {
-		plugin->domain_per_thread = (ofi_nccl_domain_per_thread() > 0);
-	} else {
-		if (platform_default_domain_per_thread) {
-			plugin->domain_per_thread = platform_default_domain_per_thread();
-		} else {
-			plugin->domain_per_thread = false;
-		}
-	}
+	plugin->domain_per_thread = ofi_nccl_domain_per_thread.get();
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s",
 		      plugin->domain_per_thread ? "thread" : "process");
 
