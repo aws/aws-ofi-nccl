@@ -323,7 +323,7 @@ OFI_NCCL_PARAM(bool, use_low_lat_tc, "USE_LOW_LATENCY_TC", true);
  * number of rails is more than the number of NICs, then the number of
  * rails must be a multiple of the number of NICs.
  */
-OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
+OFI_NCCL_PARAM(size_t, force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
  * Should we enable early completion in the rdma transport? The rdma transport
