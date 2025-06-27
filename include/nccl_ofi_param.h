@@ -196,12 +196,12 @@ OFI_NCCL_PARAM_UINT(sched_max_small_msg_size, "SCHED_MAX_SMALL_RR_SIZE", 64);
 /*
  * Deprecated value to control both eager and control bounce counts.
  */
-OFI_NCCL_PARAM_INT(deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", -1);
+OFI_NCCL_PARAM(size_t, deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 0);
 
 /*
  * Deprecated value to control both eager and control bounce counts.
  */
-OFI_NCCL_PARAM_INT(deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", -1);
+OFI_NCCL_PARAM(size_t, deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 0);
 
 /*
  * Minimum eager rx buffers posted per endpoint. The plugin will attempt to post
