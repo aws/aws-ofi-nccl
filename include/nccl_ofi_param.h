@@ -226,16 +226,17 @@ OFI_NCCL_PARAM_INT(rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS
 /*
  * Minimum control rx buffers posted per endpoint. The plugin will attempt to post
  * more rx buffers if we dip below this threshold, allocating new rx buffers if
- * needed.
+ * needed. This is used only for close message (which is disabled by default).
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
+OFI_NCCL_PARAM_INT(rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 16);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
- * buffers to the free list if needed
+ * buffers to the free list if needed. This is used only for close message
+ * (which is disabled by default).
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
+OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 32);
 
 /*
  * Whether to spread the control message across multiple rails in round robin fashion or
