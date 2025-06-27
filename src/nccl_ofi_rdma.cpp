@@ -439,7 +439,7 @@ exit:
  * @return	Populated I/O vector, on success
  * @return	0 on success
  *		non-zero on error
- */ 
+ */
 static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
 			   int type, struct fi_mr_attr *mr_attr)
@@ -447,7 +447,7 @@ static int set_mr_req_attr(uint64_t mr_key,
 	int ret = 0;
 	mr_attr->access = FI_SEND | FI_RECV;
 
-	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write) 
+	/* Add FI_WRITE (source of fi_write) and FI_REMOTE_WRITE (target of fi_write)
 	   for RDMA send/recv buffers */
 	mr_attr->access |= (FI_WRITE | FI_REMOTE_WRITE);
 	/* Add FI_READ (destination buffer for RMA read) and FI_REMOTE_READ
@@ -543,10 +543,10 @@ static inline int get_properties(nccl_net_ofi_device_t *base_dev,
 	assert(is_max_write_inline_size_initialized);
 	props->max_write_inline_size = max_write_inline_size;
 
-	/* 
+	/*
 	 * Actual max tansfer size is the min size between the interface and
 	 * libfabric's data transfer layer
-	 * 
+	 *
 	 * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in
 	 * the actual plugin implementations are using int type, thus the max
 	 * max for interface is INT_MAX
@@ -816,7 +816,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 	int ret = 0;
 	bool segms_received;
-	
+
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	/* Sum up segment sizes */
@@ -827,7 +827,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 	/* The arrival of the last segment is treated as a single
 	 * request completion of the parent request */
 	segms_received = req->ncompls == total_nsegms;
-	
+
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
 		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
@@ -842,7 +842,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 		 * unlocking receive segment request after it has been
 		 * freed in `test()` */
 		nccl_net_ofi_mutex_unlock(&req->req_lock);
-		
+
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
 	} else {
@@ -1296,7 +1296,7 @@ exit:
 
 /**
  * @brief	Get request associated with RDMA write immediate data
- * 
+ *
  * @param	ep, to look up r_comm from ID encoded in data
  * @param	data, the immediate data
  */
@@ -1984,7 +1984,7 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 {
 	int ret = 0;
 	nccl_ofi_freelist_elem_t *elem = NULL;
-	
+
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Provided null request for cleanup");
@@ -6594,7 +6594,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 		domain_rail = rdma_domain_get_rail(domain_arg, rail_id);
 		rail = rdma_endpoint_get_rail(rail_id);
 
-		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev, 
+		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev,
 							   domain_rail, rail, FI_TC_UNSPEC);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing rail %d failed", rail_id);
@@ -6772,7 +6772,7 @@ static int nccl_net_ofi_rdma_domain_create_endpoint(nccl_net_ofi_domain_t *base_
 	/* Allocate endpoint */
 	ep = new nccl_net_ofi_rdma_ep_t(domain);
 
-	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created", ep, 
+	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created", ep,
 		       device->base.dev_id);
 
 	*new_ep = ep;
@@ -7370,11 +7370,12 @@ static void get_hints(struct fi_info *hints)
 	hints->domain_attr->threading = FI_THREAD_SAFE;
 
 	/* Set progress mode to unspec to use the provider's default
-	 * mode.  We hard poll for completion, but if a provider is
+	 * mode.  OFI_NCCL_PROGRESS can override the unspec default.
+	 * We hard poll for completion, but if a provider is
 	 * faster with async progress, then we don't really care and
 	 * should let it do that. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	hints->domain_attr->control_progress = nccl_ofi_progress_mode;
+	hints->domain_attr->data_progress = nccl_ofi_progress_mode;
 }
 
 
@@ -7581,12 +7582,12 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	/* 
+	/*
 	* NCCL Net v9 API Optimization for LL/LL128 Protocols
-	* 
+	*
 	* Background:
-	* When using LL (Low Latency) or LL128 protocols, NCCL sets the request pointer 
-	* to NCCL_NET_OPTIONAL_RECV_COMPLETION in irecv() calls. This indicates that 
+	* When using LL (Low Latency) or LL128 protocols, NCCL sets the request pointer
+	* to NCCL_NET_OPTIONAL_RECV_COMPLETION in irecv() calls. This indicates that
 	* the plugin can complete a receiver request early without plugin explicitly
 	* polling the CQ to validate data arrival. This is achievable because NCCL itself
 	* following LL protocol semantics will validate data arrival by checking the flag bytes.

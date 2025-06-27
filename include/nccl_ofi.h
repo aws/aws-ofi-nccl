@@ -119,6 +119,17 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+/* Requested progress mode to be used.
+ *
+ * During initialization, check the progress mode environment variable
+ * to determine the mode that the plugin will request from the provider.
+ *
+ * Valid values are FI_PROGRESS_UNSPEC, FI_PROGRESS_MANUAL, and
+ * FI_PROGRESS_AUTO; default is FI_PROGRESS_UNSPEC (set by the
+ * param OFI_NCCL_PROGRESS (Values: UNSPEC, MANUAL, and AUTO))
+ */
+extern enum fi_progress nccl_ofi_progress_mode;
+
 class nccl_net_ofi_ep_t;
 
 struct nccl_net_ofi_plugin;
@@ -475,10 +486,10 @@ class nccl_net_ofi_ep_t {
 public:
 	/**
 	 * @brief	Default constructor.
-	 * 
+	 *
 	 * Initialize resources associated with the endpoint base class.
 	 * Expectation is that this will be called by a transport's endpoint
-	 * constructor 
+	 * constructor
 	 */
 	nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain);
 
@@ -555,13 +566,13 @@ protected:
 
 	/**
 	 * @brief	Cleanup endpoint resources.
-	 * 
+	 *
 	 * Virtual function to clean up and release each transport type's endpoint resources.
 	 * Should not throw exceptions, and instead returns an error code on success or failure
 	 * to make it safe to call in endpoint destructors. Set called_cleanup_resources to true
 	 * at the start of the function to make sure it is only called once per endpoint
 	 * instance.
-	 * 
+	 *
 	 * @return	0 if successfully, negative error code on failure.
 	 */
 	virtual int cleanup_resources() = 0;
@@ -569,12 +580,12 @@ protected:
 	/* Backpointer to the domain associated with this ep. */
 	nccl_net_ofi_domain_t *domain = nullptr;
 
-	/** 
+	/**
 	 * Track whether the cleanup_resources function was already called to avoid calling
-	 * multiple time on the same endpoint instance. It being set to true does not 
+	 * multiple time on the same endpoint instance. It being set to true does not
 	 * indicate that the endpoint resources were successfully released since this is set
 	 * to true regardless of whether cleanup_resources finished successfully or not.
-	 */ 
+	 */
 	bool called_cleanup_resources = false;
 
 	/* Endpoint reference counter for resource management.

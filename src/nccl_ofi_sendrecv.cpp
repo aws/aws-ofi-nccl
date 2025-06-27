@@ -101,10 +101,10 @@ static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
 	 */
 	props->regIsGlobal = 0;
 
-	/* 
+	/*
 	 * Actual max tansfer size is the min size between the interface and
 	 * libfabric's data transfer layer
-	 * 
+	 *
 	 * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in
 	 * the actual plugin implementations are using int type, thus the max
 	 * max for interface is INT_MAX
@@ -1482,7 +1482,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 	const nccl_ofi_connection_info_t *conn_msg = nullptr;
 	nccl_ofi_connection_info_t conn_resp_msg = { };
-	
+
 	/*
 	 * Take appropriate actions based on connection stage of communicator.
 	 *
@@ -2037,7 +2037,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	CHECK_DOMAIN_ACTIVE(domain_ptr, "connect");
 
 	nccl_ofi_connection_info_t conn_info = { };
-	
+
 	/* Retrieve and validate devices */
 	nccl_net_ofi_sendrecv_device_t *device = sendrecv_domain_get_device(domain_ptr);
 	if (OFI_UNLIKELY(device == nullptr)) {
@@ -2126,7 +2126,7 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 	} else {
 		nccl_ofi_ofiutils_ep_release(ofi_ep, av, device->base.dev_id);
 		ofi_ep = nullptr;
-		av = nullptr;		
+		av = nullptr;
 	}
 
 	assert(ret == 0);
@@ -2468,9 +2468,10 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 
 	hints->domain_attr->threading = FI_THREAD_SAFE;
 
-	/* Set progress mode to unspec to use the provider's default mode. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	/* Set progress mode to unspec to use the provider's default mode.
+	 * OFI_NCCL_PROGRESS can override the unspec default. */
+	hints->domain_attr->control_progress = nccl_ofi_progress_mode;
+	hints->domain_attr->data_progress = nccl_ofi_progress_mode;
 
 	/* Set MR mode bits to indicate FI_MR_BASIC registration */
 	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;
