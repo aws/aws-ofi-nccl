@@ -326,12 +326,12 @@ OFI_NCCL_PARAM(bool, use_low_lat_tc, "USE_LOW_LATENCY_TC", true);
 OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
- * 1 to enable early completion, 0 to disable it.
- * Default at -1 to follow the data progress model, given that 
- * early completion feature is contigent on FI_PROGRESS_AUTO data progress model
+ * Should we enable early completion in the rdma transport? The rdma transport
+ * will change the default to follow the data progress model, given that early
+ * completion feature is contigent on FI_PROGRESS_AUTO data progress model
  * i.e. enabled when FI_PROGRESS_AUTO, otherwise disabled
  */
-OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
+OFI_NCCL_PARAM(bool, early_completion, "EARLY_COMPLETION", true);
 
 /*
  * 1 to disable close message, 0 to enable it.
