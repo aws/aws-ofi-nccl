@@ -123,12 +123,12 @@ OFI_NCCL_PARAM(bool, mr_cache_disable, "MR_CACHE_DISABLE",
  * Maximum number of cq entries to read in a single call to
  * fi_cq_read.
  */
-OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
+OFI_NCCL_PARAM(size_t, cq_read_count, "CQ_READ_COUNT", 4);
 
-/* 
+/*
  * Completion queue size. Defaults to EFA RDM path size.
  */
-OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
+OFI_NCCL_PARAM(size_t, cq_size, "CQ_SIZE", 12288);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
@@ -208,28 +208,28 @@ OFI_NCCL_PARAM_INT(deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_B
  * more rx buffers if we dip below this threshold, allocating new rx buffers if
  * needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_eager_buffers, "RDMA_MIN_POSTED_EAGER_BUFFERS", 64);
+OFI_NCCL_PARAM(size_t, rdma_min_posted_eager_buffers, "RDMA_MIN_POSTED_EAGER_BUFFERS", 64);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS", 128);
+OFI_NCCL_PARAM(size_t, rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS", 128);
 
 /*
  * Minimum control rx buffers posted per endpoint. The plugin will attempt to post
  * more rx buffers if we dip below this threshold, allocating new rx buffers if
  * needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
+OFI_NCCL_PARAM(size_t, rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
+OFI_NCCL_PARAM(size_t, rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
 
 /*
  * Whether to spread the control message across multiple rails in round robin fashion or
