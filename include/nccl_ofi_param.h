@@ -35,9 +35,6 @@
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 	OFI_NCCL_PARAM(int, name, env, default_value)
 
-#define OFI_NCCL_PARAM_STR(name, env, default_value) \
-	OFI_NCCL_PARAM(const char *, name, env, default_value)
-
 #else
 
 #define OFI_NCCL_PARAM(type, name, env, default_value) \
@@ -49,16 +46,13 @@
 #define OFI_NCCL_PARAM_INT(name, env, default_value) \
 	OFI_NCCL_PARAM(int, name, env, default_value)
 
-#define OFI_NCCL_PARAM_STR(name, env, default_value) \
-	OFI_NCCL_PARAM(const char *, name, env, default_value)
-
 #endif
 
 /*
  * Enable using endpoints with IPv6 addressing format for TCP provider.
  * By default, we disable using endpoints having IPv6 addressing format.
  */
-OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
+OFI_NCCL_PARAM(bool, use_ipv6_tcp, "USE_IPV6_TCP", false);
 
 /*
  * List of interface names (comma-separated) to be filtered out for TCP provider.
@@ -66,7 +60,7 @@ OFI_NCCL_PARAM_INT(use_ipv6_tcp, "USE_IPV6_TCP", 0);
  *
  * TODO: Remove lo after https://github.com/ofiwg/libfabric/issues/6127 is fixed
  */
-OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
+OFI_NCCL_PARAM(std::string, exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
 
 /*
  * Disable flush operation when using GPUDirect. Flush commands
@@ -75,7 +69,7 @@ OFI_NCCL_PARAM_STR(exclude_tcp_if, "EXCLUDE_TCP_IF", "lo,docker0");
  * ensures data consistency.
  * By default, plugin issues flush commands.
  */
-OFI_NCCL_PARAM_INT(gdr_flush_disable, "GDR_FLUSH_DISABLE", 0);
+OFI_NCCL_PARAM(bool, gdr_flush_disable, "GDR_FLUSH_DISABLE", false);
 
 /*
  * Specify the number of network connections created by
@@ -92,7 +86,7 @@ OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
  * PCIe configurations require an additional network-level flush that
  * is not provided by this option.
  */
-OFI_NCCL_PARAM_INT(cuda_flush_enable, "CUDA_FLUSH_ENABLE", 0);
+OFI_NCCL_PARAM(bool, cuda_flush_enable, "CUDA_FLUSH_ENABLE", false);
 
 /*
  * Specify the memory registration key size in bytes when using a libfabric
@@ -110,7 +104,7 @@ OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2);
  * registration with the device, so it may cause a significant performance
  * degradation.
  */
-OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
+OFI_NCCL_PARAM(bool, mr_cache_disable, "MR_CACHE_DISABLE",
 #if HAVE_NEURON
 		/*
 		 * 1. NeuronRuntime maintains its own MR cache, making the aws-ofi-nccl
@@ -119,9 +113,9 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
 		 *    NeuronRuntime MR cache supports that, while aws-ofi-nccl MR
 		 *    cache doesn't.
 		 */
-		1
+		true
 #else
-		0
+		false
 #endif
 		);
 
@@ -129,30 +123,28 @@ OFI_NCCL_PARAM_INT(mr_cache_disable, "MR_CACHE_DISABLE",
  * Maximum number of cq entries to read in a single call to
  * fi_cq_read.
  */
-OFI_NCCL_PARAM_INT(cq_read_count, "CQ_READ_COUNT", 4);
+OFI_NCCL_PARAM(size_t, cq_read_count, "CQ_READ_COUNT", 4);
 
-/* 
+/*
  * Completion queue size. Defaults to EFA RDM path size.
  */
-OFI_NCCL_PARAM_UINT(cq_size, "CQ_SIZE", 12288);
+OFI_NCCL_PARAM(size_t, cq_size, "CQ_SIZE", 12288);
 
 /*
  * Protocol to use for send/recv operations.  Valid options are
- * SENDRECV and RDMA.  Default to a nonsense name, as protocol
- * selection is based on rail config and system support.
+ * SENDRECV and RDMA.
  */
-OFI_NCCL_PARAM_STR(protocol, "PROTOCOL", "default");
+OFI_NCCL_PARAM_VALUE_SET(PROTOCOL, (SENDRECV)(RDMA))
+OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
 
 /*
  * Override the platform default for domain allocation, with
  * respect to the process or thread.
  *
- * -1 (unset default): use the platform-specific configuration.
  * 0: Allocate one domain per process
  * 1: Allocate one domain per thread
  */
-
-OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
+OFI_NCCL_PARAM(bool, domain_per_thread, "DOMAIN_PER_THREAD", false);
 
 /*
  * Disable the native RDMA write support check when using the "RDMA" protocol
@@ -161,14 +153,14 @@ OFI_NCCL_PARAM_INT(domain_per_thread, "DOMAIN_PER_THREAD", -1);
  * supported or cannot be verified to be supported. By default, the plugin
  * peforms the native RDMA support checks.
  */
-OFI_NCCL_PARAM_INT(disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", 0);
+OFI_NCCL_PARAM(bool, disable_native_rdma_check, "DISABLE_NATIVE_RDMA_CHECK", false);
 
 /*
  * Disable the check for required GDR support on EC2 instances. When this check
  * is disabled, the plugin can be used without GDR support even on platforms
  * that support GDR (P4d and later). By default, the plugin performs the check.
  */
-OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
+OFI_NCCL_PARAM(bool, disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", false);
 
 /*
  * In cases where libfabric>=1.20 is available, and the provider has FI_HMEM
@@ -186,7 +178,7 @@ OFI_NCCL_PARAM_INT(disable_gdr_required_check, "DISABLE_GDR_REQUIRED_CHECK", 0);
  * environment variable to '1' to force NCCL to avoid providing dmabuf file
  * desciptors.
  */
-OFI_NCCL_PARAM_INT(disable_dmabuf, "DISABLE_DMABUF", 0);
+OFI_NCCL_PARAM(bool, disable_dmabuf, "DISABLE_DMABUF", false);
 
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
@@ -202,46 +194,46 @@ OFI_NCCL_PARAM_UINT(sched_max_small_msg_size, "SCHED_MAX_SMALL_RR_SIZE", 64);
 /*
  * Deprecated value to control both eager and control bounce counts.
  */
-OFI_NCCL_PARAM_INT(deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", -1);
+OFI_NCCL_PARAM(size_t, deprecated_rdma_min_posted_bounce_buffers, "RDMA_MIN_POSTED_BOUNCE_BUFFERS", 0);
 
 /*
  * Deprecated value to control both eager and control bounce counts.
  */
-OFI_NCCL_PARAM_INT(deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", -1);
+OFI_NCCL_PARAM(size_t, deprecated_rdma_max_posted_bounce_buffers, "RDMA_MAX_POSTED_BOUNCE_BUFFERS", 0);
 
 /*
  * Minimum eager rx buffers posted per endpoint. The plugin will attempt to post
  * more rx buffers if we dip below this threshold, allocating new rx buffers if
  * needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_eager_buffers, "RDMA_MIN_POSTED_EAGER_BUFFERS", 64);
+OFI_NCCL_PARAM(size_t, rdma_min_posted_eager_buffers, "RDMA_MIN_POSTED_EAGER_BUFFERS", 64);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS", 128);
+OFI_NCCL_PARAM(size_t, rdma_max_posted_eager_buffers, "RDMA_MAX_POSTED_EAGER_BUFFERS", 128);
 
 /*
  * Minimum control rx buffers posted per endpoint. The plugin will attempt to post
  * more rx buffers if we dip below this threshold, allocating new rx buffers if
  * needed.
  */
-OFI_NCCL_PARAM_INT(rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
+OFI_NCCL_PARAM(size_t, rdma_min_posted_control_buffers, "RDMA_MIN_POSTED_CONTROL_BUFFERS", 1920);
 
 /*
  * Maximum rx buffers posted per endpoint. The plugin will not attempt to
  * post more rx buffers if we reach this threshold, returning available
  * buffers to the free list if needed
  */
-OFI_NCCL_PARAM_INT(rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
+OFI_NCCL_PARAM(size_t, rdma_max_posted_control_buffers, "RDMA_MAX_POSTED_CONTROL_BUFFERS", 2048);
 
 /*
  * Whether to spread the control message across multiple rails in round robin fashion or
  * send it consistenly on one rail.
  */
-OFI_NCCL_PARAM_INT(rdma_rr_ctrl_msg, "RR_CTRL_MSG", 1);
+OFI_NCCL_PARAM(bool, rdma_rr_ctrl_msg, "RR_CTRL_MSG", true);
 
 /*
  * Internode network latency reported to NCCL. Defaults to 0, unless the configured
@@ -261,19 +253,19 @@ OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
  * defaults to 1.
  */
 #if defined(NDEBUG) && NDEBUG != 0
-#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT 0
+#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT false
 #else
-#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT 1
+#define OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT true
 #endif
-OFI_NCCL_PARAM_INT(errorcheck_mutex, "ERRORCHECK_MUTEX",
-		   OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT);
+OFI_NCCL_PARAM(bool, errorcheck_mutex, "ERRORCHECK_MUTEX",
+	       OFI_NCCL_PARAM_ERRORCHECK_MUTEX_DEFAULT);
 
 /*
  * If 0, create a Libfabric endpoint per domain, shared across all
  * communicators.  If non-0, create a Libfabric endpoint per
  * communicator.
  */
-OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
+OFI_NCCL_PARAM(bool, endpoint_per_communicator, "ENDPOINT_PER_COMM", false);
 
 /*
  * Some versions of NCCL (in particular, we know NCCL 2.21-2.23) will
@@ -283,7 +275,7 @@ OFI_NCCL_PARAM_INT(endpoint_per_communicator, "ENDPOINT_PER_COMM", 0);
  * provide an environment variable to cause the plugin to abort the
  * job rather than returning an (ignored) error to NCCL.
  */
-OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
+OFI_NCCL_PARAM(bool, abort_on_error, "ABORT_ON_ERROR", false);
 
 /*
  * Force using a specific tuner type.
@@ -291,7 +283,8 @@ OFI_NCCL_PARAM_INT(abort_on_error, "ABORT_ON_ERROR", 0);
  * "Region" for NCCL OFI Region base tuner.
  * "Model" for NCCL OFI Model base tuner.
  */
-OFI_NCCL_PARAM_STR(tuner_force_type, "TUNER_TYPE", "Region");
+OFI_NCCL_PARAM_VALUE_SET(TUNER_TYPE, (INTERNAL)(REGION)(MODEL))
+OFI_NCCL_PARAM(TUNER_TYPE, tuner_force_type, "TUNER_TYPE", TUNER_TYPE::REGION);
 
 /*
  * The plugin interface lets us tune the number of channels as well, but that
@@ -321,22 +314,22 @@ OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
  * messages?  This generally improves performance for platforms that
  * support TCs, unless the prioritization over-reacts on the given network.
  */
-OFI_NCCL_PARAM_INT(use_low_lat_tc, "USE_LOW_LATENCY_TC", 1);
+OFI_NCCL_PARAM(bool, use_low_lat_tc, "USE_LOW_LATENCY_TC", true);
 
 /*
  * Number of rails that the rdma transport should build.  If the
  * number of rails is more than the number of NICs, then the number of
  * rails must be a multiple of the number of NICs.
  */
-OFI_NCCL_PARAM_INT(force_num_rails, "FORCE_NUM_RAILS", 0);
+OFI_NCCL_PARAM(size_t, force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
- * 1 to enable early completion, 0 to disable it.
- * Default at -1 to follow the data progress model, given that 
- * early completion feature is contigent on FI_PROGRESS_AUTO data progress model
+ * Should we enable early completion in the rdma transport? The rdma transport
+ * will change the default to follow the data progress model, given that early
+ * completion feature is contigent on FI_PROGRESS_AUTO data progress model
  * i.e. enabled when FI_PROGRESS_AUTO, otherwise disabled
  */
-OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
+OFI_NCCL_PARAM(bool, early_completion, "EARLY_COMPLETION", true);
 
 /*
  * 1 to disable close message, 0 to enable it.
@@ -355,7 +348,7 @@ OFI_NCCL_PARAM_INT(early_completion, "EARLY_COMPLETION", -1);
  * Until we have a long-term fix for this, we disable the close message by
  * default.
  */
-OFI_NCCL_PARAM_INT(disable_close_message, "DISABLE_CLOSE_MESSAGE", 1);
+OFI_NCCL_PARAM(bool, disable_close_message, "DISABLE_CLOSE_MESSAGE", true);
 
 /*
  * Number of RX buffers to post for the connection manager endpoint (for

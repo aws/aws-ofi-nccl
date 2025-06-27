@@ -69,7 +69,7 @@ static bool prov_filter_tcp_interfaces(struct fi_info *provider, const void *dat
 	   providers */
         if (0 != strncmp(provider->fabric_attr->prov_name, "tcp", strlen("tcp"))) {
 		return true;
-	} else if (in_list(provider->domain_attr->name, ofi_nccl_exclude_tcp_if()) == 0) {
+	} else if (in_list(provider->domain_attr->name, ofi_nccl_exclude_tcp_if().c_str()) == 0) {
 		return true;
 	}
 

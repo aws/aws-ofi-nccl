@@ -69,13 +69,13 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		goto exit;
 	}
 
-	if (strcasecmp(ofi_nccl_tuner_force_type.get(), "Internal") == 0) {
+	if (ofi_nccl_tuner_force_type.get() == TUNER_TYPE::INTERNAL) {
 		/* fallback to NCCL internal tuner */
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
 			      "NCCL_OFI_TUNER_TYPE is Internal, Fall back to NCCL's tuner for platform : %s",
 			      platform_type);
 		goto exit;
-	} else if (strcasecmp(ofi_nccl_tuner_force_type.get(), "Model") == 0) {
+	} else if (ofi_nccl_tuner_force_type.get() == TUNER_TYPE::MODEL) {
 		is_force_type_model = 1;
 	}
 
@@ -136,7 +136,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 	 */
 
 	if (region_support && !(model_support && is_force_type_model)) {
-		ctx->type = NCCL_OFI_TUNER_TYPE_REGION;
+		ctx->type = TUNER_TYPE::REGION;
 		ctx->init_internal = region_init_internal;
 		ctx->get_coll_info_internal_v3 = region_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = region_get_coll_info_internal_v2;
@@ -144,7 +144,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Region base Tuner is chosen for platform: %s", platform_type);
 	} else {
 		assert(model_support);
-		ctx->type = NCCL_OFI_TUNER_TYPE_MODEL;
+		ctx->type = TUNER_TYPE::MODEL;;
 		ctx->init_internal = model_init_internal;
 		ctx->get_coll_info_internal_v3 = model_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = model_get_coll_info_internal_v2;
