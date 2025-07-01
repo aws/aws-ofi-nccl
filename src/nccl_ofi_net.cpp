@@ -765,6 +765,27 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
+/**
+ * @brief	Erase all domain_table elements matching the provided domain
+ */
+static void nccl_net_ofi_device_remove_domain(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain)
+{
+	size_t n_removed = 0;
+
+	assert(device->domain_table);
+	for (auto it = device->domain_table->begin(); it != device->domain_table->end();) {
+		if (it->second == domain) {
+			it = device->domain_table->erase(it);
+			++n_removed;
+		} else {
+			++it;
+		}
+	}
+
+	assert_always(n_removed == 1);
+}
+
+
 /*
  * implementation of retreiving a domain from a device.  This code
  * assumes the device lock is already held, because in the case of
@@ -799,7 +820,6 @@ static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_d
 			return NULL;
 		}
 
-		domain->creating_thread_id = lookup_key;
 		device->domain_table->insert(std::pair(lookup_key,  domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
@@ -1030,8 +1050,7 @@ static void nccl_net_ofi_domain_invalidate(nccl_net_ofi_domain_t *domain)
 
 		/* Remove this domain from the thread->domain table so that it
 		   is not used for future communicators */
-		size_t n_removed = device->domain_table->erase(domain->creating_thread_id);
-		assert_always(n_removed == 1);
+		nccl_net_ofi_device_remove_domain(device, domain);
 
 		++device->unreleased_inactive_domain_counter;
 	}
@@ -1063,7 +1082,7 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_
 		/* Remove this domain from the domain table if it was active.
 		   If not, it was already removed in domain_invalidate. */
 		if (domain->domain_active) {
-			device->domain_table->erase(domain->creating_thread_id);
+			nccl_net_ofi_device_remove_domain(device, domain);
 		} else {
 			--device->unreleased_inactive_domain_counter;
 		}
@@ -1106,7 +1125,6 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 	domain->get_ep = nccl_net_ofi_domain_get_ep;
 	domain->release = nccl_net_ofi_domain_release;
 	domain->endpoint = NULL;
-	domain->creating_thread_id = 0;
 	domain->ref_cnt = 0;
 	domain->domain_active = true;
 	domain->invalidate = nccl_net_ofi_domain_invalidate;

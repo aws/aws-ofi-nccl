@@ -466,10 +466,6 @@ struct nccl_net_ofi_domain {
 	   requests and all connection-establishment requests, but may
 	   have additional endpoints for the rx side of rdma writes. */
 	nccl_net_ofi_ep_t *endpoint;
-
-	/* thread id of the thread that called get_domain().  Used as
-	   the hash key for the domain hash */
-	long creating_thread_id;
 };
 
 
