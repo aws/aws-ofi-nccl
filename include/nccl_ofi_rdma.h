@@ -915,10 +915,6 @@ public:
 	   receive communicator */
 	bool is_endpoint_per_communicator_ep;
 
-	/* thread id of the thread that called get_ep().  Used as the
-	   hash key for the endpoint hash */
-	long creating_thread_id;
-
 protected:
 	int cleanup_resources() override;
 
