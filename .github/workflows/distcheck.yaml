@@ -7,27 +7,7 @@ on:
       - master
       - main
       - v*
-    paths:
-      - "configure.ac"
-      - "Makefile.am"
-      - "autogen.sh"
-      - "include/**"
-      - "m4/**"
-      - "src/**"
-      - "tests/**"
-      - "topology/**"
-      - ".github/workflows/**"
   pull_request:
-    paths:
-      - "configure.ac"
-      - "Makefile.am"
-      - "autogen.sh"
-      - "include/**"
-      - "m4/**"
-      - "src/**"
-      - "tests/**"
-      - "topology/**"
-      - ".github/workflows/**"
 env:
   # note, related to issue around actions/checkout@v4, linked below. This
   # environment variable is also now needed, as of july 2024.
