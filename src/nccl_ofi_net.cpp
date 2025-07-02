@@ -16,6 +16,7 @@
 #include <ctype.h>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_assert.h"
 #include "nccl_ofi_environ.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_tracepoint.h"
@@ -960,7 +961,15 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 		}
 
 	}
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+
+	if (device->unreleased_inactive_domain_counter > 0) {
+		NCCL_OFI_WARN("%zu inactive domains still open after cleanup",
+			      device->unreleased_inactive_domain_counter);
+
+		if (first_error != 0) {
+			first_error = -FI_EBUSY; // Anything else than above
+		}
+	}
 
 	domain_num = device->domain_table->size();
 	if (OFI_UNLIKELY(domain_num > 0)) {
@@ -969,6 +978,8 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 			first_error = -FI_EBUSY; // Anything else than above
 		}
 	}
+
+	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 	return first_error;
 }
@@ -1009,6 +1020,24 @@ unlock:
 }
 
 
+static void nccl_net_ofi_domain_invalidate(nccl_net_ofi_domain_t *domain)
+{
+	if (domain->domain_active == true) {
+		domain->domain_active = false;
+
+		nccl_net_ofi_device_t *device = domain->device;
+		pthread_wrapper lock(&device->device_lock);
+
+		/* Remove this domain from the thread->domain table so that it
+		   is not used for future communicators */
+		size_t n_removed = device->domain_table->erase(domain->creating_thread_id);
+		assert_always(n_removed == 1);
+
+		++device->unreleased_inactive_domain_counter;
+	}
+}
+
+
 static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_device_lock, bool force_cleanup)
 {
 	int ret = 0;
@@ -1031,7 +1060,13 @@ static int nccl_net_ofi_domain_release(nccl_net_ofi_domain_t *domain, bool skip_
 		if (!skip_device_lock) {
 			nccl_net_ofi_mutex_lock(&device->device_lock);
 		}
-		device->domain_table->erase(domain->creating_thread_id);
+		/* Remove this domain from the domain table if it was active.
+		   If not, it was already removed in domain_invalidate. */
+		if (domain->domain_active) {
+			device->domain_table->erase(domain->creating_thread_id);
+		} else {
+			--device->unreleased_inactive_domain_counter;
+		}
 
 		// domain->free below is going to free the domain lock
 		// and we've removed the domain from the hash table,
@@ -1074,6 +1109,7 @@ int nccl_net_ofi_domain_init(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_
 	domain->creating_thread_id = 0;
 	domain->ref_cnt = 0;
 	domain->domain_active = true;
+	domain->invalidate = nccl_net_ofi_domain_invalidate;
 
 	domain->mr_cache = NULL;
 	if (!ofi_nccl_mr_cache_disable()) {

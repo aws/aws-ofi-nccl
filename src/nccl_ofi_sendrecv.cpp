@@ -1035,7 +1035,7 @@ static inline void sendrecv_endpoint_abort(nccl_net_ofi_sendrecv_ep_t *ep)
 	ep->ofi_ep = NULL;
 	ep->av = NULL;
 
-	base_domain->domain_active = false;
+	base_domain->invalidate(base_domain);
 }
 
 
