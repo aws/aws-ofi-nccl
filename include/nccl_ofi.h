@@ -345,6 +345,15 @@ struct nccl_net_ofi_device {
 	 * constructor.
 	 */
 	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table;
+
+	/**
+	 * Number of domains that have been deactivated but not freed
+	 *
+	 * This counter is used for a diagnostic when the device is finalized,
+	 * to track inactive domains (which aren't in the domain table) which
+	 * were never closed
+	 */
+	size_t unreleased_inactive_domain_counter;
 };
 
 
@@ -428,6 +437,14 @@ struct nccl_net_ofi_domain {
 	 * This flag is protected by domain_lock
 	 */
 	bool domain_active;
+
+	/**
+	 * Invalidate domain. Marks the domain as inactive and removes it from the
+	 * thread->domain map, so future communicators do not use this domain.
+	 *
+	 * Caller is assumed to hold domain_lock
+	 */
+	void (*invalidate)(nccl_net_ofi_domain_t *domain);
 
 /* Private */
 	/* pure virtual function called when resources associated with

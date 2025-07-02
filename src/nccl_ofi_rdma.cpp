@@ -4064,7 +4064,7 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
 
 	release_rdma_ep_resources(dev_id);
 
-	base_domain->domain_active = false;
+	base_domain->invalidate(base_domain);
 }
 
 /**
