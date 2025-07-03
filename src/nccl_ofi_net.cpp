@@ -1170,16 +1170,16 @@ nccl_net_ofi_domain_t::~nccl_net_ofi_domain_t()
 int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 {
 	int ret = 0;
-	nccl_net_ofi_domain_t *domain_ptr = domain;
+	nccl_net_ofi_domain_t *domain_ptr = this->domain;
 
 	if (!skip_lock) {
 		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
 	}
 
-	decrement_ref_cnt();
+	this->decrement_ref_cnt();
 
 	/* Store ref_cnt in local variable in case the endpoint gets deleted */
-	int local_ref_cnt = ref_cnt;
+	int local_ref_cnt = this->ref_cnt;
 	
 	if (local_ref_cnt == 0 || force_cleanup) {
 		/* If this was the endpoint we stored in domain for connection
@@ -1192,7 +1192,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
 				      this, local_ref_cnt);
 		}
-		ret = cleanup_resources();
+		ret = this->cleanup_resources();
 		delete this;
 	}
 
