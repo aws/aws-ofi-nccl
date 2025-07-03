@@ -176,18 +176,17 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_domain_t;
 class nccl_net_ofi_rdma_ep_t;
+
+struct nccl_net_ofi_rdma_domain_rail_t;
 
 struct nccl_net_ofi_rdma_device;
 struct nccl_net_ofi_rdma_device_rail;
-struct nccl_net_ofi_rdma_domain;
-struct nccl_net_ofi_rdma_domain_rail;
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_ep_rail;
 typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
 typedef struct nccl_net_ofi_rdma_device_rail nccl_net_ofi_rdma_device_rail_t;
-typedef struct nccl_net_ofi_rdma_domain nccl_net_ofi_rdma_domain_t;
-typedef struct nccl_net_ofi_rdma_domain_rail nccl_net_ofi_rdma_domain_rail_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
@@ -614,34 +613,196 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 } nccl_net_ofi_rdma_listen_comm_t;
 
 
-typedef struct nccl_net_ofi_rdma_domain_rail {
+struct nccl_net_ofi_rdma_domain_rail_t {
 	uint16_t rail_id;
 
 	/* Access domain handles */
 	struct fid_domain *domain;
 
 	struct fid_cq *cq;
-} nccl_net_ofi_rdma_domain_rail_t;
+};
 
 
-typedef struct nccl_net_ofi_rdma_domain {
-	nccl_net_ofi_domain_t base;
+class nccl_net_ofi_rdma_domain_t : public nccl_net_ofi_domain_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base domain class constructor, sets up RDMA domain resources like domain
+	 * rails, message scheduler, endpoint address list, flush buffer, and 
+	 * connection manager.
+	 */	
+	nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *domain_args);
+	
+	inline struct fid_domain *get_ofi_domain_for_cm() override
+	{
+		assert(!domain_rails.empty());
+		return domain_rails[0].domain;
+	}
+
+	inline struct fid_cq *get_ofi_cq_for_cm() override
+	{
+		assert(!domain_rails.empty());
+		return domain_rails[0].cq;
+	}
+
+	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_device_t *>(device);
+	}
+
+	inline nccl_net_ofi_rdma_domain_rail_t *rdma_domain_get_rail(uint16_t rail_id)
+	{
+		assert(!domain_rails.empty());
+		assert(rail_id < num_rails);
+		return &domain_rails[rail_id];
+	}
+
+	/* Caller must hold the device lock */
+	nccl_net_ofi_ep_t *create_endpoint() override;
+
+	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
+			     int type,
+			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
+
+	/**
+	 * @brief	Register memory region on RDMA domain
+	 *
+	 * @param	ckey
+	 *		MR cache key reference
+	 * @param	type
+	 *		Type of MR
+	 *
+	 * @return	Memory registration handle
+	 */
+	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
+		   int type,
+		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
+
+	/**
+	 * @brief	Register memory region on RDMA endpoint
+	 *
+	 * When a process executes the fork() syscall, all process memory pages
+	 * are marked as CoW (copy-on-write) such that the virtual pages are
+	 * read-only on both parent and child processes and when one of them
+	 * writes to a page, a page-fault is triggered which cause OS to copy the
+	 * page to a new physical page and change virtual page to be mapped to
+	 * the new physical page with writable access.
+	 *
+	 * In order for MRs to properly be used as device DMA source/target,
+	 * their physical pages must be pinned. In order to avoid changing MRs
+	 * physical pages after a fork(), rdma-core historically
+	 * madvice(MADV_DONTFORK) their buffers. fork() handles memory pages
+	 * marked with MADV_DONTFORK by keeping them writable on parent and
+	 * providing new zeroed physical pages on child.
+	 *
+	 * This assumes that the content of a page marked with MADV_DONTFORK is
+	 * not used by the child. However, this assumption is wrong when a MR do
+	 * not cover the entire page, because the remainder of the page may
+	 * contain content that the child intends to use. Which may lead to
+	 * various hard to debug issues in the child process (e.g. memory
+	 * corruption on CRT heap).
+	 *
+	 * To address this issue, kernel 5.15 introduced copy-on-fork support to
+	 * not require userspace to mark any memory page MADV_DONTFORK but
+	 * instead kernel copy the content of pinned memory pages from parent to
+	 * child immediately when fork() is executed.
+	 *
+	 * In attempt to avoid this issue in old kernels without copy-on-fork,
+	 * we enlarge our MRs to cover full memory pages and assert that this
+	 * is the case to avoid introducing such hard to debug issues in the
+	 * future. Note that we can only do this though on internal MRs and
+	 * NCCL is still allowed to register MRs which do not cover full
+	 * memory pages.
+	 *
+	 * It's worth emphasizing that registering a MR which does not cover a
+	 * full memory page on a kernel without copy-on-fork won't necessarily
+	 * result in an issue. Because fork() may never be executed, or an
+	 * execve() may immediately be executed after fork() such that the above
+	 * mentioned issue is not encountered.
+	 *
+	 * @param	data
+	 *		Pointer to MR. MR must be aligned to system memory page size.
+	 * @param	size
+	 *		Size of MR. Size must be a multiple of system memory page size.
+	 * @param	type
+	 *		Type of MR
+	 *
+	 * @return	Memory registration handle
+	 */
+	int reg_internal_mr(void *data,
+			    size_t size, int type,
+			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
+
+	/**
+	 * @brief	Deregister memory region
+	 *
+	 * @param	mr_handle
+	 *		Memory registration handle
+	 *
+	 * @return	0 on success
+	 *		non-zero on error
+	 */
+	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
 
 	uint16_t num_rails;
-	nccl_net_ofi_rdma_domain_rail_t *domain_rails;
+	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
 
 	/* The flush buffer */
 	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
 
 	/* List of endpoints and set of addresses they have connections to */
-	nccl_ofi_ep_addr_list_t *ep_addr_list;
+	nccl_ofi_ep_addr_list_t ep_addr_list;
 
 	/* Message scheduler */
-	nccl_net_ofi_scheduler_t *scheduler;
+	nccl_net_ofi_scheduler_t *scheduler = nullptr;
 
-	/* Associated connection manager */
-	nccl_ofi_connection_manager *cm;
-} nccl_net_ofi_rdma_domain_t;
+	/** 
+	 * Associated connection manager
+	 * 
+	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
+	 * safely be initialized in the domain constructor. Currently cm can't
+	 * be initialized in the domain constructor initializer list since it
+	 * expects the domain passed in as an argument to have already 
+	 * initialized Libfabric and ID pool resources. As well, cm can't be 
+	 * initialized at the end of the domain constructor since
+	 * nccl_ofi_connection_manager doesn't have a default constructor.
+	 */
+	nccl_ofi_connection_manager *cm = nullptr;
+
+protected:
+	/**
+	 * @brief	RDMA domain destructor.
+	 * 
+	 * Overrides base domain class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up RDMA domain resources before the destructor
+	 * was called.
+	 */		
+	~nccl_net_ofi_rdma_domain_t() override;
+
+	int cleanup_resources() override;
+
+	/**
+	 * @brief	Allocated and registers buffer to flush RDMA operations. On
+	 * 		Success, receive communicator holds reference to flush buffer
+	 * 		and associated memory handle.
+	 *
+	 * @param	dev_id
+	 *		Device ID
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int alloc_and_reg_flush_buff(int dev_id);
+
+	/**
+	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */			    
+	int dealloc_and_dereg_flush_buff();
+};
 
 
 /*
@@ -734,7 +895,7 @@ public:
 
 	inline nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device()
 	{
-		return (nccl_net_ofi_rdma_device_t *) rdma_endpoint_get_domain()->base.device;
+		return rdma_endpoint_get_domain()->rdma_domain_get_device();
 	}
 
 	/**
@@ -914,10 +1075,6 @@ public:
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
 	bool is_endpoint_per_communicator_ep;
-
-	/* thread id of the thread that called get_ep().  Used as the
-	   hash key for the endpoint hash */
-	long creating_thread_id;
 
 protected:
 	int cleanup_resources() override;
