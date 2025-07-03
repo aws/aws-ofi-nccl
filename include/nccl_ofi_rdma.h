@@ -863,10 +863,20 @@ public:
 	/**
 	 * @brief	Destructor.
 	 * 
-	 * Overrides base endpoint class virtual destructor, releases endpoint rails
-	 * and freelists.
+	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up RDMA endpoint resources before the destructor
+	 * was called.
+	 * 
+	 * TODO: Make protected once no longer needed to be directly called in 
+	 * nccl_net_ofi_rdma_domain_t::create_endpoint.
 	 */
 	~nccl_net_ofi_rdma_ep_t() override;
+
+	/**
+	 * TODO: Make protected once no longer needed to be directly called in 
+	 * nccl_net_ofi_rdma_domain_t::create_endpoint.
+	 */
+	int cleanup_resources() override;
 
 	int listen(nccl_net_ofi_conn_handle_t *handle,
 		   nccl_net_ofi_listen_comm_t **listen_comm) override;
@@ -1075,9 +1085,6 @@ public:
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
 	bool is_endpoint_per_communicator_ep;
-
-protected:
-	int cleanup_resources() override;
 
 private:
 	/**

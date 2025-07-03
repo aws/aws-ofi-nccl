@@ -174,14 +174,6 @@ public:
 	 */
 	nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg);
 
-	/**
-	 * @brief	Destructor.
-	 * 
-	 * Overrides base endpoint class virtual destructor, releases freelist and 
-	 * endpoint resources.
-	 */
-	~nccl_net_ofi_sendrecv_ep_t() override;
-
 	int listen(nccl_net_ofi_conn_handle_t *handle,
 		   nccl_net_ofi_listen_comm_t **listen_comm) override;
 
@@ -222,6 +214,15 @@ public:
 	struct fid_av *av = nullptr;
 
 protected:
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up SENDRECV endpoint resources before the
+	 * destructor was called.
+	 */
+	~nccl_net_ofi_sendrecv_ep_t() override;
+
 	int cleanup_resources() override;
 };
 

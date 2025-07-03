@@ -638,10 +638,8 @@ protected:
 	 * @brief	Cleanup endpoint resources.
 	 * 
 	 * Virtual function to clean up and release each transport type's endpoint resources.
-	 * Should not throw exceptions, and instead returns an error code on success or failure
-	 * to make it safe to call in endpoint destructors. Set called_cleanup_resources to true
-	 * at the start of the function to make sure it is only called once per endpoint
-	 * instance.
+	 * Set called_cleanup_resources to true at the start of the function to make sure it
+	 * is only called once per endpoint instance.
 	 * 
 	 * @return	0 if successfully, negative error code on failure.
 	 */
