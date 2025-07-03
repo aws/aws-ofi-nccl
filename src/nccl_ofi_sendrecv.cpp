@@ -2468,9 +2468,10 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 
 	hints->domain_attr->threading = FI_THREAD_SAFE;
 
-	/* Set progress mode to unspec to use the provider's default mode. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	/* Set progress mode to unspec to use the provider's default mode.
+	 * OFI_NCCL_PROGRESS can override the unspec default. */
+	hints->domain_attr->control_progress = nccl_ofi_progress_mode;
+	hints->domain_attr->data_progress = nccl_ofi_progress_mode;
 
 	/* Set MR mode bits to indicate FI_MR_BASIC registration */
 	hints->domain_attr->mr_mode |= FI_MR_VIRT_ADDR | FI_MR_ALLOCATED | FI_MR_PROV_KEY;

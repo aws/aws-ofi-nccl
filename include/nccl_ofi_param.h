@@ -359,4 +359,10 @@ OFI_NCCL_PARAM(bool, disable_close_message, "DISABLE_CLOSE_MESSAGE", true);
  */
 OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
 
+/*
+ * Progress mode requested.  Valid options are AUTO, MANUAL,
+ * and UNSPEC, with the default set to UNSPEC.
+ */
+OFI_NCCL_PARAM_STR(progress, "PROGRESS", "UNSPEC");
+
 #endif // End NCCL_OFI_PARAM_H_

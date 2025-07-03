@@ -65,6 +65,9 @@ bool virt_addr_mr = false;
 /* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
 bool data_progress_auto = false;
 
+/* Indicates the progress mode to be requested. */
+enum fi_progress nccl_ofi_progress_mode = FI_PROGRESS_UNSPEC;
+
 /* Size of a memory page */
 size_t system_page_size = 0;
 
@@ -199,6 +202,28 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	} else if (ofi_nccl_protocol.get_source() == ParamSource::API) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s (platform set)",
 			      ofi_nccl_protocol.get_string());
+	}
+
+	/* Set the progress mode based on OFI_NCCL_PROGRESS.  The default
+	 * is UNSPEC to use the provider's default mode.  We hard
+	 * poll for completion until there are no outstanding receive
+	 * requests.  If a provider defaults with async progress,
+	 * then we don't really care and should let it do that. */
+	if (ofi_nccl_progress.get_source() != ParamSource::DEFAULT) {
+		const char *progress_mode = ofi_nccl_progress.get();
+		if (strcasecmp(progress_mode, "UNSPEC") == 0) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using progress mode FI_PROGRESS_UNSPEC");
+		} else if (strcasecmp(progress_mode, "MANUAL") == 0) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using progress mode FI_PROGRESS_MANUAL");
+			nccl_ofi_progress_mode = FI_PROGRESS_MANUAL;
+		} else if (strcasecmp(progress_mode, "AUTO") == 0) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using progress mode FI_PROGRESS_AUTO");
+			nccl_ofi_progress_mode = FI_PROGRESS_AUTO;
+		} else {
+			NCCL_OFI_WARN("Invalid progress mode specified %s", progress_mode);
+			ret = -ENOTSUP;
+			goto exit;
+		}
 	}
 
 	if (ofi_nccl_protocol.get_source() != ParamSource::DEFAULT) {

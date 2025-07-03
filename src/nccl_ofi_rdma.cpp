@@ -7370,11 +7370,12 @@ static void get_hints(struct fi_info *hints)
 	hints->domain_attr->threading = FI_THREAD_SAFE;
 
 	/* Set progress mode to unspec to use the provider's default
-	 * mode.  We hard poll for completion, but if a provider is
+	 * mode.  OFI_NCCL_PROGRESS can override the unspec default.
+	 * We hard poll for completion, but if a provider is
 	 * faster with async progress, then we don't really care and
 	 * should let it do that. */
-	hints->domain_attr->control_progress = FI_PROGRESS_UNSPEC;
-	hints->domain_attr->data_progress = FI_PROGRESS_UNSPEC;
+	hints->domain_attr->control_progress = nccl_ofi_progress_mode;
+	hints->domain_attr->data_progress = nccl_ofi_progress_mode;
 }
 
 

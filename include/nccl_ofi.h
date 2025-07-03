@@ -119,6 +119,17 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+/* Requested progress mode to be used.
+ *
+ * During initialization, check the progress mode environment variable
+ * to determine the mode that the plugin will request from the provider.
+ *
+ * Valid values are FI_PROGRESS_UNSPEC, FI_PROGRESS_MANUAL, and
+ * FI_PROGRESS_AUTO; default is FI_PROGRESS_UNSPEC (set by the
+ * param OFI_NCCL_PROGRESS (Values: UNSPEC, MANUAL, and AUTO))
+ */
+extern enum fi_progress nccl_ofi_progress_mode;
+
 class nccl_net_ofi_ep_t;
 
 struct nccl_net_ofi_plugin;
