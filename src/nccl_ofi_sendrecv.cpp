@@ -1652,7 +1652,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = nullptr;
 	int dev_id = 0;
 	int num_addrs;
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = sendrecv_endpoint_get_domain();
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
 	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain_ptr, "listen");
@@ -1666,13 +1666,13 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	dev_id = device->base.dev_id;
 
-	local_ep_name = sendrecv_get_local_address(ofi_ep);
+	local_ep_name = sendrecv_get_local_address(this->ofi_ep);
 	if (local_ep_name == nullptr) {
 		return -EINVAL;
 	}
 
 	/* Insert local EP address to AV. This will be used to issue local read operations */
-	num_addrs = fi_av_insert(av, (void *)local_ep_name, 1, &local_ep_addr, 0, NULL);
+	num_addrs = fi_av_insert(this->av, (void *)local_ep_name, 1, &local_ep_addr, 0, NULL);
 
 	/* Only 1 address should be inserted into the AV */
 	if (OFI_UNLIKELY(num_addrs != 1)) {
@@ -1697,7 +1697,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	l_comm->base.base.dev_id = dev_id;
 	l_comm->base.accept = sendrecv_listen_comm_accept;
 	l_comm->base.close = sendrecv_listen_comm_close;
-	l_comm->local_ep = ofi_ep;
+	l_comm->local_ep = this->ofi_ep;
 	l_comm->local_ep_addr = local_ep_addr;
 
 	l_comm->listener = domain_ptr->cm->listen();
@@ -2024,7 +2024,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 {
 	int ret = 0;
 	*send_comm = nullptr;
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = sendrecv_endpoint_get_domain();
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
 	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
@@ -2063,7 +2063,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Progress our engine to get completions */
-	ret = sendrecv_cq_process(sendrecv_endpoint_get_domain()->cq);
+	ret = sendrecv_cq_process(this->sendrecv_endpoint_get_domain()->cq);
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(s_comm);
 		return ret;
@@ -2109,18 +2109,18 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 {
 	int ret = 0;
-	called_cleanup_resources = true;
+	this->called_cleanup_resources = true;
 	nccl_net_ofi_sendrecv_device_t *device = nullptr;
 
 	/* Validate device */
-	device = sendrecv_endpoint_get_device();
+	device = this->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		ret = -EINVAL;
 	} else {
-		nccl_ofi_ofiutils_ep_release(ofi_ep, av, device->base.dev_id);
-		ofi_ep = nullptr;
-		av = nullptr;		
+		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->base.dev_id);
+		this->ofi_ep = nullptr;
+		this->av = nullptr;		
 	}
 
 	assert(ret == 0);
@@ -2132,8 +2132,8 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
 {
 	int ret = 0;
-	if (!called_cleanup_resources) {
-		ret = cleanup_resources();
+	if (!this->called_cleanup_resources) {
+		ret = this->cleanup_resources();
 	}
 
 	if (ret != 0) {
@@ -2160,14 +2160,14 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 	assert(device != nullptr);
 
 	/* Initialize endpoint tag */
-	tag = 0;
-	max_tag = device->max_tag;
+	this->tag = 0;
+	this->max_tag = device->max_tag;
 
-	struct fid_domain *ofi_domain = sendrecv_endpoint_get_ofi_domain();
+	struct fid_domain *ofi_domain = this->sendrecv_endpoint_get_ofi_domain();
 	ret = nccl_ofi_ofiutils_init_connection(device->info,
 						ofi_domain,
-						&ofi_ep,
-						&av,
+						&this->ofi_ep,
+						&this->av,
 						domain_arg->cq);
 	if (ret != 0) {
 		throw std::runtime_error("sendrecv endpoint constructor: failed to init endpoint");
