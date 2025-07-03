@@ -6512,6 +6512,8 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 	int ret = 0;
 	int err_code = 0;
 
+	/* cleanup_resources should only be called once per endpoint instance */
+	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
 	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
@@ -6599,16 +6601,10 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 
 nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 {
-	int ret = 0;
-	if (!this->called_cleanup_resources) {
-		ret = this->cleanup_resources();
-	}
-
-	if (ret != 0) {
-		NCCL_OFI_WARN("RDMA transport endpoint destructor failed");
-	}
+	/* cleanup_resources should always be called to clean-up endpoint resources before
+	   the destructor is called */
+	assert(this->called_cleanup_resources);
 }
-
 
 static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
 								nccl_net_ofi_rdma_ep_t *ep)
@@ -6653,6 +6649,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
 	 * reads the maximum write inline size variable. */
 	ret = init_max_write_inline_size_if_not_initialized(device_ptr, ep);
 	if (ret != 0) {
+		ep->cleanup_resources();
 		delete ep;
 		ep = nullptr;
 	}

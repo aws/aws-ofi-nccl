@@ -2109,6 +2109,9 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 {
 	int ret = 0;
+
+	/* cleanup_resources should only be called once per endpoint instance */
+	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 	nccl_net_ofi_sendrecv_device_t *device = nullptr;
 
@@ -2131,14 +2134,9 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 
 nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
 {
-	int ret = 0;
-	if (!this->called_cleanup_resources) {
-		ret = this->cleanup_resources();
-	}
-
-	if (ret != 0) {
-		NCCL_OFI_WARN("SENDRECV transport endpoint destructor failed");
-	}
+	/* cleanup_resources should always be called to clean-up endpoint resources before
+	   the destructor is called */
+	assert(this->called_cleanup_resources);
 }
 
 
