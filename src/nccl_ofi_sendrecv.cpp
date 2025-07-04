@@ -1005,31 +1005,17 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 }
 
 
-/**
- * Abort an endpoint when a communicator using it still has inflight requests
- *
- * This function will
- * 1. Close the OFI resources (ep, av) associated with the endpoint
- * 2. Mark the associated domain as inactive to prevent further use of domain
- *    resources, such as completion queue
- *
- * After this function returns, the endpoint will still have non-OFI resources
- * allocated (freelists, rx requests, etc.), but will not be usable except to
- * release it (release_ep).
- */
-static inline void sendrecv_endpoint_abort(nccl_net_ofi_sendrecv_ep_t *ep)
+void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 {
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
+	pthread_wrapper domain_lock(&this->domain->domain_lock);
 
-	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
+	int dev_id = this->domain->get_device()->dev_id;
 
-	int dev_id = domain_ptr->get_device()->dev_id;
+	nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, dev_id);
+	this->ofi_ep = nullptr;
+	this->av = nullptr;
 
-	nccl_ofi_ofiutils_ep_release(ep->ofi_ep, ep->av, dev_id);
-	ep->ofi_ep = NULL;
-	ep->av = NULL;
-
-	domain_ptr->invalidate();
+	this->domain->invalidate();
 }
 
 
@@ -1054,7 +1040,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
 			      r_comm);
 
-		sendrecv_endpoint_abort(ep);
+		ep->sendrecv_endpoint_abort();
 	}
 
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
@@ -1849,7 +1835,7 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating domain",
 			      s_comm);
 
-		sendrecv_endpoint_abort(ep);
+		ep->sendrecv_endpoint_abort();
 	}
 
 	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
