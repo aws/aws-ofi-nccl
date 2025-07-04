@@ -183,7 +183,7 @@ public:
 
 	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
 	{
-		return (nccl_net_ofi_sendrecv_domain_t *) domain;
+		return static_cast<nccl_net_ofi_sendrecv_domain_t *>(domain);
 	}
 
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()

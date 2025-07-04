@@ -900,7 +900,7 @@ public:
 
 	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
 	{
-		return (nccl_net_ofi_rdma_domain_t *) domain;
+		return static_cast<nccl_net_ofi_rdma_domain_t *>(domain);
 	}
 
 	inline nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device()

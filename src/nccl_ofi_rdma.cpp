@@ -4941,8 +4941,9 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Build listen_comm */
-	l_comm = (nccl_net_ofi_rdma_listen_comm_t *)calloc(1,
-							   sizeof(nccl_net_ofi_rdma_listen_comm_t));
+	l_comm = static_cast<nccl_net_ofi_rdma_listen_comm_t *>(calloc(
+		1,
+		sizeof(nccl_net_ofi_rdma_listen_comm_t)));
 	if (OFI_UNLIKELY(l_comm == nullptr)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
 		ret = -ENOMEM;
@@ -6270,7 +6271,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
-		(nccl_net_ofi_rdma_send_comm_t *)comm_state->comm;
+		reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>(comm_state->comm);
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 

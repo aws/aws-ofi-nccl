@@ -1683,9 +1683,9 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	free(local_ep_name);
 
 	/* Build listen_comm */
-	l_comm = (nccl_net_ofi_sendrecv_listen_comm_t *)calloc(
+	l_comm = static_cast<nccl_net_ofi_sendrecv_listen_comm_t *>(calloc(
 		1,
-		sizeof(nccl_net_ofi_sendrecv_listen_comm_t));
+		sizeof(nccl_net_ofi_sendrecv_listen_comm_t)));
 	if (OFI_UNLIKELY(l_comm == nullptr)) {
 		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
 		return -ENOMEM;
@@ -1705,7 +1705,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	/* Build handle */
 	*handle = l_comm->listener->get_handle();
 
-	*listen_comm = (nccl_net_ofi_listen_comm_t *)l_comm;
+	*listen_comm = reinterpret_cast<nccl_net_ofi_listen_comm_t *>(l_comm);
 	return 0;
 }
 
@@ -2043,7 +2043,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
 	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		(nccl_net_ofi_sendrecv_send_comm_t *)comm_state->comm;
+		reinterpret_cast<nccl_net_ofi_sendrecv_send_comm_t *>(comm_state->comm);
 
 	/* Connection establishment is not done yet */
 	if (comm_state->stage == COMM_CONNECTED) {
