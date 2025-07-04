@@ -201,6 +201,20 @@ public:
 		return sendrecv_endpoint_get_domain()->domain;
 	}
 
+	/**
+	 * Abort an endpoint when a communicator using it still has inflight requests
+	 *
+	 * This function will
+	 * 1. Close the OFI resources (ep, av) associated with the endpoint
+	 * 2. Mark the associated domain as inactive to prevent further use of domain
+	 *    resources, such as completion queue
+	 *
+	 * After this function returns, the endpoint will still have non-OFI resources
+	 * allocated (freelists, rx requests, etc.), but will not be usable except to
+	 * release it (release_ep).
+	 */
+	void sendrecv_endpoint_abort();
+
 	/* Current available tag ID */
 	uint64_t tag;
 
