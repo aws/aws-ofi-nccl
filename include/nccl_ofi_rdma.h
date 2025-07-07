@@ -1086,7 +1086,7 @@ public:
 	   receive communicator */
 	bool is_endpoint_per_communicator_ep;
 
-private:
+protected:
 	/**
 	 * @brief	Initialize rx buffer data of endpoint
 	 *
