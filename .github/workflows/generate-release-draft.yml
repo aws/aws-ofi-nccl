@@ -1,0 +1,113 @@
+defaults:
+  run:
+    shell: bash
+
+name: Build and Generate Draft Release
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - container: ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}/aws-ofi-nccl-ubuntu:cuda-gcc-latest-none-efalattest
+            name: ubuntu
+            generate_packages: true
+          - container: ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}/aws-ofi-nccl-al2023:cuda-efalatest
+            name: amazonlinux
+            generate_packages: false
+
+    runs-on: ubuntu-latest
+    container: ${{ matrix.container }}
+    name: Build for ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.ref }}
+
+      - name: Configure and build
+        run: |
+          git config --global --add safe.directory $GITHUB_WORKSPACE
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      --with-cuda=/usr/local/cuda/
+          make distcheck V=1
+          make dist
+
+      - name: Generate source packages
+        if: matrix.generate_packages
+        run: |
+          echo "Attempting to generate packages for tag: ${{ github.ref_name }}"
+          ./contrib/scripts/generate_source_packages.sh "${{ github.ref_name }}"
+
+      - name: Prepare release notes
+        if: matrix.generate_packages
+        run: |
+          VERSION=${{ github.ref_name }}
+          awk -v version="$VERSION" '
+          BEGIN { found=0; printing=0; }
+          $0 ~ "^# " version " \\(" { found=1; printing=1; print; next }
+          printing==1 && $0 ~ "^# v[0-9]" { printing=0; exit }
+          printing==1 { print }
+          END {
+            if (!found) {
+              print "No specific release notes found for version " version > "/dev/stderr"
+              exit 1
+            }
+          }' RELEASENOTES.md > RELEASE_NOTES.md
+
+          # Extract version without 'v' prefix for tarball name
+          TARBALL_VERSION=$(echo $VERSION | sed 's/^v//')
+          TARBALL_NAME="aws-ofi-nccl-${TARBALL_VERSION}.tar.gz"
+
+          # Calculate SHA512 checksum for the tarball and format it properly
+          CHECKSUM=$(sha512sum ${TARBALL_NAME})
+
+          # Append checksum information to release notes in the exact format of the v1.16.0 release
+          echo -e "\nChecksum (sha512) for the release tarball \`aws-ofi-nccl-${TARBALL_VERSION}.tar.gz\`:\n\n\`\`\`\n${CHECKSUM}\n\`\`\`" >> RELEASE_NOTES.md
+
+      - name: Upload artifacts
+        if: matrix.generate_packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.name }}
+          path: |
+            *.tar*
+            *.dsc
+            *.rpm
+            RELEASE_NOTES.md
+          if-no-files-found: error
+
+  create-release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: packages-ubuntu
+
+      - name: Display structure of downloaded files
+        run: ls -R
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: true
+          prerelease: false
+          body_path: RELEASE_NOTES.md
+          files: |
+            aws-ofi-nccl*
+            libnccl-ofi-*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
