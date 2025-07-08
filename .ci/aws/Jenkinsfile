@@ -181,6 +181,7 @@ pipeline {
                     def p3dn_lock_label = "p3dn-1-4node"
                     def p4d_lock_label = "p4d-1-4node"
                     def p5_lock_label = "p5-1-4node"
+                    def p5en_lock_label = "p5en-1-4node"
                     def g4dn_lock_label = "g4dn-1-4node"
                     def trn1_lock_label = "trn1-1-4node"
                     def trn1n_lock_label = "trn1n-1-4node"
@@ -188,24 +189,30 @@ pipeline {
                     def nvidia_test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
                     def neuron_test_list = "--test-list test_nccom_test"
 
-                    def p3_p4_p5_base_os = "alinux2"
+                    def base_os = "alinux2"
+
                     def p3_p4_addl_args = "${base_args} ${container_addl_args} ${nvidia_test_list}"
                     def p5_addl_args = "${base_args} ${container_addl_args}  ${nvidia_test_list}"
+                    def p5en_addl_args = "${base_args} ${container_addl_args}  ${nvidia_test_list}"
                     def g4dn_addl_args = "${base_args} ${nvidia_test_list}"
                     def g4dn_tcp_addl_args = "${g4dn_addl_args} ${test_tcp_provider}"
                     def neuron_addl_args = "${base_args} ${neuron_test_list}"
 
                     // p3dn tests
-                    stages["4_p3dn_al2"] = get_test_stage_with_lock_container("4_p3dn_al2", env.BUILD_TAG, p3_p4_p5_base_os, "alinux2", "p3dn.24xlarge", p3dn_lock_label, num_instances, p3_p4_addl_args)
-                    stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock_container("4_p3dn_ubuntu2204", env.BUILD_TAG, p3_p4_p5_base_os, "ubuntu2204", "p3dn.24xlarge", p3dn_lock_label, num_instances, p3_p4_addl_args)
+                    stages["4_p3dn_al2"] = get_test_stage_with_lock_container("4_p3dn_al2", env.BUILD_TAG, base_os, "alinux2", "p3dn.24xlarge", p3dn_lock_label, num_instances, p3_p4_addl_args)
+                    stages["4_p3dn_ubuntu2204"] = get_test_stage_with_lock_container("4_p3dn_ubuntu2204", env.BUILD_TAG, base_os, "ubuntu2204", "p3dn.24xlarge", p3dn_lock_label, num_instances, p3_p4_addl_args)
 
                     // p4d tests
-                    stages["4_p4d_alinux2"] = get_test_stage_with_lock_container("4_p4d_alinux2", env.BUILD_TAG, p3_p4_p5_base_os, "alinux2", "p4d.24xlarge", p4d_lock_label, num_instances, p3_p4_addl_args)
-                    stages["4_p4d_ubuntu2204"] = get_test_stage_with_lock_container("4_p4d_ubuntu2204", env.BUILD_TAG, p3_p4_p5_base_os, "ubuntu2204", "p4d.24xlarge", p4d_lock_label, num_instances, p3_p4_addl_args)
+                    stages["4_p4d_alinux2"] = get_test_stage_with_lock_container("4_p4d_alinux2", env.BUILD_TAG, base_os, "alinux2", "p4d.24xlarge", p4d_lock_label, num_instances, p3_p4_addl_args)
+                    stages["4_p4d_ubuntu2204"] = get_test_stage_with_lock_container("4_p4d_ubuntu2204", env.BUILD_TAG, base_os, "ubuntu2204", "p4d.24xlarge", p4d_lock_label, num_instances, p3_p4_addl_args)
 
                     // p5 tests
-                    stages["4_p5_alinux2"] = get_test_stage_with_lock_container("4_p5_alinux2", env.BUILD_TAG, p3_p4_p5_base_os, "alinux2", "p5.48xlarge", p5_lock_label, num_instances, p5_addl_args)
-                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock_container("4_p5_ubuntu2204", env.BUILD_TAG, p3_p4_p5_base_os, "ubuntu2204", "p5.48xlarge", p5_lock_label, num_instances, p5_addl_args)
+                    stages["4_p5_alinux2"] = get_test_stage_with_lock_container("4_p5_alinux2", env.BUILD_TAG, base_os, "alinux2", "p5.48xlarge", p5_lock_label, num_instances, p5_addl_args)
+                    stages["4_p5_ubuntu2204"] = get_test_stage_with_lock_container("4_p5_ubuntu2204", env.BUILD_TAG, base_os, "ubuntu2204", "p5.48xlarge", p5_lock_label, num_instances, p5_addl_args)
+
+                    // p5en tests
+                    stages["4_p5en_alinux2"] = get_test_stage_with_lock_container("4_p5en_alinux2", env.BUILD_TAG, base_os, "alinux2", "p5en.48xlarge", p5en_lock_label, num_instances, p5en_addl_args)
+                    stages["4_p5en_ubuntu2204"] = get_test_stage_with_lock_container("4_p5en_ubuntu2204", env.BUILD_TAG, base_os, "ubuntu2204", "p5en.48xlarge", p5en_lock_label, num_instances, p5en_addl_args)
 
                     // g4dn tests
                     stages["4_g4dn_ubuntu2204"] = get_test_stage_with_lock_persistent("4_g4dn_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "g4dn.12xlarge", g4dn_lock_label, num_instances, g4dn_addl_args)
