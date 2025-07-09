@@ -318,6 +318,20 @@ public:
 
 	nccl_net_ofi_ep_t *get_ep();
 
+	/**
+	 * implementation of retreiving a domain from a device.  This code
+	 * assumes the device lock is already held, because in the case of
+	 * get_domain() we only need to worry about the device lock, but in
+	 * the device->get_ep call, hold the lock while we're also creating
+	 * the ep.
+	 */
+	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl();
+
+	/**
+	 * @brief	Erase all domain_table elements matching the provided domain
+	 */
+	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
+
 	struct nccl_net_ofi_plugin *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */

@@ -770,17 +770,14 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
-/**
- * @brief	Erase all domain_table elements matching the provided domain
- */
-static void nccl_net_ofi_device_remove_domain(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain)
+void nccl_net_ofi_device_t::remove_domain_from_map(nccl_net_ofi_domain_t *domain)
 {
 	size_t n_removed = 0;
 
-	assert(device->domain_table);
-	for (auto it = device->domain_table->begin(); it != device->domain_table->end();) {
+	assert(this->domain_table);
+	for (auto it = this->domain_table->begin(); it != this->domain_table->end();) {
 		if (it->second == domain) {
-			it = device->domain_table->erase(it);
+			it = this->domain_table->erase(it);
 			++n_removed;
 		} else {
 			++it;
@@ -791,46 +788,35 @@ static void nccl_net_ofi_device_remove_domain(nccl_net_ofi_device_t *device, ncc
 }
 
 
-/*
- * implementation of retreiving a domain from a device.  This code
- * assumes the device lock is already held, because in the case of
- * get_domain() we only need to worry about the device lock, but in
- * the device->get_ep call, hold the lock while we're also creating
- * the ep.
- */
-static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_device_t *device)
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_impl()
 {
-	nccl_net_ofi_plugin_t *plugin = NULL;
-	nccl_net_ofi_domain_t *domain = NULL;
+	nccl_net_ofi_domain_t *domain = nullptr;
 	long lookup_key = 0;
 
-	assert(device != NULL);
+	assert(this->plugin != nullptr);
 
-	plugin = device->plugin;
-	assert(plugin != NULL);
-
-	if (plugin->domain_per_thread) {
+	if (this->plugin->domain_per_thread) {
 		lookup_key = nccl_net_ofi_gettid();
 	}
 
-	auto domain_iter = device->domain_table->find(lookup_key);
+	auto domain_iter = this->domain_table->find(lookup_key);
 
-	if (domain_iter != device->domain_table->end()) {
+	if (domain_iter != this->domain_table->end()) {
 		domain = domain_iter->second;
 	} else {
-		domain = device->create_domain();
-		if (domain == NULL) {
+		domain = this->create_domain();
+		if (domain == nullptr) {
 			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
-				      device->name);
-			return NULL;
+				      this->name);
+			return nullptr;
 		}
 
-		device->domain_table->insert(std::pair(lookup_key,  domain));
+		this->domain_table->insert(std::pair(lookup_key, domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
-			       device->dev_id,
-			       device->name);
+			       this->dev_id,
+			       this->name);
 	}
 
 	return domain;
@@ -842,7 +828,7 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain()
 	nccl_net_ofi_domain_t *domain = nullptr;
 
 	pthread_wrapper scoped_device_lock(&this->device_lock);
-	domain = nccl_net_ofi_device_get_domain_impl(this);
+	domain = this->nccl_net_ofi_device_get_domain_impl();
 
 	return domain;
 }
@@ -855,7 +841,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep()
 
 	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	domain = nccl_net_ofi_device_get_domain_impl(this);
+	domain = this->nccl_net_ofi_device_get_domain_impl();
 	if (domain == nullptr) {
 		return nullptr;
 	}
@@ -1025,7 +1011,7 @@ void nccl_net_ofi_domain_t::invalidate()
 
 		/* Remove this domain from the thread->domain table so that it
 		   is not used for future communicators */
-		nccl_net_ofi_device_remove_domain(this->device, this);
+		this->device->remove_domain_from_map(this);
 
 		++this->device->unreleased_inactive_domain_counter;
 	}
@@ -1054,7 +1040,7 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 		/* Remove this domain from the domain table if it was active.
 		   If not, it was already removed in domain_invalidate. */
 		if (this->domain_active) {
-			nccl_net_ofi_device_remove_domain(device_ptr, this);
+			device_ptr->remove_domain_from_map(this);
 		} else {
 			--device_ptr->unreleased_inactive_domain_counter;
 		}
