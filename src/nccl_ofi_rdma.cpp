@@ -6541,7 +6541,7 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 		if (ret == 0) {
 			is_max_write_inline_size_initialized = true;
 		} else if (ret == -FI_ENOPROTOOPT) {
-			max_write_inline_size = device->device_rails[0].info->tx_attr->inject_size;
+			max_write_inline_size = device->rdma_device_get_rail(0)->info->tx_attr->inject_size;
 			is_max_write_inline_size_initialized = true;
 			ret = 0;
 		} else {

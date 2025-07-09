@@ -1013,7 +1013,7 @@ void nccl_net_ofi_domain_t::invalidate()
 		   is not used for future communicators */
 		this->device->remove_domain_from_map(this);
 
-		++this->device->unreleased_inactive_domain_counter;
+		this->device->inc_unreleased_inactive_domain_counter();
 	}
 }
 
@@ -1042,7 +1042,7 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 		if (this->domain_active) {
 			device_ptr->remove_domain_from_map(this);
 		} else {
-			--device_ptr->unreleased_inactive_domain_counter;
+			device_ptr->dec_unreleased_inactive_domain_counter();
 		}
 
 		// domain->free below is going to free the domain lock

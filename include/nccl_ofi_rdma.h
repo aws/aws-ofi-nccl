@@ -1272,18 +1272,11 @@ public:
 	/* Number of rails */
 	uint16_t num_rails;
 
-	/* Array of 'num_rails' device rails */
-	nccl_net_ofi_rdma_device_rail_t *device_rails = nullptr;
-
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 
 	/* ID pool */
 	nccl_ofi_idpool_t *comm_idpool = nullptr;
-
-	/* Array of open comms associated with this endpoint. This is needed for fast
-	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms = nullptr;
 
 	bool use_long_rkeys;
 
@@ -1291,7 +1284,7 @@ public:
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 
-/* private */
+protected:
 	/**
 	 * @brief	RDMA device destructor.
 	 * 
@@ -1337,6 +1330,13 @@ public:
 	 */
 	static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info *info_list,
 									 int num_infos);
+
+	/* Array of 'num_rails' device rails */
+	nccl_net_ofi_rdma_device_rail_t *device_rails = nullptr;
+
+	/* Array of open comms associated with this endpoint. This is needed for fast
+	   lookup of comms in the RDMA protocol. */
+	nccl_net_ofi_comm_t **comms = nullptr;
 };
 
 
