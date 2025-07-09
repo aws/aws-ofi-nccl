@@ -3475,7 +3475,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	device->rdma_device_set_comm(r_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	device->comm_idpool->free_id(r_comm->local_comm_id);
+	device->comm_idpool.free_id(r_comm->local_comm_id);
 
 	ret = nccl_net_ofi_mutex_destroy(&r_comm->ctrl_counter_lock);
 	if (ret != 0) {
@@ -3697,7 +3697,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	device->rdma_device_set_comm(s_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
-	device->comm_idpool->free_id(s_comm->local_comm_id);
+	device->comm_idpool.free_id(s_comm->local_comm_id);
 
 	/* Destroy domain */
 #if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
@@ -4314,7 +4314,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	r_comm->n_ctrl_delivered = 0;
 
 	/* Allocate recv communicator ID */
-	comm_id = device->comm_idpool->allocate_id();
+	comm_id = device->comm_idpool.allocate_id();
 	if (OFI_UNLIKELY(comm_id == FI_KEY_NOTAVAIL)) {
 		r_comm->local_comm_id = COMM_ID_INVALID;
 		ret = -ENOMEM;
@@ -4505,7 +4505,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		if (r_comm->msgbuff)
 			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
 		if (COMM_ID_INVALID != r_comm->local_comm_id) {
-			device->comm_idpool->free_id(r_comm->local_comm_id);
+			device->comm_idpool.free_id(r_comm->local_comm_id);
 		}
 		nccl_net_ofi_mutex_destroy(&r_comm->ctrl_counter_lock);
 		free_rdma_recv_comm(r_comm);
@@ -6113,7 +6113,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	this->increment_ref_cnt();
 
 	/* Allocate send communicator ID */
-	comm_id = device->comm_idpool->allocate_id();
+	comm_id = device->comm_idpool.allocate_id();
 	if (OFI_UNLIKELY(comm_id == FI_KEY_NOTAVAIL)) {
 		ret_s_comm->local_comm_id = COMM_ID_INVALID;
 		ret = -ENOMEM;
@@ -6163,7 +6163,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
  error:
 	if (ret_s_comm) {
 		if (COMM_ID_INVALID != ret_s_comm->local_comm_id) {
-			device->comm_idpool->free_id(ret_s_comm->local_comm_id);
+			device->comm_idpool.free_id(ret_s_comm->local_comm_id);
 		}
 		nccl_net_ofi_mutex_destroy(&ret_s_comm->ctrl_recv_lock);
 		this->decrement_ref_cnt();
@@ -6781,11 +6781,11 @@ int nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(nccl_net_ofi_rdma
 int nccl_net_ofi_rdma_device_t::device_prepare_for_connection()
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_device_rail_t *begin = this->device_rails;
-	nccl_net_ofi_rdma_device_rail_t *end = this->device_rails + this->num_rails;
+	auto begin = this->device_rails.begin();
+	auto end = this->device_rails.end();
 
 	for (; begin != end; ++begin) {
-		ret = nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(begin);
+		ret = this->init_device_rail_ofi_resources(&(*begin));
 		if (ret != 0) {
 			return ret;
 		}
@@ -6797,8 +6797,8 @@ int nccl_net_ofi_rdma_device_t::device_prepare_for_connection()
 
 void nccl_net_ofi_rdma_device_t::release_device_ofi_resources()
 {
-	nccl_net_ofi_rdma_device_rail_t *begin = this->device_rails;
-	nccl_net_ofi_rdma_device_rail_t *end = this->device_rails + this->num_rails;
+	auto begin = this->device_rails.begin();
+	auto end = this->device_rails.end();
 
 	for (; begin != end; ++begin) {
 		if (begin->fabric) {
@@ -6811,35 +6811,28 @@ void nccl_net_ofi_rdma_device_t::release_device_ofi_resources()
 }
 
 
-nccl_net_ofi_rdma_device_rail_t *nccl_net_ofi_rdma_device_t::create_device_rail_array(struct fi_info *info_list,
-										      int num_infos)
+int nccl_net_ofi_rdma_device_t::create_device_rail_array(struct fi_info *info_list,
+							 int num_infos)
 {
-	/* Allocate NIC info array */
-	auto *device_rails = static_cast<nccl_net_ofi_rdma_device_rail_t *>(calloc(num_infos,
-		sizeof(nccl_net_ofi_rdma_device_rail_t)));
-	if (device_rails == NULL) {
-		return NULL;
-	}
-
 	for (int i = 0 ; i < num_infos ; i++) {
-		if (info_list == NULL) {
+		if (info_list == nullptr) {
 			goto error;
 		}
 
 		/* Duplicate NIC info */
-		device_rails[i].info = fi_dupinfo(info_list);
-		if (device_rails[i].info == NULL) {
+		this->device_rails[i].info = fi_dupinfo(info_list);
+		if (this->device_rails[i].info == nullptr) {
 			goto error;
 		}
 		/* Libfabric documnetation is not clear if next is
 		 * copied or not with fi_dupinfo(), so assume the
 		 * worst */
-		device_rails[i].info->next = NULL;
+		this->device_rails[i].info->next = nullptr;
 
 		info_list = info_list->next;
 	}
 
-	return device_rails;
+	return 0;
 
 error:
 	for (int i = 0 ; i < num_infos ; i++) {
@@ -6847,9 +6840,7 @@ error:
 			fi_freeinfo(device_rails[i].info);
 		}
 	}
-	free(device_rails);
-
-	return NULL;
+	return -EINVAL;
 }
 
 
@@ -6875,9 +6866,9 @@ int nccl_net_ofi_rdma_device_t::cleanup_resources()
 	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
-	if (!this->domain_table->empty()) {
+	if (!this->domain_table.empty()) {
 		NCCL_OFI_INFO(NCCL_NET, "%zu domains still active at close",
-			      this->domain_table->size());
+			      this->domain_table.size());
 		err_code = this->release_all_domain_and_ep();
 		if (err_code != 0) {
 			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
@@ -6886,20 +6877,7 @@ int nccl_net_ofi_rdma_device_t::cleanup_resources()
 		}
 	}
 
-	if (this->device_rails != nullptr) {
-		this->release_device_ofi_resources();
-		free(this->device_rails);
-	}
-
-	if (this->comms) {
-		free(this->comms);
-		this->comms = nullptr;
-	}
-
-	if (this->comm_idpool) {
-		delete this->comm_idpool;
-		this->comm_idpool = nullptr;
-	}
+	this->release_device_ofi_resources();
 
 	assert(ret == 0);
 
@@ -6922,7 +6900,11 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 							int device_id,
 							struct fi_info *info_list,
 							nccl_ofi_topo_t *topo)
-	: nccl_net_ofi_device_t(plugin_arg, device_id, info_list)
+	: nccl_net_ofi_device_t(plugin_arg, device_id, info_list),
+	  num_comm_ids(static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS)),
+	  comm_idpool(num_comm_ids),
+	  comms(NCCL_OFI_RDMA_MAX_COMMS, nullptr)
+
 {
 	int ret = 0;
 	size_t length = 0, target_length;
@@ -6987,8 +6969,11 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 
 	/* Set NIC information */
 	this->num_rails = length;
-	this->device_rails = nccl_net_ofi_rdma_device_t::create_device_rail_array(info_list, length);
-	if (this->device_rails == NULL) {
+
+	this->device_rails = std::vector<nccl_net_ofi_rdma_device_rail_t>(length, nccl_net_ofi_rdma_device_rail_t{});
+
+	ret = this->create_device_rail_array(info_list, length);
+	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
 		throw std::runtime_error("RDMA device constructor: device rail array creation failed");
 	}
@@ -6999,8 +6984,6 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 		this->use_long_rkeys = true;
 	}
 
-	this->num_comm_ids = static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS);
-
 	/* Initialize libfabric resources of rdma device */
 	ret = this->device_prepare_for_connection();
 	if (ret != 0) {
@@ -7008,19 +6991,6 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 			      strerror(-ret));
 		throw std::runtime_error("RDMA device constructor: connection prep failed");
 	}
-
-	/* Create array of comms. */
-	/* TODO make this array expandable */
-	this->comms = static_cast<nccl_net_ofi_comm_t**>(calloc(NCCL_OFI_RDMA_MAX_COMMS,
-								sizeof(nccl_net_ofi_comm_t *)));
-	if (!this->comms) {
-		NCCL_OFI_WARN("Failed to alloc comms array");
-		ret = -ENOMEM;
-		throw std::runtime_error("RDMA device constructor: comms array alloc failed");
-	}
-
-	/* Initialize device ID pool */
-	this->comm_idpool = new nccl_ofi_idpool_t(this->num_comm_ids);
 
 	/* NVTX domain */
 #if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
