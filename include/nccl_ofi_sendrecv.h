@@ -240,6 +240,14 @@ protected:
 };
 
 
+struct nccl_net_ofi_sendrecv_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	struct fi_info *provider_list;
+};
+typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
+
+
 /**
  * @brief	Sendrecv Device
  *
@@ -274,6 +282,11 @@ public:
 		return info;
 	}
 
+	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+	}
+
 	/* Device provider */
 	struct fi_info *info = nullptr;
 
@@ -303,6 +316,12 @@ public:
 	int cleanup_resources() override;
 
 	nccl_net_ofi_domain_t *create_domain() override;
+
+	/**
+	 * @brief	Allocates and initialises various libfabric resources like
+	 *		fabric and domain to make sendrecv device ready for endpoint creation.
+	 */
+	int sendrecv_device_prepare_for_connection();
 };
 	
 typedef struct nccl_net_ofi_sendrecv_req {
@@ -332,14 +351,6 @@ typedef struct nccl_net_ofi_sendrecv_req {
 	/* Backpointer to freelist elem (for cleanup) */
 	nccl_ofi_freelist_elem_t *elem;
 } nccl_net_ofi_sendrecv_req_t;
-
-
-struct nccl_net_ofi_sendrecv_plugin {
-	nccl_net_ofi_plugin_t base;
-
-	struct fi_info *provider_list;
-};
-typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
 
 
 /*
