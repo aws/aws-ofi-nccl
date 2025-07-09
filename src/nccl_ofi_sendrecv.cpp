@@ -2291,9 +2291,9 @@ int nccl_net_ofi_sendrecv_device_t::cleanup_resources()
 	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
-	if (!this->domain_table->empty()) {
+	if (!this->domain_table.empty()) {
 		NCCL_OFI_INFO(NCCL_NET, "%zu SENDRECV domains still active at close",
-			      this->domain_table->size());
+			      this->domain_table.size());
 		err_code = this->release_all_domain_and_ep();
 		if (err_code != 0) {
 			NCCL_OFI_WARN("Cleanup of SENDRECV domain failed. RC: %d, ERROR: %s",

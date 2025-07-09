@@ -774,10 +774,10 @@ void nccl_net_ofi_device_t::remove_domain_from_map(nccl_net_ofi_domain_t *domain
 {
 	size_t n_removed = 0;
 
-	assert(this->domain_table);
-	for (auto it = this->domain_table->begin(); it != this->domain_table->end();) {
+	assert(!this->domain_table.empty());
+	for (auto it = this->domain_table.begin(); it != this->domain_table.end();) {
 		if (it->second == domain) {
-			it = this->domain_table->erase(it);
+			it = this->domain_table.erase(it);
 			++n_removed;
 		} else {
 			++it;
@@ -799,9 +799,9 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_imp
 		lookup_key = nccl_net_ofi_gettid();
 	}
 
-	auto domain_iter = this->domain_table->find(lookup_key);
+	auto domain_iter = this->domain_table.find(lookup_key);
 
-	if (domain_iter != this->domain_table->end()) {
+	if (domain_iter != this->domain_table.end()) {
 		domain = domain_iter->second;
 	} else {
 		domain = this->create_domain();
@@ -811,7 +811,7 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_imp
 			return nullptr;
 		}
 
-		this->domain_table->insert(std::pair(lookup_key, domain));
+		this->domain_table.insert(std::pair(lookup_key, domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
@@ -892,18 +892,11 @@ nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 			      strerror(-ret));
 		throw std::runtime_error("Base device constructor: MR key config parse failed");
 	}
-
-	this->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
 }
 
 
 nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 {
-        if (this->domain_table != nullptr) {
-		assert(this->domain_table->empty());
-		delete this->domain_table;
-	}
-
 	if (this->name != nullptr) {
 		free(this->name);
 	}
@@ -918,9 +911,9 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 
 	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	assert(!this->domain_table->empty());
-	for (auto domain_iter = this->domain_table->begin() ;
-	     domain_iter != this->domain_table->end();) {
+	assert(!this->domain_table.empty());
+	for (auto domain_iter = this->domain_table.begin() ;
+	     domain_iter != this->domain_table.end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
@@ -962,9 +955,9 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 		}
 	}
 
-	if (OFI_UNLIKELY(!this->domain_table->empty())) {
+	if (OFI_UNLIKELY(!this->domain_table.empty())) {
 		NCCL_OFI_WARN("%zu domains still active after cleanup",
-			      this->domain_table->size());
+			      this->domain_table.size());
 		if (first_error != 0) {
 			first_error = -FI_EBUSY; // Anything else than above
 		}
