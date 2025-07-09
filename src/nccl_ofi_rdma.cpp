@@ -3815,6 +3815,12 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
  */
 static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
+	/* If close message is not enabled, do not wait for the close message;
+	   destroy the communicator immediately */
+	if (ofi_nccl_disable_close_message() == 1) {
+		return COMM_READY_TO_DESTROY;
+	}
+
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		s_comm->base.base.ep;
 
@@ -3849,10 +3855,8 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm_t *s_co
 	 *    In this case, we assume that the receive communicator was
 	 *    never established, and we will never receive a close
 	 *    message.
-	 * 3. The close message is disabled by parameter.
 	 */
-	bool ready_to_destroy = (ofi_nccl_disable_close_message() == 1) ||
-				((s_comm->received_close_message) ?
+	bool ready_to_destroy = ((s_comm->received_close_message) ?
 				 (s_comm->n_ctrl_received == s_comm->n_ctrl_expected) :
 				 (s_comm->n_ctrl_received == 0));
 
