@@ -1292,7 +1292,7 @@ public:
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
 
-/* private */
+protected:
 	/**
 	 * @brief	RDMA device destructor.
 	 * 

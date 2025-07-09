@@ -303,7 +303,7 @@ public:
 	/* Fabric handle */
 	struct fid_fabric *fabric;
 
-/* private */
+protected:
 	/**
 	 * @brief	SENDRECV device destructor.
 	 * 

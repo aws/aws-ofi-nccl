@@ -288,6 +288,22 @@ public:
 
 	virtual int get_mr_key(void* mhandle, uint64_t* mr_key);
 
+	/**
+	 * @brief	Increment base device's unreleased_inactive_domain_counter
+	 */
+	inline void inc_unreleased_inactive_domain_counter()
+	{
+		++unreleased_inactive_domain_counter;
+	}
+
+	/**
+	 * @brief	Decrement base device's unreleased_inactive_domain_counter
+	 */
+	inline void dec_unreleased_inactive_domain_counter()
+	{
+		--unreleased_inactive_domain_counter;
+	}
+
 	void remove_domain_table_entry(long lookup_key);
 
 	/* Retrieve a domain associated with this device.  There may
@@ -341,7 +357,7 @@ public:
 	 * multiple entities. */
 	pthread_mutex_t device_lock;
 
-/* private */
+protected:
 	/**
 	 * destructor - releases resources associated with base device
 	 */
