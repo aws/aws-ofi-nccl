@@ -308,8 +308,23 @@ public:
 	 */
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
 
-	/** 
-	 * Retrieve a domain associated with this device.  There may
+	/**
+	 * @brief	Increment base device's unreleased_inactive_domain_counter
+	 */
+	inline void inc_unreleased_inactive_domain_counter()
+	{
+		++unreleased_inactive_domain_counter;
+	}
+
+	/**
+	 * @brief	Decrement base device's unreleased_inactive_domain_counter
+	 */
+	inline void dec_unreleased_inactive_domain_counter()
+	{
+		--unreleased_inactive_domain_counter;
+	}
+
+	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
 	 * of performance tradeoffs (be sure to read the domain
 	 * description below).
@@ -360,7 +375,7 @@ public:
 	 * multiple entities. */
 	pthread_mutex_t device_lock;
 
-/* private */
+protected:
 	/**
 	 * @brief	Base device destructor
 	 * 
