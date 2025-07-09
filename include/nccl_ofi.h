@@ -411,13 +411,8 @@ protected:
 
 	/**
 	 * hash table indexed by thread id of active domains.
-	 *
-	 * TODO: When the device class is made a proper C++ class, this should
-	 * be changed from a pointer to a map to a map.  We can't do that right
-	 * now, because that leaves us with no good way to invoke the map
-	 * constructor.
 	 */
-	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table = nullptr;
+	std::unordered_map<long, nccl_net_ofi_domain_t *> domain_table;
 
 	/**
 	 * Number of domains that have been deactivated but not freed
