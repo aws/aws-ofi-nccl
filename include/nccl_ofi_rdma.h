@@ -1167,9 +1167,17 @@ struct nccl_net_ofi_rdma_device_rail_t {
 class nccl_net_ofi_rdma_device_t : public nccl_net_ofi_device_t {
 public:
 	/**
-	 * destructor - releases resources associated with device
+	 * @brief	Default RDMA transport constructor.
+	 * 
+	 * Calls base device class constructor, sets up RDMA device resources like device
+	 * rails, array of open communicators, and an idpool.
 	 */
-	int release() override;
+	nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin,
+				   int dev_id,
+				   struct fi_info *info_list,
+				   nccl_ofi_topo_t *topo);
+
+	int release_device() override;
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
@@ -1183,17 +1191,17 @@ public:
 	uint16_t num_rails;
 
 	/* Array of 'num_rails' device rails */
-	nccl_net_ofi_rdma_device_rail_t *device_rails;
+	nccl_net_ofi_rdma_device_rail_t *device_rails = nullptr;
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 
 	/* ID pool */
-	nccl_ofi_idpool_t *comm_idpool;
+	nccl_ofi_idpool_t *comm_idpool = nullptr;
 
 	/* Array of open comms associated with this endpoint. This is needed for fast
 	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms;
+	nccl_net_ofi_comm_t **comms = nullptr;
 
 	bool use_long_rkeys;
 
@@ -1202,6 +1210,17 @@ public:
 #endif
 
 /* private */
+	/**
+	 * @brief	RDMA device destructor.
+	 * 
+	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up RDMA domain resources before the destructor
+	 * was called.
+	 */	
+	~nccl_net_ofi_rdma_device_t() override;
+
+	int cleanup_resources() override;
+
 	nccl_net_ofi_domain_t *create_domain() override;
 };
 

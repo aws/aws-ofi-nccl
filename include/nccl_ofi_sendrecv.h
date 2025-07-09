@@ -269,9 +269,16 @@ protected:
 class nccl_net_ofi_sendrecv_device_t : public nccl_net_ofi_device_t {
 public:
 	/**
-	 * destructor - releases resources associated with device
+	 * @brief	Default SENDRECV transport constructor.
+	 * 
+	 * Calls base device class constructor, sets up SENDRECV device resources
+	 * like the Libfabric fabric.
 	 */
-	int release() override;
+	nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+				       int device_id,
+				       struct fi_info *info_arg);
+
+	int release_device() override;
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
@@ -281,13 +288,13 @@ public:
 	}
 
 	/* Device provider */
-	struct fi_info *info;
+	struct fi_info *info = nullptr;
 
 	/* Maximum supported tag ID */
 	uint64_t max_tag;
 
 	/* Provider name. Device did not obtain ownership. */
-	char *prov_name;
+	char *prov_name = nullptr;
 
 	// TODO: So far, devices resources are not released and device
 	// memory is not freed. These actions should include closing
@@ -297,6 +304,17 @@ public:
 	struct fid_fabric *fabric;
 
 /* private */
+	/**
+	 * @brief	SENDRECV device destructor.
+	 * 
+	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up SENDRECV device resources before the
+	 * destructor was called.
+	 */
+	~nccl_net_ofi_sendrecv_device_t() override;
+
+	int cleanup_resources() override;
+
 	nccl_net_ofi_domain_t *create_domain() override;
 };
 	
