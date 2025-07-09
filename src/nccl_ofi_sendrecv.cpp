@@ -69,19 +69,13 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 				       nccl_ofi_mr_cache_t *mr_cache);
 
 
-static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_sendrecv_device_t *device)
-{
-	return (nccl_net_ofi_sendrecv_plugin_t*)device->plugin;
-}
-
-
 int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	assert(this->plugin != nullptr);
 	
 	size_t num_devices = this->plugin->get_num_devices(this->plugin);
 	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = sendrecv_device_get_plugin(this);
+	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
 	/* Validate libfabric NIC info */
 	if (OFI_UNLIKELY(this->info == nullptr)) {
@@ -2248,32 +2242,28 @@ nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_t::create_domain()
 }
 
 
-/*
- * @brief	Allocates and initialises various libfabric resources like
- *		fabric and domain to make sendrecv device ready for endpoint creation.
- */
-static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
+int nccl_net_ofi_sendrecv_device_t::sendrecv_device_prepare_for_connection()
 {
 	int ret = 0;
 	int ofi_tag_leading_zeroes = 0, ofi_tag_bits_for_ring_id = 64;
 
 	/* Determine if any tag bits are used by provider */
-	while (!((device->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
-		 (uint64_t) OFI_HIGHEST_TAG_BIT) &&
+	while (!((this->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
+		 static_cast<uint64_t>(OFI_HIGHEST_TAG_BIT)) &&
 	       (ofi_tag_bits_for_ring_id >= MIN_TAG_BITS_FOR_RING_ID)) {
 		ofi_tag_bits_for_ring_id--;
 	}
 
 	if (OFI_UNLIKELY(ofi_tag_bits_for_ring_id < MIN_TAG_BITS_FOR_RING_ID)) {
 		NCCL_OFI_WARN("Provider %s does not provide enough tag bits %d for ring ID. Minimum required is %d",
-			      device->info->fabric_attr->prov_name,
+			      this->info->fabric_attr->prov_name,
 			      ofi_tag_bits_for_ring_id,
 			      MIN_TAG_BITS_FOR_RING_ID);
 		return -EINVAL;
 	}
 
 	/* Set maximum tag information; Reserving 1 bit for control information */
-	device->max_tag = (uint64_t)((1ULL << (ofi_tag_bits_for_ring_id - 1)) - 1);
+	this->max_tag = static_cast<uint64_t>((1ULL << (ofi_tag_bits_for_ring_id - 1)) - 1);
 
 	return ret;
 }
@@ -2361,7 +2351,7 @@ nccl_net_ofi_sendrecv_device_t::nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plug
 		throw std::runtime_error("SENDRECV device constructor: fi_fabric failed");
 	}
 
-	ret = sendrecv_device_prepare_for_connection(this);
+	ret = this->sendrecv_device_prepare_for_connection();
 	if (ret != 0) {
 		NCCL_OFI_WARN("preparing for connection failed: %s",
 			      strerror(-ret));
