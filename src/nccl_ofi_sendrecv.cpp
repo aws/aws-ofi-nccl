@@ -2279,104 +2279,94 @@ static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t
 }
 
 
+int nccl_net_ofi_sendrecv_device_t::release_device()
+{
+	int ret = 0;
+	ret = this->cleanup_resources();
+	delete this;
+
+	return ret;
+}
+
+
 /**
  * Destroy an rdma device object
  */
-int nccl_net_ofi_sendrecv_device_t::release()
+int nccl_net_ofi_sendrecv_device_t::cleanup_resources()
 {
-	int ret, first_error = 0;
+	int ret = 0;
+	int err_code = 0;
 
-	unsigned num_domains = this->domain_table->size();
-	if (num_domains > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
-		ret = this->release_all_domain_and_ep();
-		if (ret != 0) {
-			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			if (first_error == 0) {
-				first_error = ret;
-			}
+	/* cleanup_resources should only be called once per device instance */
+	assert(!this->called_cleanup_resources);
+	this->called_cleanup_resources = true;
+
+	if (!this->domain_table->empty()) {
+		NCCL_OFI_INFO(NCCL_NET, "%zu SENDRECV domains still active at close",
+			      this->domain_table->size());
+		err_code = this->release_all_domain_and_ep();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("Cleanup of SENDRECV domain failed. RC: %d, ERROR: %s",
+				      err_code, fi_strerror(-err_code));
+			ret = -EINVAL;
 		}
 	}
 
 	if (this->fabric) {
-		fi_close((fid_t)this->fabric);
+		fi_close(reinterpret_cast<fid_t>(this->fabric));
 	}
 
 	if (this->info != NULL) {
 		fi_freeinfo(this->info);
 	}
 
-	ret = nccl_net_ofi_device_t::release();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
-			      strerror(-ret));
-		if (first_error == 0) {
-			first_error = ret;
-		}
-	}
+	assert(ret == 0);
 
-	free(this);
-
-	return 0;
+	return ret;
 }
 
+nccl_net_ofi_sendrecv_device_t::~nccl_net_ofi_sendrecv_device_t()
+{
+	/* cleanup_resources should always be called to clean-up device resources before
+	   the destructor is called */
+	assert(this->called_cleanup_resources);
+}
 
 /**
  * Create a sendrecv device object
  */
-static nccl_net_ofi_sendrecv_device_t *
-nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
-				int dev_id, struct fi_info *info)
+nccl_net_ofi_sendrecv_device_t::nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+							       int device_id,
+							       struct fi_info *info_arg)
+	: nccl_net_ofi_device_t(plugin_arg, device_id, info_arg)
 {
 	int ret;
-
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
-	if (device == NULL) {
-		NCCL_OFI_WARN("Unable to allocate device %d", dev_id);
-		return NULL;
-	}
-
-	ret = nccl_net_ofi_device_init(device, plugin, dev_id,
-				       info);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
-		return NULL;
-	}
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
 
 	/* Set device provider */
-	device->info = fi_dupinfo(info);
-	if (!device->info) {
+	this->info = fi_dupinfo(info_arg);
+	if (!this->info) {
 		NCCL_OFI_WARN("Failed to duplicate NIC info struct");
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: fi_dupinfo failed");
 	}
-	device->prov_name = device->info->fabric_attr->prov_name;
+	this->prov_name = this->info->fabric_attr->prov_name;
 
 	/* Create fabric */
-	ret = fi_fabric(device->info->fabric_attr, &device->fabric, NULL);
+	ret = fi_fabric(this->info->fabric_attr, &this->fabric, nullptr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: fi_fabric failed");
 	}
 
-	ret = sendrecv_device_prepare_for_connection(device);
+	ret = sendrecv_device_prepare_for_connection(this);
 	if (ret != 0) {
 		NCCL_OFI_WARN("preparing for connection failed: %s",
 			      strerror(-ret));
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: connection prep failed");
 	}
-
-	return device;
-
-error:
-	device->release();
-
-	return NULL;
 }
 
 static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
@@ -2458,11 +2448,9 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_sendrecv_device_t *device = nccl_net_ofi_sendrecv_device_create(plugin, (int)dev_id, info);
-		if (device == NULL) {
-			NCCL_OFI_WARN("Unable to allocate device %li", dev_id);
-			return -ENOMEM;
-		}
+		auto *device = new nccl_net_ofi_sendrecv_device_t(plugin,
+								  static_cast<int>(dev_id),
+								  info);
 
 		ret = plugin->assign_device(plugin, dev_id, device);
 		if (ret != 0) {

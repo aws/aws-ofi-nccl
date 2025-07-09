@@ -759,7 +759,7 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
 		if (plugin->p_devs[i] != NULL) {
-			plugin->p_devs[i]->release();
+			plugin->p_devs[i]->release_device();
 		}
 	}
 
@@ -868,52 +868,50 @@ nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep()
 	return ep;
 }
 
-int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, struct fi_info *ofi_info)
+
+nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+					     int device_index,
+					     struct fi_info *info)
+	: plugin(plugin_arg),
+	  dev_id(device_index),
+	  name(strdup(info->fabric_attr->prov_name))
 {
 	int ret = 0;
 
-	device->plugin = plugin;
-	device->dev_id = device_index;
-	device->name = strdup(ofi_info->fabric_attr->prov_name);
-	if (device->name == NULL) {
+	assert(this->plugin != nullptr);
+
+	if (this->name == nullptr) {
 		NCCL_OFI_WARN("Unable to allocate device name");
-		ret = -ENOMEM;
-		goto exit;
+		throw std::runtime_error("Base device constructor: device name alloc failed");
 	}
 
 	if (platform_device_set_guid) {
-		platform_device_set_guid(ofi_info, device);
+		platform_device_set_guid(info, this);
 	} else {
-		nccl_net_ofi_device_set_guid(ofi_info, device);
+		nccl_net_ofi_device_set_guid(info, this);
 	}
 
 	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&device->device_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);
 	if (ret != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to initialize device mutex");
-		return -ret;
+		NCCL_OFI_WARN("Unable to initialize device mutex");
+		throw std::runtime_error("Base device constructor: device mutex init failed");
 	}
 
 	/* Initialize mr rkey handling */
-	device->need_mr_rkey_pool = true;
-	ret = nccl_ofi_mr_keys_need_own_key(ofi_info, &device->need_mr_rkey_pool);
+	this->need_mr_rkey_pool = true;
+	ret = nccl_ofi_mr_keys_need_own_key(info, &this->need_mr_rkey_pool);
 	if (ret != 0) {
 		NCCL_OFI_WARN("MR key config parsing failed: %s",
 			      strerror(-ret));
-		return -ret;
+		throw std::runtime_error("Base device constructor: MR key config parse failed");
 	}
 
-	device->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
-
-exit:
-
-	return ret;
+	this->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
 }
 
 
-int nccl_net_ofi_device_t::release()
+nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 {
         if (this->domain_table != nullptr) {
 		assert(this->domain_table->empty());
@@ -923,8 +921,6 @@ int nccl_net_ofi_device_t::release()
 	if (this->name != nullptr) {
 		free(this->name);
 	}
-
-	return 0;
 }
 
 
