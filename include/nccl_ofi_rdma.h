@@ -1196,7 +1196,7 @@ public:
 
 	inline struct fi_info *get_ofi_info_for_cm() override
 	{
-		assert(device_rails);
+		assert(!device_rails.empty());
 		return device_rails[0].info;
 	}
 
@@ -1210,7 +1210,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(uint16_t rail_id)
 	{
-		assert(this->device_rails);
+		assert(!this->device_rails.empty());
 		assert(rail_id < num_rails);
 		return &device_rails[rail_id];
 	}
@@ -1269,7 +1269,7 @@ public:
 	uint32_t num_comm_ids;
 
 	/* ID pool */
-	nccl_ofi_idpool_t *comm_idpool = nullptr;
+	nccl_ofi_idpool_t comm_idpool;
 
 	bool use_long_rkeys;
 
@@ -1316,18 +1316,16 @@ protected:
 	 * @param	num_infos
 	 *		Length of list
 	 *
-	 * @return	Initialized device rail array, on success
-	 *		NULL, on others
+	 * @return	Return 0 on success, non-0 on failure.
 	 */
-	static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info *info_list,
-									 int num_infos);
+	int create_device_rail_array(struct fi_info *info_list, int num_infos);
 
 	/* Array of 'num_rails' device rails */
-	nccl_net_ofi_rdma_device_rail_t *device_rails = nullptr;
+	std::vector<nccl_net_ofi_rdma_device_rail_t> device_rails;
 
-	/* Array of open comms associated with this endpoint. This is needed for fast
+	/* Array of open comms associated with this device. This is needed for fast
 	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms = nullptr;
+	std::vector<nccl_net_ofi_comm_t *> comms;
 };
 
 
