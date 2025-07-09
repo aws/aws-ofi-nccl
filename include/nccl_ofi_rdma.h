@@ -37,6 +37,10 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  */
 #define NCCL_OFI_RDMA_COMM_ID_BITS (18)
 
+/* Maximum number of comms open simultaneously. Eventually this will be
+   runtime-expandable */
+#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
+
 /*
  * @brief	Number of bits used for message sequence number
  *
@@ -1136,6 +1140,15 @@ struct nccl_net_ofi_rdma_device_rail_t {
 	struct fid_fabric *fabric;
 };
 
+
+struct nccl_net_ofi_rdma_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	nccl_ofi_topo_t *topo;
+};
+typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
+
+
 /*
  * @brief	RDMA Device
  *
@@ -1172,7 +1185,90 @@ public:
 		return device_rails[0].info;
 	}
 
+	inline nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
+	}
+
+	/*
+	 * @brief Return device rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(uint16_t rail_id)
+	{
+		assert(this->device_rails);
+		assert(rail_id < num_rails);
+		return &device_rails[rail_id];
+	}
+
+	/**
+	 * @brief	Get endpoint communicator with given ID
+	 */
+	inline nccl_net_ofi_comm_t *rdma_device_get_comm(uint32_t local_comm_id)
+	{
+		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+		assert(local_comm_id < num_comm_ids);
+		return comms[local_comm_id];
+	}
+
+	/**
+	 * @brief	Set endpoint communicator with given ID
+	 */
+	inline void rdma_device_set_comm(uint32_t local_comm_id,
+					 nccl_net_ofi_comm_t *comm)
+	{
+		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+		assert(local_comm_id < num_comm_ids);
+		comms[local_comm_id] = comm;
+	}
+
+	/**
+	 * @brief	Get endpoint listen communicator with given comm_id
+	 */
+	inline nccl_net_ofi_rdma_listen_comm_t *rdma_device_get_listen_comm(uint32_t local_comm_id)
+	{
+		auto l_comm = reinterpret_cast<nccl_net_ofi_rdma_listen_comm_t *>
+			(rdma_device_get_comm(local_comm_id));
+		assert(l_comm->base.base.type == NCCL_NET_OFI_LISTEN_COMM);
+		return l_comm;
+	}
+
+	/**
+	 * @brief	Get endpoint send communicator with given ID
+	 */
+	inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(uint32_t local_comm_id)
+	{
+		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>
+			(rdma_device_get_comm(local_comm_id));
+		if (OFI_UNLIKELY(s_comm == nullptr)) {
+			/* Received a ctrl message for a non-existent send comm */
+			return nullptr;
+		}
+		assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
+		return s_comm;
+	}
+
+	/**
+	 * @brief	Get endpoint recv communicator with given comm_id
+	 */
+	inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(uint32_t local_comm_id)
+	{
+		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>
+			(rdma_device_get_comm(local_comm_id));
+		assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
+		return r_comm;
+	}
+
 	int get_mr_key(void* mhandle, uint64_t* mr_key) override;
+
+	/**
+	 * @brief	Handle receiving a rx buffer message. These are:
+	 * 		connect messages (l_comm), connect response messages (s_comm),
+	 * 		RDMA control messages (s_comm), eager messages (r_comm).
+	 */
+	int handle_rx_buff_recv(uint16_t rail_id,
+				struct fi_cq_data_entry *cq_entry,
+				nccl_net_ofi_rdma_req_t *rx_buff_req,
+				bool eager);
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -1209,15 +1305,38 @@ public:
 	int cleanup_resources() override;
 
 	nccl_net_ofi_domain_t *create_domain() override;
+
+	/**
+	 * @brief	Allocates and initializes various libfabric resources to make rdma
+	 *		device ready for endpoint creation.
+	 */
+	int device_prepare_for_connection();
+
+	/**
+	 * @brief	Release libfabric resources of device
+	 */
+	void release_device_ofi_resources();
+
+	/**
+	 * @brief	Allocates and initialises various libfabric resources like
+	 *		fabric and domain to make device rail ready for rail creation.
+	 */
+	static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev);
+
+	/**
+	 * @brief	Allocate device rail array and store duplicates of libfabric NIC info structs.
+	 *
+	 * @param	info_list
+	 *		NIC info list for which device rails are created
+	 * @param	num_infos
+	 *		Length of list
+	 *
+	 * @return	Initialized device rail array, on success
+	 *		NULL, on others
+	 */
+	static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info *info_list,
+									 int num_infos);
 };
-
-
-struct nccl_net_ofi_rdma_plugin {
-	nccl_net_ofi_plugin_t base;
-
-	nccl_ofi_topo_t *topo;
-};
-typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
 
 
 /*
