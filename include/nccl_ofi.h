@@ -286,9 +286,17 @@ typedef struct nccl_ofi_properties {
 class nccl_net_ofi_device_t {
 public:
 	/**
-	 * destructor - releases resources associated with device
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the device base class.
+	 * Expectation is that this will be called by a transport's device
+	 * constructor 
 	 */
-	virtual int release();
+	nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+			      int device_index,
+			      struct fi_info *info);
+
+	virtual int release_device() = 0;
 
 	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
 
@@ -310,7 +318,7 @@ public:
 
 	nccl_net_ofi_ep_t *get_ep();
 
-	struct nccl_net_ofi_plugin *plugin;
+	struct nccl_net_ofi_plugin *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
@@ -326,7 +334,7 @@ public:
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
 	 */
-	char *name;
+	char *name = nullptr;
 
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
@@ -340,6 +348,24 @@ public:
 
 /* private */
 	/**
+	 * @brief	Base device destructor
+	 * 
+	 * Releases resources associated with base device.
+	 */
+	virtual ~nccl_net_ofi_device_t();
+
+	/**
+	 * @brief	Cleanup device resources.
+	 * 
+	 * Virtual function to clean up and release each transport type's device resources.
+	 * Set called_cleanup_resources to true at the start of the function to make sure
+	 * it is only called once per device instance.
+	 * 
+	 * @return	0 if successfully, negative error code on failure.
+	 */
+	virtual int cleanup_resources() = 0;
+
+	/*
 	 * create a new domain.  This funcion is a private pure
 	 * virtual function, which is called from the base
 	 * implementation of get_domain() and should not be called
@@ -349,12 +375,12 @@ public:
 
 	/**
 	 * release all domains and endpoints. This function is a private
-	 * function, which is called only during release() to free allocated
+	 * function, which is called only during cleanup_resources() to free allocated
 	 * domains and endpoints.
 	 */
 	int release_all_domain_and_ep();
 
-	/*
+	/**
 	 * hash table indexed by thread id of active domains.
 	 *
 	 * TODO: When the device class is made a proper C++ class, this should
@@ -362,7 +388,7 @@ public:
 	 * now, because that leaves us with no good way to invoke the map
 	 * constructor.
 	 */
-	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table;
+	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table = nullptr;
 
 	/**
 	 * Number of domains that have been deactivated but not freed
@@ -371,7 +397,15 @@ public:
 	 * to track inactive domains (which aren't in the domain table) which
 	 * were never closed
 	 */
-	size_t unreleased_inactive_domain_counter;
+	size_t unreleased_inactive_domain_counter = 0;
+
+	/** 
+	 * Track whether the cleanup_resources function was already called to avoid calling
+	 * multiple time on the same device instance. It being set to true does not 
+	 * indicate that the device resources were successfully released since this is set
+	 * to true regardless of whether cleanup_resources finished successfully or not.
+	 */
+	bool called_cleanup_resources = false;
 };
 
 
@@ -846,12 +880,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/**
- * Constructor for a device object
- */
-int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, struct fi_info *ofi_info);
 
 /*
  * Constructor for the nccl_net_ofi_plugin class
