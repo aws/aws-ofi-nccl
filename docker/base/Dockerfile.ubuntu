@@ -15,11 +15,12 @@ RUN apt-get update && \
     software-properties-common && \
     add-apt-repository universe && \
     add-apt-repository multiverse && \
+    add-apt-repository ppa:git-core/ppa && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
     curl wget git build-essential gcc-multilib \
     libhwloc-dev make sudo lsb-release pciutils \
     libevent-core-2.1-7 libevent-pthreads-2.1-7 \
-    udev dmidecode ethtool iproute2 \
+    rpm udev dmidecode ethtool iproute2 \
     environment-modules tcl \
     libnl-3-200 libnl-3-dev \
     libnl-route-3-200 libnl-route-3-dev && \
