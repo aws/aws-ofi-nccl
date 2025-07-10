@@ -404,9 +404,9 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = this->device_rails[0].info;
-	size_t num_devices = plugin_ptr->base.get_num_devices(this->plugin);
+	size_t num_devices = plugin_ptr->get_num_devices(this->plugin);
 
-	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, info, this->dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(plugin_ptr, info, this->dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
@@ -7060,7 +7060,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
-	if (rdma_plugin->base.domain_per_thread && ofi_nccl_endpoint_per_communicator() != 0) {
+	if (rdma_plugin->domain_per_thread && ofi_nccl_endpoint_per_communicator() != 0) {
 		/* TODO support this configuration */
 		NCCL_OFI_WARN("domain_per_thread is true and ofi_nccl_endpoint_per_communicator() != 0 are not supported together");
 		return ncclInvalidArgument;
@@ -7074,7 +7074,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 	}
 
 	/* Allocate and initialize nccl_net devices */
-	for (size_t dev_id = 0; dev_id != rdma_plugin->base.p_num_devs; ++dev_id) {
+	for (size_t dev_id = 0; dev_id != rdma_plugin->p_num_devs; ++dev_id) {
 		struct fi_info *info_list;
 
 		/* Retrieve NIC info list from topology */
@@ -7086,7 +7086,7 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 		}
 
 		/* Allocate device */
-		auto *device = new nccl_net_ofi_rdma_device_t(&rdma_plugin->base,
+		auto *device = new nccl_net_ofi_rdma_device_t(rdma_plugin,
 							      static_cast<int>(dev_id),
 							      info_list,
 							      rdma_plugin->topo);
@@ -7115,7 +7115,7 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_plugin_init(&plugin->base, num_devices);
+	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing base plugin failed: %s",
 			      strerror(-ret));
@@ -7130,8 +7130,8 @@ static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
 
 	plugin->topo = topo;
 
-	plugin->base.release_plugin = nccl_net_ofi_rdma_plugin_fini;
-	plugin->base.complete_init = nccl_net_ofi_rdma_plugin_complete_init;
+	plugin->release_plugin = nccl_net_ofi_rdma_plugin_fini;
+	plugin->complete_init = nccl_net_ofi_rdma_plugin_complete_init;
 
 	*plugin_p = plugin;
 
@@ -7336,13 +7336,13 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		cpu_cache_line_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE;
 	}
 
-	*plugin_p = &plugin->base;
+	*plugin_p = plugin;
 
 	return ret;
 
  error:
 	if (plugin != NULL) {
-		plugin->base.release_plugin(&plugin->base);
+		plugin->release_plugin(plugin);
 		plugin = NULL;
 	}
 

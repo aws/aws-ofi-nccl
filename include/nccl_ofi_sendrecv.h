@@ -253,12 +253,10 @@ protected:
 };
 
 
-struct nccl_net_ofi_sendrecv_plugin {
-	nccl_net_ofi_plugin_t base;
-
+class nccl_net_ofi_sendrecv_plugin_t : public nccl_net_ofi_plugin_t {
+public:
 	struct fi_info *provider_list;
 };
-typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
 
 
 /**
