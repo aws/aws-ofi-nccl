@@ -122,15 +122,14 @@ extern size_t system_page_size;
 class nccl_net_ofi_device_t;
 class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
+class nccl_net_ofi_plugin_t;
 
-struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_comm;
 struct nccl_net_ofi_listen_comm;
 struct nccl_net_ofi_send_comm;
 struct nccl_net_ofi_recv_comm;
 
-typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
 typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
@@ -347,7 +346,7 @@ public:
 	 */
 	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
 
-	struct nccl_net_ofi_plugin *plugin = nullptr;
+	nccl_net_ofi_plugin_t *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
@@ -853,9 +852,8 @@ struct nccl_net_ofi_recv_comm {
  * named nccl_net_ofi_plugin, which is valid after NCCL calls init()
  * on the plugin.
  */
-struct nccl_net_ofi_plugin {
-/* public */
-
+class nccl_net_ofi_plugin_t {
+public:
 	/**
 	 * Complete initialization of plugin
 	 *
