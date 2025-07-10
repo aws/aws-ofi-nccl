@@ -84,7 +84,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, this->info, this->dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(plugin_ptr, this->info, this->dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
@@ -2432,7 +2432,7 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 
 	/* Allocate and initialize nccl_net devices */
 	info = sendrecv_plugin->provider_list;
-	while (dev_id != sendrecv_plugin->base.p_num_devs) {
+	while (dev_id != sendrecv_plugin->p_num_devs) {
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			return -EINVAL;
@@ -2469,7 +2469,7 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 		return -ENOMEM;
 	}
 
-	ret = nccl_net_ofi_plugin_init(&plugin->base, num_devices);
+	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing base plugin failed: %s",
 			      strerror(-ret));
@@ -2478,8 +2478,8 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 
 	plugin->provider_list = provider_list;
 
-	plugin->base.release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
-	plugin->base.complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
+	plugin->release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
+	plugin->complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
 
 	*plugin_p = plugin;
 
@@ -2671,13 +2671,13 @@ found:
 		goto error;
 	}
 
-	*plugin_p = &plugin->base;
+	*plugin_p = plugin;
 
 	return ret;
 
  error:
 	if (plugin != NULL) {
-		plugin->base.release_plugin(&plugin->base);
+		plugin->release_plugin(plugin);
 		plugin = NULL;
 	}
 
