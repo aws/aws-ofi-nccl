@@ -166,15 +166,6 @@ static inline void rdma_device_set_comm(nccl_net_ofi_rdma_device_t *device,
 	device->comms[local_comm_id] = comm;
 }
 
-/*
- * @brief	Get endpoint listen communicator with given comm_id
- */
-static inline nccl_net_ofi_rdma_listen_comm_t *rdma_device_get_listen_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
-{
-	nccl_net_ofi_rdma_listen_comm_t *l_comm = (nccl_net_ofi_rdma_listen_comm_t *)rdma_device_get_comm(device, local_comm_id);
-	assert(l_comm->base.base.type == NCCL_NET_OFI_LISTEN_COMM);
-	return l_comm;
-}
 
 /*
  * @brief	Get endpoint send communicator with given ID
