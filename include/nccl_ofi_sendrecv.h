@@ -94,8 +94,7 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /* Forward declarations needed for sendrecv transport endpoint type */
-struct nccl_net_ofi_sendrecv_device;
-typedef struct nccl_net_ofi_sendrecv_device nccl_net_ofi_sendrecv_device_t;
+class nccl_net_ofi_sendrecv_device_t;
 
 
 /*
@@ -241,6 +240,14 @@ protected:
 };
 
 
+struct nccl_net_ofi_sendrecv_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	struct fi_info *provider_list;
+};
+typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
+
+
 /**
  * @brief	Sendrecv Device
  *
@@ -254,28 +261,40 @@ protected:
  * locks and the lifetime of resouces is maintained with a reference
  * counter.
  */
-typedef struct nccl_net_ofi_sendrecv_device {
-	/* This base device interface struct provides access to the
-	 * sendrecv endpoint's functions such as
-	 * sendrecv_get_properties(), sendrecv_get_ep(), and
-	 * sendrecv_release_ep(). At construction time of this device,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_device_t device
-	 * 'device'.
-	 *
-	 * This base device must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_device_t base;
+class nccl_net_ofi_sendrecv_device_t : public nccl_net_ofi_device_t {
+public:
+	/**
+	 * @brief	Default SENDRECV transport constructor.
+	 * 
+	 * Calls base device class constructor, sets up SENDRECV device resources
+	 * like the Libfabric fabric.
+	 */
+	nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+				       int device_id,
+				       struct fi_info *info_arg);
+
+	int release_device() override;
+
+	int get_properties(nccl_ofi_properties_t *props) override;
+
+	inline struct fi_info *get_ofi_info_for_cm() override
+	{
+		return info;
+	}
+
+	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+	}
 
 	/* Device provider */
-	struct fi_info *info;
+	struct fi_info *info = nullptr;
 
 	/* Maximum supported tag ID */
 	uint64_t max_tag;
 
 	/* Provider name. Device did not obtain ownership. */
-	char *prov_name;
+	char *prov_name = nullptr;
 
 	// TODO: So far, devices resources are not released and device
 	// memory is not freed. These actions should include closing
@@ -283,7 +302,27 @@ typedef struct nccl_net_ofi_sendrecv_device {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-} nccl_net_ofi_sendrecv_device_t;
+
+protected:
+	/**
+	 * @brief	SENDRECV device destructor.
+	 * 
+	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up SENDRECV device resources before the
+	 * destructor was called.
+	 */
+	~nccl_net_ofi_sendrecv_device_t() override;
+
+	int cleanup_resources() override;
+
+	nccl_net_ofi_domain_t *create_domain() override;
+
+	/**
+	 * @brief	Allocates and initialises various libfabric resources like
+	 *		fabric and domain to make sendrecv device ready for endpoint creation.
+	 */
+	int sendrecv_device_prepare_for_connection();
+};
 	
 typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_req_t base;
@@ -312,14 +351,6 @@ typedef struct nccl_net_ofi_sendrecv_req {
 	/* Backpointer to freelist elem (for cleanup) */
 	nccl_ofi_freelist_elem_t *elem;
 } nccl_net_ofi_sendrecv_req_t;
-
-
-struct nccl_net_ofi_sendrecv_plugin {
-	nccl_net_ofi_plugin_t base;
-
-	struct fi_info *provider_list;
-};
-typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
 
 
 /*

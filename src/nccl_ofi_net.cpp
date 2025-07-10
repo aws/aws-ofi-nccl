@@ -290,11 +290,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	device = plugin->get_device(plugin, 0);
 
-	ret = device->get_ep(device, &ep);
-	if (ret != 0) {
+	ep = device->get_ep();
+	if (ep == nullptr) {
 		goto exit;
 	}
-	ret = device->get_properties(device, &properties);
+	ret = device->get_properties(&properties);
 	if (ret != 0) {
 		goto exit;
 	}
@@ -446,7 +446,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
 	const char *platform_type = NULL;
-	nccl_net_ofi_device *device = NULL;
+	nccl_net_ofi_device_t *device = NULL;
 
 	memset(props, 0, sizeof(*props));
 
@@ -759,7 +759,7 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 {
 	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
 		if (plugin->p_devs[i] != NULL) {
-			plugin->p_devs[i]->release(plugin->p_devs[i]);
+			plugin->p_devs[i]->release_device();
 		}
 	}
 
@@ -770,17 +770,14 @@ int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 }
 
 
-/**
- * @brief	Erase all domain_table elements matching the provided domain
- */
-static void nccl_net_ofi_device_remove_domain(nccl_net_ofi_device_t *device, nccl_net_ofi_domain_t *domain)
+void nccl_net_ofi_device_t::remove_domain_from_map(nccl_net_ofi_domain_t *domain)
 {
 	size_t n_removed = 0;
 
-	assert(device->domain_table);
-	for (auto it = device->domain_table->begin(); it != device->domain_table->end();) {
+	assert(!this->domain_table.empty());
+	for (auto it = this->domain_table.begin(); it != this->domain_table.end();) {
 		if (it->second == domain) {
-			it = device->domain_table->erase(it);
+			it = this->domain_table.erase(it);
 			++n_removed;
 		} else {
 			++it;
@@ -791,173 +788,138 @@ static void nccl_net_ofi_device_remove_domain(nccl_net_ofi_device_t *device, ncc
 }
 
 
-/*
- * implementation of retreiving a domain from a device.  This code
- * assumes the device lock is already held, because in the case of
- * get_domain() we only need to worry about the device lock, but in
- * the device->get_ep call, hold the lock while we're also creating
- * the ep.
- */
-static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(nccl_net_ofi_device_t *device)
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_impl()
 {
-	nccl_net_ofi_plugin_t *plugin = NULL;
-	nccl_net_ofi_domain_t *domain = NULL;
+	nccl_net_ofi_domain_t *domain = nullptr;
 	long lookup_key = 0;
 
-	assert(device != NULL);
+	assert(this->plugin != nullptr);
 
-	plugin = device->plugin;
-	assert(plugin != NULL);
-
-	if (plugin->domain_per_thread) {
+	if (this->plugin->domain_per_thread) {
 		lookup_key = nccl_net_ofi_gettid();
 	}
 
-	auto domain_iter = device->domain_table->find(lookup_key);
+	auto domain_iter = this->domain_table.find(lookup_key);
 
-	if (domain_iter != device->domain_table->end()) {
+	if (domain_iter != this->domain_table.end()) {
 		domain = domain_iter->second;
 	} else {
-		domain = device->create_domain(device);
-		if (domain == NULL) {
+		domain = this->create_domain();
+		if (domain == nullptr) {
 			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
-				      device->name);
-			return NULL;
+				      this->name);
+			return nullptr;
 		}
 
-		device->domain_table->insert(std::pair(lookup_key,  domain));
+		this->domain_table.insert(std::pair(lookup_key, domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
-			       device->dev_id,
-			       device->name);
+			       this->dev_id,
+			       this->name);
 	}
 
 	return domain;
 }
 
 
-static nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain(nccl_net_ofi_device_t *device)
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain()
 {
-	nccl_net_ofi_domain_t *domain;
+	nccl_net_ofi_domain_t *domain = nullptr;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
-	domain = nccl_net_ofi_device_get_domain_impl(device);
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
+	pthread_wrapper scoped_device_lock(&this->device_lock);
+	domain = this->nccl_net_ofi_device_get_domain_impl();
 
 	return domain;
 }
 
-
-static int nccl_net_ofi_device_get_ep(nccl_net_ofi_device_t *device,
-				      nccl_net_ofi_ep_t **ep_p)
+int nccl_net_ofi_device_t::get_mr_key(void *mhandle, uint64_t *mr_key)
 {
-	int ret = 0;
-	nccl_net_ofi_domain_t *domain = NULL;
-
-	nccl_net_ofi_mutex_lock(&device->device_lock);
-
-	domain = nccl_net_ofi_device_get_domain_impl(device);
-	if (domain == NULL) {
-		ret = -EINVAL;
-		goto unlock;
-	}
-
-	*ep_p = domain->get_ep();
-	if (ep_p == NULL) {
-		ret = -EINVAL;
-		goto unlock;
-	}
-unlock:
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
-
-	return ret;
+	NCCL_OFI_WARN("getMrKey API function unsupported");
+	return -EINVAL;
 }
 
-int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, struct fi_info *ofi_info)
+
+nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep()
+{
+	nccl_net_ofi_domain_t *domain = nullptr;
+	nccl_net_ofi_ep_t *ep = nullptr;
+
+	pthread_wrapper scoped_device_lock(&this->device_lock);
+
+	domain = this->nccl_net_ofi_device_get_domain_impl();
+	if (!domain) {
+		return nullptr;
+	}
+
+	ep = domain->get_ep();
+	if (!ep) {
+		return nullptr;
+	}
+
+	return ep;
+}
+
+
+nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+					     int device_index,
+					     struct fi_info *ofi_info)
+	: plugin(plugin_arg),
+	  dev_id(device_index),
+	  name(strdup(ofi_info->fabric_attr->prov_name))
 {
 	int ret = 0;
 
-	device->plugin = plugin;
-	device->dev_id = device_index;
-	device->name = strdup(ofi_info->fabric_attr->prov_name);
-	if (device->name == NULL) {
+	assert(this->plugin != nullptr);
+
+	if (this->name == nullptr) {
 		NCCL_OFI_WARN("Unable to allocate device name");
-		ret = -ENOMEM;
-		goto exit;
+		throw std::runtime_error("Base device constructor: device name alloc failed");
 	}
 
 	if (platform_device_set_guid) {
-		platform_device_set_guid(ofi_info, device);
+		platform_device_set_guid(ofi_info, this);
 	} else {
-		nccl_net_ofi_device_set_guid(ofi_info, device);
+		nccl_net_ofi_device_set_guid(ofi_info, this);
 	}
 
-	device->get_properties = NULL;
-	device->get_domain = nccl_net_ofi_device_get_domain;
-	device->get_ep = nccl_net_ofi_device_get_ep;
-	device->get_mr_key = NULL;
-	device->release = nccl_net_ofi_device_fini;
-	device->release_all_domain_and_ep = nccl_net_ofi_device_release_all_domain_and_ep;
-
 	/* Intiaialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&device->device_lock, NULL);
+	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);
 	if (ret != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to initialize device mutex");
-		return -ret;
+		NCCL_OFI_WARN("Unable to initialize device mutex");
+		throw std::runtime_error("Base device constructor: device mutex init failed");
 	}
 
 	/* Initialize mr rkey handling */
-	device->need_mr_rkey_pool = true;
-	ret = nccl_ofi_mr_keys_need_own_key(ofi_info, &device->need_mr_rkey_pool);
+	this->need_mr_rkey_pool = true;
+	ret = nccl_ofi_mr_keys_need_own_key(ofi_info, &this->need_mr_rkey_pool);
 	if (ret != 0) {
 		NCCL_OFI_WARN("MR key config parsing failed: %s",
 			      strerror(-ret));
-		return -ret;
+		throw std::runtime_error("Base device constructor: MR key config parse failed");
 	}
-
-	device->create_domain = NULL;
-	device->domain_table = new std::unordered_map<long, nccl_net_ofi_domain_t *>;
-
-exit:
-
-	return ret;
 }
 
 
-int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device)
+nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 {
-	if (device == NULL) {
-		return 0;
+	if (this->name != nullptr) {
+		free(this->name);
 	}
-
-        if (device->domain_table != NULL) {
-		delete device->domain_table;
-	}
-
-	if (device->name != NULL) {
-		free(device->name);
-	}
-
-	return 0;
 }
 
 
-int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
+int nccl_net_ofi_device_t::release_all_domain_and_ep()
 {
-	int ret, first_error = 0, domain_num;
+	int ret, first_error = 0;
 
-	assert(device != NULL);
 	nccl_net_ofi_ep_t *ep;
 
-	nccl_net_ofi_mutex_lock(&device->device_lock);
+	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	domain_num = device->domain_table->size();
-	assert(domain_num > 0);
-	for (auto domain_iter = device->domain_table->begin() ;
-	     domain_iter != device->domain_table->end();) {
+	assert(!this->domain_table.empty());
+	for (auto domain_iter = this->domain_table.begin() ;
+	     domain_iter != this->domain_table.end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
 		nccl_net_ofi_mutex_lock(&domain->domain_lock);
@@ -972,7 +934,7 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 					first_error = ret;
 				}
 			}
-			ep = NULL;
+			ep = nullptr;
 		}
 		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 
@@ -990,24 +952,22 @@ int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device)
 
 	}
 
-	if (device->unreleased_inactive_domain_counter > 0) {
+	if (this->unreleased_inactive_domain_counter > 0) {
 		NCCL_OFI_WARN("%zu inactive domains still open after cleanup",
-			      device->unreleased_inactive_domain_counter);
+			      this->unreleased_inactive_domain_counter);
 
 		if (first_error != 0) {
 			first_error = -FI_EBUSY; // Anything else than above
 		}
 	}
 
-	domain_num = device->domain_table->size();
-	if (OFI_UNLIKELY(domain_num > 0)) {
-		NCCL_OFI_WARN("%u domains still active after cleanup", domain_num);
+	if (OFI_UNLIKELY(!this->domain_table.empty())) {
+		NCCL_OFI_WARN("%zu domains still active after cleanup",
+			      this->domain_table.size());
 		if (first_error != 0) {
 			first_error = -FI_EBUSY; // Anything else than above
 		}
 	}
-
-	nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 	return first_error;
 }
@@ -1050,9 +1010,9 @@ void nccl_net_ofi_domain_t::invalidate()
 
 		/* Remove this domain from the thread->domain table so that it
 		   is not used for future communicators */
-		nccl_net_ofi_device_remove_domain(this->device, this);
+		this->device->remove_domain_from_map(this);
 
-		++this->device->unreleased_inactive_domain_counter;
+		this->device->inc_unreleased_inactive_domain_counter();
 	}
 }
 
@@ -1079,9 +1039,9 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 		/* Remove this domain from the domain table if it was active.
 		   If not, it was already removed in domain_invalidate. */
 		if (this->domain_active) {
-			nccl_net_ofi_device_remove_domain(device_ptr, this);
+			device_ptr->remove_domain_from_map(this);
 		} else {
-			--device_ptr->unreleased_inactive_domain_counter;
+			device_ptr->dec_unreleased_inactive_domain_counter();
 		}
 
 		// domain->free below is going to free the domain lock
