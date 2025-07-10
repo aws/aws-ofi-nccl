@@ -190,6 +190,10 @@ static inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(nccl_net_
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)
 		rdma_device_get_comm(device, local_comm_id);
+	if (OFI_UNLIKELY(r_comm == nullptr)) {
+		/* Received a message for a non-existent recv comm */
+		return nullptr;
+	}
 	assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
 	return r_comm;
 }
@@ -1252,6 +1256,16 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 		/* Eager message receive completion */
 
 		r_comm = rdma_device_get_recv_comm(device, GET_COMM_ID_FROM_IMM(cq_entry->data));
+		if (OFI_UNLIKELY(r_comm == nullptr)) {
+			/* Received eager completion for non-existent recv
+			   communicator. This is possible in case of a
+			   communicator abort, but it shouldn't happen as long
+			   as all communicators are closed after abort. */
+			NCCL_OFI_WARN("Received eager message for non-existent r_comm (%lu)",
+				      GET_COMM_ID_FROM_IMM(cq_entry->data));
+			ret = -EINVAL;
+			goto exit;
+		}
 
 		NCCL_OFI_TRACE_EAGER_RECV(r_comm->base.base.dev_id, rail_id, r_comm,
 					  GET_SEQ_NUM_FROM_IMM(cq_entry->data));
@@ -1281,6 +1295,14 @@ static inline nccl_net_ofi_rdma_req_t *get_req_from_imm_data
 {
 	uint32_t comm_id = GET_COMM_ID_FROM_IMM(data);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = rdma_device_get_recv_comm(device, comm_id);
+	if (OFI_UNLIKELY(r_comm == nullptr)) {
+		/* Received write-immediate completion for non-existent recv
+		   communicator. This should never happen, since the domain
+		   should have been invalidated in this case */
+		NCCL_OFI_WARN("Received write-immediate message for non-existent r_comm (%u)",
+			      comm_id);
+		return nullptr;
+	}
 
 	uint16_t msg_seq_num = GET_SEQ_NUM_FROM_IMM(data);
 	void *elem;
