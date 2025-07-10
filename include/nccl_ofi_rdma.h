@@ -1156,12 +1156,10 @@ struct nccl_net_ofi_rdma_device_rail_t {
 };
 
 
-struct nccl_net_ofi_rdma_plugin {
-	nccl_net_ofi_plugin_t base;
-
+class nccl_net_ofi_rdma_plugin_t : public nccl_net_ofi_plugin_t {
+public:
 	nccl_ofi_topo_t *topo;
 };
-typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
 
 
 /*
