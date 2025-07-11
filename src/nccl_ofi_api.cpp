@@ -132,11 +132,7 @@ ncclResult_t nccl_net_ofi_fini_v6()
 	if (plugin == NULL) {
 		ret = check_return(ncclSystemError);
 	} else {
-		int rc = plugin->release_plugin();
-		if (rc != 0) {
-			NCCL_OFI_WARN("Failure in plugin cleanup");
-			ret = nccl_net_ofi_retval_translate(rc);
-		}
+		delete plugin;
 		plugin = NULL;
 	}
 	return ret;

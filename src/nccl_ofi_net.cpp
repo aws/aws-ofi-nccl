@@ -247,13 +247,13 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			ofi_nccl_protocol.set(PROTOCOL::RDMA);
 			plugin = rdma_plugin;
 			if (sendrecv_plugin != NULL) {
-				sendrecv_plugin->release_plugin();
+				delete sendrecv_plugin;
 			}
 		} else {
 			ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 			plugin = sendrecv_plugin;
 			if (rdma_plugin != NULL) {
-				rdma_plugin->release_plugin();
+				delete rdma_plugin;
 			}
 		}
 
@@ -706,24 +706,23 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 }
 
 
-int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
-			     size_t num_devices)
+nccl_net_ofi_plugin_t::nccl_net_ofi_plugin_t(size_t num_devices)
+	: p_num_devs(num_devices)
 {
-	plugin->p_devs =
-		(nccl_net_ofi_device_t **)calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
-	if (plugin->p_devs == NULL) {
-		NCCL_OFI_WARN("Unable to allocate "
-			      "nccl_net_ofi_device_t pointer array");
-		return -ENOMEM;
+	/* Validate that at least one Libfabric NIC was found */
+	assert(p_num_devs > 0);
+
+	this->p_devs =
+		static_cast<nccl_net_ofi_device_t **>(calloc(num_devices,
+							     sizeof(nccl_net_ofi_device_t *)));
+	if (this->p_devs == nullptr) {
+		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_device_t pointer array");
+		throw std::runtime_error("base plugin constructor: device pointer array alloc failed");
 	}
-
-	plugin->p_num_devs = num_devices;
-
-	return 0;
 }
 
 
-int nccl_net_ofi_plugin_t::release_plugin()
+nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 {
 	for (size_t i = 0 ; i < this->p_num_devs ; i++) {
 		if (this->p_devs[i] != nullptr) {
@@ -733,8 +732,6 @@ int nccl_net_ofi_plugin_t::release_plugin()
 
 	free(this->p_devs);
 	this->p_num_devs = 0;
-
-	return 0;
 }
 
 
