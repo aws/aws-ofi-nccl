@@ -84,7 +84,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(plugin_ptr, this->info, this->dev_id, num_devices, props);
+	ret = plugin_ptr->nccl_net_ofi_info_properties(this->info, this->dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
