@@ -255,9 +255,21 @@ protected:
 
 class nccl_net_ofi_sendrecv_plugin_t : public nccl_net_ofi_plugin_t {
 public:
-	int complete_init() override;
+	/**
+	 * @brief	Default SENDRECV plugin constructor
+	 */
+	nccl_net_ofi_sendrecv_plugin_t(size_t num_devices,
+				       struct fi_info *provider_list_arg)
+		: nccl_net_ofi_plugin_t(num_devices),
+		  provider_list(provider_list_arg)
+	{}
 
-	int release_plugin() override;
+	/**
+	 * @brief	Default SENDRECV plugin destructor
+	 */
+	~nccl_net_ofi_sendrecv_plugin_t() override;
+
+	int complete_init() override;
 
 	struct fi_info *provider_list;
 };

@@ -7019,10 +7019,8 @@ static void get_hints(struct fi_info *hints)
 }
 
 
-int nccl_net_ofi_rdma_plugin_t::release_plugin()
+nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 {
-	int ret, last_error = 0;
-
 	if (this->topo != nullptr) {
 		nccl_ofi_topo_free(this->topo);
 		this->topo = nullptr;
@@ -7037,19 +7035,6 @@ int nccl_net_ofi_rdma_plugin_t::release_plugin()
 		delete s_comm_cleanup_list;
 		s_comm_cleanup_list = nullptr;
 	}
-
-	ret = nccl_net_ofi_plugin_t::release_plugin();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Destructing base plugin failed: %s",
-			      strerror(-ret));
-		if (last_error == 0) {
-			last_error = ret;
-		}
-	}
-
-	free(this);
-
-	return last_error;
 }
 
 
@@ -7100,37 +7085,15 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 }
 
 
-static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
-						  nccl_ofi_topo_t *topo,
-						  nccl_net_ofi_rdma_plugin_t **plugin_p)
+nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(size_t num_devices,
+						       nccl_ofi_topo_t *topo_arg)
+	: nccl_net_ofi_plugin_t(num_devices),
+	  topo(topo_arg)
 {
-	int ret;
-	nccl_net_ofi_rdma_plugin_t *plugin = NULL;
-
-	plugin = (nccl_net_ofi_rdma_plugin_t*)calloc(1, sizeof(nccl_net_ofi_rdma_plugin_t));
-	if (plugin == NULL) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		return -ENOMEM;
-	}
-
-	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing base plugin failed: %s",
-			      strerror(-ret));
-		free(plugin);
-		return ret;
-	}
-
 	/* TODO: we should probably have an rdma_plugin object and put globals
 	   such as these there. */
 	s_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_send_comm_t*>;
 	r_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_recv_comm_t*>;
-
-	plugin->topo = topo;
-
-	*plugin_p = plugin;
-
-	return 0;
 }
 
 
@@ -7163,8 +7126,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	hints = fi_allocinfo();
 	if (hints == NULL) {
 		NCCL_OFI_WARN("Allocation of fi_info failed");
-		ret = -FI_ENOMEM;
-		goto error;
+		return -FI_ENOMEM;
 	}
 
 	get_hints(hints);
@@ -7188,29 +7150,27 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		support_gdr = GDR_UNKNOWN;
 	} else if (ret == -FI_ENODATA) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "No eligible providers were found");
-		goto error;
+		return ret;
 	} else {
 		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
-		goto error;
+		return ret;
 	}
 	fi_freeinfo(hints);
 
 	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
-		goto error;
+		return ret;
 	}
 
 	if (endpoint_mr) {
 		NCCL_OFI_WARN("RDMA protocol does not support endpoint memory registration.");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
-		ret = ncclInvalidArgument;
-		goto error;
+		return ncclInvalidArgument;
 	}
 
 	/* 
@@ -7250,15 +7210,13 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	} else if (ofi_nccl_early_completion.get_source() == ParamSource::ENVIRONMENT &&
 		   ofi_nccl_early_completion.get() && !data_progress_auto) {
 		NCCL_OFI_WARN("Failed configuration of EARLY_COMPLETION due to provider data progress model is not FI_PROGRESS_AUTO");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 	early_completion = ofi_nccl_early_completion.get();
 
 	if (early_completion && ofi_nccl_eager_max_size() != -1) {
 		NCCL_OFI_WARN("Conflicted configuration of EARLY_COMPLETION and EAGER_MAX_SIZE");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 
 	/* Create NCCL OFI topology */
@@ -7316,11 +7274,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	ret = nccl_net_ofi_rdma_plugin_create(num_devs, topo, &plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		goto error;
-	}
+	plugin = new nccl_net_ofi_rdma_plugin_t(num_devs, topo);
 
 	cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
 	if (cpu_cache_line_size < 0) {
@@ -7332,14 +7286,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 
 	*plugin_p = plugin;
-
-	return ret;
-
- error:
-	if (plugin != NULL) {
-		plugin->release_plugin();
-		plugin = NULL;
-	}
 
 	return ret;
 }
