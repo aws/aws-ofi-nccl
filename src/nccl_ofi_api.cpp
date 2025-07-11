@@ -132,7 +132,7 @@ ncclResult_t nccl_net_ofi_fini_v6()
 	if (plugin == NULL) {
 		ret = check_return(ncclSystemError);
 	} else {
-		int rc = plugin->release_plugin(plugin);
+		int rc = plugin->release_plugin();
 		if (rc != 0) {
 			NCCL_OFI_WARN("Failure in plugin cleanup");
 			ret = nccl_net_ofi_retval_translate(rc);
@@ -204,7 +204,7 @@ ncclResult_t nccl_net_ofi_devices_v2(int *num_devices)
 		return check_return(ncclInvalidArgument);
 	}
 
-	*num_devices = plugin->get_num_devices(plugin);
+	*num_devices = plugin->get_num_devices();
 	return ncclSuccess;
 }
 
@@ -219,7 +219,7 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 		return check_return(ncclInvalidArgument);
 	}
 
-	device = plugin->get_device(plugin, dev_id);
+	device = plugin->get_device(dev_id);
 	if (device == NULL) {
 		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 		return check_return(ncclInternalError);
@@ -263,7 +263,7 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 		return check_return(ncclInvalidArgument);
 	}
 
-	device = plugin->get_device(plugin, dev_id);
+	device = plugin->get_device(dev_id);
 	if (device == NULL) {
 		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 		return check_return(ncclInternalError);
@@ -362,7 +362,7 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 	nccl_net_ofi_ep_t *ep = NULL;
 	bool created_ep = false;
 	if (ofi_handle->state.comm == nullptr) {
-		nccl_net_ofi_device_t *device = plugin->get_device(plugin, dev_id);
+		nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
 		if (device == NULL) {
 			NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 			return check_return(ncclInternalError);
@@ -913,7 +913,7 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 		return check_return(ncclInvalidArgument);
 	}
 
-	device = plugin->get_device(plugin, 0);
+	device = plugin->get_device(0);
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device %i.", 0);
 		return check_return(ncclInternalError);
