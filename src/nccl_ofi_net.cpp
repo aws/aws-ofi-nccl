@@ -704,19 +704,6 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 }
 
 
-nccl_net_ofi_plugin_t::nccl_net_ofi_plugin_t(size_t num_devices)
-	: p_num_devs(num_devices)
-{
-	this->p_devs =
-		static_cast<nccl_net_ofi_device_t **>(calloc(num_devices,
-							     sizeof(nccl_net_ofi_device_t *)));
-	if (this->p_devs == nullptr) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_device_t pointer array");
-		throw std::runtime_error("base plugin constructor: device pointer array alloc failed");
-	}
-}
-
-
 nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 {
 	for (size_t i = 0 ; i < this->p_num_devs ; i++) {
@@ -725,7 +712,6 @@ nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 		}
 	}
 
-	free(this->p_devs);
 	this->p_num_devs = 0;
 }
 

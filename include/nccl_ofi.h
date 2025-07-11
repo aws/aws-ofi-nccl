@@ -861,7 +861,12 @@ public:
 	 * called from the transport-specific plugin creation function, which
 	 * is called from nccl_net_ofi_create_plugin().
 	 */
-	nccl_net_ofi_plugin_t(size_t num_devices);
+	nccl_net_ofi_plugin_t(size_t num_devices)
+		: p_devs(num_devices, nullptr),
+		  p_num_devs(num_devices)
+	{
+		assert(p_num_devs > 0);
+	}
 
 	/**
 	 * @brief	Destructor for the nccl_net_ofi_plugin class
@@ -926,7 +931,7 @@ public:
 
 /* private */
 	/* Array of devices */
-	nccl_net_ofi_device_t **p_devs;
+	std::vector<nccl_net_ofi_device_t *> p_devs;
 
 	/* Number of devices in devs array */
 	size_t p_num_devs;
