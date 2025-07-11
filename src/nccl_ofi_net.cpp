@@ -247,13 +247,13 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			ofi_nccl_protocol.set(PROTOCOL::RDMA);
 			plugin = rdma_plugin;
 			if (sendrecv_plugin != NULL) {
-				sendrecv_plugin->release_plugin(sendrecv_plugin);
+				sendrecv_plugin->release_plugin();
 			}
 		} else {
 			ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 			plugin = sendrecv_plugin;
 			if (rdma_plugin != NULL) {
-				rdma_plugin->release_plugin(rdma_plugin);
+				rdma_plugin->release_plugin();
 			}
 		}
 
@@ -271,7 +271,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s",
 		      plugin->domain_per_thread ? "thread" : "process");
 
-	ret = plugin->complete_init(plugin);
+	ret = plugin->complete_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to initialize %s protocol", ofi_nccl_protocol.get_string());
 		goto exit;
@@ -288,7 +288,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * resources. This initialization happens once per process, and thus it
 	 * does not matter which device is used to create the endpoint.
 	 */
-	device = plugin->get_device(plugin, 0);
+	device = plugin->get_device(0);
 
 	ep = device->get_ep();
 	if (ep == nullptr) {
@@ -450,7 +450,12 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 
 	memset(props, 0, sizeof(*props));
 
-	device = plugin->get_device(plugin, dev_id);
+	device = plugin->get_device(dev_id);
+	if (OFI_UNLIKELY(device == nullptr)) {
+		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
+		ret = -ENOTSUP;
+		goto error;
+	}
 	props->guid = device->guid;
 
 	ret = set_nic_props_default(dev_id, nic_prov, props);
@@ -701,38 +706,6 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 }
 
 
-static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
-					     size_t device_index,
-					     nccl_net_ofi_device_t *device)
-{
-	if (device_index >= plugin->p_num_devs) {
-		return -ENOSPC;
-	}
-
-	plugin->p_devs[device_index] = device;
-
-	return 0;
-}
-
-
-static nccl_net_ofi_device_t * nccl_net_ofi_plugin_get_device(nccl_net_ofi_plugin_t *plugin,
-							      size_t device_index)
-{
-	if (device_index >= plugin->p_num_devs) {
-		NCCL_OFI_WARN("Invalid device index %zu", device_index);
-		return NULL;
-	}
-
-	return plugin->p_devs[device_index];
-}
-
-
-static size_t nccl_net_ofi_plugin_get_num_devices(nccl_net_ofi_plugin_t *plugin)
-{
-	return plugin->p_num_devs;
-}
-
-
 int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
 			     size_t num_devices)
 {
@@ -746,25 +719,20 @@ int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
 
 	plugin->p_num_devs = num_devices;
 
-	plugin->assign_device = nccl_net_ofi_plugin_assign_device;
-	plugin->get_device = nccl_net_ofi_plugin_get_device;
-	plugin->get_num_devices = nccl_net_ofi_plugin_get_num_devices;
-	plugin->release_plugin = nccl_net_ofi_plugin_fini;
-
 	return 0;
 }
 
 
-int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+int nccl_net_ofi_plugin_t::release_plugin()
 {
-	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
-		if (plugin->p_devs[i] != NULL) {
-			plugin->p_devs[i]->release_device();
+	for (size_t i = 0 ; i < this->p_num_devs ; i++) {
+		if (this->p_devs[i] != nullptr) {
+			this->p_devs[i]->release_device();
 		}
 	}
 
-	free(plugin->p_devs);
-	plugin->p_num_devs = 0;
+	free(this->p_devs);
+	this->p_num_devs = 0;
 
 	return 0;
 }

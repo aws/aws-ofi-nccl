@@ -73,7 +73,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	assert(this->plugin != nullptr);
 	
-	size_t num_devices = this->plugin->get_num_devices(this->plugin);
+	size_t num_devices = this->plugin->get_num_devices();
 	int ret;
 	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
@@ -2399,16 +2399,15 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 }
 
 
-static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+int nccl_net_ofi_sendrecv_plugin_t::release_plugin()
 {
 	int ret, last_error = 0;
-	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
 
-	if (sendrecv_plugin->provider_list != NULL) {
-		fi_freeinfo(sendrecv_plugin->provider_list);
+	if (this->provider_list != nullptr) {
+		fi_freeinfo(this->provider_list);
 	}
 
-	ret = nccl_net_ofi_plugin_fini(plugin);
+	ret = nccl_net_ofi_plugin_t::release_plugin();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Destructing base plugin failed: %s",
 			      strerror(-ret));
@@ -2417,32 +2416,31 @@ static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
 		}
 	}
 
-	free(plugin);
+	free(this);
 
 	return 0;
 }
 
 
-static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin_t *plugin)
+int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 {
-	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
 	struct fi_info *info;
 	size_t dev_id = 0;
 	int ret;
 
 	/* Allocate and initialize nccl_net devices */
-	info = sendrecv_plugin->provider_list;
-	while (dev_id != sendrecv_plugin->p_num_devs) {
+	info = this->provider_list;
+	while (dev_id != this->p_num_devs) {
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			return -EINVAL;
 		}
 
-		auto *device = new nccl_net_ofi_sendrecv_device_t(plugin,
+		auto *device = new nccl_net_ofi_sendrecv_device_t(this,
 								  static_cast<int>(dev_id),
 								  info);
 
-		ret = plugin->assign_device(plugin, dev_id, device);
+		ret = this->assign_device(dev_id, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Assigning device %li failed", dev_id);
 			return ret;
@@ -2477,9 +2475,6 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 	}
 
 	plugin->provider_list = provider_list;
-
-	plugin->release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
-	plugin->complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
 
 	*plugin_p = plugin;
 
@@ -2677,7 +2672,7 @@ found:
 
  error:
 	if (plugin != NULL) {
-		plugin->release_plugin(plugin);
+		plugin->release_plugin();
 		plugin = NULL;
 	}
 
