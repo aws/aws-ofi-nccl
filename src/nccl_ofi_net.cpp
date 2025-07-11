@@ -435,22 +435,20 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	return 0;
 }
 
-/*
- * @brief	Set properties obtained from libfabric NIC Info.
- *
- * @return	Populated props structure
- */
-int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
-				 int dev_id, int num_devices, nccl_ofi_properties_t *props)
+
+int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+							int dev_id,
+							int num_devices,
+							nccl_ofi_properties_t *props)
 {
 	int ret = 0;
-	struct fid_nic *nic_info = NULL;
-	const char *platform_type = NULL;
-	nccl_net_ofi_device_t *device = NULL;
+	struct fid_nic *nic_info = nullptr;
+	const char *platform_type = nullptr;
+	nccl_net_ofi_device_t *device = nullptr;
 
 	memset(props, 0, sizeof(*props));
 
-	device = plugin->get_device(dev_id);
+	device = this->get_device(dev_id);
 	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
 		ret = -ENOTSUP;
@@ -464,8 +462,8 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	}
 
 	/* Change default values as set by NIC attributes */
-	nic_info = (struct fid_nic *)nic_prov->nic;
-	if (nic_info == NULL) {
+	nic_info = nic_prov->nic;
+	if (nic_info == nullptr) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "No NIC info for dev %d. Supplying default values for NIC properties.",
 			      dev_id);
@@ -480,7 +478,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 			free(props->name);
 		}
 		props->name = strdup(nic_info->device_attr->name);
-		assert(props->name != NULL);
+		assert(props->name != nullptr);
 	}
 
 	/*
@@ -493,7 +491,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	 * Also, if we have different domains for different threads, registrations
 	 * are not reported as global even if they are tied to the domain.
 	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || plugin->domain_per_thread) {
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
 		props->regIsGlobal = 0;
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {

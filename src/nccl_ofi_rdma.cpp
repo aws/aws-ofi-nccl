@@ -406,7 +406,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	struct fi_info *info = this->device_rails[0].info;
 	size_t num_devices = plugin_ptr->get_num_devices();
 
-	ret = nccl_net_ofi_info_properties(plugin_ptr, info, this->dev_id, num_devices, props);
+	ret = plugin_ptr->nccl_net_ofi_info_properties(info, this->dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */

@@ -906,6 +906,16 @@ public:
 		return p_num_devs;
 	}
 
+	/**
+	 * @brief	Set properties obtained from libfabric NIC Info.
+	 *
+	 * @return	Populated props structure
+	 */
+	int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+					 int dev_id,
+					 int num_devices,
+					 nccl_ofi_properties_t *props);
+
 	/*
 	 * Determine whether to allocate the domain per process or per
 	 * thread.
@@ -932,14 +942,6 @@ public:
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/*
- * @brief	Set properties obtained from libfabric NIC Info.
- *
- * @return	Populated props structure
- */
-int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
-				 int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
 /*
  * @brief	Allocate memory region for memory registration
