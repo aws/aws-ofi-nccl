@@ -1158,6 +1158,10 @@ struct nccl_net_ofi_rdma_device_rail_t {
 
 class nccl_net_ofi_rdma_plugin_t : public nccl_net_ofi_plugin_t {
 public:
+	int complete_init() override;
+
+	int release_plugin() override;	
+
 	nccl_ofi_topo_t *topo;
 };
 
