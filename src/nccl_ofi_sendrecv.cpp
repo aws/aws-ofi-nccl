@@ -2399,26 +2399,11 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 }
 
 
-int nccl_net_ofi_sendrecv_plugin_t::release_plugin()
+nccl_net_ofi_sendrecv_plugin_t::~nccl_net_ofi_sendrecv_plugin_t()
 {
-	int ret, last_error = 0;
-
 	if (this->provider_list != nullptr) {
 		fi_freeinfo(this->provider_list);
 	}
-
-	ret = nccl_net_ofi_plugin_t::release_plugin();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Destructing base plugin failed: %s",
-			      strerror(-ret));
-		if (last_error == 0) {
-			last_error = ret;
-		}
-	}
-
-	free(this);
-
-	return 0;
 }
 
 
@@ -2449,34 +2434,6 @@ int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 		dev_id++;
 		info = info->next;
 	}
-
-	return 0;
-}
-
-
-static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
-					       struct fi_info *provider_list,
-					       nccl_net_ofi_sendrecv_plugin_t **plugin_p)
-{
-	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin = NULL;
-
-	plugin = (nccl_net_ofi_sendrecv_plugin_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_plugin_t));
-	if (plugin == NULL) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		return -ENOMEM;
-	}
-
-	ret = nccl_net_ofi_plugin_init(plugin, num_devices);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing base plugin failed: %s",
-			      strerror(-ret));
-		return ret;
-	}
-
-	plugin->provider_list = provider_list;
-
-	*plugin_p = plugin;
 
 	return 0;
 }
@@ -2660,11 +2617,7 @@ found:
 		goto error;
 	}
 
-	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, provider_list, &plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		goto error;
-	}
+	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list);
 
 	*plugin_p = plugin;
 
@@ -2672,7 +2625,7 @@ found:
 
  error:
 	if (plugin != NULL) {
-		plugin->release_plugin();
+		delete plugin;
 		plugin = NULL;
 	}
 
