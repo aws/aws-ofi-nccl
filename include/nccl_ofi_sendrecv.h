@@ -255,6 +255,10 @@ protected:
 
 class nccl_net_ofi_sendrecv_plugin_t : public nccl_net_ofi_plugin_t {
 public:
+	int complete_init() override;
+
+	int release_plugin() override;
+
 	struct fi_info *provider_list;
 };
 

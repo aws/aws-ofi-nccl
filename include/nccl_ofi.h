@@ -864,17 +864,32 @@ public:
 	 * at which point devices and network resources can be
 	 * created.
 	 */
-	int (*complete_init)(nccl_net_ofi_plugin_t *plugin);
+	virtual int complete_init() = 0;
 
-	int (*assign_device)(nccl_net_ofi_plugin_t *plugin,
-			     size_t device_index, nccl_net_ofi_device_t *device);
+	virtual int release_plugin();
 
-	nccl_net_ofi_device_t *(*get_device)(nccl_net_ofi_plugin_t *plugin,
-					     size_t device_index);
+	inline int assign_device(size_t device_index, nccl_net_ofi_device_t *device)
+	{
+		if (device_index >= p_num_devs) {
+			return -ENOSPC;
+		}
+		p_devs[device_index] = device;
+		return 0;
+	}
 
-	size_t (*get_num_devices)(nccl_net_ofi_plugin_t *plugin);
+	inline nccl_net_ofi_device_t *get_device(size_t device_index)
+	{
+		if (device_index >= p_num_devs) {
+			NCCL_OFI_WARN("Invalid device index %zu", device_index);
+			return nullptr;
+		}
+		return p_devs[device_index];
+	}
 
-	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
+	inline size_t get_num_devices()
+	{
+		return p_num_devs;
+	}
 
 	/*
 	 * Determine whether to allocate the domain per process or per
