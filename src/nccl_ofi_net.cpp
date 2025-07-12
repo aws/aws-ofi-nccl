@@ -897,7 +897,6 @@ int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_
 	device->get_properties = NULL;
 	device->get_domain = nccl_net_ofi_device_get_domain;
 	device->get_ep = nccl_net_ofi_device_get_ep;
-	device->get_mr_key = NULL;
 	device->release = nccl_net_ofi_device_fini;
 	device->release_all_domain_and_ep = nccl_net_ofi_device_release_all_domain_and_ep;
 

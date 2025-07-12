@@ -47,6 +47,23 @@
 /* Indicates if provider supports FI_RMA */
 bool support_fi_rma = false;
 
+
+int nccl_net_ofi_sendrecv_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
+{
+	int ret = 0;
+
+	uint64_t key = fi_mr_key(this->mr);
+	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
+		ret = -ENOENT;
+		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
+	} else {
+		*mr_key_ptr = key;
+	}
+
+	return ret;
+}
+
+
 static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
 				       nccl_ofi_idpool_t *key_pool,
 				       nccl_ofi_mr_cache_t *mr_cache);
@@ -527,7 +544,7 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
-	auto *ret_handle = new nccl_net_ofi_sendrecv_mr_handle_t{MR_KEY_INIT_VALUE, nullptr};
+	auto *ret_handle = new nccl_net_ofi_sendrecv_mr_handle_t(MR_KEY_INIT_VALUE);
 
 	mr_attr.access = FI_SEND | FI_RECV;
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, &mr_attr, &regattr_flags);
@@ -2348,7 +2365,6 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 
 	device->get_properties = sendrecv_get_properties;
 	device->release = nccl_net_ofi_sendrecv_device_release;
-	device->get_mr_key = NULL;
 	device->create_domain = nccl_net_ofi_sendrecv_device_create_domain;
 	device->get_ofi_info = sendrecv_device_get_ofi_info;
 
