@@ -125,7 +125,6 @@ class nccl_net_ofi_ep_t;
 
 struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_req;
-struct nccl_net_ofi_mr_handle;
 struct nccl_net_ofi_comm;
 struct nccl_net_ofi_listen_comm;
 struct nccl_net_ofi_send_comm;
@@ -133,7 +132,6 @@ struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
-typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
 typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
 typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
@@ -149,6 +147,30 @@ typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
  */
 struct nccl_net_ofi_req {
 	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
+};
+
+struct nccl_net_ofi_mr_handle_t {
+	/**
+	 * @brief	Default constructor
+	 */
+	nccl_net_ofi_mr_handle_t(uint64_t mr_key_arg)
+		: mr_key(mr_key_arg)
+	{}
+
+	virtual ~nccl_net_ofi_mr_handle_t() = default;
+
+	/**
+	 * @brief	Get MR key from an MR handle
+	 * 
+	 * 		Pure virtual function for getting an MR key from an MR handle,
+	 * 		must be implemented by derived MR handle structs.
+	 * 
+	 * @param	mr_key_ptr, set to the mr_key
+	 * @return	0 on success, non-0 on failure
+	 */
+	virtual int get_mr_key(uint64_t *mr_key_ptr) = 0;
+	
+	uint64_t mr_key;
 };
 
 /**

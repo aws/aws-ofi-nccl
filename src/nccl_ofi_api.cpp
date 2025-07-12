@@ -901,6 +901,7 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
+	auto *mhandle_ptr = static_cast<nccl_net_ofi_mr_handle_t *>(mhandle);
 
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
@@ -918,12 +919,7 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 		return check_return(ncclInternalError);
 	}
 
-	if (OFI_UNLIKELY(device->get_mr_key == NULL)) {
-		NCCL_OFI_WARN("Protocol does not support getMrKey API function");
-		return check_return(ncclInternalError);
-	}
-
-	ret = device->get_mr_key(device, mhandle, mr_key);
+	ret = mhandle_ptr->get_mr_key(mr_key);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
