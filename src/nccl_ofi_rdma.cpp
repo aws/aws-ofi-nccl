@@ -2696,10 +2696,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 		}
 	}
 
-	if (mr_handle->mr != NULL) {
-		free(mr_handle->mr);
-	}
-	free(mr_handle);
+	delete mr_handle;
 
 	return ret;
 }
@@ -2718,17 +2715,10 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	*mhandle = NULL;
 
 	/* Allocate rdma memory registration handle */
-	ret_handle =  static_cast<nccl_net_ofi_rdma_mr_handle_t *>(calloc(1, sizeof(nccl_net_ofi_rdma_mr_handle_t)));
+	ret_handle = new nccl_net_ofi_rdma_mr_handle_t(num_rails);
 	if (OFI_UNLIKELY(!ret_handle)) {
 		NCCL_OFI_WARN("Unable to allocate memory registration handle");
 		return -ENOMEM;
-	}
-
-	ret_handle->mr = static_cast<struct fid_mr **>(calloc(num_rails, sizeof(struct fid_mr *)));
-	if (OFI_UNLIKELY(!ret_handle->mr)) {
-		NCCL_OFI_WARN("Unable to allocate memory registration handles array");
-		ret = -ENOMEM;
-		goto error;
 	}
 
 	if (key_pool->get_size() != 0) {
@@ -2750,7 +2740,6 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	}
 
 	/* Register memory on each rail */
-	ret_handle->num_rails = num_rails;
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
@@ -6038,18 +6027,17 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 	return ret;
 }
 
-static int get_mr_key(nccl_net_ofi_device_t *base_dev, void *mhandle,
-		      uint64_t *mr_key)
+
+int nccl_net_ofi_rdma_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-
-	uint64_t key = fi_mr_key(mr_handle->mr[0]);
+	assert(!this->mr.empty());
+	uint64_t key = fi_mr_key(this->mr[0]);
 	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 		ret = -ENOENT;
 		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
 	} else {
-		*mr_key = key;
+		*mr_key_ptr = key;
 	}
 
 	return ret;
@@ -7064,7 +7052,6 @@ static nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_device_create(
 	}
 
 	device->get_properties = get_properties;
-	device->get_mr_key = get_mr_key;
 	device->release = nccl_net_ofi_rdma_device_release;
 	device->create_domain = nccl_net_ofi_rdma_device_create_domain;
 	device->get_ofi_info = rdma_device_get_ofi_info;

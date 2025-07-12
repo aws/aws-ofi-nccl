@@ -111,15 +111,30 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  * Use function `calloc_rdma_mr_handle(int num_rails, int num_control_rails)' to
  * allocate a RDMA memory registration handle with `num_rails`+`num_control_rails` rails.
  */
-typedef struct nccl_net_ofi_rdma_mr_handle {
+struct nccl_net_ofi_rdma_mr_handle_t : nccl_net_ofi_mr_handle_t {
+	/**
+	 * @brief 	Default constructor
+	 */
+	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
+		: nccl_net_ofi_mr_handle_t(0),
+		  num_rails(num_rails_arg),
+		  mr(num_rails, nullptr)
+	{
+		assert(num_rails > 0);
+	}
+
+	/**
+	 * @brief	Get MR key for RDMA handle
+	 * 
+	 * 		Return MR key associated with first mr array element
+	 */
+	int get_mr_key(uint64_t *mr_key_ptr) override;
+
 	uint16_t num_rails;
 
-	/* value of mr key id, if keys must be requested */
-	uint64_t mr_key;
-
 	/* Array of size `num_rails' */
-	struct fid_mr **mr;
-} nccl_net_ofi_rdma_mr_handle_t;
+	std::vector<struct fid_mr *> mr;
+};
 
 
 /* Contents of ctrl message sent from receiver to sender to advertise

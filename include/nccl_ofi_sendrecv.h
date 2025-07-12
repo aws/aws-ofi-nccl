@@ -30,10 +30,23 @@ typedef enum nccl_net_ofi_sendrecv_req_direction {
 	NCCL_OFI_SENDRECV_RECV,
 } nccl_net_ofi_sendrecv_req_direction_t;
 
-typedef struct nccl_net_ofi_sendrecv_mr_handle {
-	uint64_t mr_key;
-	struct fid_mr *mr;
-} nccl_net_ofi_sendrecv_mr_handle_t;
+struct nccl_net_ofi_sendrecv_mr_handle_t : nccl_net_ofi_mr_handle_t {
+	/**
+	 * @brief	Default constructor
+	 */
+	nccl_net_ofi_sendrecv_mr_handle_t(uint64_t mr_key_arg)
+		: nccl_net_ofi_mr_handle_t(mr_key_arg)
+	{}
+
+	/**
+	 * @brief	Get MR key for SENDRECV handle
+	 * 
+	 * 		Return MR key associated with mr
+	 */
+	int get_mr_key(uint64_t *mr_key_ptr) override;
+	
+	struct fid_mr *mr = nullptr;
+};
 
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	/* This base listen communicator must be the first member of
