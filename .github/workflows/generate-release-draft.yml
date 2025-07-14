@@ -4,7 +4,6 @@ defaults:
 
 name: Build and Generate Draft Release
 on:
-  workflow_dispatch:
   push:
     tags:
       - 'v*.*.*'
@@ -14,10 +13,10 @@ jobs:
     strategy:
       matrix:
         include:
-          - container: ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}/aws-ofi-nccl-ubuntu:cuda-gcc-latest-none-efalattest
+          - container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:cuda-gcc-latest-none-efalattest
             name: ubuntu
             generate_packages: true
-          - container: ghcr.io/${{ github.actor }}/${{ github.event.repository.name }}/aws-ofi-nccl-al2023:cuda-efalatest
+          - container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:cuda-efalatest
             name: amazonlinux
             generate_packages: false
 
