@@ -37,10 +37,6 @@
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
-/* Maximum number of comms open simultaneously. Eventually this will be
-   runtime-expandable */
-#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
-
 /*
  * @brief	Number of bits used for number of segments value
  */
@@ -138,65 +134,6 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req);
 
-
-static nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin(nccl_net_ofi_rdma_device_t *device)
-{
-	return (nccl_net_ofi_rdma_plugin_t*)device->plugin;
-}
-
-/*
- * @brief	Get endpoint communicator with given ID
- */
-static inline nccl_net_ofi_comm_t *rdma_device_get_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
-{
-	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
-	assert(local_comm_id < device->num_comm_ids);
-	return device->comms[local_comm_id];
-}
-
-/*
- * @brief	Set endpoint communicator with given ID
- */
-static inline void rdma_device_set_comm(nccl_net_ofi_rdma_device_t *device,
-			    uint32_t local_comm_id,
-			    nccl_net_ofi_comm_t *comm)
-{
-	assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
-	assert(local_comm_id < device->num_comm_ids);
-	device->comms[local_comm_id] = comm;
-}
-
-
-/*
- * @brief	Get endpoint send communicator with given ID
- */
-static inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(nccl_net_ofi_rdma_device_t *device, uint32_t local_comm_id)
-{
-	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)
-		rdma_device_get_comm(device, local_comm_id);
-	if (OFI_UNLIKELY(s_comm == nullptr)) {
-		/* Received a ctrl message for a non-existent send comm */
-		return nullptr;
-	}
-	assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
-	return s_comm;
-}
-
-/*
- * @brief	Get endpoint recv communicator with given comm_id
- */
-static inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(nccl_net_ofi_rdma_device_t *device,
-							   uint32_t local_comm_id)
-{
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)
-		rdma_device_get_comm(device, local_comm_id);
-	if (OFI_UNLIKELY(r_comm == nullptr)) {
-		/* Received a message for a non-existent recv comm */
-		return nullptr;
-	}
-	assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
-	return r_comm;
-}
 
 /*
  * Get connection message from rx buffer
@@ -298,18 +235,6 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rai
 static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
 	return (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-}
-
-
-/*
- * @brief Return device rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(nccl_net_ofi_rdma_device_t *device,
-							       uint16_t rail_id)
-{
-	assert(device->device_rails);
-	assert(rail_id < device->num_rails);
-	return &device->device_rails[rail_id];
 }
 
 
@@ -496,7 +421,7 @@ static inline size_t ofi_info_list_length(struct fi_info *info_list)
 int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	int ret;
-	nccl_net_ofi_rdma_plugin_t *plugin_ptr = rdma_device_get_plugin(this);
+	nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
 	assert(plugin_ptr != nullptr);
 
 	/* Retrieve NIC properties of first rail */
@@ -1149,7 +1074,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req_t *rx_buff_req)
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
 		rx_get_close_msg(rx_buff_data);
 
-	nccl_net_ofi_rdma_send_comm_t *s_comm = rdma_device_get_send_comm(device, close_msg->send_comm_id);
+	nccl_net_ofi_rdma_send_comm_t *s_comm = device->rdma_device_get_send_comm(close_msg->send_comm_id);
 	if (s_comm == nullptr) {
 		/* We already destroyed this s_comm. */
 		NCCL_OFI_WARN("Received close message for non-existent send comm id %u",
@@ -1222,7 +1147,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 		assert(cq_entry->len == nccl_net_ofi_rdma_ctrl_msg_size(ep->num_rails, ep->use_long_rkeys));
 
 		ctrl_msg = get_rx_ctrl_msg(rx_buff_data);
-		s_comm = rdma_device_get_send_comm(device, ctrl_msg->remote_comm_id);
+		s_comm = device->rdma_device_get_send_comm(ctrl_msg->remote_comm_id);
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			/* We already destroyed this s_comm. */
 			NCCL_OFI_WARN("Received ctrl message for non-existent send comm id %u",
@@ -1252,7 +1177,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 	case NCCL_OFI_RDMA_MSG_EAGER:
 		/* Eager message receive completion */
 
-		r_comm = rdma_device_get_recv_comm(device, GET_COMM_ID_FROM_IMM(cq_entry->data));
+		r_comm = device->rdma_device_get_recv_comm(GET_COMM_ID_FROM_IMM(cq_entry->data));
 		if (OFI_UNLIKELY(r_comm == nullptr)) {
 			/* Received eager completion for non-existent recv
 			   communicator. This is possible in case of a
@@ -1291,7 +1216,7 @@ static inline nccl_net_ofi_rdma_req_t *get_req_from_imm_data
 	(nccl_net_ofi_rdma_device_t *device, uint64_t data)
 {
 	uint32_t comm_id = GET_COMM_ID_FROM_IMM(data);
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = rdma_device_get_recv_comm(device, comm_id);
+	nccl_net_ofi_rdma_recv_comm_t *r_comm = device->rdma_device_get_recv_comm(comm_id);
 	if (OFI_UNLIKELY(r_comm == nullptr)) {
 		/* Received write-immediate completion for non-existent recv
 		   communicator. This should never happen, since the domain
@@ -2765,7 +2690,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		 * insert a missing entry
 		 */
 		nccl_net_ofi_mutex_lock(&this->mr_cache->lock);
-		ret_handle = reinterpret_cast<nccl_net_ofi_rdma_mr_handle_t *>(
+		ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
 			nccl_ofi_mr_cache_lookup_entry(this->mr_cache, ckey));
 
 		if (ret_handle) {
@@ -3552,7 +3477,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 #endif
 
 	/* Not strictly necessary, but why leave dangling pointers? */
-	rdma_device_set_comm(device, r_comm->local_comm_id, NULL);
+	device->rdma_device_set_comm(r_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
 	device->comm_idpool->free_id(r_comm->local_comm_id);
@@ -3774,7 +3699,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
-	rdma_device_set_comm(device, s_comm->local_comm_id, NULL);
+	device->rdma_device_set_comm(s_comm->local_comm_id, NULL);
 
 	/* Release communicator ID */
 	device->comm_idpool->free_id(s_comm->local_comm_id);
@@ -4471,7 +4396,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 
 	/* Add ourselves to ep's lookup array */
-	rdma_device_set_comm(device, r_comm->local_comm_id, &r_comm->base.base);
+	device->rdma_device_set_comm(r_comm->local_comm_id, &r_comm->base.base);
 
 	/* Allocate array of control communicator rails */
 	r_comm->num_control_rails = num_control_rails;
@@ -6205,7 +6130,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	ret_s_comm->local_comm_id = (uint32_t)comm_id;
 
 	/* Add ourselves to ep's lookup array */
-	rdma_device_set_comm(device, ret_s_comm->local_comm_id, &ret_s_comm->base.base);
+	device->rdma_device_set_comm(ret_s_comm->local_comm_id, &ret_s_comm->base.base);
 
 	/* Allocate communicator rails array */
 	ret_s_comm->num_rails = num_rails;
@@ -6470,7 +6395,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 
 	/* Initialize libfabric resources of endpoint rails */
 	for (uint16_t rail_id = 0; rail_id != device->num_rails; ++rail_id) {
-		rail_dev = rdma_device_get_rail(device, rail_id);
+		rail_dev = device->rdma_device_get_rail(rail_id);
 		domain_rail = domain_arg->rdma_domain_get_rail(rail_id);
 		rail = this->rdma_endpoint_get_rail(rail_id);
 
@@ -6484,7 +6409,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 
 	/* Initialize libfabric resources of endpoint control rails */
 	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
-		rail_dev = rdma_device_get_rail(device, rail_id);
+		rail_dev = device->rdma_device_get_rail(rail_id);
 		domain_rail = domain_arg->rdma_domain_get_rail(rail_id);
 		rail = rdma_endpoint_get_rail(rail_id);
 		control_rail = rdma_endpoint_get_control_rail(rail_id);
@@ -6781,7 +6706,7 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 									  nccl_net_ofi_rdma_domain_rail_t{});
 
 	for (uint16_t i = 0; i < this->num_rails ; i++) {
-		nccl_net_ofi_rdma_device_rail_t *device_rail = rdma_device_get_rail(device_arg, i);
+		nccl_net_ofi_rdma_device_rail_t *device_rail = device_arg->rdma_device_get_rail(i);
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(i);
 
 		domain_rail->rail_id = i;
@@ -6837,17 +6762,12 @@ nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain()
 }
 
 
-/*
- * @brief	Allocates and initialises various libfabric resources like
- *		fabric and domain to make device rail ready for rail creation.
- */
-static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
-						 nccl_net_ofi_rdma_device_rail_t *rail_dev)
+int nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
 	int ret = 0;
 
 	/* Create fabric */
-	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, NULL);
+	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, nullptr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
@@ -6858,25 +6778,22 @@ static inline int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_t *dev
 	return ret;
  error:
 	if (rail_dev->fabric) {
-		fi_close((fid_t)rail_dev->fabric);
-		rail_dev->fabric = NULL;
+		fi_close(reinterpret_cast<fid_t>(rail_dev->fabric));
+		rail_dev->fabric = nullptr;
 	}
 
  	return ret;
 }
 
-/*
- * @brief	Allocates and initializes various libfabric resources to make rdma
- *		device ready for endpoint creation.
- */
-static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
+
+int nccl_net_ofi_rdma_device_t::device_prepare_for_connection()
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_device_rail_t *begin = device->device_rails;
-	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
+	nccl_net_ofi_rdma_device_rail_t *begin = this->device_rails;
+	nccl_net_ofi_rdma_device_rail_t *end = this->device_rails + this->num_rails;
 
 	for (; begin != end; ++begin) {
-		ret = init_device_rail_ofi_resources(device, begin);
+		ret = nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(begin);
 		if (ret != 0) {
 			return ret;
 		}
@@ -6886,13 +6803,10 @@ static int device_prepare_for_connection(nccl_net_ofi_rdma_device_t *device)
 }
 
 
-/*
- * @brief	Release libfabric resources of device
- */
-static void release_device_ofi_resources(nccl_net_ofi_rdma_device_t *device)
+void nccl_net_ofi_rdma_device_t::release_device_ofi_resources()
 {
-	nccl_net_ofi_rdma_device_rail_t *begin = device->device_rails;
-	nccl_net_ofi_rdma_device_rail_t *end = device->device_rails + device->num_rails;
+	nccl_net_ofi_rdma_device_rail_t *begin = this->device_rails;
+	nccl_net_ofi_rdma_device_rail_t *end = this->device_rails + this->num_rails;
 
 	for (; begin != end; ++begin) {
 		if (begin->fabric) {
@@ -6904,42 +6818,31 @@ static void release_device_ofi_resources(nccl_net_ofi_rdma_device_t *device)
 	}
 }
 
-/*
- * @brief	Allocate device rail array and store duplicates of libfabric NIC info structs.
- *
- * @param	info_list
- *		NIC info list for which device rails are created
- * @param	num_infos
- *		Length of list
- *
- * @param	Initialized device rail array, on success
- *		NULL, on others
- */
-static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info *info_list,
-								 int num_infos)
+
+nccl_net_ofi_rdma_device_rail_t *nccl_net_ofi_rdma_device_t::create_device_rail_array(struct fi_info *info_list,
+										      int num_infos)
 {
 	/* Allocate NIC info array */
-	nccl_net_ofi_rdma_device_rail_t *device_rails =
-		(nccl_net_ofi_rdma_device_rail_t *)calloc(num_infos,
-							  sizeof(nccl_net_ofi_rdma_device_rail_t));
-	if (device_rails == NULL) {
-		return NULL;
+	auto *device_rails = static_cast<nccl_net_ofi_rdma_device_rail_t *>(calloc(num_infos,
+		sizeof(nccl_net_ofi_rdma_device_rail_t)));
+	if (device_rails == nullptr) {
+		return nullptr;
 	}
 
 	for (int i = 0 ; i < num_infos ; i++) {
-		if (info_list == NULL) {
+		if (info_list == nullptr) {
 			goto error;
 		}
 
 		/* Duplicate NIC info */
 		device_rails[i].info = fi_dupinfo(info_list);
-		if (device_rails[i].info == NULL) {
+		if (device_rails[i].info == nullptr) {
 			goto error;
 		}
 		/* Libfabric documnetation is not clear if next is
 		 * copied or not with fi_dupinfo(), so assume the
 		 * worst */
-		device_rails[i].info->next = NULL;
+		device_rails[i].info->next = nullptr;
 
 		info_list = info_list->next;
 	}
@@ -6948,7 +6851,7 @@ static nccl_net_ofi_rdma_device_rail_t *create_device_rail_array(struct fi_info 
 
 error:
 	for (int i = 0 ; i < num_infos ; i++) {
-		if (device_rails[i].info != NULL) {
+		if (device_rails[i].info != nullptr) {
 			fi_freeinfo(device_rails[i].info);
 		}
 	}
@@ -6992,7 +6895,7 @@ int nccl_net_ofi_rdma_device_t::cleanup_resources()
 	}
 
 	if (this->device_rails != nullptr) {
-		release_device_ofi_resources(this);
+		this->release_device_ofi_resources();
 		free(this->device_rails);
 		this->device_rails = nullptr;
 	}
@@ -7093,7 +6996,7 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 
 	/* Set NIC information */
 	this->num_rails = length;
-	this->device_rails = create_device_rail_array(info_list, length);
+	this->device_rails = nccl_net_ofi_rdma_device_t::create_device_rail_array(info_list, length);
 	if (this->device_rails == NULL) {
 		NCCL_OFI_WARN("Failed to create device rail array from NIC info list");
 		throw std::runtime_error("RDMA device constructor: device rail array creation failed");
@@ -7108,7 +7011,7 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	this->num_comm_ids = static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS);
 
 	/* Initialize libfabric resources of rdma device */
-	ret = device_prepare_for_connection(this);
+	ret = this->device_prepare_for_connection();
 	if (ret != 0) {
 		NCCL_OFI_WARN("preparing for connection failed: %s",
 			      strerror(-ret));
