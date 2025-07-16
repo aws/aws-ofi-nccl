@@ -5,6 +5,8 @@
 #ifndef NCCL_OFI_SYSTEM_H_
 #define NCCL_OFI_SYSTEM_H_
 
+#include "nccl_ofi.h"
+
 /*
  * @brief   Retrieves a unique ID for the current node. This is based on the IP
  *          address of the first non-loopback network interface.  For IPv4 addresses,
@@ -19,13 +21,12 @@
  */
 uint32_t nccl_ofi_get_unique_node_id(void);
 
-
 /*
  * @brief   Generic device GUID setter based on network device index and IP
  *          address of the host. Platforms can override with with
  *          platform_device_set_guid() as needed.
  */
-void nccl_net_ofi_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device);
+void nccl_net_ofi_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device);
 /*
  * @brief   Reads the product name from the DMI information.
  *          The caller must free the returned string.

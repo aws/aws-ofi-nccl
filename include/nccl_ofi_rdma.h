@@ -37,6 +37,10 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  */
 #define NCCL_OFI_RDMA_COMM_ID_BITS (18)
 
+/* Maximum number of comms open simultaneously. Eventually this will be
+   runtime-expandable */
+#define NCCL_OFI_RDMA_MAX_COMMS    (1 << NCCL_OFI_RDMA_COMM_ID_BITS)
+
 /*
  * @brief	Number of bits used for message sequence number
  *
@@ -111,15 +115,30 @@ typedef uint16_t nccl_ofi_rdma_msg_type_t;
  * Use function `calloc_rdma_mr_handle(int num_rails, int num_control_rails)' to
  * allocate a RDMA memory registration handle with `num_rails`+`num_control_rails` rails.
  */
-typedef struct nccl_net_ofi_rdma_mr_handle {
+struct nccl_net_ofi_rdma_mr_handle_t : nccl_net_ofi_mr_handle_t {
+	/**
+	 * @brief 	Default constructor
+	 */
+	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
+		: nccl_net_ofi_mr_handle_t(0),
+		  num_rails(num_rails_arg),
+		  mr(num_rails, nullptr)
+	{
+		assert(num_rails > 0);
+	}
+
+	/**
+	 * @brief	Get MR key for RDMA handle
+	 * 
+	 * 		Return MR key associated with first mr array element
+	 */
+	int get_mr_key(uint64_t *mr_key_ptr) override;
+
 	uint16_t num_rails;
 
-	/* value of mr key id, if keys must be requested */
-	uint64_t mr_key;
-
 	/* Array of size `num_rails' */
-	struct fid_mr **mr;
-} nccl_net_ofi_rdma_mr_handle_t;
+	std::vector<struct fid_mr *> mr;
+};
 
 
 /* Contents of ctrl message sent from receiver to sender to advertise
@@ -176,17 +195,15 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_device_t;
 class nccl_net_ofi_rdma_domain_t;
 class nccl_net_ofi_rdma_ep_t;
 
+struct nccl_net_ofi_rdma_device_rail_t;
 struct nccl_net_ofi_rdma_domain_rail_t;
 
-struct nccl_net_ofi_rdma_device;
-struct nccl_net_ofi_rdma_device_rail;
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_ep_rail;
-typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
-typedef struct nccl_net_ofi_rdma_device_rail nccl_net_ofi_rdma_device_rail_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
@@ -1130,13 +1147,22 @@ protected:
  * Deivice rail encapsulates data of an endpoint for a
  * specific rail.
  */
-typedef struct nccl_net_ofi_rdma_device_rail {
+struct nccl_net_ofi_rdma_device_rail_t {
 	/* NIC info */
 	struct fi_info *info;
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-} nccl_net_ofi_rdma_device_rail_t;
+};
+
+
+struct nccl_net_ofi_rdma_plugin {
+	nccl_net_ofi_plugin_t base;
+
+	nccl_ofi_topo_t *topo;
+};
+typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
+
 
 /*
  * @brief	RDMA Device
@@ -1151,50 +1177,156 @@ typedef struct nccl_net_ofi_rdma_device_rail {
  * locks and the lifetime of resouces is maintained with a reference
  * counter.
  */
-typedef struct nccl_net_ofi_rdma_device {
-	/* This base device interface struct provides access to the
-	 * rdma endpoint's functions such as
-	 * rdma_get_properties(), rdma_get_ep(), and
-	 * rdma_release_ep(). At construction time of this device,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_device_t device
-	 * 'device'.
-	 *
-	 * This base device must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_device_t base;
+class nccl_net_ofi_rdma_device_t : public nccl_net_ofi_device_t {
+public:
+	/**
+	 * @brief	Default RDMA transport constructor.
+	 * 
+	 * Calls base device class constructor, sets up RDMA device resources like device
+	 * rails, array of open communicators, and an idpool.
+	 */
+	nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin,
+				   int dev_id,
+				   struct fi_info *info_list,
+				   nccl_ofi_topo_t *topo);
+
+	int release_device() override;
+
+	int get_properties(nccl_ofi_properties_t *props) override;
+
+	inline struct fi_info *get_ofi_info_for_cm() override
+	{
+		assert(!device_rails.empty());
+		return device_rails[0].info;
+	}
+
+	inline nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
+	}
+
+	/*
+	 * @brief Return device rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_device_rail_t *rdma_device_get_rail(uint16_t rail_id)
+	{
+		assert(!this->device_rails.empty());
+		assert(rail_id < num_rails);
+		return &device_rails[rail_id];
+	}
+
+	/**
+	 * @brief	Get endpoint communicator with given ID
+	 */
+	inline nccl_net_ofi_comm_t *rdma_device_get_comm(uint32_t local_comm_id)
+	{
+		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+		assert(local_comm_id < num_comm_ids);
+		return comms[local_comm_id];
+	}
+
+	/**
+	 * @brief	Set endpoint communicator with given ID
+	 */
+	inline void rdma_device_set_comm(uint32_t local_comm_id,
+					 nccl_net_ofi_comm_t *comm)
+	{
+		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
+		assert(local_comm_id < num_comm_ids);
+		comms[local_comm_id] = comm;
+	}
+
+	/**
+	 * @brief	Get endpoint send communicator with given ID
+	 */
+	inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(uint32_t local_comm_id)
+	{
+		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>
+			(rdma_device_get_comm(local_comm_id));
+		if (OFI_UNLIKELY(s_comm == nullptr)) {
+			/* Received a ctrl message for a non-existent send comm */
+			return nullptr;
+		}
+		assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
+		return s_comm;
+	}
+
+	/**
+	 * @brief	Get endpoint recv communicator with given comm_id
+	 */
+	inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(uint32_t local_comm_id)
+	{
+		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>
+			(rdma_device_get_comm(local_comm_id));
+		assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
+		return r_comm;
+	}
 
 	/* Number of rails */
 	uint16_t num_rails;
-
-	/* Array of 'num_rails' device rails */
-	nccl_net_ofi_rdma_device_rail_t *device_rails;
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 
 	/* ID pool */
-	nccl_ofi_idpool_t *comm_idpool;
-
-	/* Array of open comms associated with this endpoint. This is needed for fast
-	   lookup of comms in the RDMA protocol. */
-	nccl_net_ofi_comm_t **comms;
+	nccl_ofi_idpool_t comm_idpool;
 
 	bool use_long_rkeys;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
-} nccl_net_ofi_rdma_device_t;
 
+protected:
+	/**
+	 * @brief	RDMA device destructor.
+	 * 
+	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
+	 * had already been called to clean up RDMA domain resources before the destructor
+	 * was called.
+	 */	
+	~nccl_net_ofi_rdma_device_t() override;
 
-struct nccl_net_ofi_rdma_plugin {
-	nccl_net_ofi_plugin_t base;
+	int cleanup_resources() override;
 
-	nccl_ofi_topo_t *topo;
+	nccl_net_ofi_domain_t *create_domain() override;
+
+	/**
+	 * @brief	Allocates and initializes various libfabric resources to make rdma
+	 *		device ready for endpoint creation.
+	 */
+	int device_prepare_for_connection();
+
+	/**
+	 * @brief	Release libfabric resources of device
+	 */
+	void release_device_ofi_resources();
+
+	/**
+	 * @brief	Allocates and initialises various libfabric resources like
+	 *		fabric and domain to make device rail ready for rail creation.
+	 */
+	static int init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev);
+
+	/**
+	 * @brief	Allocate device rail array and store duplicates of libfabric NIC info structs.
+	 *
+	 * @param	info_list
+	 *		NIC info list for which device rails are created
+	 * @param	num_infos
+	 *		Length of list
+	 *
+	 * @return	Return 0 on success, non-0 on failure.
+	 */
+	int create_device_rail_array(struct fi_info *info_list, int num_infos);
+
+	/* Array of 'num_rails' device rails */
+	std::vector<nccl_net_ofi_rdma_device_rail_t> device_rails;
+
+	/* Array of open comms associated with this device. This is needed for fast
+	   lookup of comms in the RDMA protocol. */
+	std::vector<nccl_net_ofi_comm_t *> comms;
 };
-typedef struct nccl_net_ofi_rdma_plugin nccl_net_ofi_rdma_plugin_t;
 
 
 /*
