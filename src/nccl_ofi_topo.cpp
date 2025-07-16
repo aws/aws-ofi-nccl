@@ -31,7 +31,7 @@ const char *speed_name = "max_link_speed";
 const char *width_name = "max_link_width";
 
 /* `pcie_gen[i]` defines the speed of a PCIe lane of PCIe generation `i+1` */
-const char *pcie_gen[] = {"2.5", "5", "8", "16", "32", "64"};
+const char *pcie_gen[] = {"2.5", "5.0", "8.0", "16.0", "32.0", "64.0"};
 
 /*
  * @brief Create vector of nccl_ofi_topo_data_t structs
@@ -1350,7 +1350,7 @@ static int write_pci_tag(FILE *file, int indent,
 			 "%*s"
 			 "<pci "
 			 "busid=\"%04x:%02x:%02x.%01x\" "
-			 "link_speed=\"%s GT/s PCIe/s\" "
+			 "link_speed=\"%s GT/s PCIe\" "
 			 "link_width=\"%zu\"/>\n",
 			 indent,
 			 "",
