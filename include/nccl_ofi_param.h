@@ -351,6 +351,13 @@ OFI_NCCL_PARAM(bool, early_completion, "EARLY_COMPLETION", true);
 OFI_NCCL_PARAM(bool, disable_close_message, "DISABLE_CLOSE_MESSAGE", true);
 
 /*
+ * Decides whether or not we should skip nics that do not have accelerators
+ * at the same PCI level.
+ */
+OFI_NCCL_PARAM(bool, skip_nics_without_accel,
+				"SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL", false);
+
+/*
  * Number of RX buffers to post for the connection manager endpoint (for
  * connection establishment)
  *
