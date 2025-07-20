@@ -560,6 +560,16 @@ int platform_init(const char **provider_filter)
 		select_efa = true;
 	}
 
+	/*
+	 * For p6e-gb200 platforms we want to skip nics which do not
+	 * have an accelerator at the same PCI level
+	 */
+	if ((strncmp(nccl_net_ofi_get_product_name(), PLATFORM_NAME_P6E_GB200,
+		strlen(PLATFORM_NAME_P6E_GB200)) == 0) &&
+		ofi_nccl_skip_nics_without_accel.get_source() == ParamSource::DEFAULT) {
+		ofi_nccl_skip_nics_without_accel.set(true);
+	}
+
 	if (platform_data != NULL) {
 		env_manager::getInstance().insert_envvars(platform_data->env);
 	}
