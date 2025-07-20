@@ -13,6 +13,10 @@
 #include <map>
 #include <string>
 
+#include "nccl_ofi_param.h"
+
+#define PLATFORM_NAME_P6E_GB200 "p6e-gb200"
+
 struct ec2_platform_data {
 	const char* name;
 	const char* regex;

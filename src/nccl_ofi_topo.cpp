@@ -294,6 +294,52 @@ static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 }
 
 /*
+ * brief	Checks if PCI device node has any accelerators at the same level
+ *
+ * Iterate through the parent PCI tree and returns true if there are any
+ * accelerators are at the same PCI level
+ *
+ * @param	node
+ *		The node
+ *
+ * @return	true if there is an accel at same level else returns false
+ */
+static bool has_accel_at_same_level(hwloc_obj_t node)
+{
+	hwloc_topology_t __unused_topo_arg = {};
+	hwloc_obj_t parent = node->parent->parent;
+	hwloc_obj_t child = NULL;
+	bool is_accel = false;
+
+	while ((child = hwloc_get_next_child(__unused_topo_arg, parent, child)) != NULL) {
+		/*
+		 * Check if child is a PCI bridge
+		 */
+		if (child->type == HWLOC_OBJ_BRIDGE &&
+			child->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI) {
+			/*
+			 * Check the devices under this bridge if any of them is an accelerator
+			 */
+			hwloc_obj_t bridge_child = hwloc_get_next_child(__unused_topo_arg, child, NULL);
+			if (bridge_child && bridge_child->type == HWLOC_OBJ_PCI_DEVICE) {
+
+				int ret = is_accelerator_dev(bridge_child, &is_accel);
+				if (ret != 0) {
+					NCCL_OFI_WARN("Error while checking whether hwloc topology node is an accelerator");
+					return false;
+				}
+
+				if (is_accel) {
+					return true;
+				}
+			}
+		}
+	}
+
+	return false;
+}
+
+/*
  * @brief	Return libfabric NIC info struct from info list that corresponds to input topology node
  *
  * @param	node
@@ -323,6 +369,14 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
 	}
 
 	if (node->type != HWLOC_OBJ_PCI_DEVICE) {
+		return 0;
+	}
+
+	/*
+	 * Check if we want to skip nics which do not have accelerators at the
+	 * same pcie level
+	 */
+	if (ofi_nccl_skip_nics_without_accel.get() && !has_accel_at_same_level(node)) {
 		return 0;
 	}
 
