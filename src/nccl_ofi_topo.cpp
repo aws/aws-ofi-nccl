@@ -18,6 +18,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_platform.h"
 
 static const uint8_t target_class_id = 0x03;		/* Display controller class */
