@@ -5,6 +5,17 @@
 - Amazon Linux 2 and Amazon Linux 2023
 - Ubuntu 22.04 LTS and 24.04 LTS
 
+# v1.16.1 (2025-07)
+
+The 1.16.1 release series supports [NCCL v2.27.6-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.6-1) while maintaining backward compatibility with older NCCL versions (([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+With this release, building with platform-aws requires [Libfabric v1.22.0amzn4.0](https://github.com/aws/libfabric/commits/v1.22.0amzn4.0) or greater. And it is currently tested with versions up to [Libfabric 2.1.0amzn3](https://github.com/aws/libfabric/commits/2.1.0amzn3.0).
+
+### Bug Fixes and Improvements:
+
+- Update the PCI link speed format reported in the topology file to match kernel 5.7+
+- Added SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL to skip libfabric nics that do not have an accelerator at the same pci level
+
 # v1.16.0 (2025-06)
 
 The 1.16.0 release series supports [NCCL v2.27.5-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.5-1) while maintaining backward compatibility with older NCCL versions (([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
