@@ -134,6 +134,17 @@ static struct ec2_platform_data platform_data_map[] = {
 		},
 	},
 	{
+		.name = "p5.4xlarge",
+		.regex = NULL,
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 75.0,
+		.gdr_required = false,
+		.default_protocol = "SENDRECV",
+		.domain_per_thread = false,
+		.env = {},
+	},
+	{
 		.name = "p5/p5e",
 		.regex = "^p5(e?\\..*)",
 		.topology = NULL,
