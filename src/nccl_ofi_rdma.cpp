@@ -184,17 +184,6 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 }
 
 /*
- * @brief Return send communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
-								uint16_t rail_id)
-{
-	assert(s_comm->rails);
-	assert(rail_id < s_comm->num_rails);
-	return &s_comm->rails[rail_id];
-}
-
-/*
  * @brief Return send communicator control rail with index `rail_id`
  */
 static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
@@ -208,17 +197,6 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rai
 static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
 	return (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
-}
-
-/*
- * @brief Return receive communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-								uint16_t rail_id)
-{
-	assert(r_comm->rails);
-	assert(rail_id < r_comm->num_rails);
-	return &r_comm->rails[rail_id];
 }
 
 /*
