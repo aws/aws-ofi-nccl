@@ -57,6 +57,6 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
  * device->guid to be any 64-bit value as they seem fit to uniquely identify the
  * network device.
  */
-void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device) __attribute__((weak));
+void platform_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) __attribute__((weak));
 
 #endif // End NCCL_OFI_PLATFORM_H_

@@ -47,41 +47,48 @@
 /* Indicates if provider supports FI_RMA */
 bool support_fi_rma = false;
 
+
+int nccl_net_ofi_sendrecv_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
+{
+	int ret = 0;
+
+	uint64_t key = fi_mr_key(this->mr);
+	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
+		ret = -ENOENT;
+		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
+	} else {
+		*mr_key_ptr = key;
+	}
+
+	return ret;
+}
+
+
 static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
 				       nccl_ofi_idpool_t *key_pool,
 				       nccl_ofi_mr_cache_t *mr_cache);
 
 
-static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_sendrecv_device_t *device)
+int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
-	return (nccl_net_ofi_sendrecv_plugin_t*)device->base.plugin;
-}
-
-
-static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
-					  nccl_ofi_properties_t *props)
-{
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)base_dev;
-	struct fi_info *info = device->info;
-	int dev_id = device->base.dev_id;
-	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
+	assert(this->plugin != nullptr);
+	
+	size_t num_devices = this->plugin->get_num_devices(this->plugin);
 	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin = sendrecv_device_get_plugin(device);
-	assert(plugin != NULL);
+	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
 	/* Validate libfabric NIC info */
-	if (OFI_UNLIKELY(info == NULL)) {
+	if (OFI_UNLIKELY(this->info == nullptr)) {
 		NCCL_OFI_WARN("Error accessing libfabric NIC info. "
 			      "info has not been set.");
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(&plugin->base, info, dev_id, num_devices, props);
+	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, this->info, this->dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
-		props->max_communicators = std::min(device->max_tag, static_cast<uint64_t>(INT_MAX));
+		props->max_communicators = std::min(this->max_tag, static_cast<uint64_t>(INT_MAX));
 	}
 
 	props->rma_supported = 0;
@@ -527,7 +534,7 @@ static int sendrecv_mr_buffers_register(struct fid_domain *domain,
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
-	auto *ret_handle = new nccl_net_ofi_sendrecv_mr_handle_t{MR_KEY_INIT_VALUE, nullptr};
+	auto *ret_handle = new nccl_net_ofi_sendrecv_mr_handle_t(MR_KEY_INIT_VALUE);
 
 	mr_attr.access = FI_SEND | FI_RECV;
 	nccl_ofi_mr_ckey_fill_mr_attrs(ckey, &mr_attr, &regattr_flags);
@@ -780,7 +787,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	CHECK_DOMAIN_ACTIVE(domain, "mr_base_reg");
 
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	int ret = 0;
 	nccl_ofi_mr_cache_t *mr_cache = domain->mr_cache;
@@ -1315,7 +1322,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
 	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
 	ret = fi_av_insert(ep->av, (void *)remote_ep_addr, 1,
@@ -1650,7 +1657,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
-	dev_id = device->base.dev_id;
+	dev_id = device->dev_id;
 
 	local_ep_name = sendrecv_get_local_address(this->ofi_ep);
 	if (local_ep_name == nullptr) {
@@ -1885,13 +1892,13 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm = (nccl_net_ofi_sendrecv_send_comm_t *)
 		calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm_t));
 	if (OFI_UNLIKELY(ret_s_comm == NULL)) {
-		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->base.dev_id);
+		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->dev_id);
 		return -ENOMEM;
 	}
 
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->base.base.ep = ep;
-	ret_s_comm->base.base.dev_id = device->base.dev_id;
+	ret_s_comm->base.base.dev_id = device->dev_id;
 	ret_s_comm->base.regMr = sendrecv_send_comm_reg_mr;
 	ret_s_comm->base.deregMr = sendrecv_send_comm_dereg_mr;
 	ret_s_comm->base.send = sendrecv_send_comm_send;
@@ -1931,7 +1938,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			      device->base.dev_id);
+			      device->dev_id);
 		goto out;
 	}
 
@@ -2024,7 +2031,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
 	}
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
@@ -2107,7 +2114,7 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 		NCCL_OFI_WARN("Invalid device provided");
 		ret = -EINVAL;
 	} else {
-		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->base.dev_id);
+		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->dev_id);
 		this->ofi_ep = nullptr;
 		this->av = nullptr;		
 	}
@@ -2199,7 +2206,7 @@ nccl_net_ofi_sendrecv_domain_t::~nccl_net_ofi_sendrecv_domain_t()
 
 
 nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg)
-	: nccl_net_ofi_domain_t(&device_arg->base)
+	: nccl_net_ofi_domain_t(device_arg)
 {
 	int ret;
 	struct fi_cq_attr cq_attr = {};
@@ -2227,41 +2234,46 @@ nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_send
 }
 
 
-static nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_create_domain(nccl_net_ofi_device_t *base_device)
+nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_t::create_domain()
 {
-	auto *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
-	auto *domain = new nccl_net_ofi_sendrecv_domain_t(device);
+	auto *domain = new nccl_net_ofi_sendrecv_domain_t(this);
 
 	return domain;
 }
 
 
-/*
- * @brief	Allocates and initialises various libfabric resources like
- *		fabric and domain to make sendrecv device ready for endpoint creation.
- */
-static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t *device)
+int nccl_net_ofi_sendrecv_device_t::sendrecv_device_prepare_for_connection()
 {
 	int ret = 0;
 	int ofi_tag_leading_zeroes = 0, ofi_tag_bits_for_ring_id = 64;
 
 	/* Determine if any tag bits are used by provider */
-	while (!((device->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
-		 (uint64_t) OFI_HIGHEST_TAG_BIT) &&
+	while (!((this->info->ep_attr->mem_tag_format << ofi_tag_leading_zeroes++) &
+		 static_cast<uint64_t>(OFI_HIGHEST_TAG_BIT)) &&
 	       (ofi_tag_bits_for_ring_id >= MIN_TAG_BITS_FOR_RING_ID)) {
 		ofi_tag_bits_for_ring_id--;
 	}
 
 	if (OFI_UNLIKELY(ofi_tag_bits_for_ring_id < MIN_TAG_BITS_FOR_RING_ID)) {
 		NCCL_OFI_WARN("Provider %s does not provide enough tag bits %d for ring ID. Minimum required is %d",
-			      device->info->fabric_attr->prov_name,
+			      this->info->fabric_attr->prov_name,
 			      ofi_tag_bits_for_ring_id,
 			      MIN_TAG_BITS_FOR_RING_ID);
 		return -EINVAL;
 	}
 
 	/* Set maximum tag information; Reserving 1 bit for control information */
-	device->max_tag = (uint64_t)((1ULL << (ofi_tag_bits_for_ring_id - 1)) - 1);
+	this->max_tag = static_cast<uint64_t>((1ULL << (ofi_tag_bits_for_ring_id - 1)) - 1);
+
+	return ret;
+}
+
+
+int nccl_net_ofi_sendrecv_device_t::release_device()
+{
+	int ret = 0;
+	ret = this->cleanup_resources();
+	delete this;
 
 	return ret;
 }
@@ -2270,120 +2282,81 @@ static int sendrecv_device_prepare_for_connection(nccl_net_ofi_sendrecv_device_t
 /**
  * Destroy an rdma device object
  */
-static int
-nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
+int nccl_net_ofi_sendrecv_device_t::cleanup_resources()
 {
-	nccl_net_ofi_sendrecv_device_t *device = (nccl_net_ofi_sendrecv_device_t *)base_device;
-	int ret, first_error = 0;
+	int ret = 0;
+	int err_code = 0;
 
-	if (device == NULL) {
-		return 0;
-	}
+	/* cleanup_resources should only be called once per device instance */
+	assert(!this->called_cleanup_resources);
+	this->called_cleanup_resources = true;
 
-	unsigned num_domains = device->base.domain_table->size();
-	if (num_domains > 0) {
-		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
-		ret = base_device->release_all_domain_and_ep(base_device);
-		if (ret != 0) {
+	if (!this->domain_table.empty()) {
+		NCCL_OFI_INFO(NCCL_NET, "%zu domains still active at close",
+			      this->domain_table.size());
+		err_code = this->release_all_domain_and_ep();
+		if (err_code != 0) {
 			NCCL_OFI_WARN("Cleanup of domain failed. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			if (first_error == 0) {
-				first_error = ret;
-			}
+				      err_code, fi_strerror(-err_code));
+			ret = -EINVAL;
 		}
 	}
 
-	if (device->fabric) {
-		fi_close((fid_t)device->fabric);
+	if (this->fabric) {
+		fi_close(reinterpret_cast<fid_t>(this->fabric));
 	}
 
-	if (device->info != NULL) {
-		fi_freeinfo(device->info);
+	if (this->info != NULL) {
+		fi_freeinfo(this->info);
 	}
 
-	ret = nccl_net_ofi_device_fini(base_device);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Cleanup of device failed, device_fini returned %s",
-			      strerror(-ret));
-		if (first_error == 0) {
-			first_error = ret;
-		}
-	}
+	assert(ret == 0);
 
-	free(device);
-
-	return 0;
+	return ret;
 }
 
-
-static inline struct fi_info *sendrecv_device_get_ofi_info(nccl_net_ofi_device_t *device)
+nccl_net_ofi_sendrecv_device_t::~nccl_net_ofi_sendrecv_device_t()
 {
-	return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device)->info;
+	/* cleanup_resources should always be called to clean-up device resources before
+	   the destructor is called */
+	assert(this->called_cleanup_resources);
 }
-
 
 /**
  * Create a sendrecv device object
  */
-static nccl_net_ofi_sendrecv_device_t *
-nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
-				int dev_id, struct fi_info *info)
+nccl_net_ofi_sendrecv_device_t::nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+							       int device_id,
+							       struct fi_info *info_arg)
+	: nccl_net_ofi_device_t(plugin_arg, device_id, info_arg)
 {
 	int ret;
-
-	nccl_net_ofi_sendrecv_device_t *device =
-		(nccl_net_ofi_sendrecv_device_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_device_t));
-	if (device == NULL) {
-		NCCL_OFI_WARN("Unable to allocate device %d", dev_id);
-		return NULL;
-	}
-
-	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
-				       info);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
-		return NULL;
-	}
-
-
-	device->base.get_properties = sendrecv_get_properties;
-	device->base.release = nccl_net_ofi_sendrecv_device_release;
-	device->base.get_mr_key = NULL;
-	device->base.create_domain = nccl_net_ofi_sendrecv_device_create_domain;
-	device->base.get_ofi_info = sendrecv_device_get_ofi_info;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
 
 	/* Set device provider */
-	device->info = fi_dupinfo(info);
-	if (!device->info) {
+	this->info = fi_dupinfo(info_arg);
+	if (!this->info) {
 		NCCL_OFI_WARN("Failed to duplicate NIC info struct");
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: fi_dupinfo failed");
 	}
-	device->prov_name = device->info->fabric_attr->prov_name;
+	this->prov_name = this->info->fabric_attr->prov_name;
 
 	/* Create fabric */
-	ret = fi_fabric(device->info->fabric_attr, &device->fabric, NULL);
+	ret = fi_fabric(this->info->fabric_attr, &this->fabric, nullptr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
 			      ret, fi_strerror(-ret));
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: fi_fabric failed");
 	}
 
-	ret = sendrecv_device_prepare_for_connection(device);
+	ret = this->sendrecv_device_prepare_for_connection();
 	if (ret != 0) {
 		NCCL_OFI_WARN("preparing for connection failed: %s",
 			      strerror(-ret));
-		goto error;
+		throw std::runtime_error("SENDRECV device constructor: connection prep failed");
 	}
-
-	return device;
-
-error:
-	device->base.release(&device->base);
-
-	return NULL;
 }
 
 static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
@@ -2465,13 +2438,15 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_sendrecv_device_t *device = nccl_net_ofi_sendrecv_device_create(plugin, (int)dev_id, info);
+		auto *device = new nccl_net_ofi_sendrecv_device_t(plugin,
+								  static_cast<int>(dev_id),
+								  info);
 		if (device == NULL) {
 			NCCL_OFI_WARN("Unable to allocate device %li", dev_id);
 			return -ENOMEM;
 		}
 
-		ret = plugin->assign_device(plugin, dev_id, &device->base);
+		ret = plugin->assign_device(plugin, dev_id, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Assigning device %li failed", dev_id);
 			return ret;

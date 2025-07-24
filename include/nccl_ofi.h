@@ -121,20 +121,17 @@ extern size_t system_page_size;
 
 class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
+class nccl_net_ofi_device_t;
 
 struct nccl_net_ofi_plugin;
-struct nccl_net_ofi_device;
 struct nccl_net_ofi_req;
-struct nccl_net_ofi_mr_handle;
 struct nccl_net_ofi_comm;
 struct nccl_net_ofi_listen_comm;
 struct nccl_net_ofi_send_comm;
 struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
-typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
-typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
 typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
 typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
@@ -150,6 +147,30 @@ typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
  */
 struct nccl_net_ofi_req {
 	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
+};
+
+struct nccl_net_ofi_mr_handle_t {
+	/**
+	 * @brief	Default constructor
+	 */
+	nccl_net_ofi_mr_handle_t(uint64_t mr_key_arg)
+		: mr_key(mr_key_arg)
+	{}
+
+	virtual ~nccl_net_ofi_mr_handle_t() = default;
+
+	/**
+	 * @brief	Get MR key from an MR handle
+	 * 
+	 * 		Pure virtual function for getting an MR key from an MR handle,
+	 * 		must be implemented by derived MR handle structs.
+	 * 
+	 * @param	mr_key_ptr, set to the mr_key
+	 * @return	0 on success, non-0 on failure
+	 */
+	virtual int get_mr_key(uint64_t *mr_key_ptr) = 0;
+	
+	uint64_t mr_key;
 };
 
 /**
@@ -262,8 +283,75 @@ typedef struct nccl_ofi_properties {
  * group.  The device is the unit of bandwidth sharing and general NIC
  * propoeries, and accessing domains (ie, groups of NIC resources).
  */
-struct nccl_net_ofi_device {
-	struct nccl_net_ofi_plugin *plugin;
+class nccl_net_ofi_device_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the device base class.
+	 * Expectation is that this will be called by a transport's device
+	 * constructor 
+	 */
+	nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+			      int device_index,
+			      struct fi_info *ofi_info);
+
+	virtual int release_device() = 0;
+
+	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
+
+	/**
+	 * Retrieve an fi_info object associated with this device to be used for connection
+	 * management. There may be more than one info per device, depending on the 
+	 * transport; in that case, this will be the info object associated with the 
+	 * "leader NIC"
+	 */
+	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+
+	virtual int get_mr_key(void* mhandle, uint64_t* mr_key);
+
+	/**
+	 * @brief	Increment base device's unreleased_inactive_domain_counter
+	 */
+	inline void inc_unreleased_inactive_domain_counter()
+	{
+		++unreleased_inactive_domain_counter;
+	}
+
+	/**
+	 * @brief	Decrement base device's unreleased_inactive_domain_counter
+	 */
+	inline void dec_unreleased_inactive_domain_counter()
+	{
+		--unreleased_inactive_domain_counter;
+	}
+
+	void remove_domain_table_entry(long lookup_key);
+
+	/* Retrieve a domain associated with this device.  There may
+	 * be more than one domain per device, depending on a number
+	 * of performance tradeoffs (be sure to read the domain
+	 * description below).
+	 */
+	nccl_net_ofi_domain_t *get_domain();
+
+	nccl_net_ofi_ep_t *get_ep();
+
+	/**
+	 * implementation of retreiving a domain from a device.  This code
+	 * assumes the device lock is already held, because in the case of
+	 * get_domain() we only need to worry about the device lock, but in
+	 * the device->get_ep call, hold the lock while we're also creating
+	 * the ep.
+	 */
+	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl();
+
+	/**
+	 * @brief	Erase all domain_table elements matching the provided domain
+	 */
+	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
+
+	struct nccl_net_ofi_plugin *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
@@ -279,7 +367,7 @@ struct nccl_net_ofi_device {
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
 	 */
-	char *name;
+	char *name = nullptr;
 
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
@@ -287,63 +375,46 @@ struct nccl_net_ofi_device {
 	 */
 	bool need_mr_rkey_pool;
 
-	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
-			      nccl_ofi_properties_t *props);
-
-	/* Retrieve a domain associated with this device.  There may
-	 * be more than one domain per device, depending on a number
-	 * of performance tradeoffs (be sure to read the domain
-	 * description below).
-	 */
-	nccl_net_ofi_domain_t *(*get_domain)(nccl_net_ofi_device_t *dev);
-
-	/**
-	 * Retrieve an fi_info object associated with this device. There may be
-	 * more than one info per device, depending on the transport; in that
-	 * case, this will be the info object associated with the "leader NIC"
-	 */
-	struct fi_info *(*get_ofi_info)(nccl_net_ofi_device_t *dev);
-
-	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
-		      nccl_net_ofi_ep_t **ep);
-
-	int (*get_mr_key)(nccl_net_ofi_device_t *base_dev, void* mhandle,
-			  uint64_t* mr_key);
-
-	/**
-	 * destructor - releases resources associated with device
-	 */
-	int (*release)(nccl_net_ofi_device_t *device);
-
 	/* Lock for concurrency since domains can be shared by
 	 * multiple entities. */
 	pthread_mutex_t device_lock;
 
-/* private */
+protected:
+	/**
+	 * destructor - releases resources associated with base device
+	 */
+	virtual ~nccl_net_ofi_device_t();
+
+	/**
+	 * @brief	Cleanup device resources.
+	 * 
+	 * Virtual function to clean up and release each transport type's device resources.
+	 * Set called_cleanup_resources to true at the start of the function to make sure
+	 * it is only called once per device instance.
+	 * 
+	 * @return	0 if successfully, negative error code on failure.
+	 */
+	virtual int cleanup_resources() = 0;
+
 	/*
 	 * create a new domain.  This funcion is a private pure
 	 * virtual function, which is called from the base
 	 * implementation of get_domain() and should not be called
 	 * from the more general case.
 	 */
-	nccl_net_ofi_domain_t *(*create_domain)(nccl_net_ofi_device_t *dev);
+	virtual nccl_net_ofi_domain_t *create_domain() = 0;
 
 	/*
 	 * release all domains and endpoints. This function is a private
-	 * function, which is called only during release() to free allocated
+	 * function, which is called only during cleanup_resources() to free allocated
 	 * domains and endpoints.
 	 */
-	int (*release_all_domain_and_ep)(nccl_net_ofi_device_t *dev);
+	int release_all_domain_and_ep();
 
-	/*
+	/**
 	 * hash table indexed by thread id of active domains.
-	 *
-	 * TODO: When the device class is made a proper C++ class, this should
-	 * be changed from a pointer to a map to a map.  We can't do that right
-	 * now, because that leaves us with no good way to invoke the map
-	 * constructor.
 	 */
-	std::unordered_map<long, nccl_net_ofi_domain_t *> *domain_table;
+	std::unordered_map<long, nccl_net_ofi_domain_t *> domain_table;
 
 	/**
 	 * Number of domains that have been deactivated but not freed
@@ -352,7 +423,15 @@ struct nccl_net_ofi_device {
 	 * to track inactive domains (which aren't in the domain table) which
 	 * were never closed
 	 */
-	size_t unreleased_inactive_domain_counter;
+	size_t unreleased_inactive_domain_counter = 0;
+
+	/** 
+	 * Track whether the cleanup_resources function was already called to avoid calling
+	 * multiple time on the same device instance. It being set to true does not 
+	 * indicate that the device resources were successfully released since this is set
+	 * to true regardless of whether cleanup_resources finished successfully or not.
+	 */
+	bool called_cleanup_resources = false;
 };
 
 
@@ -827,23 +906,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/**
- * Constructor for a device object
- */
-int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, struct fi_info *ofi_info);
-
-/**
- * Destructor for a device object
- */
-int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device);
-
-/* release all domains and their enpoints of a device. This is called
- * only by device->release() during plugin release to free all fabric
- * domain and QPs.
- */
-int nccl_net_ofi_device_release_all_domain_and_ep(nccl_net_ofi_device_t *device);
 
 /*
  * Constructor for the nccl_net_ofi_plugin class

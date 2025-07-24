@@ -931,7 +931,7 @@ static int get_rail_vf_idx(struct fi_info *info)
 	return fields->func_idx;
 }
 
-void platform_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device)
+void platform_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device)
 {
 	const struct platform_aws_node_guid* fields = get_node_guid_fields(info);
 	uint32_t node_id = nccl_ofi_get_unique_node_id();
