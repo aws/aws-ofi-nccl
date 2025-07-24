@@ -104,7 +104,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
-    Send_ctrl_start,
+    Write_ctrl_start,
     LTTNG_UST_TP_ARGS(
             int, dev,
             int, rail_id,
@@ -125,7 +125,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
 
 LTTNG_UST_TRACEPOINT_EVENT(
     nccl_ofi_plugin,
-    Send_ctrl_end,
+    Write_ctrl_end,
     LTTNG_UST_TP_ARGS(
             int, dev,
             int, rail_id,

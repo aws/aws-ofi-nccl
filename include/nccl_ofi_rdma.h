@@ -70,8 +70,6 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	NCCL_OFI_RDMA_SEND,
 	/* Receive request */
 	NCCL_OFI_RDMA_RECV,
-	/* Send control request. Subrequest of NCCL_OFI_RDMA_RECV */
-	NCCL_OFI_RDMA_SEND_CTRL,
 	/* Send close request. */
 	NCCL_OFI_RDMA_SEND_CLOSE,
 	/* Receive segments request. Subrequest of NCCL_OFI_RDMA_RECV */
@@ -121,43 +119,53 @@ typedef struct nccl_net_ofi_rdma_mr_handle {
 	struct fid_mr **mr;
 } nccl_net_ofi_rdma_mr_handle_t;
 
+/*
+ * @brief Fifo used for control messages
+ *
+ * This fifo is populated by the receiver with control
+ * information including destination address, size and the message sequence number.
+ * It is further used by the sender to check the existence of
+ * a control message by checking the msg_seq_num against
+ * the next_msg_seq_num it expects.
+ */
+typedef struct nccl_net_ofi_ctrl_fifo {
 
-/* Contents of ctrl message sent from receiver to sender to advertise
-   destination buffer */
-typedef struct nccl_net_ofi_rdma_ctrl_msg {
-	/* Message type, must be NCCL_OFI_RDMA_MSG_CTRL */
-	uint32_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
-
-	/* Message sequence number */
-	uint32_t msg_seq_num:NCCL_OFI_RDMA_SEQ_BITS;
-
-	/* A comm identitifer that uniquely identifies the comm
-	 * on the receiver side */
-	uint32_t remote_comm_id:NCCL_OFI_RDMA_COMM_ID_BITS;
-
-	uint32_t buff_len;
-
+	/* Destination buffer address */
 	uint64_t buff_addr;
 
-	union {
-		uint32_t short_buff_mr_key[MAX_NUM_RAILS];
-		uint64_t long_buff_mr_key[MAX_NUM_RAILS];
-	};
-} nccl_net_ofi_rdma_ctrl_msg_t;
+	/* mr keys to write to the destination buffer */
+	uint64_t mr_key[MAX_NUM_RAILS];
+
+	/* Destination buffer size */
+	uint32_t buff_size;
+
+	/* Flag to indicate if recv completion is optional or not */
+	uint16_t recv_completion_optional;
+
+	/* Control message sequence number */
+	uint16_t msg_seq_num;
+
+	uint8_t page_size_padding[16];
+} nccl_net_ofi_ctrl_fifo_t;
+
+typedef struct nccl_net_ofi_remote_fifo {
+
+	/* Local control fifo and mr_handle */
+	nccl_net_ofi_ctrl_fifo_t *ctrl_fifo;
+	nccl_net_ofi_rdma_mr_handle_t *ctrl_fifo_mr_handle;
+
+	/* Addr and key of remote control fifo*/
+	uint64_t remote_addr;
+	uint64_t remote_mr_key[MAX_NUM_RAILS];
+} nccl_net_ofi_remote_fifo_t;
+
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_net_ofi_rdma_ctrl_msg_t) == 48,
+static_assert(offsetof(nccl_net_ofi_ctrl_fifo_t, page_size_padding) == 48,
               "Wrong size for RDMA Control message");
-static_assert(offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) +
-	       sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key) <= 32,
-	       "Short RDMA Control message larger than 32 bytes (EFA inline size)");
 
-#define NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->short_buff_mr_key[0] ))
-#define NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE (sizeof( ((nccl_net_ofi_rdma_ctrl_msg_t *)0)->long_buff_mr_key[0] ))
-
-static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(uint16_t num_rails, bool use_long_rkeys)
+static inline size_t nccl_net_ofi_rdma_ctrl_msg_size(uint16_t num_rails)
 {
-	size_t rkey_len = (use_long_rkeys) ? NCCL_NET_OFI_CTRL_MSG_LONG_KEY_SIZE : NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE;
-	return offsetof(nccl_net_ofi_rdma_ctrl_msg_t, short_buff_mr_key) + num_rails * rkey_len;
+	return offsetof(nccl_net_ofi_ctrl_fifo_t, page_size_padding);
 }
 
 /* Message from receiver to sender indicating sender can close resources */
@@ -270,23 +278,6 @@ typedef struct {
 } rdma_req_send_data_t;
 
 /*
- * @brief	Data of request responsible for sending the control message
- */
-typedef struct {
-	/* Pointer to the allocated control buffer from freelist */
-	nccl_ofi_freelist_elem_t *ctrl_fl_elem;
-	/* Schedule used to transfer the control buffer. We save the
-	 * pointer to reference it when transferring the buffer over
-	 * network. */
-	nccl_net_ofi_schedule_t *ctrl_schedule;
-	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req_t *recv_req;
-#if HAVE_NVTX_TRACING
-	nvtxRangeId_t trace_id;
-#endif
-} rdma_req_send_ctrl_data_t;
-
-/*
  * @brief	Data of request responsible for sending the close message
  */
 typedef struct {
@@ -323,8 +314,6 @@ typedef struct {
 	size_t dst_len;
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
-	/* Pointer to send control message child request */
-	nccl_net_ofi_rdma_req_t *send_ctrl_req;
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req_t *recv_segms_req;
 	/* (Eager messages) pointer to eager local copy request */
@@ -338,6 +327,7 @@ typedef struct {
 	int total_num_compls;
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
+	nvtxRangeId_t write_ctrl_trace_id;
 #endif
 } rdma_req_recv_data_t;
 
@@ -377,7 +367,6 @@ typedef struct nccl_net_ofi_rdma_req {
 		rdma_req_rma_op_data_t rma_op_data;
 		rdma_req_send_data_t send_data;
 		rdma_req_recv_data_t recv_data;
-		rdma_req_send_ctrl_data_t send_ctrl_data;
 		rdma_req_send_close_data_t send_close_data;
 		rdma_req_eager_copy_data_t eager_copy_data;
 		rdma_req_recv_segms_data_t recv_segms_data;
@@ -442,9 +431,14 @@ typedef struct nccl_ofi_rdma_connection_info {
 	 * the number of entries that are in use. */
 	nccl_ofi_rdma_ep_name_t control_ep_names[MAX_NUM_RAILS];
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
+
+	/* Information regarding ctrl fifo */
+	uint64_t ctrl_fifo_addr;
+	uint64_t ctrl_fifo_mr_key[MAX_NUM_RAILS];
+
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 520,
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 560,
 			  "Wrong size for RDMA connect message");
 
 /*
@@ -487,8 +481,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	uint16_t next_msg_seq_num;
 
-	nccl_ofi_msgbuff_t *msgbuff;
-
 	/* Number of rails */
 	uint16_t num_rails;
 	/* Number of rails */
@@ -498,7 +490,6 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
 
-	pthread_mutex_t ctrl_recv_lock;
 	bool received_close_message;
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_received;
@@ -514,6 +505,9 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	/* Connect manager send connector */
 	nccl_ofi_cm_send_connector *connector;
 
+	/* Array of ctrl_fifo_entries */
+	nccl_net_ofi_ctrl_fifo_t *ctrl_fifo;
+	nccl_net_ofi_rdma_mr_handle_t *ctrl_fifo_mr_handle;
 } nccl_net_ofi_rdma_send_comm_t;
 
 /*
@@ -579,7 +573,6 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_req_t *send_close_req;
 
 	/* Counters for total sent and received control messages */
-	pthread_mutex_t ctrl_counter_lock;
 	uint64_t n_ctrl_sent;
 	uint64_t n_ctrl_delivered;
 
@@ -594,6 +587,8 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
 	/* Array of `num_control_rails` communicator rails */
 	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
+
+	nccl_net_ofi_remote_fifo_t remote_fifo;
 } nccl_net_ofi_rdma_recv_comm_t;
 
 typedef struct nccl_net_ofi_rdma_listen_comm {
@@ -1007,7 +1002,9 @@ public:
 	 *		Handle received from remote
 	 */
 	void prepare_send_connect_message(uint32_t local_comm_id,
-					  nccl_ofi_rdma_connection_info_t *conn_msg);
+						nccl_net_ofi_ctrl_fifo* ctrl_fifo, 
+						nccl_net_ofi_rdma_mr_handle_t *ctrl_fifo_mr_handle,	
+					  	nccl_ofi_rdma_connection_info_t *conn_msg);
 
 	/**
 	 * Abort an endpoint when a communicator using it still has inflight requests
@@ -1052,8 +1049,6 @@ public:
 
 	/* Array of `num_control_rails` endpoint rails */
 	std::vector<nccl_net_ofi_ep_rail_t> control_rails;
-
-	bool use_long_rkeys;
 
 	/* Pending requests queue */
 	std::deque<nccl_net_ofi_rdma_req_t *> pending_reqs_queue;
@@ -1180,8 +1175,6 @@ typedef struct nccl_net_ofi_rdma_device {
 	/* Array of open comms associated with this endpoint. This is needed for fast
 	   lookup of comms in the RDMA protocol. */
 	nccl_net_ofi_comm_t **comms;
-
-	bool use_long_rkeys;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
