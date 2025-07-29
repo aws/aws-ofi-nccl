@@ -119,11 +119,11 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+class nccl_net_ofi_device_t;
 class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
 
 struct nccl_net_ofi_plugin;
-struct nccl_net_ofi_device;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_mr_handle;
 struct nccl_net_ofi_comm;
@@ -132,7 +132,6 @@ struct nccl_net_ofi_send_comm;
 struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
-typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
@@ -262,7 +261,8 @@ typedef struct nccl_ofi_properties {
  * group.  The device is the unit of bandwidth sharing and general NIC
  * propoeries, and accessing domains (ie, groups of NIC resources).
  */
-struct nccl_net_ofi_device {
+class nccl_net_ofi_device_t {
+public:
 	struct nccl_net_ofi_plugin *plugin;
 
 	/* this device's index in the plugin's devices array */

@@ -107,7 +107,7 @@ uint32_t nccl_ofi_get_unique_node_id(void)
 	return ip_addr;
 }
 
-void nccl_net_ofi_device_set_guid(struct fi_info *info, struct nccl_net_ofi_device *device)
+void nccl_net_ofi_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device)
 {
         uint32_t node_id = nccl_ofi_get_unique_node_id();
 

@@ -94,8 +94,7 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 } nccl_net_ofi_sendrecv_recv_comm_t;
 
 /* Forward declarations needed for sendrecv transport endpoint type */
-struct nccl_net_ofi_sendrecv_device;
-typedef struct nccl_net_ofi_sendrecv_device nccl_net_ofi_sendrecv_device_t;
+class nccl_net_ofi_sendrecv_device_t;
 
 
 /*
@@ -254,20 +253,8 @@ protected:
  * locks and the lifetime of resouces is maintained with a reference
  * counter.
  */
-typedef struct nccl_net_ofi_sendrecv_device {
-	/* This base device interface struct provides access to the
-	 * sendrecv endpoint's functions such as
-	 * sendrecv_get_properties(), sendrecv_get_ep(), and
-	 * sendrecv_release_ep(). At construction time of this device,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_device_t device
-	 * 'device'.
-	 *
-	 * This base device must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_device_t base;
-
+class nccl_net_ofi_sendrecv_device_t : public nccl_net_ofi_device_t {
+public:
 	/* Device provider */
 	struct fi_info *info;
 
@@ -283,7 +270,7 @@ typedef struct nccl_net_ofi_sendrecv_device {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-} nccl_net_ofi_sendrecv_device_t;
+};
 	
 typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_req_t base;

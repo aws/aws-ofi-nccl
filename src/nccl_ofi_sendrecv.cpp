@@ -54,7 +54,7 @@ static int sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_han
 
 static nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin(nccl_net_ofi_sendrecv_device_t *device)
 {
-	return (nccl_net_ofi_sendrecv_plugin_t*)device->base.plugin;
+	return (nccl_net_ofi_sendrecv_plugin_t*)device->plugin;
 }
 
 
@@ -64,7 +64,7 @@ static inline int sendrecv_get_properties(nccl_net_ofi_device_t *base_dev,
 	nccl_net_ofi_sendrecv_device_t *device =
 		(nccl_net_ofi_sendrecv_device_t *)base_dev;
 	struct fi_info *info = device->info;
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 	size_t num_devices = base_dev->plugin->get_num_devices(base_dev->plugin);
 	int ret;
 	nccl_net_ofi_sendrecv_plugin_t *plugin = sendrecv_device_get_plugin(device);
@@ -780,7 +780,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	CHECK_DOMAIN_ACTIVE(domain, "mr_base_reg");
 
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	int ret = 0;
 	nccl_ofi_mr_cache_t *mr_cache = domain->mr_cache;
@@ -1315,7 +1315,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
 	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
 	ret = fi_av_insert(ep->av, (void *)remote_ep_addr, 1,
@@ -1650,7 +1650,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
-	dev_id = device->base.dev_id;
+	dev_id = device->dev_id;
 
 	local_ep_name = sendrecv_get_local_address(this->ofi_ep);
 	if (local_ep_name == nullptr) {
@@ -1885,13 +1885,13 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm = (nccl_net_ofi_sendrecv_send_comm_t *)
 		calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm_t));
 	if (OFI_UNLIKELY(ret_s_comm == NULL)) {
-		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->base.dev_id);
+		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->dev_id);
 		return -ENOMEM;
 	}
 
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->base.base.ep = ep;
-	ret_s_comm->base.base.dev_id = device->base.dev_id;
+	ret_s_comm->base.base.dev_id = device->dev_id;
 	ret_s_comm->base.regMr = sendrecv_send_comm_reg_mr;
 	ret_s_comm->base.deregMr = sendrecv_send_comm_dereg_mr;
 	ret_s_comm->base.send = sendrecv_send_comm_send;
@@ -1931,7 +1931,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 				     &ret_s_comm->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			      device->base.dev_id);
+			      device->dev_id);
 		goto out;
 	}
 
@@ -2024,7 +2024,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
 	}
-	int dev_id = device->base.dev_id;
+	int dev_id = device->dev_id;
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
@@ -2107,7 +2107,7 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 		NCCL_OFI_WARN("Invalid device provided");
 		ret = -EINVAL;
 	} else {
-		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->base.dev_id);
+		nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, device->dev_id);
 		this->ofi_ep = nullptr;
 		this->av = nullptr;		
 	}
@@ -2199,7 +2199,7 @@ nccl_net_ofi_sendrecv_domain_t::~nccl_net_ofi_sendrecv_domain_t()
 
 
 nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg)
-	: nccl_net_ofi_domain_t(&device_arg->base)
+	: nccl_net_ofi_domain_t(device_arg)
 {
 	int ret;
 	struct fi_cq_attr cq_attr = {};
@@ -2280,7 +2280,7 @@ nccl_net_ofi_sendrecv_device_release(nccl_net_ofi_device_t *base_device)
 		return 0;
 	}
 
-	unsigned num_domains = device->base.domain_table->size();
+	unsigned num_domains = device->domain_table->size();
 	if (num_domains > 0) {
 		NCCL_OFI_INFO(NCCL_NET, "%u domains still active at close", num_domains);
 		ret = base_device->release_all_domain_and_ep(base_device);
@@ -2338,7 +2338,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 		return NULL;
 	}
 
-	ret = nccl_net_ofi_device_init(&device->base, plugin, dev_id,
+	ret = nccl_net_ofi_device_init(device, plugin, dev_id,
 				       info);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Initializing device %i failed: %s", dev_id, strerror(-ret));
@@ -2346,11 +2346,11 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	}
 
 
-	device->base.get_properties = sendrecv_get_properties;
-	device->base.release = nccl_net_ofi_sendrecv_device_release;
-	device->base.get_mr_key = NULL;
-	device->base.create_domain = nccl_net_ofi_sendrecv_device_create_domain;
-	device->base.get_ofi_info = sendrecv_device_get_ofi_info;
+	device->get_properties = sendrecv_get_properties;
+	device->release = nccl_net_ofi_sendrecv_device_release;
+	device->get_mr_key = NULL;
+	device->create_domain = nccl_net_ofi_sendrecv_device_create_domain;
+	device->get_ofi_info = sendrecv_device_get_ofi_info;
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -2381,7 +2381,7 @@ nccl_net_ofi_sendrecv_device_create(nccl_net_ofi_plugin_t *plugin,
 	return device;
 
 error:
-	device->base.release(&device->base);
+	device->release(device);
 
 	return NULL;
 }
@@ -2471,7 +2471,7 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 			return -ENOMEM;
 		}
 
-		ret = plugin->assign_device(plugin, dev_id, &device->base);
+		ret = plugin->assign_device(plugin, dev_id, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Assigning device %li failed", dev_id);
 			return ret;

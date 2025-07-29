@@ -176,17 +176,15 @@ typedef struct nccl_net_ofi_rdma_close_msg {
    need to be 128B aligned */
 #define EAGER_RX_BUFFER_ALIGNMENT 128
 
+class nccl_net_ofi_rdma_device_t;
 class nccl_net_ofi_rdma_domain_t;
 class nccl_net_ofi_rdma_ep_t;
 
+struct nccl_net_ofi_rdma_device_rail_t;
 struct nccl_net_ofi_rdma_domain_rail_t;
 
-struct nccl_net_ofi_rdma_device;
-struct nccl_net_ofi_rdma_device_rail;
 struct nccl_net_ofi_rdma_req;
 struct nccl_net_ofi_ep_rail;
-typedef struct nccl_net_ofi_rdma_device nccl_net_ofi_rdma_device_t;
-typedef struct nccl_net_ofi_rdma_device_rail nccl_net_ofi_rdma_device_rail_t;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 typedef struct nccl_net_ofi_ep_rail nccl_net_ofi_ep_rail_t;
 
@@ -1130,13 +1128,13 @@ protected:
  * Deivice rail encapsulates data of an endpoint for a
  * specific rail.
  */
-typedef struct nccl_net_ofi_rdma_device_rail {
+struct nccl_net_ofi_rdma_device_rail_t {
 	/* NIC info */
 	struct fi_info *info;
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
-} nccl_net_ofi_rdma_device_rail_t;
+};
 
 /*
  * @brief	RDMA Device
@@ -1151,20 +1149,8 @@ typedef struct nccl_net_ofi_rdma_device_rail {
  * locks and the lifetime of resouces is maintained with a reference
  * counter.
  */
-typedef struct nccl_net_ofi_rdma_device {
-	/* This base device interface struct provides access to the
-	 * rdma endpoint's functions such as
-	 * rdma_get_properties(), rdma_get_ep(), and
-	 * rdma_release_ep(). At construction time of this device,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_device_t device
-	 * 'device'.
-	 *
-	 * This base device must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_device_t base;
-
+class nccl_net_ofi_rdma_device_t : public nccl_net_ofi_device_t {
+public:
 	/* Number of rails */
 	uint16_t num_rails;
 
@@ -1186,7 +1172,7 @@ typedef struct nccl_net_ofi_rdma_device {
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[MAX_NUM_RAILS];
 #endif
-} nccl_net_ofi_rdma_device_t;
+};
 
 
 struct nccl_net_ofi_rdma_plugin {
