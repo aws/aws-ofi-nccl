@@ -446,7 +446,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	int ret = 0;
 	struct fid_nic *nic_info = NULL;
 	const char *platform_type = NULL;
-	nccl_net_ofi_device *device = NULL;
+	nccl_net_ofi_device_t *device = NULL;
 
 	memset(props, 0, sizeof(*props));
 
