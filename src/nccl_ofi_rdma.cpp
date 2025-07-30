@@ -2654,7 +2654,8 @@ static inline void rdma_req_init_ctx(nccl_net_ofi_rdma_req_t *req)
 }
 
 
-int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle)
+int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
+						 bool is_mr_cache_locked = false)
 {
 	int ret = 0;
 
@@ -2668,9 +2669,13 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		nccl_net_ofi_mutex_lock(&this->mr_cache->lock);
-		ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
-		nccl_net_ofi_mutex_unlock(&this->mr_cache->lock);
+		if (!is_mr_cache_locked) {
+			nccl_net_ofi_mutex_lock(&this->mr_cache->lock);
+			ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
+			nccl_net_ofi_mutex_unlock(&this->mr_cache->lock);
+		} else {
+			ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
+		}
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -2707,7 +2712,8 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
-						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
+						 nccl_net_ofi_rdma_mr_handle_t **mhandle,
+						 bool is_mr_cached)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -2765,7 +2771,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	return 0;
 
 error:
-	(void) this->dereg_mr(ret_handle);
+	(void) this->dereg_mr(ret_handle, is_mr_cached);
 	return ret;
 }
 
@@ -2794,7 +2800,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		/* Cache miss */
 	}
 
-	ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+	ret = this->reg_mr_on_device(ckey, type, &ret_handle, this->mr_cache != nullptr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto exit;
 	}
@@ -2804,7 +2810,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 						     ckey,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
-			if (this->dereg_mr(ret_handle) != 0) {
+			if (this->dereg_mr(ret_handle, true) != 0) {
 				NCCL_OFI_WARN("Error de-registering MR");
 			}
 

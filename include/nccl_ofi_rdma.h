@@ -662,8 +662,9 @@ public:
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
-			     int type,
-			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
+				 int type,
+				 nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				 bool is_mr_cached);
 
 	/**
 	 * @brief	Register memory region on RDMA domain
@@ -740,10 +741,15 @@ public:
 	 * @param	mr_handle
 	 *		Memory registration handle
 	 *
+	 * @param   is_mr_cache_locked
+	 *      (Optional) Whether MR cache is locked.
+	 *      By default the value is false.
+	 *
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
+	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
+				 bool is_mr_cache_locked);
 
 	uint16_t num_rails;
 	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
