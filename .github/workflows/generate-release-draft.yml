@@ -102,6 +102,7 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
+          name: AWS OFI NCCL ${{ github.ref_name }}
           draft: true
           prerelease: false
           body_path: RELEASE_NOTES.md
