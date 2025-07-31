@@ -864,9 +864,7 @@ public:
 	nccl_net_ofi_plugin_t(size_t num_devices)
 		: p_devs(num_devices, nullptr),
 		  p_num_devs(num_devices)
-	{
-		assert(p_num_devs > 0);
-	}
+	{}
 
 	/**
 	 * @brief	Destructor for the nccl_net_ofi_plugin class
@@ -929,7 +927,7 @@ public:
 	 */
 	bool domain_per_thread;
 
-/* private */
+protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
 
