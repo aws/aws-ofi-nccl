@@ -905,7 +905,7 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 		return check_return(ncclInvalidArgument);
 	}
 
-	if (OFI_UNLIKELY(plugin->p_num_devs == 0)) {
+	if (OFI_UNLIKELY(plugin->get_num_devices() == 0)) {
 		return check_return(ncclInvalidArgument);
 	}
 
