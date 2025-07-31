@@ -929,7 +929,7 @@ public:
 	 */
 	bool domain_per_thread;
 
-/* private */
+protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
 };
