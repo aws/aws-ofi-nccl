@@ -247,13 +247,13 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			ofi_nccl_protocol.set(PROTOCOL::RDMA);
 			plugin = rdma_plugin;
 			if (sendrecv_plugin != NULL) {
-				sendrecv_plugin->release_plugin(sendrecv_plugin);
+				delete sendrecv_plugin;
 			}
 		} else {
 			ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 			plugin = sendrecv_plugin;
 			if (rdma_plugin != NULL) {
-				rdma_plugin->release_plugin(rdma_plugin);
+				delete rdma_plugin;
 			}
 		}
 
@@ -271,7 +271,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s",
 		      plugin->domain_per_thread ? "thread" : "process");
 
-	ret = plugin->complete_init(plugin);
+	ret = plugin->complete_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to initialize %s protocol", ofi_nccl_protocol.get_string());
 		goto exit;
@@ -288,7 +288,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * resources. This initialization happens once per process, and thus it
 	 * does not matter which device is used to create the endpoint.
 	 */
-	device = plugin->get_device(plugin, 0);
+	device = plugin->get_device(0);
 
 	ep = device->get_ep();
 	if (ep == nullptr) {
@@ -435,22 +435,25 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	return 0;
 }
 
-/*
- * @brief	Set properties obtained from libfabric NIC Info.
- *
- * @return	Populated props structure
- */
-int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
-				 int dev_id, int num_devices, nccl_ofi_properties_t *props)
+
+int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+							int dev_id,
+							int num_devices,
+							nccl_ofi_properties_t *props)
 {
 	int ret = 0;
-	struct fid_nic *nic_info = NULL;
-	const char *platform_type = NULL;
-	nccl_net_ofi_device_t *device = NULL;
+	struct fid_nic *nic_info = nullptr;
+	const char *platform_type = nullptr;
+	nccl_net_ofi_device_t *device = nullptr;
 
 	memset(props, 0, sizeof(*props));
 
-	device = plugin->get_device(plugin, dev_id);
+	device = this->get_device(dev_id);
+	if (OFI_UNLIKELY(device == nullptr)) {
+		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
+		ret = -ENOTSUP;
+		goto error;
+	}
 	props->guid = device->guid;
 
 	ret = set_nic_props_default(dev_id, nic_prov, props);
@@ -459,8 +462,8 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	}
 
 	/* Change default values as set by NIC attributes */
-	nic_info = (struct fid_nic *)nic_prov->nic;
-	if (nic_info == NULL) {
+	nic_info = reinterpret_cast<struct fid_nic *>(nic_prov->nic);
+	if (nic_info == nullptr) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "No NIC info for dev %d. Supplying default values for NIC properties.",
 			      dev_id);
@@ -475,7 +478,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 			free(props->name);
 		}
 		props->name = strdup(nic_info->device_attr->name);
-		assert(props->name != NULL);
+		assert(props->name != nullptr);
 	}
 
 	/*
@@ -488,7 +491,7 @@ int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *
 	 * Also, if we have different domains for different threads, registrations
 	 * are not reported as global even if they are tied to the domain.
 	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || plugin->domain_per_thread) {
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
 		props->regIsGlobal = 0;
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {
@@ -701,72 +704,15 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 }
 
 
-static int nccl_net_ofi_plugin_assign_device(nccl_net_ofi_plugin_t *plugin,
-					     size_t device_index,
-					     nccl_net_ofi_device_t *device)
+nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 {
-	if (device_index >= plugin->p_num_devs) {
-		return -ENOSPC;
-	}
-
-	plugin->p_devs[device_index] = device;
-
-	return 0;
-}
-
-
-static nccl_net_ofi_device_t * nccl_net_ofi_plugin_get_device(nccl_net_ofi_plugin_t *plugin,
-							      size_t device_index)
-{
-	if (device_index >= plugin->p_num_devs) {
-		NCCL_OFI_WARN("Invalid device index %zu", device_index);
-		return NULL;
-	}
-
-	return plugin->p_devs[device_index];
-}
-
-
-static size_t nccl_net_ofi_plugin_get_num_devices(nccl_net_ofi_plugin_t *plugin)
-{
-	return plugin->p_num_devs;
-}
-
-
-int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin,
-			     size_t num_devices)
-{
-	plugin->p_devs =
-		(nccl_net_ofi_device_t **)calloc(num_devices, sizeof(nccl_net_ofi_device_t *));
-	if (plugin->p_devs == NULL) {
-		NCCL_OFI_WARN("Unable to allocate "
-			      "nccl_net_ofi_device_t pointer array");
-		return -ENOMEM;
-	}
-
-	plugin->p_num_devs = num_devices;
-
-	plugin->assign_device = nccl_net_ofi_plugin_assign_device;
-	plugin->get_device = nccl_net_ofi_plugin_get_device;
-	plugin->get_num_devices = nccl_net_ofi_plugin_get_num_devices;
-	plugin->release_plugin = nccl_net_ofi_plugin_fini;
-
-	return 0;
-}
-
-
-int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin)
-{
-	for (size_t i = 0 ; i < plugin->p_num_devs ; i++) {
-		if (plugin->p_devs[i] != NULL) {
-			plugin->p_devs[i]->release_device();
+	for (size_t i = 0 ; i < this->p_num_devs ; i++) {
+		if (this->p_devs[i] != nullptr) {
+			this->p_devs[i]->release_device();
 		}
 	}
 
-	free(plugin->p_devs);
-	plugin->p_num_devs = 0;
-
-	return 0;
+	this->p_num_devs = 0;
 }
 
 
