@@ -450,7 +450,7 @@ ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 		(nccl_net_ofi_listen_comm_t *)lComm;
 	nccl_net_ofi_recv_comm_t **recv_comm =
 		(nccl_net_ofi_recv_comm_t **)rComm;
-	int ret = listen_comm->accept(listen_comm, recv_comm);
+	int ret = listen_comm->accept(recv_comm);
 
 	/* Invoke release_ep() on listen comm's endpoint since accept failed */
 	if (ret != 0) {
@@ -888,7 +888,7 @@ ncclResult_t nccl_net_ofi_closeListen_v2(void *lComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = listen_comm->close(listen_comm);
+	int ret = listen_comm->close();
 	return nccl_net_ofi_retval_translate(ret);
 }
 
