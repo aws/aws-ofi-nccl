@@ -745,6 +745,10 @@ public:
 		return reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(ep);
 	}
 
+	int accept(nccl_net_ofi_xfer_comm_t **recv_comm) override;
+
+	int close() override;
+
 	/* Associated listener from connection manager */
 	nccl_ofi_cm_listener *listener = nullptr;
 

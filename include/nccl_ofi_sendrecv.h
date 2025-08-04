@@ -64,6 +64,10 @@ public:
 		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
 	}
 
+	int accept(nccl_net_ofi_xfer_comm_t **recv_comm) override;
+
+	int close() override;
+
 	struct fid_ep *local_ep = nullptr;
 	fi_addr_t local_ep_addr;
 	/* Saves temporary state when creating receive communicator object */
