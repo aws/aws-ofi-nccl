@@ -456,7 +456,7 @@ ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 	if (ret != 0) {
 		/* Retrieve and validate endpoint */
 		nccl_net_ofi_ep_t *ep =
-			listen_comm->base.ep;
+			listen_comm->ep;
 		if (OFI_UNLIKELY(ep == NULL)) {
 			NCCL_OFI_WARN("Invalid endpoint provided");
 			ret = -EINVAL;
