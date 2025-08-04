@@ -780,9 +780,9 @@ class nccl_net_ofi_listen_comm_t {
 public:
 	virtual ~nccl_net_ofi_listen_comm_t() = default;
 
-	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
-			       nccl_net_ofi_xfer_comm_t **recv_comm);
-	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
+	virtual int accept(nccl_net_ofi_xfer_comm_t **recv_comm) = 0;
+
+	virtual int close() = 0;
 
 	/**
 	 * @brief	Get base domain from endpoint
