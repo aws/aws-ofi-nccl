@@ -119,22 +119,19 @@ extern bool data_progress_auto;
 /* Size of system memory pages */
 extern size_t system_page_size;
 
+class nccl_net_ofi_comm_t;
+class nccl_net_ofi_listen_comm_t;
+class nccl_net_ofi_recv_comm_t;
+class nccl_net_ofi_send_comm_t;
+
 class nccl_net_ofi_device_t;
 class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
 class nccl_net_ofi_plugin_t;
 
 struct nccl_net_ofi_req;
-struct nccl_net_ofi_comm;
-struct nccl_net_ofi_listen_comm;
-struct nccl_net_ofi_send_comm;
-struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
-typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
-typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
-typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
-typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
 
 /**
  * Request - handle for an outstanding non-blocking communication
@@ -758,7 +755,10 @@ enum nccl_net_ofi_comm_type_t {
  * but instead underlying transports should extend the listen, send,
  * and recv communicators.
  */
-struct nccl_net_ofi_comm {
+class nccl_net_ofi_comm_t {
+public:
+	virtual ~nccl_net_ofi_comm_t() = default;
+
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
 	int dev_id;
@@ -767,17 +767,20 @@ struct nccl_net_ofi_comm {
 /**
  * Listen Communicator - Communicator for a listen/accept pairing
  */
-struct nccl_net_ofi_listen_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_listen_comm_t : public nccl_net_ofi_comm_t {
+public:
+	virtual ~nccl_net_ofi_listen_comm_t() = default;
 
 	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
 			       nccl_net_ofi_recv_comm_t **recv_comm);
 	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
 };
 
-struct nccl_net_ofi_send_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_send_comm_t : public nccl_net_ofi_comm_t {
+public:
 	// TODO: Potentially store this here: int trafficClass;
+
+	virtual ~nccl_net_ofi_send_comm_t() = default;
 
 	/*
 	 * @brief	Register memory region on send communicator (both Host and CUDA)
@@ -809,8 +812,9 @@ struct nccl_net_ofi_send_comm {
 			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request);
 };
 
-struct nccl_net_ofi_recv_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_recv_comm_t : public nccl_net_ofi_comm_t {
+public:
+	virtual ~nccl_net_ofi_recv_comm_t() = default;
 
 	/*
 	 * @brief	Register memory region on recv communicator (both Host and CUDA)
