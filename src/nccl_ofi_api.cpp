@@ -470,7 +470,7 @@ ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 		reinterpret_cast<nccl_net_ofi_recv_comm_t **>(rComm);
 	int ret = 0;
 	try {
-		ret = listen_comm->accept(listen_comm, recv_comm);
+		ret = listen_comm->accept(recv_comm);
 	}
 	catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in plugin accept: %s", e.what());
@@ -912,7 +912,7 @@ ncclResult_t nccl_net_ofi_closeListen_v2(void *lComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = listen_comm->close(listen_comm);
+	int ret = listen_comm->close();
 	return nccl_net_ofi_retval_translate(ret);
 }
 
