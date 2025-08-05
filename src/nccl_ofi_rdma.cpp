@@ -7057,7 +7057,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 	}
 
 	/* Allocate and initialize nccl_net devices */
-	for (size_t dev_id = 0; dev_id != this->p_num_devs; ++dev_id) {
+	for (size_t dev_id = 0; dev_id != this->get_num_devices(); ++dev_id) {
 		struct fi_info *info_list;
 
 		/* Retrieve NIC info list from topology */
