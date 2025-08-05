@@ -2786,21 +2786,19 @@ int nccl_net_ofi_rdma_send_comm_t::regMr(nccl_ofi_mr_ckey_ref ckey, int mr_type,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
-static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-			    nccl_ofi_mr_ckey_ref ckey,
-			    int type, void **mhandle)
+int nccl_net_ofi_rdma_recv_comm_t::regMr(nccl_ofi_mr_ckey_ref ckey, int mr_type, void **mhandle)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->ep;
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
+	auto *ep_ptr = this->rdma_recv_comm_get_ep();
+	auto *domain = ep_ptr->rdma_endpoint_get_domain();
+	assert(domain != nullptr);
 
 	pthread_wrapper domain_lock(&domain->domain_lock);
 
-	CHECK_DOMAIN_ACTIVE(domain, "reg_mr_recv_comm");
+	CHECK_DOMAIN_ACTIVE(domain, "recv regMr");
 
 	return domain->reg_mr(ckey,
-			      type,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      mr_type,
+			      reinterpret_cast<nccl_net_ofi_rdma_mr_handle_t **>(mhandle));
 }
 
 typedef struct {
@@ -2862,17 +2860,16 @@ static int freelist_deregmr_host_fn(void *handle)
 	return 0;
 }
 
-static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-						nccl_net_ofi_mr_handle_t *mhandle)
+int nccl_net_ofi_rdma_recv_comm_t::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->ep;
-	assert(ep != NULL);
+	auto *ep_ptr = this->rdma_recv_comm_get_ep();
+	assert(ep_ptr != nullptr);
 
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
+	auto *domain = ep_ptr->rdma_endpoint_get_domain();
+	assert(domain != nullptr);
 
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
+	auto *mr_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(mhandle);
 	return domain->dereg_mr(mr_handle);
 }
 
@@ -3160,63 +3157,58 @@ int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 	return 0;
 }
 
-static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
-			 size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles,
-			 nccl_net_ofi_req_t **base_req)
+int nccl_net_ofi_rdma_recv_comm_t::recv(int n, void **buffers,
+					size_t *sizes, int *tags,
+					nccl_net_ofi_mr_handle_t **mhandles,
+					nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_req_t *req = NULL;
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
-	rdma_req_recv_data_t *recv_data = NULL;
-	nccl_net_ofi_rdma_ep_t *ep = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
-	nccl_net_ofi_rdma_device_t *device = NULL;
-	int dev_id = 0;
-	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
+	nccl_net_ofi_rdma_req_t *req = nullptr;
+	rdma_req_recv_data_t *recv_data = nullptr;
+	nccl_net_ofi_rdma_ep_t *ep_ptr = nullptr;
+	nccl_net_ofi_rdma_domain_t *domain = nullptr;
+	nccl_net_ofi_rdma_device_t *device = nullptr;
+	auto **mr_handles = reinterpret_cast<nccl_net_ofi_rdma_mr_handle_t **>(mhandles);
 	uint16_t msg_seq_num = 0;
 	bool eager = false;
 	int i;
 	bool recv_completion_optional = false;
 
-	assert(r_comm != NULL);
-
 	if (early_completion && *base_req == (void *)NCCL_NET_OPTIONAL_RECV_COMPLETION) {
 		recv_completion_optional = true;
 	}
 
-	if (r_comm->comm_active == false) {
+	if (this->comm_active == false) {
 		NCCL_OFI_WARN("Called irecv on inactive communicator");
 		ret = -EINVAL;
 		return ret;
 	}
 
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	if (OFI_UNLIKELY(this->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -ENOSPC;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_REQUESTS);
 		return ret;
 	}
 
-	dev_id = r_comm->dev_id;
+	ep_ptr = this->rdma_recv_comm_get_ep();
+	assert(ep_ptr != nullptr);
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
-	assert(ep != NULL);
+	domain = ep_ptr->rdma_endpoint_get_domain();
+	assert(domain != nullptr);
 
-	domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
-
-	device = ep->rdma_endpoint_get_device();
-	assert(device != NULL);
+	device = ep_ptr->rdma_endpoint_get_device();
+	assert(device != nullptr);
 
 	pthread_wrapper domain_lock(&domain->domain_lock);
 
 	CHECK_DOMAIN_ACTIVE(domain, "recv");
 
 
-	ret = ep->process_cq_if_pending();
+	ret = ep_ptr->process_cq_if_pending();
 	if (ret == -EAGAIN) {
 		/* Network is still busy. Return NULL to NCCL. */
-		*base_req = NULL;
+		*base_req = nullptr;
 		ret = 0;
 		goto error;
 	}
@@ -3224,24 +3216,24 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto error;
 	}
 
-	msg_seq_num = r_comm->next_msg_seq_num;
+	msg_seq_num = this->next_msg_seq_num;
 
 	eager = false;
 	void *elem;
-	nccl_ofi_msgbuff_elemtype_t type;
+	nccl_ofi_msgbuff_elemtype_t msgbuff_type;
 	nccl_ofi_msgbuff_status_t msg_stat;
 	nccl_ofi_msgbuff_result_t mb_res;
 
-	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, &elem,
-					   &type, &msg_stat);
+	mb_res = nccl_ofi_msgbuff_retrieve(this->msgbuff, msg_seq_num, &elem,
+					   &msgbuff_type, &msg_stat);
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 
-		if (type == NCCL_OFI_MSGBUFF_REQ) {
+		if (msgbuff_type == NCCL_OFI_MSGBUFF_REQ) {
 			/* Shouldn't happen: duplicate request */
 			NCCL_OFI_WARN("Duplicate request in message buffer for msg %hu", msg_seq_num);
 			ret = -EINVAL;
 			goto error;
-		} else if (OFI_LIKELY(type == NCCL_OFI_MSGBUFF_BUFF)) {
+		} else if (OFI_LIKELY(msgbuff_type == NCCL_OFI_MSGBUFF_BUFF)) {
 			/* This is an eager message */
 			eager = true;
 		} else {
@@ -3277,9 +3269,9 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		}
 	}
 
-	ret = allocate_rdma_recv_req(r_comm, device, dev_id, msg_seq_num,
-					buffers[0], sizes[0],
-					mr_handles[0], &req, recv_completion_optional);
+	ret = allocate_rdma_recv_req(this, device, this->dev_id, msg_seq_num,
+				     buffers[0], sizes[0],
+				     mr_handles[0], &req, recv_completion_optional);
 	if (ret != 0) {
 		goto error;
 	}
@@ -3296,29 +3288,29 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 				NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
 				return ret;
 			}
-			recv_data->eager_copy_req = NULL;
+			recv_data->eager_copy_req = nullptr;
 		} else {
-			ret = alloc_eager_copy_req(req, r_comm, rx_buff_req);
+			ret = alloc_eager_copy_req(req, this, rx_buff_req);
 			if (ret != 0) {
 				goto error;
 			}
 		}
 	}
 
-	ret = insert_rdma_recv_req_into_msgbuff(r_comm, eager, &req);
-	if (ret != 0 || req == NULL) {
+	ret = insert_rdma_recv_req_into_msgbuff(this, eager, &req);
+	if (ret != 0 || req == nullptr) {
 		goto free_req;
 	}
 
 	/* At this point, we've successfully inserted a new request, so update the num inflight. */
-	(r_comm->num_inflight_reqs)++;
+	(this->num_inflight_reqs)++;
 
-	NCCL_OFI_TRACE_RECV(dev_id, r_comm, sizes[0], req, base_req);
+	NCCL_OFI_TRACE_RECV(this->dev_id, this, sizes[0], req, base_req);
 
 	/* Send ctrl msg */
-	nccl_net_ofi_mutex_lock(&r_comm->ctrl_counter_lock);
-	r_comm->n_ctrl_sent += 1;
-	nccl_net_ofi_mutex_unlock(&r_comm->ctrl_counter_lock);
+	nccl_net_ofi_mutex_lock(&this->ctrl_counter_lock);
+	this->n_ctrl_sent += 1;
+	nccl_net_ofi_mutex_unlock(&this->ctrl_counter_lock);
 	ret = receive_progress(recv_data->send_ctrl_req, true);
 	if (OFI_UNLIKELY(ret != 0)) {
 		/* TODO: Remove req from message buffer */
@@ -3326,7 +3318,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	if (eager) {
-		if (recv_data->eager_copy_req == NULL) {
+		if (recv_data->eager_copy_req == nullptr) {
 			/* If we don't need to do eager copy, this recv is already complete */
 			ret = inc_req_completion(req, 0, recv_data->total_num_compls);
 			if (ret != 0) {
@@ -3344,9 +3336,9 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	}
 
 	/* Return request to NCCL */
-	*base_req = (nccl_net_ofi_req_t *)req;
+	*base_req = reinterpret_cast<nccl_net_ofi_req_t *>(req);
 	/* Increment next_msg_seq_num for next call */
-	r_comm->next_msg_seq_num = (r_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+	this->next_msg_seq_num = (this->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
 
 	goto exit;
 
@@ -3354,7 +3346,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
  error:
 	if (req)
 		req->free(req, false);
-	*base_req = NULL;
+	*base_req = nullptr;
  exit:
 	return ret;
 }
@@ -3908,29 +3900,27 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
  *
  * To directly free the communicator resources, use recv_comm_destroy.
  */
-static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
+int nccl_net_ofi_rdma_recv_comm_t::close()
 {
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	int ret = 0;
 
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
-	if (r_comm->num_inflight_reqs > 0) {
+	if (this->num_inflight_reqs > 0) {
 		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
-			      r_comm);
+			      this);
 
-		auto *ep = r_comm->rdma_recv_comm_get_ep();
-		ep->rdma_endpoint_abort();
+		auto *ep_ptr = this->rdma_recv_comm_get_ep();
+		ep_ptr->rdma_endpoint_abort();
 	}
 
-	r_comm->comm_active = false;
+	this->comm_active = false;
 
 	nccl_net_ofi_mutex_lock(&comm_cleanup_list_lock);
 
 	/* Defer cleanup until we deliver all outstanding control messages
 	   and deliver the close message */
-	r_comm_cleanup_list->push_back(r_comm);
+	r_comm_cleanup_list->push_back(this);
 
 	assert(num_open_comms > 0);
 	num_open_comms--;
@@ -3973,27 +3963,25 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	return 0;
 }
 
-static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
-				   int *sizes, nccl_net_ofi_mr_handle_t **mhandles,
-				   nccl_net_ofi_req_t **base_req)
+int nccl_net_ofi_rdma_recv_comm_t::flush(int n, void **buffers,
+					 int *sizes, nccl_net_ofi_mr_handle_t **mhandles,
+					 nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
 	int flush_n = 0;
 	bool network_busy = false;
-	nccl_net_ofi_rdma_recv_comm_t *r_comm =
-		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
-	nccl_net_ofi_rdma_ep_t *ep = r_comm->rdma_recv_comm_get_ep();
+	auto *ep_ptr = this->rdma_recv_comm_get_ep();
 
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
+	auto *domain = ep_ptr->rdma_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->domain_lock);
 
 	CHECK_DOMAIN_ACTIVE(domain, "flush");
 
-	nccl_net_ofi_rdma_req_t *req = NULL;
+	nccl_net_ofi_rdma_req_t *req = nullptr;
 	ssize_t rc = 0;
-	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
+	auto **mr_handles = reinterpret_cast<nccl_net_ofi_rdma_mr_handle_t **>(mhandles);
 
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	if (OFI_UNLIKELY(this->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -ENOSPC;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_REQUESTS);
@@ -4002,7 +3990,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 
 	/* Process any pending requests */
 	network_busy = false;
-	rc = ep->process_cq_if_pending();
+	rc = ep_ptr->process_cq_if_pending();
 	if (rc == -EAGAIN) {
 		/* Network is still busy. */
 		network_busy = true;
@@ -4045,7 +4033,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		goto exit;
 	}
 
-	ret = rdma_comm_alloc_flush_req(r_comm, buffers[flush_n], mr_handles[flush_n], &req);
+	ret = rdma_comm_alloc_flush_req(this, buffers[flush_n], mr_handles[flush_n], &req);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
@@ -4061,14 +4049,14 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		}
 	} else {
 		/* Add to pending reqs queue */
-		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-		ep->pending_reqs_queue.push_back(req);
-		nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
+		nccl_net_ofi_mutex_lock(&ep_ptr->pending_reqs_lock);
+		ep_ptr->pending_reqs_queue.push_back(req);
+		nccl_net_ofi_mutex_unlock(&ep_ptr->pending_reqs_lock);
 		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	}
 
-	(r_comm->num_inflight_reqs)++;
+	(this->num_inflight_reqs)++;
 
 	*base_req = &req->base;
 
@@ -4078,7 +4066,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	if (req)
 		req->free(req, false);
  exit:
-	*base_req = NULL;
+	*base_req = nullptr;
 	return ret;
 }
 
@@ -4177,38 +4165,37 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
  *       	the application
  */
 
-static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size, void* mhandle,
-		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
+int nccl_net_ofi_rdma_recv_comm_t::read(void* dest, size_t size, void* mhandle,
+					uint64_t src, uint64_t mr_key,
+					nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	nccl_net_ofi_rdma_req_t *req = NULL;
-	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	auto *mr_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(mhandle);
+	nccl_net_ofi_rdma_req_t *req = nullptr;
+	nccl_net_ofi_rdma_ep_t *ep_ptr = nullptr;
 
-	assert(r_comm != NULL);
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
+	if (OFI_UNLIKELY(this->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_REQUESTS);
 		goto error;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
-	assert(ep != NULL);
+	ep_ptr = this->rdma_recv_comm_get_ep();
+	assert(ep_ptr != nullptr);
 
-	ret = ep->process_cq_if_pending();
+	ret = ep_ptr->process_cq_if_pending();
 	if (ret == -EAGAIN) {
 		/* Network is still busy. Return NULL to NCCL. */
-		*base_req = NULL;
+		*base_req = nullptr;
 		ret = 0;
 		goto error;
 	} else if (ret != 0) {
 		goto error;
 	}
 
-	ret = alloc_rdma_read_req(r_comm, ep, dest,
+	ret = alloc_rdma_read_req(this, ep_ptr, dest,
 				  size, mr_handle, src, mr_key, &req);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
@@ -4218,7 +4205,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
 	 * At this point, we've successfully inserted a new request,
 	 * so update the num inflight
 	 */
-	(r_comm->num_inflight_reqs)++;
+	(this->num_inflight_reqs)++;
 
 	NCCL_OFI_TRACE_READ(req, base_req);
 
@@ -4239,7 +4226,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
  error:
 	if (req)
 		req->free(req, false);
-	*base_req = NULL;
+	*base_req = nullptr;
  exit:
 	return ret;
 }
@@ -4333,12 +4320,6 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	r_comm->type = NCCL_NET_OFI_RECV_COMM;
 	r_comm->dev_id = dev_id;
 	r_comm->num_inflight_reqs = 0;
-	r_comm->regMr = reg_mr_recv_comm;
-	r_comm->deregMr = dereg_mr_recv_comm;
-	r_comm->recv = recv;
-	r_comm->flush = flush;
-	r_comm->close = recv_close_deferred;
-	r_comm->read = rma_read;
 
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
