@@ -544,7 +544,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 		break;
 	case NCCL_NET_OFI_RECV_COMM:
 		recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->regMr(recv_comm, &cache_key, type, mhandle);
+		ret = recv_comm->regMr(&cache_key, type, mhandle);
 		break;
 	case NCCL_NET_OFI_BASE_COMM:
 	case NCCL_NET_OFI_LISTEN_COMM:
@@ -586,7 +586,7 @@ ncclResult_t nccl_net_ofi_deregMr_v2(void *comm, void *mhandle)
 		break;
 	case NCCL_NET_OFI_RECV_COMM:
 		recv_comm = (nccl_net_ofi_recv_comm_t *)base_comm;
-		ret = recv_comm->deregMr(recv_comm, (nccl_net_ofi_mr_handle_t *)mhandle);
+		ret = recv_comm->deregMr(static_cast<nccl_net_ofi_mr_handle_t *>(mhandle));
 		break;
 	case NCCL_NET_OFI_BASE_COMM:
 	case NCCL_NET_OFI_LISTEN_COMM:
@@ -720,7 +720,7 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->recv(recv_comm, n, data, sizes, tags, handles, base_req);
+	int ret = recv_comm->recv(n, data, sizes, tags, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -810,7 +810,7 @@ ncclResult_t nccl_net_ofi_iflush_v5(void* rComm, int n, void** buffers, int* siz
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
+	int ret = recv_comm->flush(n, buffers, sizes, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -863,7 +863,7 @@ ncclResult_t nccl_net_ofi_closeRecv_v2(void *rComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->close(recv_comm);
+	int ret = recv_comm->close();
 
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -979,17 +979,12 @@ ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* m
 		return check_return(ncclInternalError);
 	}
 
-	if (OFI_UNLIKELY(recv_comm->read == NULL)) {
-		NCCL_OFI_WARN("Protocol does not support iread API function");
-		return check_return(ncclInternalError);
-	}
-
 	if (OFI_UNLIKELY(base_req == NULL)) {
 		NCCL_OFI_WARN("Invalid request provided");
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->read(recv_comm, dest, size, mhandle, src, mr_key, base_req);
+	int ret = recv_comm->read(dest, size, mhandle, src, mr_key, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 

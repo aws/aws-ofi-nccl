@@ -646,6 +646,21 @@ public:
 		return &control_rails[rail_id];
 	}
 
+	int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+
+	int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+
+	int recv(int n, void **data, size_t *sizes, int *tags,
+		 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int flush(int n, void **data, int *sizes,
+		  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int read(void* dest, size_t size, void* dest_mhandle,
+		 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
+
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver = nullptr;
 
