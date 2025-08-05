@@ -2415,7 +2415,7 @@ int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 
 	/* Allocate and initialize nccl_net devices */
 	info = this->provider_list;
-	while (dev_id != this->p_num_devs) {
+	while (dev_id != this->get_num_devices()) {
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			return -EINVAL;

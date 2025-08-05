@@ -861,7 +861,12 @@ public:
 	 * called from the transport-specific plugin creation function, which
 	 * is called from nccl_net_ofi_create_plugin().
 	 */
-	nccl_net_ofi_plugin_t(size_t num_devices);
+	nccl_net_ofi_plugin_t(size_t num_devices)
+		: p_devs(num_devices, nullptr)
+	{
+		/* Validate that at least one Libfabric NIC was found */
+		assert(!p_devs.empty());
+	}
 
 	/**
 	 * @brief	Destructor for the nccl_net_ofi_plugin class
@@ -885,7 +890,7 @@ public:
 
 	inline int assign_device(size_t device_index, nccl_net_ofi_device_t *device)
 	{
-		if (device_index >= p_num_devs) {
+		if (device_index >= get_num_devices()) {
 			return -ENOSPC;
 		}
 		p_devs[device_index] = device;
@@ -894,7 +899,7 @@ public:
 
 	inline nccl_net_ofi_device_t *get_device(size_t device_index)
 	{
-		if (device_index >= p_num_devs) {
+		if (device_index >= get_num_devices()) {
 			NCCL_OFI_WARN("Invalid device index %zu", device_index);
 			return nullptr;
 		}
@@ -903,7 +908,7 @@ public:
 
 	inline size_t get_num_devices()
 	{
-		return p_num_devs;
+		return p_devs.size();
 	}
 
 	/**
@@ -926,10 +931,7 @@ public:
 
 /* private */
 	/* Array of devices */
-	nccl_net_ofi_device_t **p_devs;
-
-	/* Number of devices in devs array */
-	size_t p_num_devs;
+	std::vector<nccl_net_ofi_device_t *> p_devs;
 };
 
 
