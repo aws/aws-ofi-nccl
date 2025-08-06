@@ -402,26 +402,11 @@ void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av, int dev_
  */
 int nccl_ofi_mr_keys_need_own_key(struct fi_info* provider, bool *provide_own_mr_key)
 {
-	if (!(provider->caps & FI_RMA)) {
-		/* When FI_RMA is not requested, Libfabric considers
-		   memory registrations to be local only, and
-		   therefore the requested_key field is ignored and
-		   (unfortunately) a random key may be returned from
-		   fi_mr_key().  This totally screws up the code to
-		   provide a unique MR key, which is, according to
-		   Libfabric, unnecessary in this mode anyway, so fall
-		   back to the provider-specified key code, which
-		   should behave properly in either case. */
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s only configured for local registration.",
-			       provider->fabric_attr->prov_name);
-		*provide_own_mr_key = false;
-	}
-	else if (provider->domain_attr->mr_mode & FI_MR_PROV_KEY) {
+	if (provider->domain_attr->mr_mode & FI_MR_PROV_KEY) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s selects memory registration keys",
 			       provider->fabric_attr->prov_name);
 		*provide_own_mr_key = false;
-	}
-	else {
+	} else {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Provider %s does not select memory registration keys",
 			       provider->fabric_attr->prov_name);
 		*provide_own_mr_key = true;
