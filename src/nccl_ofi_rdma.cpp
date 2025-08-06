@@ -238,56 +238,6 @@ static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm
 }
 
 
-static std::string format_rdma_device(const nccl_net_ofi_rdma_device_t* device) {
-    if (!device) {
-        return "NULL RDMA device";
-    }
-
-    std::ostringstream oss;
-    oss << "  Number of rails: " << device->num_rails << "\n"
-        << "  Max communicator IDs: " << device->num_comm_ids << "\n"
-        << "  Using long rkeys: " << (device->use_long_rkeys ? "true" : "false") << "\n";
-
-    for (int i = 0; i < device->num_rails; ++i) {
-        const auto& rail = device->device_rails[i];
-        oss << "  Rail[" << i << "]:\n";
-        if (rail.info) {
-            oss << "    Provider: " << rail.info->fabric_attr->prov_name << "\n"
-                << "    Domain: " << rail.info->domain_attr->name << "\n";
-        }
-        if (rail.source_dev_id >= 0) {
-            oss << "    Source device ID: " << rail.source_dev_id << "\n";
-        }
-    }
-
-    return oss.str();
-}
-
-static void log_device_properties(nccl_net_ofi_plugin_t* plugin,
-				  const ncclNetVDeviceProps_t* vProps,
-				  const nccl_net_ofi_rdma_device_t* virtual_device) {
-	std::ostringstream oss;
-	// oss << "Device Merge Configuration:\n"
-	// 	<< "Source Devices (" << vProps->ndevs << "):\n";
-	//
-	// // Log properties of all source devices
-	// for (int i = 0; i < vProps->ndevs; ++i) {
-	// 	auto* phys_dev = reinterpret_cast<nccl_net_ofi_rdma_device_t*>(
-	// 		plugin->get_device(plugin, vProps->devs[i]));
-	//
-	// 	oss << "Physical Device " << vProps->devs[i] << ":\n"
-	// 		<< format_rdma_device(phys_dev) << "\n";
-	// }
-
-	// Log the resulting virtual device
-	oss << "\nResulting Virtual Device:\n"
-		<< format_rdma_device(virtual_device);
-
-	// Log everything in one call
-	NCCL_OFI_INFO(NCCL_INIT, "%s", oss.str().c_str());
-}
-
-
 /*
  * @brief	Write topology to NCCL topology file
  *
@@ -7057,8 +7007,8 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	}
 
 	/* Set source device ID for all rails (for physical devices, it's the device itself) */
-	for (int i = 0; i < device->num_rails; i++) {
-		device->device_rails[i].source_dev_id = props ? props->devs[i] : dev_id;
+	for (int i = 0; i < this->num_rails; i++) {
+		this->device_rails[i].source_dev_id = props ? props->devs[i] : dev_id;
 	}
 
 	if (info_list->domain_attr->mr_key_size <= NCCL_NET_OFI_CTRL_MSG_SHORT_KEY_SIZE) {
@@ -7232,11 +7182,11 @@ static ncclResult_t nccl_net_ofi_rdma_makevdevice_impl(nccl_net_ofi_plugin_t *pl
 
 	// 5. Create device using SAME function as topo.c uses!
 	auto* virtual_device =
-		nccl_net_ofi_rdma_device_create(plugin,
-				  new_dev_idx,
-				  combined_info_list,
-				  nullptr,
-				  vProps);
+		new nccl_net_ofi_rdma_device_t(plugin,
+			     new_dev_idx,
+			     combined_info_list,
+			     nullptr,
+			     vProps);
 
 	if (!virtual_device) {
 		NCCL_OFI_WARN("Failed to create virtual device using standard device creation");
@@ -7245,10 +7195,9 @@ static ncclResult_t nccl_net_ofi_rdma_makevdevice_impl(nccl_net_ofi_plugin_t *pl
 	}
 
 	// 6. Add to plugin device array
-	plugin->assign_device(plugin, new_dev_idx, &virtual_device->base);
+	plugin->assign_device(plugin, new_dev_idx, virtual_device);
 	*deviceIndex = new_dev_idx;
 
-	log_device_properties(plugin, vProps, virtual_device);
 	return ncclSuccess;
 }
 
