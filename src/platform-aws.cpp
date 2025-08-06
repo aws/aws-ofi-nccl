@@ -131,6 +131,8 @@ static struct ec2_platform_data platform_data_map[] = {
 			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_NET_MERGE_LEVEL", "PORT" },
+			{ "NCCL_NET_FORCE_MERGE", "rdmap85s0,rdmap86s0;rdmap87s0,rdmap88s0;rdmap110s0,rdmap111s0;rdmap112s0,rdmap113s0;rdmap135s0,rdmap136s0;rdmap137s0,rdmap138s0;rdmap160s0,rdmap161s0;rdmap162s0,rdmap163s0" },
 		},
 	},
 	{
@@ -159,6 +161,7 @@ static struct ec2_platform_data platform_data_map[] = {
 			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_NET_MERGE_LEVEL", "PIX" },
 		},
 	},
 	{

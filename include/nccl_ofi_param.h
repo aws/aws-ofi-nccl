@@ -373,4 +373,9 @@ OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
 OFI_NCCL_PARAM_VALUE_SET(PROGRESS_MODEL, (UNSPEC)(AUTO)(MANUAL))
 OFI_NCCL_PARAM(PROGRESS_MODEL, progress_model,  "PROGRESS_MODEL", PROGRESS_MODEL::UNSPEC)
 
+/*
+ * Skip nccl_ofi_topo_gen() when non-zero
+ */
+OFI_NCCL_PARAM(bool, skip_topo_gen, "SKIP_TOPO_GEN", true);
+
 #endif // End NCCL_OFI_PARAM_H_

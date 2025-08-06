@@ -1007,4 +1007,45 @@ ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* m
 	return nccl_net_ofi_retval_translate(ret);
 }
 
+/*
+ * @brief	Create virtual device from multiple physical devices
+ *
+ * Creates a virtual device that aggregates properties from multiple
+ * physical devices. The virtual device appears as a regular device
+ * to NCCL with merged properties (summed bandwidth, etc.).
+ *
+ * @param	deviceIndex
+ *		Pointer to store the new virtual device index
+ * @param	props
+ *		Properties specifying which devices to merge
+ *
+ * @return	0, on success
+ *		error, on others
+ */
+ncclResult_t nccl_net_ofi_makevdevice(int* deviceIndex, void* props)
+{
+	/* Validate plugin */
+	if (OFI_UNLIKELY(plugin == NULL)) {
+		NCCL_OFI_WARN("Plugin not initialized");
+		return check_return(ncclInternalError);
+	}
 
+	/* Validate inputs */
+	if (OFI_UNLIKELY(deviceIndex == NULL || props == NULL)) {
+		NCCL_OFI_WARN("Invalid arguments to makeVDevice");
+		return check_return(ncclInvalidArgument);
+	}
+
+	/* Check if plugin supports makeVDevice */
+	if (OFI_UNLIKELY(plugin->makeVDevice == NULL)) {
+		NCCL_OFI_WARN("Plugin does not support virtual devices");
+		return check_return(ncclInvalidUsage);
+	}
+	ncclResult_t result = check_return(plugin->makeVDevice(plugin, deviceIndex, props));
+
+	if (result == ncclSuccess && deviceIndex) {
+		NCCL_OFI_INFO(NCCL_INIT, "nccl_net_ofi_makevdevice: SUCCESS - Created virtual device with index %d\n", *deviceIndex);
+	}
+
+	return result;
+}

@@ -1153,6 +1153,9 @@ struct nccl_net_ofi_rdma_device_rail_t {
 
 	/* Fabric handle */
 	struct fid_fabric *fabric;
+
+	/* Original physical device index this rail came from (for virtual devices) */
+	int source_dev_id;
 };
 
 

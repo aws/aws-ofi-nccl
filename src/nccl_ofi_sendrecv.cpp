@@ -2480,6 +2480,7 @@ static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
 
 	plugin->base.release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
 	plugin->base.complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
+	plugin->base.makeVDevice = nullptr;
 
 	*plugin_p = plugin;
 
