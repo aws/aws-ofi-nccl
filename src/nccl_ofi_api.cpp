@@ -1042,10 +1042,5 @@ ncclResult_t nccl_net_ofi_makevdevice(int* deviceIndex, void* props)
 		return check_return(ncclInvalidUsage);
 	}
 	ncclResult_t result = check_return(plugin->makeVDevice(plugin, deviceIndex, props));
-
-	if (result == ncclSuccess && deviceIndex) {
-		NCCL_OFI_INFO(NCCL_INIT, "nccl_net_ofi_makevdevice: SUCCESS - Created virtual device with index %d\n", *deviceIndex);
-	}
-
 	return result;
 }

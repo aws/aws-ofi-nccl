@@ -4,9 +4,6 @@
 
 #include "config.h"
 
-#include <cstdlib>
-#include <string>
-
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
@@ -120,11 +117,10 @@ static ncclResult_t getProperties_v9(int dev_id, ncclNetProperties_v9_t* props)
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
-	/* Copy vProps fields manually to handle v9/v10 version differences */
 	props->vProps.ndevs = ofi_properties.vProps.ndevs;
-	for (int i = 0; i < ofi_properties.vProps.ndevs && i < NCCL_NET_MAX_DEVS_PER_NIC_V9; i++) {
-		props->vProps.devs[i] = ofi_properties.vProps.devs[i];
-	}
+	std::copy_n(ofi_properties.vProps.devs,
+	     std::min(ofi_properties.vProps.ndevs, NCCL_NET_MAX_DEVS_PER_NIC_V9),
+	     props->vProps.devs);
 	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
 	props->maxCollBytes = ofi_properties.max_coll_bytes;
 
@@ -344,8 +340,7 @@ static ncclResult_t nccl_net_ofi_accept_v9(void* listenComm, void** recvComm,
 
 static ncclResult_t nccl_net_ofi_makevdevice_v9(int* deviceIndex, ncclNetVDeviceProps_t* props)
 {
-	// Cast to void* for the generic API - the plugin will receive void* and cast it back
-	return nccl_net_ofi_makevdevice(deviceIndex, props);
+	return nccl_net_ofi_makevdevice(deviceIndex, static_cast<void*>(props));
 }
 
 

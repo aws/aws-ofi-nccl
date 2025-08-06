@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <deque>
+#include <set>
 #include <stdexcept>
 
 #include <assert.h>
@@ -447,28 +448,20 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	props->max_write_inline_size = max_write_inline_size;
 
 	/* Derive vProps from rails - collect unique source device IDs */
-	int unique_devs[NCCL_NET_MAX_DEVS_PER_NIC];
-	int num_unique = 0;
-	
-	for (int i = 0; i < this->num_rails; i++) {
-		int source_dev = this->device_rails[i].source_dev_id;
-		// Check if we've already seen this device
-		bool found = false;
-		for (int j = 0; j < num_unique; j++) {
-			if (unique_devs[j] == source_dev) {
-				found = true;
-				break;
-			}
-		}
-		if (!found && num_unique < NCCL_NET_MAX_DEVS_PER_NIC) {
-			unique_devs[num_unique++] = source_dev;
-		}
-	}
-	
-	props->vProps.ndevs = num_unique;
-	for (int i = 0; i < num_unique; i++) {
-		props->vProps.devs[i] = unique_devs[i];
-	}
+	// Use a set to automatically keep unique device IDs
+	std::set<int> unique_devs;
+
+	// Collect unique source device IDs
+	std::transform(this->device_rails.begin(), this->device_rails.end(),
+		std::inserter(unique_devs, unique_devs.begin()),
+		[](const auto& rail) { return rail.source_dev_id; });
+
+	// Limit the number of devices to NCCL_NET_MAX_DEVS_PER_NIC
+	props->vProps.ndevs = std::min(static_cast<int>(unique_devs.size()), NCCL_NET_MAX_DEVS_PER_NIC);
+
+	// Copy the unique device IDs to props->vProps.devs
+	std::copy_n(unique_devs.begin(), props->vProps.ndevs, props->vProps.devs);
+
 
 	/* 
 	 * Actual max tansfer size is the min size between the interface and
@@ -7135,7 +7128,7 @@ static fi_info* extract_combined_rails(nccl_net_ofi_plugin_t *plugin,
 			return nullptr;
 		}
 
-		auto* dev_info = fi_dupinfo(rdma_dev->device_rails[0].info);
+		auto* dev_info = fi_dupinfo(rdma_dev->rdma_device_get_rail(0)->info);
 		if (!dev_info) {
 			NCCL_OFI_WARN("Failed to duplicate device %d info", props->devs[i]);
 			if (combined_list) fi_freeinfo(combined_list);
