@@ -1018,11 +1018,6 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 
-	if (ofi_nccl_skip_topo_gen()) {
-		NCCL_OFI_INFO(NCCL_INIT, "nccl_ofi_topo_group() skipped by Mozar 1184 test");
-		return ret;
-	}
-
         ret = mark_topo_nodes_with_ofi_info_subtree(topo);
 	if (ret != 0) {
 		return ret;

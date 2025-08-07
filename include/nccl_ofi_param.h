@@ -376,6 +376,6 @@ OFI_NCCL_PARAM(PROGRESS_MODEL, progress_model,  "PROGRESS_MODEL", PROGRESS_MODEL
 /*
  * Skip nccl_ofi_topo_gen() when non-zero
  */
-OFI_NCCL_PARAM(bool, skip_topo_gen, "SKIP_TOPO_GEN", true);
+OFI_NCCL_PARAM(bool, enable_vnic_gen, "ENABLE_VNIC_GEN", true);
 
 #endif // End NCCL_OFI_PARAM_H_

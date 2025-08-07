@@ -315,9 +315,8 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 		goto error;
 	}
 
-	// TODO: Disable this if vNic Path is enabled
 	/* Set topology file path environment variable `NCCL_TOPO_FILE` */
-	// env_manager::getInstance().insert_envvar("NCCL_TOPO_FILE", filename, true);
+	env_manager::getInstance().insert_envvar("NCCL_TOPO_FILE", filename, true);
 
 	goto exit;
 
@@ -7418,39 +7417,41 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		goto error;
 	}
 
-	ret = nccl_ofi_topo_group(topo);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to group NICs");
-		goto error;
-	}
-
-	if (topo->max_group_size > MAX_NUM_RAILS) {
-		NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
-			      topo->max_group_size, MAX_NUM_RAILS);
-		ret = -EINVAL;
-		goto error;
-	}
-	if (topo->max_group_size < 1) {
-		NCCL_OFI_WARN("Unexpected group size %d", topo->max_group_size);
-		ret = -EINVAL;
-		goto error;
-	}
-
-	if (topo->max_group_size > 1) {
-		*found_multiple_rails = true;
-	}
-
-	/**
-	 * NCCL's topology detection will set NIC PCIe link speed based on the
-	 * "leader" NIC for the GPU. For multi-rail platforms, we increase the
-	 * link speed reported to NCCL to account for the other rails. This
-	 * requires generating a topology file that will be passed to NCCL.
-	 */
-	if (topo->max_group_size > 1) {
-		ret = write_topo_file(topo);
+	if (!ofi_nccl_enable_vnic_gen()) {
+		ret = nccl_ofi_topo_group(topo);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to write NCCL topology file");
+			NCCL_OFI_WARN("Failed to group NICs");
 			goto error;
+		}
+
+		if (topo->max_group_size > MAX_NUM_RAILS) {
+			NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
+		 topo->max_group_size, MAX_NUM_RAILS);
+			ret = -EINVAL;
+			goto error;
+		}
+		if (topo->max_group_size < 1) {
+			NCCL_OFI_WARN("Unexpected group size %d", topo->max_group_size);
+			ret = -EINVAL;
+			goto error;
+		}
+
+		if (topo->max_group_size > 1) {
+			*found_multiple_rails = true;
+		}
+
+		/**
+		 * NCCL's topology detection will set NIC PCIe link speed based on the
+		 * "leader" NIC for the GPU. For multi-rail platforms, we increase the
+		 * link speed reported to NCCL to account for the other rails. This
+		 * requires generating a topology file that will be passed to NCCL.
+		 */
+		if (topo->max_group_size > 1) {
+			ret = write_topo_file(topo);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to write NCCL topology file");
+				goto error;
+			}
 		}
 	}
 
