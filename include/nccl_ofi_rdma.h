@@ -678,10 +678,6 @@ public:
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
-	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
-			     int type,
-			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
-
 	/**
 	 * @brief	Register memory region on RDMA domain
 	 *
@@ -819,6 +815,11 @@ protected:
 	 * 		error, on others
 	 */			    
 	int dealloc_and_dereg_flush_buff();
+
+private:
+	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
+			     int type,
+			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
 };
 
 
