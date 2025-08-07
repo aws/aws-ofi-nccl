@@ -112,28 +112,6 @@ static struct ec2_platform_data platform_data_map[] = {
 		.env = {},
 	},
 	{
-		.name = "p-series",
-		/*
-		 * we only want to match P5en and later, as earlier
-		 * platforms all either need to be ignored or special
-		 * cased.
-		 */
-		.regex = "^(p5en\\.48xlarge)|(^p([6-9]|[0-9]{2,}).*)",
-		.topology = NULL,
-		.default_dup_conns = 0,
-		.latency = 35.0,
-		.gdr_required = true,
-		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = false,
-		.env = {
-			{ "NCCL_BUFFSIZE", "8388608" },
-			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
-			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
-			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
-			{ "NCCL_NET_FORCE_FLUSH", "0" },
-		},
-	},
-	{
 		.name = "p5.4xlarge",
 		.regex = NULL,
 		.topology = NULL,
@@ -150,6 +128,28 @@ static struct ec2_platform_data platform_data_map[] = {
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 75.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.domain_per_thread = false,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+		},
+	},
+	{
+		.name = "p-series",
+		/*
+		 * we only want to match P5en and later, as earlier
+		 * platforms all either need to be ignored or special
+		 * cased.
+		 */
+		.regex = "^p([5-9]|[0-9]{2,}).*",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
 		.domain_per_thread = false,
