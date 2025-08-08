@@ -80,7 +80,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = "SENDRECV",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -94,7 +94,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = "SENDRECV",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -108,7 +108,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 150.0,
 		.gdr_required = false,
 		.default_protocol = "SENDRECV",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {},
 	},
 	{
@@ -124,7 +124,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = "RDMA",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -141,7 +141,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = "SENDRECV",
-		.domain_per_thread = false,
+		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -152,7 +152,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = "RDMA",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -169,7 +169,7 @@ static struct ec2_platform_data platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = "SENDRECV",
-		.domain_per_thread = 0,
+		.domain_per_thread = 1,
 		.env = {},
 	},
 	{
