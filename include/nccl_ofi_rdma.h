@@ -1343,4 +1343,25 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
 			   bool *found_multi_rail);
 
+/*
+ * @brief Return send communicator rail with index `rail_id`
+ */
+static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
+								uint16_t rail_id)
+{
+	assert(s_comm->rails);
+	assert(rail_id < s_comm->num_rails);
+	return &s_comm->rails[rail_id];
+}
+
+/*
+ * @brief Return receive communicator rail with index `rail_id`
+ */
+static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+								uint16_t rail_id)
+{
+	assert(r_comm->rails);
+	assert(rail_id < r_comm->num_rails);
+	return &r_comm->rails[rail_id];
+}
 #endif // End NCCL_OFI_RDMA_H_
