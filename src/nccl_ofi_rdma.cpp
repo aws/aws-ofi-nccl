@@ -2585,14 +2585,14 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 	}
 
 	if (this->mr_cache) {
+		pthread_wrapper mr_cache_lock(&this->mr_cache->lock);
+
 		/*
 		* Depending on the number of references on this handle and the cache
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		nccl_net_ofi_mutex_lock(&this->mr_cache->lock);
 		ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
-		nccl_net_ofi_mutex_unlock(&this->mr_cache->lock);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -2663,6 +2663,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 		ret = fi_mr_regattr(domain_rail->domain, &mr_attr,
 				    regattr_flags, &ret_handle->mr[rail_id]);
 		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu", rail_id, regattr_flags);
 			goto error;
 		}
 	}
@@ -2671,7 +2672,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	return 0;
 
 error:
-	(void) this->dereg_mr(ret_handle);
+	*mhandle = ret_handle;
 	return ret;
 }
 
@@ -2689,42 +2690,42 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		 * MR cache is locked between lookup and insert, to be sure we
 		 * insert a missing entry
 		 */
-		nccl_net_ofi_mutex_lock(&this->mr_cache->lock);
+		pthread_wrapper mr_cache_lock(&this->mr_cache->lock);
+
 		ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
 			nccl_ofi_mr_cache_lookup_entry(this->mr_cache, ckey));
-
 		if (ret_handle) {
 			/* Cache hit */
-			goto exit;
+			*mhandle = ret_handle;
+			return ret;
 		}
 		/* Cache miss */
-	}
 
-	ret = this->reg_mr_on_device(ckey, type, &ret_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
-		goto exit;
-	}
+		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			goto exit;
+		}
 
-	if (this->mr_cache) {
 		ret = nccl_ofi_mr_cache_insert_entry(this->mr_cache,
 						     ckey,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
-			if (this->dereg_mr(ret_handle) != 0) {
-				NCCL_OFI_WARN("Error de-registering MR");
-			}
-
-			ret_handle = NULL;
+			goto exit;
+		}
+	} else {
+		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
 	}
 
-exit:
-	if (this->mr_cache) {
-		nccl_net_ofi_mutex_unlock(&this->mr_cache->lock);
-	}
-
 	*mhandle = ret_handle;
+	return ret;
+
+exit:
+	if (this->dereg_mr(ret_handle) != 0) {
+		NCCL_OFI_WARN("Error de-registering MR");
+	}
 	return ret;
 }
 
