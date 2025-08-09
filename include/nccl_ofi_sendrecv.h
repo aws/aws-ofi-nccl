@@ -253,12 +253,26 @@ protected:
 };
 
 
-struct nccl_net_ofi_sendrecv_plugin {
-	nccl_net_ofi_plugin_t base;
+class nccl_net_ofi_sendrecv_plugin_t : public nccl_net_ofi_plugin_t {
+public:
+	/**
+	 * @brief	Default SENDRECV plugin constructor
+	 */
+	nccl_net_ofi_sendrecv_plugin_t(size_t num_devices,
+				       struct fi_info *provider_list_arg)
+		: nccl_net_ofi_plugin_t(num_devices),
+		  provider_list(provider_list_arg)
+	{}
+
+	/**
+	 * @brief	Default SENDRECV plugin destructor
+	 */
+	~nccl_net_ofi_sendrecv_plugin_t() override;
+
+	int complete_init() override;
 
 	struct fi_info *provider_list;
 };
-typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
 
 
 /**

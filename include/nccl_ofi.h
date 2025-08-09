@@ -122,15 +122,14 @@ extern size_t system_page_size;
 class nccl_net_ofi_device_t;
 class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
+class nccl_net_ofi_plugin_t;
 
-struct nccl_net_ofi_plugin;
 struct nccl_net_ofi_req;
 struct nccl_net_ofi_comm;
 struct nccl_net_ofi_listen_comm;
 struct nccl_net_ofi_send_comm;
 struct nccl_net_ofi_recv_comm;
 
-typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
 typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
 typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
@@ -347,7 +346,7 @@ public:
 	 */
 	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
 
-	struct nccl_net_ofi_plugin *plugin = nullptr;
+	nccl_net_ofi_plugin_t *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
@@ -853,8 +852,27 @@ struct nccl_net_ofi_recv_comm {
  * named nccl_net_ofi_plugin, which is valid after NCCL calls init()
  * on the plugin.
  */
-struct nccl_net_ofi_plugin {
-/* public */
+class nccl_net_ofi_plugin_t {
+public:
+	/**
+	 * @brief	Constructor for the nccl_net_ofi_plugin class
+	 *
+	 * Construct a nccl_net_ofi_plugin object.  This is expected to be
+	 * called from the transport-specific plugin creation function, which
+	 * is called from nccl_net_ofi_create_plugin().
+	 */
+	nccl_net_ofi_plugin_t(size_t num_devices)
+		: p_devs(num_devices, nullptr),
+		  p_num_devs(num_devices)
+	{}
+
+	/**
+	 * @brief	Destructor for the nccl_net_ofi_plugin class
+	 *
+	 * Destruct a nccl_net_ofi_plugin object.  This is expected to be
+	 * called from the transport-specific plugin destructor.
+	 */
+	virtual ~nccl_net_ofi_plugin_t();
 
 	/**
 	 * Complete initialization of plugin
@@ -866,17 +884,40 @@ struct nccl_net_ofi_plugin {
 	 * at which point devices and network resources can be
 	 * created.
 	 */
-	int (*complete_init)(nccl_net_ofi_plugin_t *plugin);
+	virtual int complete_init() = 0;
 
-	int (*assign_device)(nccl_net_ofi_plugin_t *plugin,
-			     size_t device_index, nccl_net_ofi_device_t *device);
+	inline int assign_device(size_t device_index, nccl_net_ofi_device_t *device)
+	{
+		if (device_index >= p_num_devs) {
+			return -ENOSPC;
+		}
+		p_devs[device_index] = device;
+		return 0;
+	}
 
-	nccl_net_ofi_device_t *(*get_device)(nccl_net_ofi_plugin_t *plugin,
-					     size_t device_index);
+	inline nccl_net_ofi_device_t *get_device(size_t device_index)
+	{
+		if (device_index >= p_num_devs) {
+			NCCL_OFI_WARN("Invalid device index %zu", device_index);
+			return nullptr;
+		}
+		return p_devs[device_index];
+	}
 
-	size_t (*get_num_devices)(nccl_net_ofi_plugin_t *plugin);
+	inline size_t get_num_devices()
+	{
+		return p_num_devs;
+	}
 
-	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
+	/**
+	 * @brief	Set properties obtained from libfabric NIC Info.
+	 *
+	 * @return	Populated props structure
+	 */
+	int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+					 int dev_id,
+					 int num_devices,
+					 nccl_ofi_properties_t *props);
 
 	/*
 	 * Determine whether to allocate the domain per process or per
@@ -886,9 +927,9 @@ struct nccl_net_ofi_plugin {
 	 */
 	bool domain_per_thread;
 
-/* private */
+protected:
 	/* Array of devices */
-	nccl_net_ofi_device_t **p_devs;
+	std::vector<nccl_net_ofi_device_t *> p_devs;
 
 	/* Number of devices in devs array */
 	size_t p_num_devs;
@@ -904,31 +945,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-/*
- * Constructor for the nccl_net_ofi_plugin class
- *
- * Construct a nccl_net_ofi_plugin object.  This is expected to be
- * called from the transport-specific plugin creation function, which
- * is called from nccl_net_ofi_create_plugin().
- */
-int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin, size_t num_devices);
-
-/*
- * Destructor for the nccl_net_ofi_plugin class
- *
- * Destruct a nccl_net_ofi_plugin object.  This is expected to be
- * called from the transport-specific plugin destructor.
- */
-int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin);
-
-/*
- * @brief	Set properties obtained from libfabric NIC Info.
- *
- * @return	Populated props structure
- */
-int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
-				 int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
 /*
  * @brief	Allocate memory region for memory registration
