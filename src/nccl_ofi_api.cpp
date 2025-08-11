@@ -147,23 +147,28 @@ static void nccl_net_ofi_fini_v2(void)
 
 ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
 {
-	int ret;
+	int ret = 0;
 
-	if (plugin != NULL) {
+	if (plugin != nullptr) {
 		return check_return(ncclSystemError);
 	}
 
 	ofi_log_function = logFunction;
 
 	abort_on_error = (ofi_nccl_abort_on_error() != 0);
-
-	ret = nccl_net_ofi_create_plugin(&plugin);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Initializing plugin failed");
-		return nccl_net_ofi_retval_translate(ret);
+	try {
+		ret = nccl_net_ofi_create_plugin(&plugin);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Initializing plugin failed");
+			return nccl_net_ofi_retval_translate(ret);
+		}
+	}
+	catch (const std::exception &e) {
+		NCCL_OFI_WARN("Caught exception in plugin init: %s", e.what());
+		ret = -EINVAL;
 	}
 
-	return ncclSuccess;
+	return nccl_net_ofi_retval_translate(ret);
 }
 
 
@@ -248,38 +253,43 @@ ncclResult_t nccl_net_ofi_listen_v2(int dev, void* handle, void** listenComm)
 ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 {
 	int ret = 0;
-	nccl_net_ofi_device_t *device = NULL;
-	nccl_net_ofi_ep_t *ep = NULL;
+	nccl_net_ofi_device_t *device = nullptr;
+	nccl_net_ofi_ep_t *ep = nullptr;
 	nccl_net_ofi_listen_comm_t **listen_comm =
-		(nccl_net_ofi_listen_comm_t **)lComm;
+		reinterpret_cast<nccl_net_ofi_listen_comm_t **>(lComm);
 
 	/* Validate plugin */
-	if (OFI_UNLIKELY(plugin == NULL)) {
+	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
 		return check_return(ncclInvalidArgument);
 	}
+	try {
+		device = plugin->get_device(dev_id);
+		if (device == nullptr) {
+			NCCL_OFI_WARN("Error accessing device %i.", dev_id);
+			return check_return(ncclInternalError);
+		}
+		/* Validate Handle */
+		if (OFI_UNLIKELY(handle == nullptr)) {
+			NCCL_OFI_WARN("Provided handle is nullptr");
+			return check_return(ncclInvalidArgument);
+		}
 
-	device = plugin->get_device(dev_id);
-	if (device == NULL) {
-		NCCL_OFI_WARN("Error accessing device %i.", dev_id);
-		return check_return(ncclInternalError);
+		/* Retrieve and validate endpoint */
+		ep = device->get_ep();
+		if (OFI_UNLIKELY(ep == nullptr)) {
+			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
+			return check_return(ncclInternalError);
+		}
+
+		ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), listen_comm);
 	}
-	/* Validate Handle */
-	if (OFI_UNLIKELY(handle == NULL)) {
-		NCCL_OFI_WARN("Provided handle is NULL");
-		return check_return(ncclInvalidArgument);
+	catch (const std::exception &e) {
+		NCCL_OFI_WARN("Caught exception in plugin listen: %s", e.what());
+		ret = -EINVAL;
 	}
 
-	/* Retrieve and validate endpoint */
-	ep = device->get_ep();
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
-		return check_return(ncclInternalError);
-	}
-
-	ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), listen_comm);
-
-	if (ret != 0) {
+	if (ret != 0 && ep != nullptr) {
 		ep->release_ep(false, false);
 	}
 	return nccl_net_ofi_retval_translate(ret);
@@ -315,9 +325,9 @@ ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
 
 
 /*
- * @brief	Non-blocking connect which returns sComm as NULL
+ * @brief	Non-blocking connect which returns sComm as nullptr
  *		with an expectation that it will be called again until 
- *		sComm != NULL
+ *		sComm != nullptr
  *
  * The callee obtains one endpoint handle via the device's get_ep()
  * function for each specific handle.  Further invocations of this
@@ -333,15 +343,15 @@ ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
  * @param	Network Device ID
  * 		Connection Handle (transferred OOB by NCCL)
  *
- * @return	sComm = NULL, if connection hasn't been established
- * 		sComm != NULL, once connection is established
+ * @return	sComm = nullptr, if connection hasn't been established
+ * 		sComm != nullptr, once connection is established
  * @return	0, on success
  * 		error, on others
  */
 ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, int trafficClass)
 {
 	/* Validate plugin */
-	if (OFI_UNLIKELY(plugin == NULL)) {
+	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
 		return check_return(ncclInvalidArgument);
 	}
@@ -349,39 +359,47 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 	/* Retrieve and validate Handle */
 	nccl_net_ofi_conn_handle_t *ofi_handle =
 		(nccl_net_ofi_conn_handle_t *)handle;
-	if (OFI_UNLIKELY(ofi_handle == NULL)) {
+	if (OFI_UNLIKELY(ofi_handle == nullptr)) {
 		NCCL_OFI_WARN("Provided handle is NULL");
 		return check_return(ncclInvalidArgument);
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *ep = NULL;
+	nccl_net_ofi_ep_t *ep = nullptr;
 	bool created_ep = false;
-	if (ofi_handle->state.comm == nullptr) {
-		nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
-		if (device == NULL) {
-			NCCL_OFI_WARN("Error accessing device %i.", dev_id);
-			return check_return(ncclInternalError);
+	int ret = 0;
+	try {
+		if (ofi_handle->state.comm == nullptr) {
+			nccl_net_ofi_device_t *device = plugin->get_device(dev_id);
+			if (device == nullptr) {
+				NCCL_OFI_WARN("Error accessing device %i.", dev_id);
+				return check_return(ncclInternalError);
+			}
+
+			ep = device->get_ep();
+			if (OFI_UNLIKELY(ep == nullptr)) {
+				return check_return(ncclInternalError);
+			}
+			created_ep = true;
+		} else {
+			ep = ofi_handle->state.comm->ep;
+			if (OFI_UNLIKELY(ep == nullptr)) {
+				NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
+				return check_return(ncclInternalError);
+			}
 		}
 
-		ep = device->get_ep();
-		if (OFI_UNLIKELY(ep == nullptr)) {
-			return check_return(ncclInternalError);
-		}
-		created_ep = true;
-	} else {
-		ep = ofi_handle->state.comm->ep;
-		if (OFI_UNLIKELY(ep == NULL)) {
-			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
-			return check_return(ncclInternalError);
-		}
+		/* Connect */
+		nccl_net_ofi_send_comm_t **send_comm =
+			reinterpret_cast<nccl_net_ofi_send_comm_t **>(sComm);
+		ret = ep->connect(static_cast<nccl_net_ofi_conn_handle_t *>(handle),
+				  send_comm,
+				  trafficClass);
 	}
-
-	/* Connect */
-	nccl_net_ofi_send_comm_t **send_comm =
-		(nccl_net_ofi_send_comm_t **)sComm;
-	int ret = ep->connect(static_cast<nccl_net_ofi_conn_handle_t *>(handle), send_comm,
-			      trafficClass);
+	catch (const std::exception &e) {
+		NCCL_OFI_WARN("Caught exception in plugin connect: %s", e.what());
+		ret = -EINVAL;
+	}
 
 	if (created_ep) {
 		/**
@@ -418,46 +436,52 @@ error:
 
 
 /*
- * @brief	Non-blocking accept which returns rComm as NULL
+ * @brief	Non-blocking accept which returns rComm as nullptr
  * 		with an expectation that it will be called again until
- * 		rComm != NULL
+ * 		rComm != nullptr
  *
  * If accept fails by returning a result other than ncclSuccess,
  * release_ep() is invoked on the listen communicator's endpoint.
  *
  * @param	Listen Communicator object
  *
- * @return	rComm = NULL, if connection hasn't been established
- * 		rComm != NULL, once connection is established
+ * @return	rComm = nullptr, if connection hasn't been established
+ * 		rComm != nullptr, once connection is established
  * @return	0, on success
  * 		error, on others
  */
 ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 {
-	if (OFI_UNLIKELY(plugin == NULL)) {
+	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
 		return check_return(ncclInvalidArgument);
 	}
 
 	/* Verify communicator */
-	if (lComm == NULL) {
+	if (lComm == nullptr) {
 		NCCL_OFI_WARN("Invalid listen communicator provided");
 		return check_return(ncclInternalError);
 	}
 
 	/* Invoke listen communicator accept() function */
 	nccl_net_ofi_listen_comm_t *listen_comm =
-		(nccl_net_ofi_listen_comm_t *)lComm;
+		reinterpret_cast<nccl_net_ofi_listen_comm_t *>(lComm);
 	nccl_net_ofi_recv_comm_t **recv_comm =
-		(nccl_net_ofi_recv_comm_t **)rComm;
-	int ret = listen_comm->accept(listen_comm, recv_comm);
+		reinterpret_cast<nccl_net_ofi_recv_comm_t **>(rComm);
+	int ret = 0;
+	try {
+		ret = listen_comm->accept(listen_comm, recv_comm);
+	}
+	catch (const std::exception &e) {
+		NCCL_OFI_WARN("Caught exception in plugin accept: %s", e.what());
+		ret = -EINVAL;
+	}
 
 	/* Invoke release_ep() on listen comm's endpoint since accept failed */
 	if (ret != 0) {
 		/* Retrieve and validate endpoint */
-		nccl_net_ofi_ep_t *ep =
-			listen_comm->base.ep;
-		if (OFI_UNLIKELY(ep == NULL)) {
+		nccl_net_ofi_ep_t *ep = listen_comm->base.ep;
+		if (OFI_UNLIKELY(ep == nullptr)) {
 			NCCL_OFI_WARN("Invalid endpoint provided");
 			ret = -EINVAL;
 			goto error;
