@@ -5,6 +5,16 @@
 - Amazon Linux 2 and Amazon Linux 2023
 - Ubuntu 22.04 LTS and 24.04 LTS
 
+# v1.16.3 (2025-08)
+
+The 1.16.3 release series supports [NCCL v2.27.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.7-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+With this release, building with platform-aws requires [Libfabric v1.22.0amzn4.0](https://github.com/aws/libfabric/commits/v1.22.0amzn4.0) or greater. And it is currently tested with versions up to [Libfabric 2.1.0amzn5.0](https://github.com/aws/libfabric/commits/2.1.0amzn5.0).
+
+### Bug Fixes and Improvements:
+
+- Enable domain-per-thread by default on all AWS instance types for improved performance for some applications where NCCL creates multiple proxy threads
+
 # v1.16.2 (2025-07)
 
 The 1.16.2 release series supports [NCCL v2.27.6-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.6-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
