@@ -226,7 +226,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		bool have_multiple_rails = false;
 		nccl_net_ofi_plugin_t *rdma_plugin = NULL, *sendrecv_plugin = NULL;
 
-		ret = nccl_net_ofi_rdma_init(provider_filter, &rdma_plugin, &have_multiple_rails);
+		try {
+			ret = nccl_net_ofi_rdma_init(provider_filter, &rdma_plugin,
+						     &have_multiple_rails);
+		}
+		catch (const std::exception &e) {
+			NCCL_OFI_WARN("Caught exception in rdma_init: %s", e.what());
+			ret = -EINVAL;
+		}
 		if (ret != 0) {
 			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 				       "Failed to initialize rdma protocol: %s", fi_strerror(-ret));
@@ -235,7 +242,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		}
 
 		if (!have_multiple_rails || rdma_plugin == NULL) {
-			ret = nccl_net_ofi_sendrecv_init(provider_filter, &sendrecv_plugin);
+			try {
+				ret = nccl_net_ofi_sendrecv_init(provider_filter,
+								 &sendrecv_plugin);
+			}
+			catch (const std::exception &e) {
+				NCCL_OFI_WARN("Caught exception in sendrecv_init: %s", e.what());
+				ret = -EINVAL;
+			}
 			if (ret != 0) {
 				NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 					       "Failed to initialized sendrecv protocol: %s", fi_strerror(-ret));
