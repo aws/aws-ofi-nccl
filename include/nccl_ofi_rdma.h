@@ -1161,8 +1161,7 @@ public:
 	/**
 	 * @brief	Default RDMA plugin constructor
 	 */
-	nccl_net_ofi_rdma_plugin_t(size_t num_devices,
-				   nccl_ofi_topo_t *topo_arg);
+	nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list);
 
 	/**
 	 * @brief	Default RDMA plugin destructor
