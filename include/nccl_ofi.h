@@ -855,11 +855,22 @@ struct nccl_net_ofi_recv_comm {
 class nccl_net_ofi_plugin_t {
 public:
 	/**
-	 * @brief	Constructor for the nccl_net_ofi_plugin class
+	 * @brief	Default constructor for the nccl_net_ofi_plugin class
 	 *
-	 * Construct a nccl_net_ofi_plugin object.  This is expected to be
-	 * called from the transport-specific plugin creation function, which
-	 * is called from nccl_net_ofi_create_plugin().
+	 * Construct a nccl_net_ofi_plugin object with an empty p_devs device vector.  This is
+	 * expected to be called from the transport-specific RDMA plugin creation function, which
+	 * is called from nccl_net_ofi_create_plugin() and should properly resize the p_devs vector
+	 * to the number of devices derived from the created topology.
+	 */
+	nccl_net_ofi_plugin_t()
+	{}
+
+	/**
+	 * @brief	Size constructor for the nccl_net_ofi_plugin class
+	 *
+	 * Construct a nccl_net_ofi_plugin object with a p_devs vector with size num_devices.
+	 * This is expected to be called from the transport-specific SENDRECV plugin creation
+	 * function, which is called from nccl_net_ofi_create_plugin().
 	 */
 	nccl_net_ofi_plugin_t(size_t num_devices)
 		: p_devs(num_devices, nullptr)

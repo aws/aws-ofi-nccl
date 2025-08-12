@@ -7049,6 +7049,14 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 		return ncclInvalidArgument;
 	}
 
+	if (this->topo->max_group_size > 1) {
+		ret = write_topo_file(this->topo);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to write NCCL topology file");
+			return ret;
+		}
+	}
+
 	/* Initialize user data iterator */
 	ret = nccl_ofi_topo_set_to_begin(this->topo, &data_iter);
 	if (ret != 0) {
@@ -7085,11 +7093,43 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 }
 
 
-nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(size_t num_devices,
-						       nccl_ofi_topo_t *topo_arg)
-	: nccl_net_ofi_plugin_t(num_devices),
-	  topo(topo_arg)
+nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list)
 {
+	int ret = 0;
+	int num_devices = 0;
+
+	/* Create NCCL OFI topology */
+	this->topo = nccl_ofi_topo_create(provider_list);
+	if (!this->topo) {
+		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
+		throw std::runtime_error("rdma plugin constructor: topo creation failed");
+	}
+
+	ret = nccl_ofi_topo_group(this->topo);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to group NICs");
+		throw std::runtime_error("rdma plugin constructor: NIC grouping failed");
+	}
+
+	if (this->topo->max_group_size < 1 || this->topo->max_group_size > MAX_NUM_RAILS) {
+		NCCL_OFI_WARN("Unexpected topo group size of %d (minimum 1, maximum %d)",
+			      this->topo->max_group_size, MAX_NUM_RAILS);
+		throw std::runtime_error("rdma plugin constructor: invalid topo group size");
+	}
+
+	ret = nccl_ofi_topo_num_info_lists(this->topo, &num_devices);
+	if (ret != 0) {
+		throw std::runtime_error("rdma plugin constructor: failed to get num info lists");
+	} else if (num_devices <= 0)  {
+		NCCL_OFI_WARN("Topology reported unexpected number of devices. "
+			      "Expected value larger than zero but got %i",
+			      num_devices);
+		throw std::runtime_error("rdma plugin constructor: invalid number of devices");
+	}
+
+	/* Properly resize the empty p_devs vector with the derived number of Libfabric providers */
+	this->p_devs.resize(num_devices);
+
 	/* TODO: we should probably have an rdma_plugin object and put globals
 	   such as these there. */
 	s_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_send_comm_t*>;
@@ -7102,11 +7142,9 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   bool *found_multiple_rails)
 {
 	int ret = 0;
-	int num_devs = 0;
 	struct fi_info *provider_list = NULL;
 	unsigned int num_providers;
 	nccl_net_ofi_rdma_plugin_t *plugin = NULL;
-	nccl_ofi_topo_t *topo = NULL;
 	struct fi_info *hints;
 	uint32_t api_version = 0;
 
@@ -7219,35 +7257,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		return -ENOTSUP;
 	}
 
-	/* Create NCCL OFI topology */
-	topo = nccl_ofi_topo_create(provider_list);
-	if (!topo) {
-		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
-		ret = -ENOTSUP;
-		goto error;
-	}
-
-	ret = nccl_ofi_topo_group(topo);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to group NICs");
-		goto error;
-	}
-
-	if (topo->max_group_size > MAX_NUM_RAILS) {
-		NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
-			      topo->max_group_size, MAX_NUM_RAILS);
-		ret = -EINVAL;
-		goto error;
-	}
-	if (topo->max_group_size < 1) {
-		NCCL_OFI_WARN("Unexpected group size %d", topo->max_group_size);
-		ret = -EINVAL;
-		goto error;
-	}
-
-	if (topo->max_group_size > 1) {
-		*found_multiple_rails = true;
-	}
+	plugin = new nccl_net_ofi_rdma_plugin_t(provider_list);
 
 	/**
 	 * NCCL's topology detection will set NIC PCIe link speed based on the
@@ -7255,26 +7265,9 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	 * link speed reported to NCCL to account for the other rails. This
 	 * requires generating a topology file that will be passed to NCCL.
 	 */
-	if (topo->max_group_size > 1) {
-		ret = write_topo_file(topo);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to write NCCL topology file");
-			goto error;
-		}
+	if (plugin->topo->max_group_size > 1) {
+		*found_multiple_rails = true;
 	}
-
-	ret = nccl_ofi_topo_num_info_lists(topo, &num_devs);
-	if (ret != 0) {
-		goto error;
-	} else if (num_devs <= 0)  {
-		NCCL_OFI_WARN("Topology reported unexpected number of devices. "
-			      "Expected value larger than zero but got %i",
-			      num_devs);
-		ret = -EINVAL;;
-		goto error;
-	}
-
-	plugin = new nccl_net_ofi_rdma_plugin_t(num_devs, topo);
 
 	cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
 	if (cpu_cache_line_size < 0) {
