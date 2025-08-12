@@ -274,6 +274,8 @@ typedef struct nccl_ofi_properties {
 	size_t max_p2p_bytes;
 	/** Max transfer size for collective operations **/
 	size_t max_coll_bytes;
+	/** Virtual device properties - original physical devices for virtual devices **/
+	ncclNetVDeviceProps_t vProps;
 } nccl_ofi_properties_t;
 
 /**
@@ -877,6 +879,14 @@ struct nccl_net_ofi_plugin {
 	size_t (*get_num_devices)(nccl_net_ofi_plugin_t *plugin);
 
 	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
+
+	/**
+	 * Create virtual device from multiple physical devices
+	 *
+	 * Creates a virtual device that aggregates properties from
+	 * multiple physical devices. Returns the new device index.
+	 */
+	ncclResult_t (*makeVDevice)(nccl_net_ofi_plugin_t* plugin, int* deviceIndex, void* props);
 
 	/*
 	 * Determine whether to allocate the domain per process or per

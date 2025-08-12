@@ -66,5 +66,6 @@ ncclResult_t nccl_net_ofi_iwrite_inline_v5(void* sComm, void* src, size_t size,
 					   uint64_t dest, uint64_t mr_key, void** req);
 ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* mhandle,
 				   uint64_t src, uint64_t mr_key, void** req);
+ncclResult_t nccl_net_ofi_makevdevice(int* deviceIndex, void* props);
 
 #endif // End NET_OFI_API_H_

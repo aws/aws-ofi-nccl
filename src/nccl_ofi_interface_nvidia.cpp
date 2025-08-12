@@ -62,8 +62,7 @@ static ncclResult_t getProperties_v10(int dev_id, ncclNetProperties_v10_t* props
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
-	props->vProps.ndevs = 1;
-	props->vProps.devs[0] = dev_id;
+	props->vProps = ofi_properties.vProps;
 	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
 	props->maxCollBytes = ofi_properties.max_coll_bytes;
 
@@ -118,8 +117,10 @@ static ncclResult_t getProperties_v9(int dev_id, ncclNetProperties_v9_t* props)
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
-	props->vProps.ndevs = 1;
-	props->vProps.devs[0] = dev_id;
+	props->vProps.ndevs = ofi_properties.vProps.ndevs;
+	std::copy_n(ofi_properties.vProps.devs,
+	     std::min(ofi_properties.vProps.ndevs, NCCL_NET_MAX_DEVS_PER_NIC_V9),
+	     props->vProps.devs);
 	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
 	props->maxCollBytes = ofi_properties.max_coll_bytes;
 
@@ -337,6 +338,12 @@ static ncclResult_t nccl_net_ofi_accept_v9(void* listenComm, void** recvComm,
 }
 
 
+static ncclResult_t nccl_net_ofi_makevdevice_v9(int* deviceIndex, ncclNetVDeviceProps_t* props)
+{
+	return nccl_net_ofi_makevdevice(deviceIndex, static_cast<void*>(props));
+}
+
+
 extern "C" {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v2_t ncclNetPlugin_v2 = {
@@ -500,7 +507,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .closeListen = nccl_net_ofi_closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
-        .makeVDevice = NULL,
+        .makeVDevice = nccl_net_ofi_makevdevice_v9,
 };
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
@@ -523,7 +530,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
         .closeListen = nccl_net_ofi_closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
-        .makeVDevice = NULL,
+        .makeVDevice = nccl_net_ofi_makevdevice_v9,
 };
 
 } /* extern "C" */
