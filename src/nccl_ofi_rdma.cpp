@@ -183,38 +183,6 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 	return (nccl_net_ofi_rdma_close_msg_t *)send_close_data->ctrl_fl_elem->ptr;
 }
 
-/*
- * @brief Return send communicator control rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
-								uint16_t rail_id)
-{
-	assert(s_comm->control_rails);
-	assert(rail_id < s_comm->num_control_rails);
-	return &s_comm->control_rails[rail_id];
-}
-
-static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm_t *s_comm)
-{
-	return (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
-}
-
-/*
- * @brief Return receive communicator control rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-								uint16_t rail_id)
-{
-	assert(r_comm->control_rails);
-	assert(rail_id < r_comm->num_control_rails);
-	return &r_comm->control_rails[rail_id];
-}
-
-static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
-{
-	return (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
-}
-
 
 /*
  * @brief	Write topology to NCCL topology file
@@ -1609,7 +1577,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	uint16_t rail_id = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -3440,7 +3408,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
+	nccl_net_ofi_rdma_ep_t *ep = r_comm->rdma_recv_comm_get_ep();
 	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -3903,7 +3871,7 @@ static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
 			      r_comm);
 
-		auto *ep = rdma_recv_comm_get_ep(r_comm);
+		auto *ep = r_comm->rdma_recv_comm_get_ep();
 		ep->rdma_endpoint_abort();
 	}
 
@@ -3965,7 +3933,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	bool network_busy = false;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
-	nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
+	nccl_net_ofi_rdma_ep_t *ep = r_comm->rdma_recv_comm_get_ep();
 
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->domain_lock);
@@ -4413,7 +4381,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	/* Initialize local and remote endpoint resources for each control rail */
 	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+		auto *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_control_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->control_ep_names[rail_id];
 
@@ -4444,7 +4412,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	/* Initialize local and remote endpoint resources for each rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
@@ -5044,7 +5012,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
 	uint16_t rail_id = 0;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, rail_id);
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = s_comm->rdma_send_comm_get_rail(rail_id);
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -5226,7 +5194,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 
 			/* Get communicator rail information to xfer the req */
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-				rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+				s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
@@ -5235,7 +5203,7 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
 				/* Get communicator rail information to xfer the req */
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+					s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
 
 				ret = post_rdma_write(req, comm_rail, xfer_info, send_data->no_target_completion);
 
@@ -5277,7 +5245,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+	auto *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
 
 	assert(rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[rail_id]);
@@ -5366,7 +5334,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	uint16_t rx_rail_id = rx_buff_data->rail->rail_id;
-	comm_rail = rdma_recv_comm_get_rail(r_comm, rx_rail_id);
+	comm_rail = r_comm->rdma_recv_comm_get_rail(rx_rail_id);
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
@@ -5409,7 +5377,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 
 	/* iterate all rails and post RDMA local read */
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
-		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
 
 		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
 
@@ -5738,7 +5706,7 @@ static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
 		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating domain",
 				s_comm);
 
-		auto *ep = rdma_send_comm_get_ep(s_comm);
+		auto *ep = s_comm->rdma_send_comm_get_ep();
 		ep->rdma_endpoint_abort();
 	} else {
 		assert (s_comm->num_inflight_writes == 0);
