@@ -404,9 +404,9 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = this->device_rails[0].info;
-	size_t num_devices = plugin_ptr->base.get_num_devices(this->plugin);
+	size_t num_devices = plugin_ptr->get_num_devices();
 
-	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, info, this->dev_id, num_devices, props);
+	ret = plugin_ptr->nccl_net_ofi_info_properties(info, this->dev_id, num_devices, props);
 
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
@@ -7019,62 +7019,53 @@ static void get_hints(struct fi_info *hints)
 }
 
 
-static inline int nccl_net_ofi_rdma_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 {
-	int ret, last_error = 0;
-	nccl_net_ofi_rdma_plugin_t *rdma_plugin = (nccl_net_ofi_rdma_plugin_t *)plugin;
-
-	if (rdma_plugin->topo != NULL) {
-		nccl_ofi_topo_free(rdma_plugin->topo);
-		rdma_plugin->topo = NULL;
+	if (this->topo != nullptr) {
+		nccl_ofi_topo_free(this->topo);
+		this->topo = nullptr;
 	}
 
-	if (r_comm_cleanup_list != NULL) {
+	if (r_comm_cleanup_list != nullptr) {
 		delete r_comm_cleanup_list;
-		r_comm_cleanup_list = NULL;
+		r_comm_cleanup_list = nullptr;
 	}
 
-	if (s_comm_cleanup_list != NULL) {
+	if (s_comm_cleanup_list != nullptr) {
 		delete s_comm_cleanup_list;
-		s_comm_cleanup_list = NULL;
+		s_comm_cleanup_list = nullptr;
 	}
-
-	ret = nccl_net_ofi_plugin_fini(plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Destructing base plugin failed: %s",
-			      strerror(-ret));
-		if (last_error == 0) {
-			last_error = ret;
-		}
-	}
-
-	free(plugin);
-
-	return last_error;
 }
 
 
-static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *plugin)
+int nccl_net_ofi_rdma_plugin_t::complete_init()
 {
-	nccl_net_ofi_rdma_plugin_t *rdma_plugin = (nccl_net_ofi_rdma_plugin_t *)plugin;
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
-	if (rdma_plugin->base.domain_per_thread && ofi_nccl_endpoint_per_communicator() != 0) {
+	if (this->domain_per_thread && ofi_nccl_endpoint_per_communicator() != 0) {
 		/* TODO support this configuration */
 		NCCL_OFI_WARN("domain_per_thread is true and ofi_nccl_endpoint_per_communicator() != 0 are not supported together");
 		return ncclInvalidArgument;
 	}
 
+	if (this->topo->max_group_size > 1) {
+		ret = write_topo_file(this->topo);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to write NCCL topology file");
+			return ret;
+		}
+	}
+
 	/* Initialize user data iterator */
-	ret = nccl_ofi_topo_set_to_begin(rdma_plugin->topo, &data_iter);
+	ret = nccl_ofi_topo_set_to_begin(this->topo, &data_iter);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to set iterator to begin of user data vector");
 		return ret;
 	}
 
 	/* Allocate and initialize nccl_net devices */
-	for (size_t dev_id = 0; dev_id != rdma_plugin->base.p_num_devs; ++dev_id) {
+	for (size_t dev_id = 0; dev_id != this->get_num_devices(); ++dev_id) {
 		struct fi_info *info_list;
 
 		/* Retrieve NIC info list from topology */
@@ -7086,12 +7077,12 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 		}
 
 		/* Allocate device */
-		auto *device = new nccl_net_ofi_rdma_device_t(&rdma_plugin->base,
+		auto *device = new nccl_net_ofi_rdma_device_t(this,
 							      static_cast<int>(dev_id),
 							      info_list,
-							      rdma_plugin->topo);
+							      this->topo);
 
-		ret = plugin->assign_device(plugin, dev_id, device);
+		ret = this->assign_device(dev_id, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Assigning device %ld failed", dev_id);
 			return ret;
@@ -7102,40 +7093,47 @@ static inline int nccl_net_ofi_rdma_plugin_complete_init(nccl_net_ofi_plugin_t *
 }
 
 
-static inline int nccl_net_ofi_rdma_plugin_create(size_t num_devices,
-						  nccl_ofi_topo_t *topo,
-						  nccl_net_ofi_rdma_plugin_t **plugin_p)
+nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list)
 {
-	int ret;
-	nccl_net_ofi_rdma_plugin_t *plugin = NULL;
+	int ret = 0;
+	int num_devices = 0;
 
-	plugin = (nccl_net_ofi_rdma_plugin_t*)calloc(1, sizeof(nccl_net_ofi_rdma_plugin_t));
-	if (plugin == NULL) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		return -ENOMEM;
+	/* Create NCCL OFI topology */
+	this->topo = nccl_ofi_topo_create(provider_list);
+	if (!this->topo) {
+		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
+		throw std::runtime_error("rdma plugin constructor: topo creation failed");
 	}
 
-	ret = nccl_net_ofi_plugin_init(&plugin->base, num_devices);
+	ret = nccl_ofi_topo_group(this->topo);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing base plugin failed: %s",
-			      strerror(-ret));
-		free(plugin);
-		return ret;
+		NCCL_OFI_WARN("Failed to group NICs");
+		throw std::runtime_error("rdma plugin constructor: NIC grouping failed");
 	}
+
+	if (this->topo->max_group_size < 1 || this->topo->max_group_size > MAX_NUM_RAILS) {
+		NCCL_OFI_WARN("Unexpected topo group size of %d (minimum 1, maximum %d)",
+			      this->topo->max_group_size, MAX_NUM_RAILS);
+		throw std::runtime_error("rdma plugin constructor: invalid topo group size");
+	}
+
+	ret = nccl_ofi_topo_num_info_lists(this->topo, &num_devices);
+	if (ret != 0) {
+		throw std::runtime_error("rdma plugin constructor: failed to get num info lists");
+	} else if (num_devices <= 0)  {
+		NCCL_OFI_WARN("Topology reported unexpected number of devices. "
+			      "Expected value larger than zero but got %i",
+			      num_devices);
+		throw std::runtime_error("rdma plugin constructor: invalid number of devices");
+	}
+
+	/* Properly resize the empty p_devs vector with the derived number of Libfabric providers */
+	this->p_devs.resize(num_devices);
 
 	/* TODO: we should probably have an rdma_plugin object and put globals
 	   such as these there. */
 	s_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_send_comm_t*>;
 	r_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_recv_comm_t*>;
-
-	plugin->topo = topo;
-
-	plugin->base.release_plugin = nccl_net_ofi_rdma_plugin_fini;
-	plugin->base.complete_init = nccl_net_ofi_rdma_plugin_complete_init;
-
-	*plugin_p = plugin;
-
-	return 0;
 }
 
 
@@ -7144,11 +7142,9 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   bool *found_multiple_rails)
 {
 	int ret = 0;
-	int num_devs = 0;
 	struct fi_info *provider_list = NULL;
 	unsigned int num_providers;
 	nccl_net_ofi_rdma_plugin_t *plugin = NULL;
-	nccl_ofi_topo_t *topo = NULL;
 	struct fi_info *hints;
 	uint32_t api_version = 0;
 
@@ -7168,8 +7164,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	hints = fi_allocinfo();
 	if (hints == NULL) {
 		NCCL_OFI_WARN("Allocation of fi_info failed");
-		ret = -FI_ENOMEM;
-		goto error;
+		return -FI_ENOMEM;
 	}
 
 	get_hints(hints);
@@ -7193,29 +7188,27 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		support_gdr = GDR_UNKNOWN;
 	} else if (ret == -FI_ENODATA) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "No eligible providers were found");
-		goto error;
+		return ret;
 	} else {
 		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
-		goto error;
+		return ret;
 	}
 	fi_freeinfo(hints);
 
 	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
-		goto error;
+		return ret;
 	}
 
 	if (endpoint_mr) {
 		NCCL_OFI_WARN("RDMA protocol does not support endpoint memory registration.");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
-		ret = ncclInvalidArgument;
-		goto error;
+		return ncclInvalidArgument;
 	}
 
 	/* 
@@ -7255,46 +7248,16 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	} else if (ofi_nccl_early_completion.get_source() == ParamSource::ENVIRONMENT &&
 		   ofi_nccl_early_completion.get() && !data_progress_auto) {
 		NCCL_OFI_WARN("Failed configuration of EARLY_COMPLETION due to provider data progress model is not FI_PROGRESS_AUTO");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 	early_completion = ofi_nccl_early_completion.get();
 
 	if (early_completion && ofi_nccl_eager_max_size() != -1) {
 		NCCL_OFI_WARN("Conflicted configuration of EARLY_COMPLETION and EAGER_MAX_SIZE");
-		ret = -ENOTSUP;
-		goto error;
+		return -ENOTSUP;
 	}
 
-	/* Create NCCL OFI topology */
-	topo = nccl_ofi_topo_create(provider_list);
-	if (!topo) {
-		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
-		ret = -ENOTSUP;
-		goto error;
-	}
-
-	ret = nccl_ofi_topo_group(topo);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to group NICs");
-		goto error;
-	}
-
-	if (topo->max_group_size > MAX_NUM_RAILS) {
-		NCCL_OFI_WARN("Unexpected topo group size of %d (maximum %d)",
-			      topo->max_group_size, MAX_NUM_RAILS);
-		ret = -EINVAL;
-		goto error;
-	}
-	if (topo->max_group_size < 1) {
-		NCCL_OFI_WARN("Unexpected group size %d", topo->max_group_size);
-		ret = -EINVAL;
-		goto error;
-	}
-
-	if (topo->max_group_size > 1) {
-		*found_multiple_rails = true;
-	}
+	plugin = new nccl_net_ofi_rdma_plugin_t(provider_list);
 
 	/**
 	 * NCCL's topology detection will set NIC PCIe link speed based on the
@@ -7302,29 +7265,8 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	 * link speed reported to NCCL to account for the other rails. This
 	 * requires generating a topology file that will be passed to NCCL.
 	 */
-	if (topo->max_group_size > 1) {
-		ret = write_topo_file(topo);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to write NCCL topology file");
-			goto error;
-		}
-	}
-
-	ret = nccl_ofi_topo_num_info_lists(topo, &num_devs);
-	if (ret != 0) {
-		goto error;
-	} else if (num_devs <= 0)  {
-		NCCL_OFI_WARN("Topology reported unexpected number of devices. "
-			      "Expected value larger than zero but got %i",
-			      num_devs);
-		ret = -EINVAL;;
-		goto error;
-	}
-
-	ret = nccl_net_ofi_rdma_plugin_create(num_devs, topo, &plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		goto error;
+	if (plugin->topo->max_group_size > 1) {
+		*found_multiple_rails = true;
 	}
 
 	cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
@@ -7336,15 +7278,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		cpu_cache_line_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE;
 	}
 
-	*plugin_p = &plugin->base;
-
-	return ret;
-
- error:
-	if (plugin != NULL) {
-		plugin->base.release_plugin(&plugin->base);
-		plugin = NULL;
-	}
+	*plugin_p = plugin;
 
 	return ret;
 }

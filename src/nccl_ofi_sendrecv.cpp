@@ -73,7 +73,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	assert(this->plugin != nullptr);
 	
-	size_t num_devices = this->plugin->get_num_devices(this->plugin);
+	size_t num_devices = this->plugin->get_num_devices();
 	int ret;
 	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
@@ -84,7 +84,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 		return -EINVAL;
 	}
 
-	ret = nccl_net_ofi_info_properties(&plugin_ptr->base, this->info, this->dev_id, num_devices, props);
+	ret = plugin_ptr->nccl_net_ofi_info_properties(this->info, this->dev_id, num_devices, props);
 	if (ret == 0) {
 		/* make sure max_communicators can safely be copied
 		into an int */
@@ -2399,50 +2399,33 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 }
 
 
-static int nccl_net_ofi_sendrecv_plugin_fini(nccl_net_ofi_plugin_t *plugin)
+nccl_net_ofi_sendrecv_plugin_t::~nccl_net_ofi_sendrecv_plugin_t()
 {
-	int ret, last_error = 0;
-	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
-
-	if (sendrecv_plugin->provider_list != NULL) {
-		fi_freeinfo(sendrecv_plugin->provider_list);
+	if (this->provider_list != nullptr) {
+		fi_freeinfo(this->provider_list);
 	}
-
-	ret = nccl_net_ofi_plugin_fini(plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Destructing base plugin failed: %s",
-			      strerror(-ret));
-		if (last_error == 0) {
-			last_error = ret;
-		}
-	}
-
-	free(plugin);
-
-	return 0;
 }
 
 
-static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin_t *plugin)
+int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 {
-	nccl_net_ofi_sendrecv_plugin_t *sendrecv_plugin = (nccl_net_ofi_sendrecv_plugin_t *)plugin;
 	struct fi_info *info;
 	size_t dev_id = 0;
 	int ret;
 
 	/* Allocate and initialize nccl_net devices */
-	info = sendrecv_plugin->provider_list;
-	while (dev_id != sendrecv_plugin->base.p_num_devs) {
+	info = this->provider_list;
+	while (dev_id != this->get_num_devices()) {
 		if (!info) {
 			NCCL_OFI_WARN("Insufficient Libfabric devices found");
 			return -EINVAL;
 		}
 
-		auto *device = new nccl_net_ofi_sendrecv_device_t(plugin,
+		auto *device = new nccl_net_ofi_sendrecv_device_t(this,
 								  static_cast<int>(dev_id),
 								  info);
 
-		ret = plugin->assign_device(plugin, dev_id, device);
+		ret = this->assign_device(dev_id, device);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Assigning device %li failed", dev_id);
 			return ret;
@@ -2451,37 +2434,6 @@ static inline int nccl_net_ofi_sendrecv_plugin_complete_init(nccl_net_ofi_plugin
 		dev_id++;
 		info = info->next;
 	}
-
-	return 0;
-}
-
-
-static int nccl_net_ofi_sendrecv_plugin_create(size_t num_devices,
-					       struct fi_info *provider_list,
-					       nccl_net_ofi_sendrecv_plugin_t **plugin_p)
-{
-	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin = NULL;
-
-	plugin = (nccl_net_ofi_sendrecv_plugin_t *)calloc(1, sizeof(nccl_net_ofi_sendrecv_plugin_t));
-	if (plugin == NULL) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		return -ENOMEM;
-	}
-
-	ret = nccl_net_ofi_plugin_init(&plugin->base, num_devices);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Initializing base plugin failed: %s",
-			      strerror(-ret));
-		return ret;
-	}
-
-	plugin->provider_list = provider_list;
-
-	plugin->base.release_plugin = nccl_net_ofi_sendrecv_plugin_fini;
-	plugin->base.complete_init = nccl_net_ofi_sendrecv_plugin_complete_init;
-
-	*plugin_p = plugin;
 
 	return 0;
 }
@@ -2499,8 +2451,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 	hints = fi_allocinfo();
 	if (hints == NULL) {
 		NCCL_OFI_WARN("Allocation of fi_info failed");
-		ret = -FI_ENOMEM;
-		goto error;
+		return -FI_ENOMEM;
 	}
 
 	if (nccl_ofi_dmabuf_viable()) {
@@ -2559,11 +2510,10 @@ found:
 	fi_freeinfo(hints);
 	if (ret != 0 && ret != -FI_ENODATA) {
 		NCCL_OFI_WARN("OFI fi_getinfo() call failed: %s", fi_strerror(ret));
-		goto error;
+		return ret;
 	}
 	if (provider_list == NULL) {
-		ret = -FI_ENODATA;
-		goto error;
+		return -FI_ENODATA;
 	}
 
 	/* The TCP provider in Libfabric versions prior to 2.2.0
@@ -2633,8 +2583,7 @@ found:
 			tmp = fi_dupinfo(input_iter);
 			if (!tmp) {
 				NCCL_OFI_WARN("DUP_CONNS fi_dupinfo failed.");
-				ret = -ENOMEM;
-				goto error;
+				return -ENOMEM;
 			}
 			/* just in case */
 			tmp->next = NULL;
@@ -2662,24 +2611,12 @@ found:
 	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
-		goto error;
+		return ret;
 	}
 
-	ret = nccl_net_ofi_sendrecv_plugin_create(num_providers, provider_list, &plugin);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to allocate nccl_net_ofi_plugin_t");
-		goto error;
-	}
+	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list);
 
-	*plugin_p = &plugin->base;
-
-	return ret;
-
- error:
-	if (plugin != NULL) {
-		plugin->base.release_plugin(&plugin->base);
-		plugin = NULL;
-	}
+	*plugin_p = plugin;
 
 	return ret;
 }
