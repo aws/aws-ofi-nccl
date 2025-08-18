@@ -550,7 +550,39 @@ public:
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
-	
+
+	int send(void *data, size_t size, int tag,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int write(void* src, size_t size, void* src_mhandle,
+		  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
+
+	int write_inline(void* src, size_t size,
+			 uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request) override;
+
+	/* recv/flush/read operations not supported in send communicator */
+	int recv(int n, void **data, size_t *sizes, int *tags,
+		 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override
+	{
+		NCCL_OFI_WARN("Send comm does not support irecv API function");
+		return -EINVAL;
+	}
+
+	int flush(int n, void **data, int *sizes,
+		  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override
+	{
+		NCCL_OFI_WARN("Send comm does not support iflush API function");
+		return -EINVAL;
+	}
+	int read(void *dest, size_t size, void *dest_mhandle,
+		 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req) override
+	{
+		NCCL_OFI_WARN("Send comm does not support iread API function");
+		return -EINVAL;
+	}
+
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 
@@ -664,6 +696,39 @@ public:
 		}
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
+	}
+
+	int recv(int n, void **data, size_t *sizes, int *tags,
+		 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int flush(int n, void **data, int *sizes,
+		  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int read(void* dest, size_t size, void* dest_mhandle,
+		 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
+
+	/* send/write operations not supported in recv communicator */
+	int send(void *data, size_t size, int tag_arg,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override
+	{
+		NCCL_OFI_WARN("Recv comm does not support isend API function");
+		return -EINVAL;
+	}
+
+	int write(void* src, size_t size, void* src_mhandle,
+		  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req) override
+	{
+		NCCL_OFI_WARN("Recv comm does not support iwrite API function");
+		return -EINVAL;
+	}
+
+	int write_inline(void* src, size_t size,
+			 uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request) override
+	{
+		NCCL_OFI_WARN("Recv comm does not support iwrite_inline API function");
+		return -EINVAL;
 	}
 
 	/* CM receiver for connection establishment */
