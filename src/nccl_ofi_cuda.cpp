@@ -39,6 +39,7 @@
 
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute);
+DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
 
 int nccl_net_ofi_cuda_init(void)
 {
@@ -106,6 +107,56 @@ int nccl_net_ofi_cuda_get_active_device_idx(void)
 	return res == cudaSuccess ? index : -1;
 }
 
+int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
+{
+	cudaError_t ret = cudaMalloc(ptr, size);
+	return ret == cudaSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_mem_free(void **ptr)
+{
+	cudaError_t ret = cudaFree(*ptr);
+	return ret == cudaSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
+{
+	cudaError_t ret = cudaMemcpy(dst, src, size, cudaMemcpyHostToDevice);
+	return ret == cudaSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_get_dma_buf_fd(void *ptr, size_t size, int *fd, size_t *offset)
+{
+	CUdeviceptr dptr = (CUdeviceptr)ptr;
+	unsigned long long flags = 0;
+
+	cudaPointerAttributes attributes;
+	cudaError_t cuda_ret = cudaPointerGetAttributes(&attributes, ptr);
+	if (cuda_ret != cudaSuccess) {
+		NCCL_OFI_WARN("Invalid CUDA pointer: %s", cudaGetErrorString(cuda_ret));
+		return -EINVAL;
+	}
+
+	// Calculate offset from base address
+	*offset = (char*)ptr - (char*)attributes.devicePointer;
+
+	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
+
+# if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
+	flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+# endif
+
+	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, dptr, size,
+					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
+	if ((ret == CUDA_ERROR_INVALID_VALUE || ret == CUDA_ERROR_NOT_SUPPORTED) && flags != 0) {
+		NCCL_OFI_INFO(NCCL_NET,
+			"cuMemGetHandleForAddressRange failed with flags: %llu, retrying with no flags", flags);
+		ret = pfn_cuMemGetHandleForAddressRange(fd, dptr, size,
+					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+	}
+
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
 
 int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
 {
