@@ -84,6 +84,17 @@ public:
 		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
 	}
 
+	int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+
+	int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+
+	int send(void *data, size_t size, int tag,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	// Note: write and write_inline use default implementation (return -ENOTSUP)
+
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 

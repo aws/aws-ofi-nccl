@@ -782,34 +782,42 @@ public:
 
 	virtual ~nccl_net_ofi_send_comm_t() = default;
 
-	/*
+	/**
 	 * @brief	Register memory region on send communicator (both Host and CUDA)
 	 *
 	 * @return	Memory handle for data send operations
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
+	virtual int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) = 0;
 
-	/*
+	/**
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
 	 *
 	 * @return	Memory handle for data send operations
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	virtual int deregMr(nccl_net_ofi_mr_handle_t *mhandle) = 0;
 
-	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
-			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
+	virtual int send(void *data, size_t size, int tag,
+			 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) = 0;
 
-	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
+	virtual int close() = 0;
 
-	int (*write)(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* src_mhandle,
-		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req);
-	int (*write_inline)(nccl_net_ofi_send_comm_t *, void* src, size_t size,
-			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request);
+	virtual int write(void* src, size_t size, void* src_mhandle, uint64_t dest,
+			  uint64_t mr_key, nccl_net_ofi_req_t **req)
+	{
+		NCCL_OFI_WARN("Protocol does not support iwrite API function");
+		return -ENOTSUP;
+	}
+
+	virtual int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key,
+				 nccl_net_ofi_req_t **request)
+	{
+		NCCL_OFI_WARN("Protocol does not support iwriteInline API function");
+		return -ENOTSUP;
+	}
 };
 
 class nccl_net_ofi_recv_comm_t : public nccl_net_ofi_comm_t {
