@@ -651,7 +651,7 @@ ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
 		return check_return(ncclInternalError);
 	}
 
-	int ret = send_comm->send(send_comm, data, size, tag, handle, base_req);
+	int ret = send_comm->send(data, size, tag, handle, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -733,7 +733,7 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->recv(recv_comm, n, data, sizes, tags, handles, base_req);
+	int ret = recv_comm->recv(n, data, sizes, tags, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -824,7 +824,7 @@ ncclResult_t nccl_net_ofi_iflush_v5(void* rComm, int n, void** buffers, int* siz
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
+	int ret = recv_comm->flush(n, buffers, sizes, handles, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -850,7 +850,7 @@ ncclResult_t nccl_net_ofi_closeSend_v2(void *sComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = send_comm->close(send_comm);
+	int ret = send_comm->close();
 
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -877,7 +877,7 @@ ncclResult_t nccl_net_ofi_closeRecv_v2(void *rComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->close(recv_comm);
+	int ret = recv_comm->close();
 
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -948,17 +948,12 @@ ncclResult_t nccl_net_ofi_iwrite_v5(void* sComm, void* src, size_t size, void* m
 	}
 	assert(send_comm->type == NCCL_NET_OFI_SEND_COMM);
 
-	if (OFI_UNLIKELY(send_comm->write == NULL)) {
-		NCCL_OFI_WARN("Protocol does not support iwrite API function");
-		return check_return(ncclInternalError);
-	}
-
 	if (OFI_UNLIKELY(base_req == NULL)) {
 		NCCL_OFI_WARN("Invalid request provided");
 		return check_return(ncclInternalError);
 	}
 
-	int ret = send_comm->write(send_comm, src, size, mhandle, dest, mr_key, base_req);
+	int ret = send_comm->write(src, size, mhandle, dest, mr_key, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -977,17 +972,12 @@ ncclResult_t nccl_net_ofi_iwrite_inline_v5(void* sComm, void* src, size_t size,
 	}
 	assert(send_comm->type == NCCL_NET_OFI_SEND_COMM);
 
-	if (OFI_UNLIKELY(send_comm->write_inline == NULL)) {
-		NCCL_OFI_WARN("Protocol does not support iwriteInline API function");
-		return check_return(ncclInternalError);
-	}
-
 	if (OFI_UNLIKELY(base_req == NULL)) {
 		NCCL_OFI_WARN("Invalid request provided");
 		return check_return(ncclInternalError);
 	}
 
-	int ret = send_comm->write_inline(send_comm, src, size, dest, mr_key, base_req);
+	int ret = send_comm->write_inline(src, size, dest, mr_key, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 
@@ -1006,17 +996,12 @@ ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* m
 	}
 	assert(recv_comm->type == NCCL_NET_OFI_RECV_COMM);
 
-	if (OFI_UNLIKELY(recv_comm->read == NULL)) {
-		NCCL_OFI_WARN("Protocol does not support iread API function");
-		return check_return(ncclInternalError);
-	}
-
 	if (OFI_UNLIKELY(base_req == NULL)) {
 		NCCL_OFI_WARN("Invalid request provided");
 		return check_return(ncclInternalError);
 	}
 
-	int ret = recv_comm->read(recv_comm, dest, size, mhandle, src, mr_key, base_req);
+	int ret = recv_comm->read(dest, size, mhandle, src, mr_key, base_req);
 	return nccl_net_ofi_retval_translate(ret);
 }
 

@@ -807,26 +807,48 @@ public:
 	virtual ~nccl_net_ofi_xfer_comm_t() = default;
 
 	// TODO: Potentially store this here: int trafficClass;
+	virtual int close() = 0;
 
-	int (*send)(nccl_net_ofi_xfer_comm_t *send_comm, void *data, size_t size, int tag,
-			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
+	/**
+	 * Data transfer API functions need to be implemented by the derived recv
+	 * and send communicator classes. Calling send/write/write_inline from
+	 * the derived recv comm class or recv/flush/read from the derived send
+	 * comm class will fail as an unsupported operation
+	 */
+	virtual int send(void *data, size_t size, int tag_arg,
+			 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req)
+	{
+		return log_unsupported_operation("comm", "isend", -EINVAL);
+	}
 
-	int (*close)(nccl_net_ofi_xfer_comm_t *send_comm);
+	virtual int write(void *src, size_t size, void *src_mhandle,
+			  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req)
+	{
+		return log_unsupported_operation("comm", "iwrite", -EINVAL);
+	}
 
-	int (*write)(nccl_net_ofi_xfer_comm_t *send_comm, void* src, size_t size, void* src_mhandle,
-		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req);
+	virtual int write_inline(void *src, size_t size,
+				 uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request)
+	{
+		return log_unsupported_operation("comm", "iwrite_inline", -EINVAL);
+	}
 
-	int (*write_inline)(nccl_net_ofi_xfer_comm_t *send_comm, void* src, size_t size,
-			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request);
+	virtual int recv(int n, void **data, size_t *sizes, int *tags,
+			 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req)
+	{
+		return log_unsupported_operation("comm", "irecv", -EINVAL);
+	}
 
-	int (*recv)(nccl_net_ofi_xfer_comm_t *recv_comm, int n, void **data, size_t *sizes,
-		    int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
-
-	int (*flush)(nccl_net_ofi_xfer_comm_t *recv_comm, int n, void **data, int *sizes,
-		     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
-
-	int (*read)(nccl_net_ofi_xfer_comm_t *recv_comm, void* dest, size_t size,
-		    void *dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req);
+	virtual int flush(int n, void **data, int *sizes,
+			  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req)
+	{
+		return log_unsupported_operation("comm", "iflush", -EINVAL);
+	}
+	virtual int read(void *dest, size_t size, void *dest_mhandle,
+			 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req)
+	{
+		return log_unsupported_operation("comm", "iread", -EINVAL);
+	}
 
 	/**
 	 * @brief	Get base domain from endpoint
@@ -840,6 +862,13 @@ public:
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
 	int dev_id;
+
+protected:
+	inline int log_unsupported_operation(const char *source, const char *api_name, int err_code)
+	{
+		NCCL_OFI_WARN("%s does not support %s API function, RC: %d", source, api_name, err_code);
+		return err_code;
+	}
 };
 
 /**
