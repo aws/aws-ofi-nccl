@@ -536,7 +536,22 @@ public:
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
-	
+
+	int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+
+	int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+
+	int send(void *data, size_t size, int tag,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int write(void* src, size_t size, void* src_mhandle,
+		  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
+
+	int write_inline(void* src, size_t size,
+			 uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request) override;
+
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 

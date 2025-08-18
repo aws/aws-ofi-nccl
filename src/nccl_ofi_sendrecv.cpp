@@ -843,9 +843,9 @@ unlock:
 	return ret;
 }
 
-static int sendrecv_send_comm_reg_mr(nccl_net_ofi_send_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
+int nccl_net_ofi_sendrecv_send_comm_t::regMr(nccl_ofi_mr_ckey_ref ckey, int type_arg, void **mhandle)
 {
-	return sendrecv_comm_mr_base_reg(comm, ckey, type, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
+	return sendrecv_comm_mr_base_reg(this, ckey, type_arg, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
 }
 
 static int sendrecv_recv_comm_reg_mr(nccl_net_ofi_recv_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
@@ -1683,60 +1683,55 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	return 0;
 }
 
-static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
-				       nccl_net_ofi_mr_handle_t *mhandle)
+int nccl_net_ofi_sendrecv_send_comm_t::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)send_comm->ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
+	auto *ep_ptr = this->sendrecv_send_comm_get_ep();
+	if (OFI_UNLIKELY(ep_ptr == nullptr)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
 	}
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-	ep->sendrecv_endpoint_get_device();
-	if (OFI_UNLIKELY(device == NULL)) {
+	auto *device =
+	ep_ptr->sendrecv_endpoint_get_device();
+	if (OFI_UNLIKELY(device == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	assert(domain != NULL);
+	auto *domain = ep_ptr->sendrecv_endpoint_get_domain();
+	assert(domain != nullptr);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
 	return sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool,
-				  domain->mr_cache);
+					   domain->mr_cache);
 }
 
-static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
-				   nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
+int nccl_net_ofi_sendrecv_send_comm_t::send(void *data, size_t size, int tag_arg,
+					    nccl_net_ofi_mr_handle_t *mhandle,
+					    nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
-	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		(nccl_net_ofi_sendrecv_send_comm_t *)send_comm;
-	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
+	auto *mr_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
 	ssize_t rc = 0;
-	nccl_net_ofi_sendrecv_req_t *req = NULL;
-	void *desc = NULL;
-	int dev_id = s_comm->dev_id;
+	nccl_net_ofi_sendrecv_req_t *req = nullptr;
+	void *desc = nullptr;
 
 	/* Validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)s_comm->ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
+	auto *ep_ptr = this->sendrecv_send_comm_get_ep();
+	if (OFI_UNLIKELY(ep_ptr == nullptr)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
+	auto *domain = ep_ptr->sendrecv_endpoint_get_domain();
 	pthread_wrapper domain_lock(&domain->domain_lock);
 	CHECK_DOMAIN_ACTIVE(domain, "send");
 
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
-	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
+	if (OFI_UNLIKELY(this->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_SEND_REQUESTS);
@@ -1749,44 +1744,44 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 	 */
 
 	/* Allocate NCCL OFI request */
-	req = sendrecv_allocate_req(s_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(req == NULL)) {
+	req = sendrecv_allocate_req(this->nccl_ofi_reqs_fl);
+	if (OFI_UNLIKELY(req == nullptr)) {
 		ret = -ENOMEM;
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
-			      dev_id);
+			      this->dev_id);
 		goto error;
 	}
 
-	req->comm = s_comm;
-	req->dev_id = dev_id;
+	req->comm = this;
+	req->dev_id = this->dev_id;
 	req->direction = NCCL_OFI_SENDRECV_SEND;
 
 	if (mr_handle->mr != nullptr)
 		desc = fi_mr_desc(mr_handle->mr);
 
-	NCCL_OFI_TRACE_SEND_SENDRECV(req->dev_id, size, s_comm, 0, req, base_req);
+	NCCL_OFI_TRACE_SEND_SENDRECV(req->dev_id, size, this, 0, req, base_req);
 
 	/*
-	 * Try sending data to remote EP; Return NULL request
+	 * Try sending data to remote EP; Return nullptr request
 	 * if not able to send.
 	 */
-	rc = fi_tsend(s_comm->local_ep, data, size, desc,
-		      s_comm->remote_ep, s_comm->tag, sendrecv_req_get_ofi_context(req));
+	rc = fi_tsend(this->local_ep, data, size, desc,
+		      this->remote_ep, this->tag, sendrecv_req_get_ofi_context(req));
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
 		ret = sendrecv_cq_process(domain->cq);
-		/* Return NULL request */
-		*base_req = NULL;
+		/* Return nullptr request */
+		*base_req = nullptr;
 		goto error;
 	}
 	else if (OFI_UNLIKELY(rc != 0)) {
 		NCCL_OFI_WARN("Could not send request for device %d. RC: %zd",
-			      dev_id, rc);
+			      this->dev_id, rc);
 		ret = rc;
 		goto error;
 	}
 
-	(s_comm->num_inflight_reqs)++;
+	(this->num_inflight_reqs)++;
 
 	/* Set request size */
 	req->size = size;
@@ -1798,20 +1793,18 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 
  error:
 	if (req)
-		sendrecv_send_comm_free_req(s_comm, dev_id, req, false);
+		sendrecv_send_comm_free_req(this, this->dev_id, req, false);
  exit:
 	return ret;
 }
 
-static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
+int nccl_net_ofi_sendrecv_send_comm_t::close()
 {
-	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		(nccl_net_ofi_sendrecv_send_comm_t *)send_comm;
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(s_comm->ep);
-	if (OFI_UNLIKELY(ep == NULL)) {
+	auto *ep_ptr = this->sendrecv_send_comm_get_ep();
+	if (OFI_UNLIKELY(ep_ptr == nullptr)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return ret;
@@ -1819,26 +1812,45 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
-	if (s_comm->num_inflight_reqs > 0) {
+	if (this->num_inflight_reqs > 0) {
 		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating domain",
-			      s_comm);
+			      this);
 
-		ep->sendrecv_endpoint_abort();
+		ep_ptr->sendrecv_endpoint_abort();
 	}
 
-	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
+	nccl_ofi_freelist_fini(this->nccl_ofi_reqs_fl);
 
-	if (s_comm->connector) {
-		delete s_comm->connector;
-		s_comm->connector = nullptr;
+	if (this->connector) {
+		delete this->connector;
+		this->connector = nullptr;
 	}
 
-	free(send_comm);
+	free(this);
 
-	ret = ep->release_ep(false, false);
+	ret = ep_ptr->release_ep(false, false);
 
 	return ret;
 }
+
+
+int nccl_net_ofi_sendrecv_send_comm_t::write(void *src, size_t size, void *src_mhandle, 
+					     uint64_t dest, uint64_t mr_key, 
+					     nccl_net_ofi_req_t **req)
+{
+	NCCL_OFI_WARN("Protocol does not support iwrite API function");
+	return -ENOTSUP;
+}
+
+
+int nccl_net_ofi_sendrecv_send_comm_t::write_inline(void* src, size_t size, uint64_t dest,
+						    uint64_t mr_key,
+						    nccl_net_ofi_req_t **request)
+{
+	NCCL_OFI_WARN("Protocol does not support iwriteInline API function");
+	return -ENOTSUP;
+}
+
 
 /*
  * @brief	Creates send communication for a peer
@@ -1876,12 +1888,6 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->num_inflight_reqs = 0;
 	ret_s_comm->ep = ep;
 	ret_s_comm->dev_id = device->dev_id;
-	ret_s_comm->regMr = sendrecv_send_comm_reg_mr;
-	ret_s_comm->deregMr = sendrecv_send_comm_dereg_mr;
-	ret_s_comm->send = sendrecv_send_comm_send;
-	ret_s_comm->close = sendrecv_send_comm_close;
-	ret_s_comm->write = NULL;
-	ret_s_comm->write_inline = NULL;
 	ret_s_comm->tag = 0; /* Populate later from connect response */
 	ret_s_comm->local_ep = ep->ofi_ep;
 
