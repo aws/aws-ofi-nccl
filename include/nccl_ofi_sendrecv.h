@@ -86,6 +86,24 @@ public:
 		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
 	}
 
+	int send(void *data, size_t size, int tag,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	/* write and write_inline operation not support for SENDRECV protocol */
+	int write(void *src, size_t size, void *src_mhandle, uint64_t dest,
+		  uint64_t mr_key, nccl_net_ofi_req_t **req) override
+	{
+		return log_unsupported_operation("protocol", "iwrite", -ENOTSUP);
+	}
+
+	int write_inline(void *src, size_t size, uint64_t dest, uint64_t mr_key,
+			 nccl_net_ofi_req_t **request) override
+	{
+		return log_unsupported_operation("protocol", "iwrite_inline", -ENOTSUP);
+	}
+
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 
@@ -113,6 +131,21 @@ public:
 	inline nccl_net_ofi_sendrecv_ep_t *sendrecv_recv_comm_get_ep()
 	{
 		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
+	}
+
+	int recv(int n, void **data, size_t *sizes, int *tags,
+		 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int flush(int n, void **data, int *sizes,
+		  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	/* read operation not support for SENDRECV protocol */
+	int read(void *dest, size_t size, void *dest_mhandle,
+		 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req) override
+	{
+		return log_unsupported_operation("protocol", "iread", -ENOTSUP);
 	}
 
 	uint64_t num_inflight_reqs;

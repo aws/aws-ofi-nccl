@@ -562,7 +562,18 @@ public:
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
-	
+
+	int send(void *data, size_t size, int tag,
+		 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int write(void* src, size_t size, void* src_mhandle,
+		  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
+
+	int write_inline(void* src, size_t size,
+			 uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request) override;
+
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 
@@ -671,6 +682,17 @@ public:
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
+
+	int recv(int n, void **data, size_t *sizes, int *tags,
+		 nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int flush(int n, void **data, int *sizes,
+		  nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req) override;
+
+	int close() override;
+
+	int read(void* dest, size_t size, void* dest_mhandle,
+		 uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req) override;
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver = nullptr;
