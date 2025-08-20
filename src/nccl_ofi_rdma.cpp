@@ -763,6 +763,10 @@ static inline int free_eager_copy_req(nccl_net_ofi_rdma_req_t *req, bool dec_inf
 
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_eager_copy_req");
+		return -EINVAL;
+	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
 			     req, dec_inflight_reqs);
@@ -1428,8 +1432,16 @@ static int post_rma_read(nccl_net_ofi_rdma_req_t *req)
 {
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in post_rma_read");
+		return -EINVAL;
+	}
 	uint16_t rail_id = 0;
 	auto *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
+	if (comm_rail == nullptr) {
+		NCCL_OFI_WARN("Failed to get recv comm rail in post_rma_read");
+		return -EINVAL;
+	}
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -1489,8 +1501,16 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 	}
 	if (rc == -FI_EAGAIN && add_to_pending) {
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+		if (r_comm == nullptr) {
+			NCCL_OFI_WARN("Recv comm is null in receive_progress");
+			return -EINVAL;
+		}
 		/* Extract ep */
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+		if (ep == nullptr) {
+			NCCL_OFI_WARN("Recv comm ep is null in receive_progress");
+			return -EINVAL;
+		}
 		/* Place in pending requests queue for next try */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
 		ep->pending_reqs_queue.push_back(req);
@@ -1738,6 +1758,10 @@ static inline int free_write_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_WRITE);
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
+	if (s_comm == nullptr) {
+		NCCL_OFI_WARN("Send comm is null in free_write_req");
+		return -EINVAL;
+	}
 	return free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
 			req, dec_inflight_reqs);
 }
@@ -1751,7 +1775,10 @@ static inline int free_read_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_read_req");
+		return -EINVAL;
+	}
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
 			req, dec_inflight_reqs);
 }
@@ -1765,6 +1792,10 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_SEND);
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		(nccl_net_ofi_rdma_send_comm_t *)req->comm;
+	if (s_comm == nullptr) {
+		NCCL_OFI_WARN("Send comm is null in free_send_req");
+		return -EINVAL;
+	}
 	rdma_req_send_data_t *send_data;
 
 	send_data = get_send_data(req);
@@ -1804,6 +1835,10 @@ static inline int free_recv_req(nccl_net_ofi_rdma_req_t *req,
 	int ret = 0;
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_recv_req");
+		return -EINVAL;
+	}
 	rdma_req_recv_data_t *recv_data = get_recv_data(req);
 	nccl_net_ofi_rdma_req_t *recv_segms_req = recv_data->recv_segms_req;
 	nccl_net_ofi_rdma_req_t *eager_copy_req = recv_data->eager_copy_req;
@@ -1837,6 +1872,10 @@ static inline int free_recv_segms_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_recv_segms_req");
+		return -EINVAL;
+	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
 			     req, dec_inflight_reqs);
@@ -1851,6 +1890,10 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_send_close_req");
+		return -EINVAL;
+	}
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	if (send_close_data->ctrl_schedule) {
@@ -1881,6 +1924,10 @@ static inline int free_flush_req(nccl_net_ofi_rdma_req_t *req,
 	assert(req->type == NCCL_OFI_RDMA_FLUSH);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in free_flush_req");
+		return -EINVAL;
+	}
 
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 
@@ -4332,6 +4379,10 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	/* Initialize local and remote endpoint resources for each control rail */
 	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
 		auto *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
+		if (comm_rail == nullptr) {
+			NCCL_OFI_WARN("Failed to get recv comm control rail in prepare_recv_comm");
+			goto error;
+		}
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_control_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->control_ep_names[rail_id];
 
@@ -4363,6 +4414,10 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 	/* Initialize local and remote endpoint resources for each rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		auto *comm_rail = r_comm->rdma_recv_comm_get_rail(rail_id);
+		if (comm_rail == nullptr) {
+			NCCL_OFI_WARN("Failed to get recv comm rail in prepare_recv_comm");
+			goto error;
+		}
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
@@ -4909,8 +4964,16 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 static int post_rma_write(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
+	if (s_comm == nullptr) {
+		NCCL_OFI_WARN("Send comm is null in post_rma_write");
+		return -EINVAL;
+	}
 	uint16_t rail_id = 0;
 	auto *comm_rail = s_comm->rdma_send_comm_get_rail(rail_id);
+	if (comm_rail == nullptr) {
+		NCCL_OFI_WARN("Failed to get send comm rail in post_rma_write");
+		return -EINVAL;
+	}
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -5068,11 +5131,16 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 static int send_progress(nccl_net_ofi_rdma_req_t *req)
 {
 	ssize_t ret = 0;;
-	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
 
 	assert(req != NULL);
 
 	if (req->type == NCCL_OFI_RDMA_SEND) { // Post RDMA write
+		nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)req->comm;
+		if (s_comm == nullptr) {
+			NCCL_OFI_WARN("Send comm is null in send_progress");
+			return -EINVAL;
+		}
+
 		rdma_req_send_data_t *send_data = get_send_data(req);
 
 		// Get Schedule
@@ -5093,6 +5161,10 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 			/* Get communicator rail information to xfer the req */
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
 				s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
+			if (comm_rail == nullptr) {
+				NCCL_OFI_WARN("Failed to get send comm rail in send_progress eager");
+				return -EINVAL;
+			}
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
@@ -5102,6 +5174,10 @@ static int send_progress(nccl_net_ofi_rdma_req_t *req)
 				/* Get communicator rail information to xfer the req */
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
 					s_comm->rdma_send_comm_get_rail(xfer_info->rail_id);
+				if (comm_rail == nullptr) {
+					NCCL_OFI_WARN("Failed to get send comm rail in send_progress non-eager");
+					return -EINVAL;
+				}
 
 				ret = post_rdma_write(req, comm_rail, xfer_info, send_data->no_target_completion);
 
@@ -5144,6 +5220,10 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
 	auto *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
+	if (comm_rail == nullptr) {
+		NCCL_OFI_WARN("Failed to get recv comm control rail in send_ctrl_post");
+		return -EINVAL;
+	}
 
 	assert(rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[rail_id]);
@@ -5163,8 +5243,15 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_RECV);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in post_rdma_ctrl");
+		return -EINVAL;
+	}
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	if (ep == nullptr) {
+		NCCL_OFI_WARN("Recv comm ep is null in post_rdma_ctrl");
+		return -EINVAL;
+	}
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
@@ -5193,7 +5280,10 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr[rail_id]);
 	auto *comm_rail = r_comm->rdma_recv_comm_get_control_rail(rail_id);
-
+	if (comm_rail == nullptr) {
+		NCCL_OFI_WARN("Recv comm rail for rail_id %d is null in post_rdma_ctrl", rail_id);
+		return -EINVAL;
+	}
 	ssize_t rc = fi_write(comm_rail->local_ep, &r_comm->ctrl_mailbox[slot],
 			ctrl_msg_len, desc,
 			comm_rail->remote_addr,
@@ -5213,6 +5303,10 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in post_close_msg");
+		return -EINVAL;
+	}
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	uint16_t rail_id;
@@ -5234,6 +5328,10 @@ static int post_close_msg(nccl_net_ofi_rdma_req_t *req)
 static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (r_comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in post_eager_copy");
+		return -EINVAL;
+	}
 	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(req);
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
 	rdma_req_recv_data_t *recv_data = get_recv_data(eager_copy_data->recv_req);
@@ -5282,7 +5380,15 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
+	if (req->comm == nullptr) {
+		NCCL_OFI_WARN("Recv comm is null in post_flush_req");
+		return -EINVAL;
+	}
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	if (ep == nullptr) {
+		NCCL_OFI_WARN("Recv comm ep is null in post_flush_req");
+		return -EINVAL;
+	}
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
