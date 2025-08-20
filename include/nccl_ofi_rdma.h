@@ -516,7 +516,10 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(uint16_t rail_id)
 	{
-		assert(rails);
+		if (rails == nullptr) {
+			NCCL_OFI_WARN("Send comm rails is null");
+			return nullptr;
+		}
 		assert(rail_id < num_rails);
 		return &rails[rail_id];
 	}
@@ -526,7 +529,10 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(uint16_t rail_id)
 	{
-		assert(control_rails);
+		if (control_rails == nullptr) {
+			NCCL_OFI_WARN("Send comm control rails is null");
+			return nullptr;
+		}
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
@@ -620,7 +626,10 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(uint16_t rail_id)
 	{
-		assert(rails);
+		if (rails == nullptr) {
+			NCCL_OFI_WARN("Recv comm rails is null");
+			return nullptr;
+		}
 		assert(rail_id < num_rails);
 		return &rails[rail_id];
 	}
@@ -630,7 +639,10 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(uint16_t rail_id)
 	{
-		assert(control_rails);
+		if (control_rails == nullptr) {
+			NCCL_OFI_WARN("Recv comm control rails is null");
+			return nullptr;
+		}
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
