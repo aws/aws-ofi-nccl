@@ -15,6 +15,7 @@
 #include "cm/nccl_ofi_cm_reqs.h"
 
 #include "nccl_ofi_freelist.h"
+#include "ofi/nccl_ofi_ofiwrapper.h"
 
 namespace nccl_ofi_cm {
 
@@ -29,7 +30,18 @@ class endpoint
 public:
 	/* Memory registration handle */
 	struct mr_handle_t {
-		fid_mr *mr;
+		/* Default constructor */
+		mr_handle_t() = default;
+
+		/* Move constructor and assignment */
+		mr_handle_t(mr_handle_t&&) = default;
+		mr_handle_t& operator=(mr_handle_t&&) = default;
+
+		/* Delete copy operations since smart pointers are non-copyable */
+		mr_handle_t(const mr_handle_t&) = delete;
+		mr_handle_t& operator=(const mr_handle_t&) = delete;
+
+		fid_mr_ptr mr;
 		uint64_t mr_key;
 		endpoint &ep;
 	};
@@ -41,6 +53,14 @@ public:
 	 *      OFI domain against which to construct this ep
 	 */
 	endpoint(nccl_net_ofi_domain_t &domain);
+	
+	/* Move constructor and assignment */
+	endpoint(endpoint&&) = default;
+	endpoint& operator=(endpoint&&) = default;
+
+	/* Delete copy operations since smart pointers are non-copyable */
+	endpoint(const endpoint&) = delete;
+	endpoint& operator=(const endpoint&) = delete;
 
 	/**
 	 * Destructor. Closes OFI endpoint if not already closed, as well as
@@ -64,7 +84,7 @@ public:
 	 *
 	 * @param req: used for the context of the operation
 	 */
-	int send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+	int send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t &mr_handle,
 		 fi_addr_t dest_addr, nccl_ofi_cm_req &req);
 
 	/**
@@ -72,13 +92,13 @@ public:
 	 *
 	 * @param req: used for the context of the operation
 	 */
-	int recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+	int recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t &mr_handle,
 		 nccl_ofi_cm_req &req);
 
 	/**
 	 * Close associated ofi_ep, while leaving other resources open
 	 */
-	int close_ofi_ep();
+	void close_ofi_ep();
 
 	/* Menory registration/deregistration. Note: these functions are static
 	   to be usable with the freelist interface */
@@ -91,8 +111,8 @@ private:
 	nccl_ofi_idpool_t &mr_key_pool;
 
 	/* Created by CM */
-	fid_ep *ofi_ep;
-	fid_av *av;
+	fid_ep_ptr ofi_ep;
+	fid_av_ptr av;
 };
 
 /**

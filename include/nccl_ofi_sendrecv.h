@@ -11,6 +11,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
+#include "ofi/nccl_ofi_ofiwrapper.h"
 
 /* This is the initial value of mr_key. At key deregisteration time,
  * it is used to validate if a key was generated and needed to be freed or not.
@@ -45,7 +46,7 @@ struct nccl_net_ofi_sendrecv_mr_handle_t : nccl_net_ofi_mr_handle_t {
 	 */
 	int get_mr_key(uint64_t *mr_key_ptr) override;
 	
-	struct fid_mr *mr = nullptr;
+	fid_mr_ptr mr;
 };
 
 typedef struct nccl_net_ofi_sendrecv_listen_comm {
@@ -121,12 +122,12 @@ public:
 	
 	inline struct fid_domain *get_ofi_domain_for_cm() override
 	{
-		return domain;
+		return domain.get();
 	}
 	
 	inline struct fid_cq *get_ofi_cq_for_cm() override
 	{
-		return cq;
+		return cq.get();
 	}
 	
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
@@ -138,10 +139,10 @@ public:
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
 	/* Access Domain handle */
-	struct fid_domain *domain = nullptr;
+	fid_domain_ptr domain;
 
 	/* Completion Queue handle */
-	struct fid_cq *cq = nullptr;
+	fid_cq_ptr cq;
 
 	/** 
 	 * Connection manager for this domain
@@ -210,7 +211,7 @@ public:
 	 */
 	inline struct fid_domain* sendrecv_endpoint_get_ofi_domain()
 	{
-		return sendrecv_endpoint_get_domain()->domain;
+		return sendrecv_endpoint_get_domain()->domain.get();
 	}
 
 	/**
@@ -234,10 +235,10 @@ public:
 	uint64_t max_tag;
 
 	/* Endpoint handle to communicate to */
-	struct fid_ep *ofi_ep = nullptr;
+	fid_ep_ptr ofi_ep;
 
 	/* Address vector handle */
-	struct fid_av *av = nullptr;
+	fid_av_ptr av;
 
 protected:
 	/**
@@ -328,7 +329,7 @@ public:
 	// fabirc, domain, and cq as well as freeing prov_name.
 
 	/* Fabric handle */
-	struct fid_fabric *fabric = nullptr;
+	fid_fabric_ptr fabric;
 
 protected:
 	/**
