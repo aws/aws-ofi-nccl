@@ -168,6 +168,26 @@ exit:
 	return ret;
 }
 
+
+static ncclResult_t nccl_ofi_tuner_init_v2(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
+{
+	/*
+	 * NCCL parses these variables and applies user filters inside its
+	 * current tuner logic. The tuner_v2 does not support setting these
+	 * variables and so the internal tuner will be used instead.
+	 */
+	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "The tuner plugin can not be loaded when "
+				"explicitly choosing an algorithm or protocol "
+				"with NCCL_ALGO/NCCL_PROTO. "
+				"Defaulting to internal tuner.");
+		*context = nullptr;
+		return ncclSuccess;
+	}
+	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, context);
+}
+
+
 static ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 						 ncclFunc_t collType,
 						 size_t nBytes,
@@ -221,7 +241,7 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 }
 
 extern "C" const ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
-					   .init = nccl_ofi_tuner_init,
+					   .init = nccl_ofi_tuner_init_v2,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v2,
 					   .destroy = nccl_ofi_tuner_destroy};
 
@@ -261,19 +281,16 @@ static ncclResult_t nccl_ofi_tuner_init_v1(size_t nRanks, size_t nNodes, ncclDeb
 
 	/*
 	 * NCCL parses these variables and applies user filters inside its
-	 * current tuner logic. Ideally, this should be done regardless of the
-	 * use of NCCL's internal tuner or an external tuner plugin. For the
-	 * time being, given the external tuner is an opt-in, detect if a user
-	 * has set one of them and bail when an external tuner is loaded.
+	 * current tuner logic. The tuner_v1 does not support setting these
+	 * variables and so the internal tuner will be used instead.
 	 */
 	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
-		NCCL_OFI_WARN("The tuner plugin can not be loaded when explicitly choosing an algorithm or protocol with NCCL_ALGO/NCCL_PROTO");
-		// FIXME: "ncclInvalidUsage should be returned when the error is
-		// most likely a user error" per nccl docs, which arguably makes
-		// it a better return code here than ncclInvalidArgument, but
-		// the former is currently not vended in ext-net headers, so
-		// we're returning ncclInvalidArgument instead.
-		return ncclInvalidArgument;
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "The tuner plugin can not be loaded when "
+				"explicitly choosing an algorithm or protocol "
+				"with NCCL_ALGO/NCCL_PROTO. "
+				"Defaulting to internal tuner.");
+		nccl_ofi_tuner_destroy_v1();
+		return ncclSuccess;
 	}
 	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, (void **)&nccl_ofi_tuner_ctx_internal);
 }
