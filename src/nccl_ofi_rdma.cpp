@@ -111,8 +111,9 @@ static int num_open_comms = 0;
 static size_t max_write_inline_size = 0;
 static bool is_max_write_inline_size_initialized = false;
 
-/* CPU cache line size */
-static ssize_t cpu_cache_line_size;
+/* Pointer to flush sentinel */
+static uint64_t* flush_sentinel;
+static ssize_t flush_sentinel_size;
 
 static bool early_completion = false;
 
@@ -1257,10 +1258,36 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
  */
 static inline int handle_flush_comp(nccl_net_ofi_rdma_req_t *req)
 {
-	int ret;
+	int ret = 0;
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 
+#if HAVE_NEURON
 	ret = inc_req_completion(req, 0, flush_data->total_num_compls);
+#endif
+
+#if HAVE_CUDA
+
+	int num_completions = ++(req->ncompls);
+	/* Check if the number of completions is equal to total completions
+	 * and if the req has not errored.
+	 */
+	if (num_completions == flush_data->total_num_compls &&
+		OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
+
+		/* If the state is already marked complete then
+		 * free the request, else test() has not yet been called
+		 * on the request, so only update request state
+		*/
+		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->type, req, req);
+
+		if (req->state == NCCL_OFI_RDMA_REQ_COMPLETED) {
+			assert(req->free);
+			req->free(req, true);
+		} else {
+			req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+		}
+	}
+#endif
 
 	return ret;
 }
@@ -2102,6 +2129,13 @@ static inline int free_flush_req(nccl_net_ofi_rdma_req_t *req,
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 
+	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+
+	// Free flush buffer
+	if (flush_data->flush_fl_elem) {
+		nccl_ofi_freelist_entry_free(r_comm->flush_buff_fl, flush_data->flush_fl_elem);
+		flush_data->flush_fl_elem = NULL;
+	}
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
 			req, dec_inflight_reqs);
 }
@@ -2455,6 +2489,29 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	return ret;
 }
 
+static inline uint64_t* get_flush_buffer_for_rail(void *ptr, uint16_t rail_id){
+	nccl_net_ofi_flush_data *fl_data = (nccl_net_ofi_flush_data *)ptr;
+	return &(fl_data[rail_id].flag);
+}
+
+static inline bool has_flush_completed(nccl_net_ofi_rdma_req_t *req)
+{
+	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+	nccl_net_ofi_comm_t *base_comm = req->comm;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
+
+	/* Check if the flush bufffer is populated across ep rails */
+	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
+		uint64_t *flush_ptr = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
+		/* We check for only the first 8B since that should ensure the read is done */
+		if (READ_ONCE(*flush_ptr) != flush_sentinel[0]) {
+			return false;
+		}
+	}
+
+	return true;
+}
+
 #define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
 
 static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
@@ -2481,10 +2538,32 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 	CHECK_DOMAIN_ACTIVE(domain, "test");
 
-	/* Process more completions unless the current request is
-	 * completed */
+	/* If the current request is not complete and not errored out,
+	* check if it is a flush(only if cuda) and the corresponding read is complete
+	* If not, process more completions since they could result in the
+	* request getting completed.
+	*/
 	if (req->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
+#if HAVE_CUDA
+		if (req->type == NCCL_OFI_RDMA_FLUSH) {
+			/*
+			* Check if the flush is complete and mark it as complete
+			* if the host buffers have been populated with the sentinel value
+			* The request will be freed once all completions are processed.
+			*/
+			if (has_flush_completed(req))
+			{
+				req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+				size_t req_size = req->size;
+
+				if (size)
+					*size = req_size;
+				*done = 1;
+				goto exit;
+			}
+		}
+#endif
 		ret = ep->ofi_process_cq();
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
@@ -2751,6 +2830,18 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size);
 	return this->reg_mr(&ckey, type, mhandle);
 }
+
+#if HAVE_DECL_FI_MR_DMABUF
+int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
+						int fd, uint64_t offset, size_t size, int type,
+						nccl_net_ofi_rdma_mr_handle_t **mhandle)
+{
+	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
+	return this->reg_mr(&ckey, type, mhandle);
+}
+#endif
 
 static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
 			    nccl_ofi_mr_ckey_ref ckey,
@@ -3255,7 +3346,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	 */
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
-			buffers[i] = domain->flush_buff.host_buffer;
+			buffers[i] = domain->flush_buff.buffer;
 			mr_handles[i] = domain->flush_buff.mr_handle;
 		}
 	}
@@ -3342,7 +3433,6 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	return ret;
 }
 
-
 int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 {
 	int ret = 0;
@@ -3355,14 +3445,22 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 		goto exit;
 	}
 
-	if (this->flush_buff.host_buffer != MAP_FAILED) {
-		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.host_buffer,
-						     system_page_size);
+	/*
+	 * Clean up the flush buffer only if it was mapped correctly
+	 */
+	if (this->flush_buff.buffer != MAP_FAILED) {
+#if HAVE_CUDA
+		ret = nccl_net_ofi_cuda_mem_free(this->flush_buff.buffer);
+#endif
+#if HAVE_NEURON
+		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
+						system_page_size);
+#endif
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", ret);
 			goto exit;
 		}
-		this->flush_buff.host_buffer = MAP_FAILED;
+		this->flush_buff.buffer = MAP_FAILED;
 	}
 
  exit:
@@ -3370,12 +3468,10 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 }
 
 /*
- * @brief	Allocated and registers buffer to flush RDMA operations. On
- * 		Success, receive communicator holds reference to flush buffer
+ * @brief	Allocated and registers GPU buffer to flush RDMA operations. On
+ * 		Success, receive domain holds reference to flush buffer
  * 		and associated memory handle.
  *
- * @param	r_comm
- *		Receive communicator
  * @param	dev_id
  *		Device ID
  *
@@ -3388,34 +3484,95 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	int rc;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
 
+#if HAVE_NEURON
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
 	this->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 	assert(NCCL_OFI_FLUSH_SIZE <= system_page_size);
-	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(this->flush_buff.host_buffer));
+	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(this->flush_buff.buffer));
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
 	}
 
 	/* make sure flush destination address does not overflow beyond host buffer */
-	assert(((cpu_cache_line_size * this->num_rails) + this->flush_buff.size) <= system_page_size);
+	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + this->flush_buff.size) <= system_page_size);
 
-	/* Register flush dummy buffer for provider access */
-	ret = this->reg_internal_mr(this->flush_buff.host_buffer, system_page_size,
-			      NCCL_PTR_HOST, &mr_handle);
+	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size,
+				NCCL_PTR_HOST, &mr_handle);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
+                             dev_id);
+		rc = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
+						system_page_size);
+		if (rc != 0) {
+			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+		}
+		this->flush_buff.buffer = MAP_FAILED;
+	}
+#endif
+
+#if HAVE_CUDA
+	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
+
+	this->flush_buff.size = system_page_size;
+	ret = nccl_net_ofi_cuda_mem_alloc(&(this->flush_buff.buffer), system_page_size);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
+		return ret;
+	}
+
+	/* Copy flush sentinel value into gpu buffer */
+	ret =  nccl_net_ofi_cuda_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
+							NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
+		return ret;
+	}
+
+#if HAVE_DECL_FI_MR_DMABUF
+	/*
+        * If dma buf is viable and supported then register flush dummy buffer
+        * using dma buf for provider access
+        */
+	nccl_net_ofi_rdma_device_t *dev = this->rdma_domain_get_device();
+	struct fi_info *nic_prov = dev->get_ofi_info_for_cm();
+
+	if (nccl_ofi_dmabuf_viable_and_supported(nic_prov)) {
+		size_t offset = 0;
+		int fd;
+
+		ret = nccl_net_ofi_cuda_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
+			return ret;
+		}
+
+		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %d", fd, offset);
+
+		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
+						NCCL_PTR_CUDA, &mr_handle);
+		close(fd);
+	} else {
+		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
+	}
+
+#else
+	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
+#endif
+
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);
-		rc = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.host_buffer,
-						    system_page_size);
+
+		rc = nccl_net_ofi_cuda_mem_free(&this->flush_buff.buffer);
 		if (rc != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
 				      rc);
 		}
-		this->flush_buff.host_buffer = MAP_FAILED;
+		this->flush_buff.buffer = MAP_FAILED;
 	}
-
+#endif
 	this->flush_buff.mr_handle = mr_handle;
 
 	return ret;
@@ -3463,6 +3620,12 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	}
 
 	ret = nccl_ofi_freelist_fini(r_comm->ctrl_buff_fl);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
+		return ret;
+	}
+
+	ret = nccl_ofi_freelist_fini(r_comm->flush_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to nccl_ofi_freelist_fini failed: %d", ret);
 		return ret;
@@ -3951,6 +4114,18 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	flush_data = get_flush_data(req);
 	flush_data->data = buff;
 	flush_data->mr_handle = buff_mr_handle;
+	flush_data->flush_fl_elem = nccl_ofi_freelist_entry_alloc(r_comm->flush_buff_fl);
+	if (OFI_UNLIKELY(flush_data->flush_fl_elem == NULL)) {
+		NCCL_OFI_WARN("Unable to get allocate flush buffer for device %d", dev_id);
+		return -ENOMEM;
+	}
+
+	/* Zero out the flush buffer contents*/
+	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
+		uint64_t *val = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
+		WRITE_ONCE(*val, 0);
+	}
+
 	flush_data->total_num_compls = ep->num_rails;
 
 	*ret_req = req;
@@ -4500,6 +4675,17 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 					&r_comm->ctrl_buff_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Call to freelist_init_mr failed: %d", ret);
+		return NULL;
+	}
+
+	/* Allocate flush buffer freelist */
+	ret = nccl_ofi_freelist_init_mr(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * MAX_NUM_RAILS,
+					8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
+					freelist_regmr_host_fn,
+					freelist_deregmr_host_fn, domain, NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE,
+					&r_comm->flush_buff_fl);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Call to freelist_init_mr failed for flush buffer: %d", ret);
 		return NULL;
 	}
 
@@ -5404,7 +5590,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -5412,14 +5597,22 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 	/* iterate all rails and post RDMA local read */
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
 		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		struct fid_mr *mr_handle = NULL;
 
-		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
+#if HAVE_NEURON
+		void *desc = fi_mr_desc(domain->flush_buff.mr_handle->mr[rail_id]);
+		mr_handle = flush_data->mr_handle->mr[rail_id];
+#endif
 
+#if HAVE_CUDA
+		freelist_regmr_fn_handle_t *fl_handle =
+			(freelist_regmr_fn_handle_t *)flush_data->flush_fl_elem->mr_handle;
+		void *desc = fi_mr_desc(fl_handle->mr_handle->mr[rail_id]);
+		mr_handle = domain->flush_buff.mr_handle->mr[rail_id];
+#endif
 		uint64_t cuda_key = 0ULL;
-		if (flush_data->mr_handle != NULL) {
-			struct fid_mr *mr_handle = NULL;
-			mr_handle = flush_data->mr_handle->mr[rail_id];
 
+		if (mr_handle != NULL) {
 			/* Extract remote key */
 			cuda_key = fi_mr_key(mr_handle);
 			if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
@@ -5429,16 +5622,26 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 			}
 		}
 
-		uint64_t host_buff_addr = (uint64_t)f_buff->host_buffer + (cpu_cache_line_size * rail_id);
-
+#if HAVE_NEURON
+		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
+		uint64_t host_buff_addr = (uint64_t)f_buff->buffer + (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
 		rc = fi_read(comm_rail->local_ep,
-			     (void *)host_buff_addr,
-			     f_buff->size, desc, comm_rail->local_addr,
-			     (uint64_t)(virt_addr_mr ? flush_data->data : 0),
-			     cuda_key, rdma_req_get_ofi_context(req, rail_id));
+			(void *)host_buff_addr,
+			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
+			(uint64_t)(virt_addr_mr ? flush_data->data : 0),
+			cuda_key, rdma_req_get_ofi_context(req, rail_id));
+#endif
+#if HAVE_CUDA
+		uint64_t *host_buff_addr = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
+		rc = fi_read(comm_rail->local_ep,
+			(void *)host_buff_addr,
+			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
+			(uint64_t)domain->flush_buff.buffer,
+			cuda_key, rdma_req_get_ofi_context(req, rail_id));
+#endif
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
 			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
-				      rc, fi_strerror(-rc));
+					rc, fi_strerror(-rc));
 			goto exit;
 		}
 	}
@@ -5630,7 +5833,7 @@ retry:
 	 * pointer and MR
 	 */
 	if (size == 0) {
-		data = domain->flush_buff.host_buffer;
+		data = domain->flush_buff.buffer;
 		mr_handle = domain->flush_buff.mr_handle;
 	}
 
@@ -6668,7 +6871,7 @@ int nccl_net_ofi_rdma_domain_t::cleanup_resources()
 
 	err_code = this->dealloc_and_dereg_flush_buff();
 	if (err_code != 0) {
-		NCCL_OFI_WARN("Failed to deregister ctrl buffer pool");
+		NCCL_OFI_WARN("Failed to deregister flush buffer pool");
 		ret = -EINVAL;
 	}
 
@@ -7068,6 +7271,8 @@ nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 		delete s_comm_cleanup_list;
 		s_comm_cleanup_list = nullptr;
 	}
+
+	delete(flush_sentinel);
 }
 
 
@@ -7302,13 +7507,10 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		*found_multiple_rails = true;
 	}
 
-	cpu_cache_line_size = sysconf(_SC_LEVEL1_DCACHE_LINESIZE);
-	if (cpu_cache_line_size < 0) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Unable to obtain CPU cache line size from sysconf. "
-			      "fallback to predefined value %llu",
-			      NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
-		cpu_cache_line_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE;
+	flush_sentinel_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE / sizeof(uint64_t);
+	flush_sentinel = new uint64_t[flush_sentinel_size];
+	for (ssize_t i = 0; i < flush_sentinel_size; i++) {
+		flush_sentinel[i] = NCCL_OFI_RDMA_FLUSH_BUFFER_SENTINEL_VAL;
 	}
 
 	*plugin_p = plugin;

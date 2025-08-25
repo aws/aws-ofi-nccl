@@ -19,6 +19,7 @@
 #include "nccl_ofi_msgbuff.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
+#include "nccl_ofi_ofiutils.h"
 #if HAVE_NVTX_TRACING
 #include <nvtx3/nvToolsExt.h>
 #endif
@@ -31,6 +32,11 @@
 static_assert(MAX_NUM_RAILS <= UINT16_MAX);
 
 #define NCCL_OFI_RDMA_CTRL_TYPE_BITS (4)
+
+/*
+ * @brief Sentinel flush buffer value stored in gpu memory
+ */
+#define NCCL_OFI_RDMA_FLUSH_BUFFER_SENTINEL_VAL (0xffffffff)
 
 /*
  * @brief      Number of bits used for the communicator ID
@@ -108,7 +114,6 @@ static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
  * size to be fixed.
  */
 typedef uint16_t nccl_ofi_rdma_msg_type_t;
-
 /*
  * @brief	Rdma memory registration handle
  *
@@ -190,6 +195,15 @@ typedef struct nccl_net_ofi_rdma_close_msg {
 	/* Comm ID provided by the sender */
 	uint32_t send_comm_id;
 } nccl_net_ofi_rdma_close_msg_t;
+
+/* Flush data that is populated during a flush operation */
+typedef struct nccl_net_ofi_flush_data {
+	/* Flag that is expected to be populated to flush sentinel value */
+	uint64_t flag;
+
+	/* Padding to align it to cache line size */
+	char padding[(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE - sizeof(uint64_t))/ sizeof(uint8_t)];
+} nccl_net_ofi_flush_data_t;
 
 /* For LL/LL128 protocols, eager rx buffers (source of RDMA read operations)
    need to be 128B aligned */
@@ -366,6 +380,8 @@ typedef struct {
 	void *data;
 	/* MR handles for the data buffer */
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
+	/* Pointer to allocated buffer from freelist */
+	nccl_ofi_freelist_elem_t *flush_fl_elem;
 	/* Total number of completions. Expect completions from all NIC rail */
 	int total_num_compls;
 } rdma_req_flush_data_t;
@@ -553,7 +569,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm_rail {
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_rdma_flush_buffer {
-	void *host_buffer;
+	void *buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
@@ -589,6 +605,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 
 	/* Free list to track control buffers, for sending RDMA control messages */
 	nccl_ofi_freelist_t *ctrl_buff_fl;
+
+	/* Free list to track host flush buffers, for sending flush messages */
+	nccl_ofi_freelist_t *flush_buff_fl;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -747,6 +766,11 @@ public:
 			    size_t size, int type,
 			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
+#if HAVE_DECL_FI_MR_DMABUF
+	int reg_internal_mr_dma_buf(void *data,
+				int fd, uint64_t offset, size_t size, int type,
+				nccl_net_ofi_rdma_mr_handle_t **mhandle);
+#endif
 	/**
 	 * @brief	Deregister memory region
 	 *

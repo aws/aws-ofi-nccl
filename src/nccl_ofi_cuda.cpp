@@ -14,20 +14,19 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 
-#define QUOTE(x)                        #x
 #define DECLARE_CUDA_FUNCTION(function) static PFN_##function pfn_##function = NULL
 #define RESOLVE_CUDA_FUNCTION(function)                                                                                 \
 	do {                                                                                                            \
 		enum cudaDriverEntryPointQueryResult result;                                                            \
 		cudaError_t err =                                                                                       \
-			cudaGetDriverEntryPoint(QUOTE(function), (void **)&pfn_##function, cudaEnableDefault, &result); \
+			cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, &result);       \
 		if (err != cudaSuccess) {                                                                               \
 			switch (result) {                                                                               \
 			case cudaDriverEntryPointSymbolNotFound:                                                        \
-				NCCL_OFI_WARN("Failed to resolve CUDA function %s", QUOTE(function));                   \
+				NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);             	        \
 				break;                                                                                  \
 			case cudaDriverEntryPointVersionNotSufficent:                                                   \
-				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", QUOTE(function));          \
+				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", #function);                \
 				break;                                                                                  \
 			case cudaDriverEntryPointSuccess:                                                               \
 			default:                                                                                        \
@@ -39,6 +38,11 @@
 
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute);
+DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
+DECLARE_CUDA_FUNCTION(cuMemGetAddressRange);
+DECLARE_CUDA_FUNCTION(cuMemAlloc);
+DECLARE_CUDA_FUNCTION(cuMemFree);
+DECLARE_CUDA_FUNCTION(cuMemcpy);
 
 int nccl_net_ofi_cuda_init(void)
 {
@@ -68,6 +72,11 @@ int nccl_net_ofi_cuda_init(void)
 
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute);
+	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
+	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange);
+	RESOLVE_CUDA_FUNCTION(cuMemAlloc);
+	RESOLVE_CUDA_FUNCTION(cuMemFree);
+	RESOLVE_CUDA_FUNCTION(cuMemcpy);
 
 	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
@@ -106,6 +115,73 @@ int nccl_net_ofi_cuda_get_active_device_idx(void)
 	return res == cudaSuccess ? index : -1;
 }
 
+int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
+{
+	CUdeviceptr d_ptr;
+	CUresult ret = pfn_cuMemAlloc(&d_ptr, size);
+	if (ret != CUDA_SUCCESS) {
+		return false;
+	}
+
+	*ptr = (void *)d_ptr;
+	return 0;
+}
+
+int nccl_net_ofi_cuda_mem_free(void *ptr)
+{
+       CUresult ret = pfn_cuMemFree((CUdeviceptr)ptr);
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
+{
+	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size)
+{
+	CUresult ret;
+	ret = pfn_cuMemGetAddressRange((CUdeviceptr *)base, size, (CUdeviceptr)ptr);
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_get_dma_buf_fd(void *ptr, size_t size, int *fd, size_t *offset)
+{
+	unsigned long long flags = 0;
+	void *base_addr;
+	size_t total_size;
+
+	/*
+	* In order to call cuMemGetHandleForAddressRange we need the ptr
+	* to be host page size aligned. The offset is calculated based on this alignment.
+	*/
+	int res = nccl_net_ofi_cuda_get_base_addr(ptr, &base_addr, &total_size);
+	if (res) {
+		NCCL_OFI_WARN("cuMemGetAddressRange: Could not get base address and size");
+		return res;
+	}
+
+	uintptr_t aligned_ptr = NCCL_OFI_ROUND_DOWN((uintptr_t)base_addr, system_page_size);
+	size_t aligned_size = NCCL_OFI_ROUND_UP(((uintptr_t)base_addr + total_size), system_page_size) - aligned_ptr;
+
+# if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
+	flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+# endif
+
+	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, aligned_ptr, aligned_size,
+					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
+	if ((ret == CUDA_ERROR_INVALID_VALUE || ret == CUDA_ERROR_NOT_SUPPORTED) && flags != 0) {
+		NCCL_OFI_INFO(NCCL_NET,
+			"cuMemGetHandleForAddressRange failed with flags: %llu, retrying with no flags", flags);
+		ret = pfn_cuMemGetHandleForAddressRange(fd, aligned_ptr, aligned_size,
+					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+	}
+
+	*offset = (uintptr_t) ptr - (uintptr_t) aligned_ptr;
+
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
 
 int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
 {
