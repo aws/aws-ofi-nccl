@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <sys/utsname.h>
 
+#include "nccl_ofi.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
@@ -90,4 +91,48 @@ int nccl_ofi_dmabuf_viable()
 	NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 	               "Attempting to use DMA-BUF capable providers. set OFI_NCCL_DISABLE_DMABUF=1 to disable");
 	return true;
+}
+
+/*
+* Consolidate dmabuf viable checks with other firmwware related checks
+*/
+int nccl_ofi_dmabuf_viable_and_supported(struct fi_info *nic_prov) {
+
+	bool dmabuf_support = ((nic_prov->caps & FI_HMEM) != 0) &&
+		FI_VERSION_GE(nic_prov->fabric_attr->api_version, FI_VERSION(1, 20)) &&
+		nccl_ofi_dmabuf_viable();
+
+	if (dmabuf_support && strncmp("efa", nic_prov->fabric_attr->prov_name, strlen("efa")) == 0) {
+		// Generations 1-3 of EFA have a firmware issue that can result
+		// in communication failures with MRs that cover a large number
+		// of page entries.  This is not usually a problem, because page
+		// merging greatly reduces the number of page entries in the MR.
+		// However, the RDMA subsystem in the Linux kernel did not
+		// properly execute page merging for dmabuf entries until a
+		// recent patch
+		// (https://web.git.kernel.org/pub/scm/linux/kernel/git/rdma/rdma.git/commit/?id=486055f5e09df9),
+		// and the lack of page merging increased the probability of
+		// hitting the EFA issue.  Testing for the fixed kernel version
+		// is effectively impossible (the issue can also be fixed in the
+		// EFA kmod itself, and backports are likely, so a simple kernel
+		// version check is insufficient), so instead we only support
+		// dmabuf by default in Generation 4 of EFA.  When the
+		// communication failure issue is resolved in previous
+		// generations, this code will be removed and dmabuf will be
+		// available by default everywhere.
+		if (nic_prov->nic == NULL || nic_prov->nic->device_attr == NULL) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "DMA-BUF disabled due to missing nic data");
+			dmabuf_support = false;
+		} else if (strcmp("0xefa0", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa1", nic_prov->nic->device_attr->device_id) == 0 ||
+			   strcmp("0xefa2", nic_prov->nic->device_attr->device_id) == 0) {
+			NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+				       "DMA-BUF disabled due to EFA device id %s",
+				       nic_prov->nic->device_attr->device_id);
+			dmabuf_support = false;
+		}
+	}
+
+	return dmabuf_support;
 }

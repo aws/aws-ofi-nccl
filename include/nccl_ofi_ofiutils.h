@@ -9,6 +9,18 @@
 
 #include "nccl_ofi_param.h"
 
+/*
+ * Memeory util functions to ensure that the compiler does not optimize
+ * these memory accesses.
+ */
+#define ACCESS_ONCE(x) (*(volatile __typeof__(x) *)&(x))
+
+#define READ_ONCE(x) \
+({ __typeof__(x) ___x = ACCESS_ONCE(x); ___x; })
+
+#define WRITE_ONCE(x, val) \
+do { ACCESS_ONCE(x) = (val); } while (0)
+
 int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    uint32_t required_version,
 				    struct fi_info *hints,

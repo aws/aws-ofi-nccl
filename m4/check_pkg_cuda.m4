@@ -83,6 +83,14 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         AC_MSG_RESULT(${chk_result})
         ])
 
+  check_cuda_dmabuf_mapping_type_pcie=0
+  AS_IF([test "${check_pkg_found}" = "yes"],
+            [AC_CHECK_DECL([CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE],
+            [check_cuda_dmabuf_mapping_type_pcie=1],
+            [check_cuda_dmabuf_mapping_type_pcie=0],
+            [[#include <cuda.h>]])
+      ])
+
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define=1
          $1],
@@ -91,6 +99,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
 
   AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
   AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_SUPPORT], [${check_cuda_dmabuf_define}], [Defined to 1 if CUDA DMA-BUF support is available])
+  AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE], [${check_cuda_dmabuf_mapping_type_pcie}], [Defined to 1 if CUDA DMA mapping type PCIE support is available])
   AC_DEFINE_UNQUOTED([HAVE_CUDA_GDRFLUSH_SUPPORT], [${check_cuda_gdr_flush_define}], [Defined to 1 if CUDA cuFlushGPUDirectRDMAWrites support is available])
   AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
 
