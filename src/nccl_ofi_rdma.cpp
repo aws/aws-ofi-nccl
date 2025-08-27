@@ -446,6 +446,14 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	assert(is_max_write_inline_size_initialized);
 	props->max_write_inline_size = max_write_inline_size;
 
+       /* Debug: Log device properties for vNIC analysis */
+       NCCL_OFI_INFO(NCCL_NET, "Device %d properties - PCI path: %s, speed: %d, num_rails: %d, vNIC enabled: %s",
+                     this->dev_id,
+                     props->pci_path ? props->pci_path : "NULL",
+                     props->port_speed,
+                     this->num_rails,
+                     ofi_nccl_enable_vnic_gen() ? "true" : "false");
+
 	/* Derive vProps from rails - collect unique source device IDs */
 	// Use a set to automatically keep unique device IDs
 	std::set<int> unique_devs;
@@ -461,6 +469,33 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	// Copy the unique device IDs to props->vProps.devs
 	std::copy_n(unique_devs.begin(), props->vProps.ndevs, props->vProps.devs);
 
+       /* Debug: Log vProps information */
+       NCCL_OFI_INFO(NCCL_NET, "Device %d vProps - ndevs: %d, total_devices: %zu",
+                     this->dev_id,
+		     props->vProps.ndevs,
+		     num_devices);
+
+       /* For vNIC mode: prefer virtual devices based on their source physical device topology */
+       if (this->dev_id >= 16 && props->pci_path) {
+               /* Extract PCI root from path to determine physical device group */
+               char *pci_root_str = strstr(props->pci_path, "pci0000:");
+               if (pci_root_str) {
+                       int pci_root = 0;
+                       sscanf(pci_root_str, "pci0000:%x", &pci_root);
+
+                       /* Prefer the first virtual device from each PCI root group */
+                       /* This respects the natural physical topology affinity */
+                       int vdev_offset = this->dev_id - 16;  /* 0,1,2,3,4,5,6,7 */
+                       if (vdev_offset % 2 == 1) {  /* Second device from each PCI root pair */
+                               props->port_speed = props->port_speed / 4;  /* Make it less preferred */
+                               NCCL_OFI_WARN("vNIC mode: reducing bandwidth for secondary vdev %d (PCI root 0x%x) to %d",
+                                             this->dev_id, pci_root, props->port_speed);
+                       } else {
+                               NCCL_OFI_WARN("vNIC mode: keeping full bandwidth for primary vdev %d (PCI root 0x%x): %d",
+                                             this->dev_id, pci_root, props->port_speed);
+                       }
+               }
+       }
 
 	/* 
 	 * Actual max tansfer size is the min size between the interface and
