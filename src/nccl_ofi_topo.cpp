@@ -20,8 +20,21 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
 
+#if HAVE_CUDA
 static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
 static const unsigned short target_vendor_ids[] = { 0x10de }; /* NVIDIA */
+#elif HAVE_ROCM
+// AMD GPUs can appear as either "Display controller" or "Processing accelerator"
+static const uint8_t target_class_ids[] = { 0x03, 0x12 };
+static const unsigned short target_vendor_ids[] = { 0x1002 }; /* AMD */
+#elif HAVE_NEURON
+// No multi-rail grouping for neuron, pick an invalid class and vendor so that
+// no devices will be found.
+static const uint8_t target_class_ids[] = { 0 };
+static const unsigned short target_vendor_ids[] = { 0 };
+#else
+#error "No target device pcie information available"
+#endif
 
 /* Maximum length of the device property read from file by function
  * get_device_property() */

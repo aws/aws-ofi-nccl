@@ -377,7 +377,7 @@ int PlatformAWS::validate_rdma_write(struct fid_ep *ep)
 }
 
 
-#if HAVE_CUDA
+#if HAVE_GPU
 /*
  * Try to set one of the in-order flags for either send/recv or rdma
  * on the current endpoint to true.  have_ordering will be the
@@ -555,7 +555,7 @@ int PlatformAWS::configure_tuner()
 
 
 
-#endif /* HAVE_CUDA */
+#endif /* HAVE_GPU */
 
 /*
  * @brief	Update NCCL's system topology using static pre-configured topology

@@ -21,6 +21,7 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
 
+
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 
@@ -381,6 +382,11 @@ ofi_ep_result nccl_ofi_ofiutils_ep_create(struct fi_info *info, ofi_domain_ptr &
 		 * provider. Unlike CUDA, we do not need to handle the
 		 * runtime/endpoint deadlock with fi_setopt(), so move the flag
 		 * to supported.
+		 */
+		support_gdr = GDR_SUPPORTED;
+#elif HAVE_ROCM
+		/*
+		 * ROCm does not require FI_OPT_CUDA_API_PERMITTED.
 		 */
 		support_gdr = GDR_SUPPORTED;
 #else
