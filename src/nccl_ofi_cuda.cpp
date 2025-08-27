@@ -87,7 +87,7 @@ DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
 DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
 
-int nccl_net_ofi_cuda_init(void)
+int nccl_net_ofi_gpu_init(void)
 {
 	int driverVersion = -1;
 	int runtimeVersion = -1;
@@ -179,7 +179,7 @@ int nccl_net_ofi_cuda_init(void)
 	return 0;
 }
 
-int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
+int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void)
 {
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 	CUresult ret;

@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025, Advanced Micro Devices, Inc. All rights reserved.
  */
 
 #ifndef NCCL_OFI_CONFIG_BOTTOM_H
@@ -61,5 +62,12 @@ static inline int memfd_create(const char *name, unsigned int flags)
     return syscall(SYS_memfd_create, name, flags);
 }
 #endif /* ifndef HAVE_MEMFD_CREATE */
+
+/* Use HAVE_GPU to guard GPU-specific code instead of checking both individually */
+#if HAVE_CUDA || HAVE_ROCM
+#define HAVE_GPU 1
+#else
+#define HAVE_GPU 0
+#endif
 
 #endif

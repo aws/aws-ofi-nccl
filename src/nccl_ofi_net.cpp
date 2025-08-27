@@ -22,6 +22,8 @@
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_rdma.h"
@@ -160,8 +162,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	mr_cache_alignment = std::min(system_page_size, NCCL_OFI_CACHE_PAGE_SIZE);
 
-#if HAVE_CUDA
-	ret = nccl_net_ofi_cuda_init();
+#if HAVE_GPU
+	ret = nccl_net_ofi_gpu_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("CUDA initialization failed.");
 		goto exit;
