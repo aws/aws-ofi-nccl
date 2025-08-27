@@ -47,7 +47,9 @@ autoreconf -ivf
 mkdir -p %{buildroot}/etc/ld.so.conf.d && \
     echo "%{_libdir}" >> %{buildroot}/etc/ld.so.conf.d/100_ofinccl.conf
 find %{buildroot} -name '*.la' -exec rm -f {} ';'
-%ldconfig_scriptlets
+
+%post -p /sbin/ldconfig
+%postun -p /sbin/ldconfig
 
 %files
 %{_libdir}/*.so
