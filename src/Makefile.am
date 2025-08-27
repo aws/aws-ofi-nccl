@@ -7,7 +7,7 @@
 AM_CPPFLAGS = -I$(abs_top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
-AM_CPPFLAGS += $(CUDA_CPPFLAGS)
+AM_CPPFLAGS += $(CUDA_CPPFLAGS) $(ROCM_CPPFLAGS)
 AM_CPPFLAGS += -DXML_DIR=\"${pkgdatadir}/xml\"
 
 sources = \
@@ -41,15 +41,21 @@ sources += platform-aws.cpp
 endif
 
 if ENABLE_NEURON
-  sources += nccl_ofi_interface_neuron.cpp
-else
-  sources += \
-	nccl_ofi_cuda.cpp \
-	nccl_ofi_interface_nvidia.cpp
+sources += nccl_ofi_interface_neuron.cpp
+endif
 
-  # add the tuner sources into the library
+if HAVE_ROCM
+sources += nccl_ofi_rocm.cpp nccl_ofi_interface_nvidia.cpp
+endif
+
+if HAVE_CUDA
+sources += nccl_ofi_cuda.cpp nccl_ofi_interface_nvidia.cpp
+endif
+
+# add the tuner sources into the library
+if !ENABLE_NEURON
 if WANT_PLATFORM_AWS
-    sources +=  \
+  sources +=  \
 	tuner/nccl_ofi_regions.cpp \
 	tuner/nccl_ofi_tuner.cpp \
 	tuner/nccl_ofi_model.cpp
@@ -61,9 +67,8 @@ endif
 # us writing dlopen() handlers for simple unit tests.
 noinst_LTLIBRARIES = libinternal_plugin.la
 libinternal_plugin_la_SOURCES = $(sources)
-libinternal_plugin_la_LDFLAGS = -static  $(CUDA_LDFLAGS)
-libinternal_plugin_la_LIBADD = $(CUDA_LIBS)
-
+libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS) $(ROCM_LDFLAGS)
+libinternal_plugin_la_LIBADD  = $(CUDA_LIBS) $(ROCM_LIBS)
 
 if ENABLE_NEURON
   lib_LTLIBRARIES = libnccom-net.la
@@ -74,7 +79,7 @@ if ENABLE_NEURON
 else
   lib_LTLIBRARIES = libnccl-net-ofi.la
   libnccl_net_ofi_la_SOURCES =
-  libnccl_net_ofi_la_LIBADD = libinternal_plugin.la
+  libnccl_net_ofi_la_LIBADD = libinternal_plugin.la $(CUDA_LIBS) $(ROCM_LIBS)
   libnccl_net_ofi_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_ofi_la_LDFLAGS = -module -avoid-version
 
@@ -103,7 +108,17 @@ if ENABLE_NCCL_NET_LIBRARY
   libnccl_net_la_LIBADD = libinternal_plugin.la
   libnccl_net_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_la_LDFLAGS = -module -avoid-version
+
+if HAVE_ROCM
+  lib_LTLIBRARIES += librccl-net.la
+  librccl_net_la_SOURCES =
+  librccl_net_la_LIBADD = libinternal_plugin.la
+  librccl_net_la_LIBTOOLFLAGS = --tag=CXX
+  librccl_net_la_LDFLAGS = -module -avoid-version
 endif
+
+endif
+
 if WANT_PLATFORM_AWS
 # NCCL standardized on the libnccl-tuner-<interface> format after we released a
 # plugin with the tuner named libnccl-ofi-tuner.so.  Create separate libraries
