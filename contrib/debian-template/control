@@ -12,8 +12,6 @@ Rules-Requires-Root: no
 Package: libnccl-ofi
 Section: contrib/libs
 Architecture: any
-Multi-Arch: same
-Pre-Depends: ${misc:Pre-Depends}
 Depends: ${misc:Depends}, ${shlib:Depends}
 Description: NCCL libfabric plugin
  AWS OFI NCCL is a plug-in which enables EC2 developers to use libfabric as a
