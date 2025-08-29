@@ -39,7 +39,17 @@ int main(int argc, char *argv[])
 	char *send_buf[NUM_REQUESTS] = {NULL};
 	char *recv_buf[NUM_REQUESTS] = {NULL};
 	char *expected_buf = NULL;
-	int done, received_size;
+	int done;
+
+	/* This is the expected size of message transmission, which is the smaller of 
+	 * SEND_SIZE and RECV_SIZE. When the send request size is larger than the receive 
+	 * request size, we truncate the send request size to the receive request size.
+	 * 
+	 * NCCL now assumes the send size to be equal to or smaller than the receive size.
+	 * However it used to relie on this truncation logic. We need to keep it for 
+	 * backward compatibility.
+	 */
+	const int expected_size = std::min(SEND_SIZE, RECV_SIZE);
 
 	/* Indicates if NICs support GPUDirect */
 	int *test_support_gdr = NULL;
@@ -236,14 +246,24 @@ int main(int argc, char *argv[])
 		while (inflight_reqs > 0) {
 			/* Test for send completions */
 			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+				int sent_size;
 				if (req_completed_send[idx])
 					continue;
 
-				OFINCCLCHECKGOTO(extNet->test((void *)send_req[idx], &done, &received_size), res, exit);
+				OFINCCLCHECKGOTO(extNet->test((void *)send_req[idx], &done, &sent_size), res, exit);
 				if (done) {
 					inflight_reqs--;
 					req_completed_send[idx] = 1;
 					send_req[idx] = nullptr;
+
+					if (sent_size != expected_size) {
+						NCCL_OFI_WARN(
+							"Wrong sent size %d while expect size %d (send size: %d recv size %d) at rank %d",
+							sent_size, expected_size, SEND_SIZE, RECV_SIZE, rank);
+						res = ncclInternalError;
+						goto exit;
+					}
+
 					/* Deregister memory handle */
 					OFINCCLCHECKGOTO(extNet->deregMr((void *)sComm_next, send_mhandle[idx]), res, exit);
 				}
@@ -251,6 +271,7 @@ int main(int argc, char *argv[])
 
 			/* Test for recv completions */
 			for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+				int received_size;
 				if (req_completed_recv[idx])
 					continue;
 
@@ -259,6 +280,14 @@ int main(int argc, char *argv[])
 					inflight_reqs--;
 					req_completed_recv[idx] = 1;
 					recv_req[idx] = nullptr;
+
+					if (received_size != expected_size) {
+						NCCL_OFI_WARN(
+							"Wrong received size %d while expect size %d (send size: %d recv size %d) at rank %d",
+							received_size, expected_size, SEND_SIZE, RECV_SIZE, rank);
+						res = ncclInternalError;
+						goto exit;
+					}
 
 					/* Invoke flush operations unless user has explicitly disabled it */
 					if (buffer_type == NCCL_PTR_CUDA) {
