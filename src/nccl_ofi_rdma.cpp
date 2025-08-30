@@ -1781,7 +1781,7 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 
 	while (true) {
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(rail->cq, cqe_buffers, cq_read_count);
+		rc = fi_cq_read(rail->cq.get(), cqe_buffers, cq_read_count);
 		if (rc > 0) {
 			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
@@ -1794,7 +1794,7 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 			 */
 			struct fi_cq_err_entry err_entry = { };
 
-			ret = fi_cq_readerr(rail->cq, &err_entry, 0);
+			ret = fi_cq_readerr(rail->cq.get(), &err_entry, 0);
 			if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
 				/*
 				 * Error not available yet.
@@ -1808,7 +1808,7 @@ static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_
 				goto exit;
 			}
 
-			ret = rdma_process_error_entry(&err_entry, rail->cq, rail->rail_id);
+			ret = rdma_process_error_entry(&err_entry, rail->cq.get(), rail->rail_id);
 			if (ret != 0) {
 				goto exit;
 			}
@@ -2342,10 +2342,10 @@ static int init_send_comm_rails(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		ep_rail = ep->rdma_endpoint_get_control_rail(rail_id);
 		remote_rdma_ep_name = &remote_control_ep_names[rail_id];
 
-		comm_rail->local_ep = ep_rail->ofi_ep;
+		comm_rail->local_ep = ep_rail->ofi_ep.get();
 
 		/* Insert remote EP address to AV */
-		ret = fi_av_insert(ep_rail->av, (void *)remote_rdma_ep_name->ep_name, 1,
+		ret = fi_av_insert(ep_rail->av.get(), (void *)remote_rdma_ep_name->ep_name, 1,
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
@@ -2360,10 +2360,10 @@ static int init_send_comm_rails(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		ep_rail = ep->rdma_endpoint_get_rail(rail_id);
 		remote_rdma_ep_name = &remote_ep_names[rail_id];
 
-		comm_rail->local_ep = ep_rail->ofi_ep;
+		comm_rail->local_ep = ep_rail->ofi_ep.get();
 
 		/* Insert remote EP address to AV */
-		ret = fi_av_insert(ep_rail->av, (void *)remote_rdma_ep_name->ep_name, 1,
+		ret = fi_av_insert(ep_rail->av.get(), (void *)remote_rdma_ep_name->ep_name, 1,
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
@@ -2556,8 +2556,6 @@ static inline void rdma_req_init_ctx(nccl_net_ofi_rdma_req_t *req)
 
 int nccl_net_ofi_rdma_domain_t::dereg_mr_on_device(nccl_net_ofi_rdma_mr_handle_t *mr_handle)
 {
-	int ret = 0;
-
 	if (OFI_UNLIKELY(mr_handle == NULL)) {
 		return 0;
 	}
@@ -2568,20 +2566,15 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_on_device(nccl_net_ofi_rdma_mr_handle_t
 
 	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
 		/* No memory registration available for this rail */
-		if (mr_handle->mr[rail_id] == NULL) {
+		if (mr_handle->mr[rail_id].get() == NULL) {
 			continue;
 		}
-
-		ret = fi_close(&mr_handle->mr[rail_id]->fid);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-				      ret, fi_strerror(-ret));
-		}
+		mr_handle->mr[rail_id].reset();
 	}
 
 	delete mr_handle;
 
-	return ret;
+	return 0;
 }
 
 
@@ -2672,11 +2665,9 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
-		ret = fi_mr_regattr(domain_rail->domain, &mr_attr,
-				    regattr_flags, &ret_handle->mr[rail_id]);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu",
-				      rail_id, regattr_flags);
+		ret_handle->mr[rail_id] = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain.get(), &mr_attr, regattr_flags);
+		if (OFI_UNLIKELY(!ret_handle->mr[rail_id])) {
+			ret = -ENOMEM;
 			goto error;
 		}
 	}
@@ -2964,7 +2955,7 @@ static inline int insert_send_ctrl_req(
 
 	uint16_t rail_id = 0;
 	for (; rail_id < r_comm->num_rails; rail_id++) {
-		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id]);
+		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id].get());
 
 		if (rkey == FI_KEY_NOTAVAIL) {
 			NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
@@ -4141,7 +4132,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 			       nccl_net_ofi_rdma_req_t **ret_req)
 {
 	uint64_t flags = 0;
-	struct fid_mr *rail_mr_handle = buff_mr_handle->mr[0];
+	struct fid_mr *rail_mr_handle = buff_mr_handle->mr[0].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 	*ret_req = NULL;
 
@@ -4418,10 +4409,10 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_control_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->control_ep_names[rail_id];
 
-		comm_rail->local_ep = rail->ofi_ep;
+		comm_rail->local_ep = rail->ofi_ep.get();
 
 		/* Insert remote EP address to AV */
-		ret = fi_av_insert(rail->av, (void *)remote_ep_name->ep_name, 1,
+		ret = fi_av_insert(rail->av.get(), (void *)remote_ep_name->ep_name, 1,
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
@@ -4430,7 +4421,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			goto error;
 		}
 
-		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name, 1,
+		ret = fi_av_insert(rail->av.get(), (void *)rail->local_ep_name, 1,
 				   &comm_rail->local_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert local address into address vector "
@@ -4449,10 +4440,10 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		nccl_net_ofi_ep_rail_t *rail = ep->rdma_endpoint_get_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
-		comm_rail->local_ep = rail->ofi_ep;
+		comm_rail->local_ep = rail->ofi_ep.get();
 
 		/* Insert remote EP address to AV */
-		ret = fi_av_insert(rail->av, (void *)remote_ep_name->ep_name, 1,
+		ret = fi_av_insert(rail->av.get(), (void *)remote_ep_name->ep_name, 1,
 				   &comm_rail->remote_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert remote address into address vector "
@@ -4461,7 +4452,7 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			goto error;
 		}
 
-		ret = fi_av_insert(rail->av, (void *)rail->local_ep_name, 1,
+		ret = fi_av_insert(rail->av.get(), (void *)rail->local_ep_name, 1,
 				   &comm_rail->local_addr, 0, NULL);
 		if (OFI_UNLIKELY(ret != 1)) {
 			NCCL_OFI_WARN("Unable to insert local address into address vector "
@@ -5092,7 +5083,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	uint16_t rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
+	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 
 	ssize_t rc;
@@ -5128,7 +5119,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	uint16_t rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id];
+	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 
 	ssize_t rc;
@@ -5153,7 +5144,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 	nccl_ofi_freelist_elem_t *rx_buff_fl_elem = rx_buff_data->rx_buff_fl_elem;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
 		(freelist_regmr_fn_handle_t *)rx_buff_fl_elem->mr_handle;
-	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rx_buff_data->rail->rail_id]);
+	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rx_buff_data->rail->rail_id].get());
 	struct iovec iov;
 	struct fi_msg msg;
 	uint64_t flags = 0;
@@ -5182,7 +5173,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req_t *req,
 	msg.context = rdma_req_get_ofi_context(req, ep_rail->rail_id);
 
 	req->state = NCCL_OFI_RDMA_REQ_CREATED;
-	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep, &msg, flags);
+	ssize_t rc = fi_recvmsg(ep_rail->ofi_ep.get(), &msg, flags);
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting rx buffer. RC: %zd, Error: %s",
 			      rc, fi_strerror(-rc));
@@ -5282,7 +5273,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
 
 	assert(rail_id < mr_handle->num_rails);
-	void *desc = fi_mr_desc(mr_handle->mr[rail_id]);
+	void *desc = fi_mr_desc(mr_handle->mr[rail_id].get());
 
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
@@ -5378,10 +5369,10 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->dest_mr_handle;
 
 	assert(rx_rail_id < dest_mr_handle->num_rails);
-	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id]);
+	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id].get());
 
 	void *rx_buff = rx_buff_data->rx_buff_fl_elem->ptr;
-	uint64_t rx_key = fi_mr_key(rx_mr_handle->mr[rx_rail_id]);
+	uint64_t rx_key = fi_mr_key(rx_mr_handle->mr[rx_rail_id].get());
 	if (rx_key == FI_KEY_NOTAVAIL) {
 		NCCL_OFI_WARN("Failed to get rx_key");
 		return -EIO;
@@ -5413,12 +5404,12 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
 		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
 
-		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id]);
+		void *desc = fi_mr_desc(f_buff->mr_handle->mr[rail_id].get());
 
 		uint64_t cuda_key = 0ULL;
 		if (flush_data->mr_handle != NULL) {
 			struct fid_mr *mr_handle = NULL;
-			mr_handle = flush_data->mr_handle->mr[rail_id];
+			mr_handle = flush_data->mr_handle->mr[rail_id].get();
 
 			/* Extract remote key */
 			cuda_key = fi_mr_key(mr_handle);
@@ -5960,7 +5951,7 @@ int nccl_net_ofi_rdma_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 {
 	int ret = 0;
 	assert(!this->mr.empty());
-	uint64_t key = fi_mr_key(this->mr[0]);
+	uint64_t key = fi_mr_key(this->mr[0].get());
 	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 		ret = -ENOENT;
 		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
@@ -6055,7 +6046,7 @@ static int rma_write(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size
 		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
 {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	struct fid_mr *rail_mr_handle = mr_handle->mr[0];
+	struct fid_mr *rail_mr_handle = mr_handle->mr[0].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 	uint64_t flags = 0;
 	return rma_write_impl(send_comm, src, size, desc, dest, mr_key, flags, base_req);
@@ -6293,27 +6284,20 @@ error:
 }
 
 
-void nccl_net_ofi_rdma_ep_t::ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id)
-{
-	nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
-				     dev_id);
-	rail->ofi_ep = NULL;
-	rail->av = NULL;
-}
-
-
 void nccl_net_ofi_rdma_ep_t::release_rdma_ep_resources(int dev_id)
 {
 	nccl_net_ofi_ep_rail_t *rail;
 
 	for (uint16_t rail_id = 0; rail_id != this->num_control_rails; ++rail_id) {
 		rail = this->rdma_endpoint_get_control_rail(rail_id);
-		nccl_net_ofi_rdma_ep_t::ep_rail_release(rail, dev_id);
+		nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
+					     dev_id);
 	}
 
 	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
 		rail = this->rdma_endpoint_get_rail(rail_id);
-		nccl_net_ofi_rdma_ep_t::ep_rail_release(rail, dev_id);
+		nccl_ofi_ofiutils_ep_release(rail->ofi_ep, rail->av,
+					     dev_id);
 	}
 }
 
@@ -6359,6 +6343,11 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 	int ret = 0;
 	struct fi_info *rail_info = dev_rail->info;
 
+	ep_rail->av = nccl_ofi_ofiutils_av_create(domain_rail->domain.get());
+	if (OFI_UNLIKELY(!ep_rail->av)) {
+		return -EINVAL;
+	}
+
 	if (tclass != FI_TC_UNSPEC) {
 		rail_info = fi_dupinfo(rail_info);
 		if (rail_info == NULL) {
@@ -6369,23 +6358,22 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 		rail_info->tx_attr->tclass = tclass;
 	}
 
-	ret = nccl_ofi_ofiutils_init_connection(rail_info,
-						domain_rail->domain,
-						&ep_rail->ofi_ep,
-						&ep_rail->av,
-						domain_rail->cq);
+	ep_rail->ofi_ep = nccl_ofi_ofiutils_ep_create(rail_info, domain_rail->domain.get(),
+						      ep_rail->av.get(), domain_rail->cq.get());
+
 	if (tclass != FI_TC_UNSPEC) {
 		fi_freeinfo(rail_info);
 	}
-	if (ret != 0) {
-		return ret;
+	if (OFI_UNLIKELY(!ep_rail->ofi_ep)) {
+		return -EINVAL;
 	}
 
 	ep_rail->rail_id = rail_id;
 
-	ret = set_local_address(ep_rail->ofi_ep, ep_rail);
+	ret = set_local_address(ep_rail->ofi_ep.get(), ep_rail);
 	if (ret != 0) {
-		nccl_net_ofi_rdma_ep_t::ep_rail_release(ep_rail, dev_id);
+		nccl_ofi_ofiutils_ep_release(ep_rail->ofi_ep, ep_rail->av,
+					     dev_id);
 		return ret;
 	}
 
@@ -6547,7 +6535,7 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 	if (is_max_write_inline_size_initialized == false) {
 		/* Overwrite default max_write_inline_size value if
 		 * FI_OPT_INJECT_RMA_SIZE option is available */
-		ret = get_inject_rma_size_opt(ep->rdma_endpoint_get_rail(0)->ofi_ep,
+		ret = get_inject_rma_size_opt(ep->rdma_endpoint_get_rail(0)->ofi_ep.get(),
 					      &max_write_inline_size);
 		if (ret == 0) {
 			is_max_write_inline_size_initialized = true;
@@ -6617,9 +6605,9 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 	this->use_long_rkeys = device->use_long_rkeys;
 
 	/* Zero-initialize the rails and control_rails vector elements */
-	this->rails = std::vector<nccl_net_ofi_ep_rail_t>(num_rails, nccl_net_ofi_ep_rail_t{});
+	this->rails.resize(num_rails);
 
-	this->control_rails = std::vector<nccl_net_ofi_ep_rail_t>(num_control_rails, nccl_net_ofi_ep_rail_t{});
+	this->control_rails.resize(num_control_rails);
 
 	ret = nccl_net_ofi_mutex_init(&this->pending_reqs_lock, NULL);
 	if (ret != 0) {
@@ -6673,11 +6661,8 @@ int nccl_net_ofi_rdma_domain_t::cleanup_resources()
 	}
 
 	for (uint16_t i = 0 ; i < this->num_rails ; ++i) {
-		if (this->domain_rails[i].cq != nullptr) {
-			fi_close(&this->domain_rails[i].cq->fid);
-			this->domain_rails[i].cq = nullptr;
-		}
-		fi_close(&this->domain_rails[i].domain->fid);
+		this->domain_rails[i].cq.reset();
+		this->domain_rails[i].domain.reset();
 	}
 
 	if (this->scheduler) {
@@ -6713,21 +6698,18 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 	}
 	this->num_rails = device_arg->num_rails;
 
-	this->domain_rails = std::vector<nccl_net_ofi_rdma_domain_rail_t>(this->num_rails,
-									  nccl_net_ofi_rdma_domain_rail_t{});
+	this->domain_rails = std::vector<nccl_net_ofi_rdma_domain_rail_t>();
+	this->domain_rails.resize(this->num_rails);
 
 	for (uint16_t i = 0; i < this->num_rails ; i++) {
 		nccl_net_ofi_rdma_device_rail_t *device_rail = device_arg->rdma_device_get_rail(i);
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(i);
 
 		domain_rail->rail_id = i;
-
-		ret = fi_domain(device_rail->fabric, device_rail->info,
-				&domain_rail->domain, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open a fabric access domain. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			throw std::runtime_error("RDMA domain constructor: fi_domain failed");
+		domain_rail->domain = nccl_ofi_ofiutils_domain_create(device_rail->fabric.get(), device_rail->info);
+		if (OFI_UNLIKELY(!domain_rail->domain)) {
+			NCCL_OFI_WARN("Couldn't open a fabric access domain");
+			throw std::runtime_error("RDMA domain constructor: ofi domain creation failed");
 		}
 
 		/* Create a shared completion queue for all Libfabric endpoints
@@ -6735,13 +6717,12 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 		struct fi_cq_attr cq_attr = {};
 		cq_attr.format = FI_CQ_FORMAT_DATA;
 		cq_attr.size = ofi_nccl_cq_size();
-		ret = fi_cq_open(domain_rail->domain, &cq_attr, &domain_rail->cq, NULL);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			throw std::runtime_error("RDMA domain constructor: fi_cq_open failed");
+		domain_rail->cq = nccl_ofi_ofiutils_cq_create(domain_rail->domain.get(), &cq_attr);
+		if (OFI_UNLIKELY(!domain_rail->cq)) {
+			NCCL_OFI_WARN("Couldn't open CQ");
+			throw std::runtime_error("RDMA domain constructor: ofi cq creation failed");
 		}
-		assert(domain_rail->cq != NULL);
+		assert(domain_rail->cq);
 	}
 
 	/*
@@ -6775,25 +6756,15 @@ nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain()
 
 int nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(nccl_net_ofi_rdma_device_rail_t *rail_dev)
 {
-	int ret = 0;
-
 	/* Create fabric */
-	ret = fi_fabric(rail_dev->info->fabric_attr, &rail_dev->fabric, nullptr);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
-		goto error;
+	rail_dev->fabric = nccl_ofi_ofiutils_fabric_create(rail_dev->info);
+	if (OFI_UNLIKELY(!rail_dev->fabric)) {
+		NCCL_OFI_WARN("Couldn't open a fabric provider using ofiutils helper");
+		return -EINVAL;
 	}
 
+	return 0;
 
-	return ret;
- error:
-	if (rail_dev->fabric) {
-		fi_close(reinterpret_cast<fid_t>(rail_dev->fabric));
-		rail_dev->fabric = nullptr;
-	}
-
- 	return ret;
 }
 
 
@@ -6815,9 +6786,7 @@ int nccl_net_ofi_rdma_device_t::device_prepare_for_connection()
 void nccl_net_ofi_rdma_device_t::release_device_ofi_resources()
 {
 	for (auto& rail : this->device_rails) {
-		if (rail.fabric) {
-			fi_close(&rail.fabric->fid);
-		}
+		rail.fabric.reset();
 		if (rail.info) {
 			fi_freeinfo(rail.info);
 		}
@@ -6984,7 +6953,8 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	/* Set NIC information */
 	this->num_rails = length;
 
-	this->device_rails = std::vector<nccl_net_ofi_rdma_device_rail_t>(length, nccl_net_ofi_rdma_device_rail_t{});
+	this->device_rails = std::vector<nccl_net_ofi_rdma_device_rail_t>();
+	this->device_rails.resize(length);
 
 	ret = this->create_device_rail_array(info_list, length);
 	if (ret != 0) {

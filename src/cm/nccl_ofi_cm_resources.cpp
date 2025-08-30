@@ -12,12 +12,20 @@ endpoint::endpoint(nccl_net_ofi_domain_t &domain) :
 {
 	fi_info *info = domain.get_device()->get_ofi_info_for_cm();
 	fid_cq *cq = domain.get_ofi_cq_for_cm();
-	int ret = nccl_ofi_ofiutils_init_connection(info, ofi_domain, &this->ofi_ep, &this->av, cq);
-	if (ret != 0) {
+
+	this->av = nccl_ofi_ofiutils_av_create(this->ofi_domain);
+	if (OFI_UNLIKELY(!this->av)) {
 		/* We can't return an error. If not caught, this is going to propagate up and
 		 * eventually terminate the program, which may or may not be what we want.
 		 * TODO revisit */
-		throw std::runtime_error("endpoint: failed call to nccl_ofi_ofiutils_init_connection");
+		throw std::runtime_error("endpoint: failed call to nccl_ofi_ofiutils_av_create");
+	}
+	this->ofi_ep = nccl_ofi_ofiutils_ep_create(info, this->ofi_domain, this->av.get(), cq);
+	if (OFI_UNLIKELY(!this->ofi_ep)) {
+		/* We can't return an error. If not caught, this is going to propagate up and
+		 * eventually terminate the program, which may or may not be what we want.
+		 * TODO revisit */
+		throw std::runtime_error("endpoint: failed call to nccl_ofi_ofiutils_ep_create");
 	}
 }
 
@@ -31,7 +39,7 @@ endpoint::~endpoint()
 
 int endpoint::get_ep_address(void *address, size_t &addr_len)
 {
-	int ret = fi_getname(&ofi_ep->fid, address, &addr_len);
+	int ret = fi_getname(&ofi_ep.get()->fid, address, &addr_len);
 	if (ret == -FI_ETOOSMALL) {
 		NCCL_OFI_WARN("Endpoint's address length (%zu) is larger than supplied buffer length",
 			      addr_len);
@@ -47,7 +55,7 @@ int endpoint::get_ep_address(void *address, size_t &addr_len)
 fi_addr_t endpoint::av_insert_address(const void *address)
 {
 	fi_addr_t ret_addr;
-	int ret = fi_av_insert(av, address, 1, &ret_addr, 0, NULL);
+	int ret = fi_av_insert(av.get(), address, 1, &ret_addr, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("CM: Unable to insert remote address into address vector "
 			      "for device.");
@@ -151,10 +159,7 @@ cm_resources::~cm_resources()
 	   The endpoint must be closed first, since posted buffers and requests cannot
 	   be freed until the endpoint is closed.
 	 */
-	int ret = ep.close_ofi_ep();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to close OFI endpoint: %d", ret);
-	}
+	ep.close_ofi_ep();
 
 	/* Free all requests. (A unique_ptr would be better here so these can be freed
 	   automatically) */
@@ -178,13 +183,7 @@ int endpoint::dereg_mr(void *handle_ptr)
 		handle->ep.mr_key_pool.free_id(handle->mr_key);
 	}
 
-	if (handle->mr) {
-		ret = fi_close(&handle->mr->fid);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Unable to de-register memory. RC: %d, Error: %s",
-				      ret, fi_strerror(-ret));
-		}
-	}
+	handle->mr.reset();
 
 	delete handle;
 	return ret;
@@ -208,7 +207,7 @@ int endpoint::reg_mr(void *ep_ptr, void *data, size_t size, void **mr_handle)
 	uint64_t regattr_flags = 0;
 
 	/* Allocate cm memory registration handle */
-	struct mr_handle_t *ret_handle = new mr_handle_t { nullptr, MR_KEY_INIT_VALUE, *ep};
+	struct mr_handle_t *ret_handle = new mr_handle_t { {}, MR_KEY_INIT_VALUE, *ep};
 
 	mr_attr.access = FI_SEND | FI_RECV;
 
@@ -223,23 +222,22 @@ int endpoint::reg_mr(void *ep_ptr, void *data, size_t size, void **mr_handle)
 		mr_attr.requested_key = ret_handle->mr_key;
 	}
 
-	ret = fi_mr_regattr(domain, &mr_attr,
-			    regattr_flags, &ret_handle->mr);
-	if (ret != 0) {
-		NCCL_OFI_WARN("CM: Unable to register memory. RC: %d, Error: %s",
-			      ret, fi_strerror(-ret));
+	ret_handle->mr = nccl_ofi_ofiutils_mr_regattr(domain, &mr_attr, regattr_flags);
+	if (!ret_handle->mr) {
+		NCCL_OFI_WARN("CM: Unable to register memory using ofiutils helper");
+		ret = -ENOMEM;
 		goto error;
 	}
 
 	if (endpoint_mr) {
-		ret = fi_mr_bind(ret_handle->mr, &ep->ofi_ep->fid, 0);
+		ret = fi_mr_bind(ret_handle->mr.get(), &ep->ofi_ep.get()->fid, 0);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("CM: Unable to bind MR to EP. RC: %d, Error: %s",
 				      ret, fi_strerror(-ret));
 			goto error;
 		}
 
-		ret = fi_mr_enable(ret_handle->mr);
+		ret = fi_mr_enable(ret_handle->mr.get());
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("CM: Unable to enable MR. RC: %d, Error: %s",
 				       ret, fi_strerror(-ret));
@@ -258,12 +256,12 @@ error:
 	return ret;
 }
 
-int endpoint::send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+int endpoint::send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t &mr_handle,
 		   fi_addr_t dest_addr, nccl_ofi_cm_req &req)
 {
-	void *desc = fi_mr_desc(mr_handle.mr);
+	void *desc = fi_mr_desc(mr_handle.mr.get());
 
-	ssize_t ret = fi_send(ofi_ep, &conn_msg, size, desc,
+	ssize_t ret = fi_send(ofi_ep.get(), &conn_msg, size, desc,
 			      dest_addr, &req.ctx.ofi_ctx);
 	if (ret != 0 && ret != -FI_EAGAIN) {
 		NCCL_OFI_WARN("Error in call to fi_send. RC: %zd, Error: %s",
@@ -274,12 +272,12 @@ int endpoint::send(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_h
 	return static_cast<int>(ret);
 }
 
-int endpoint::recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_handle,
+int endpoint::recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t &mr_handle,
 		   nccl_ofi_cm_req &req)
 {
-	void *desc = fi_mr_desc(mr_handle.mr);
+	void *desc = fi_mr_desc(mr_handle.mr.get());
 
-	ssize_t ret = fi_recv(ofi_ep, &conn_msg, size, desc,
+	ssize_t ret = fi_recv(ofi_ep.get(), &conn_msg, size, desc,
 			      FI_ADDR_UNSPEC, &req.ctx.ofi_ctx);
 	if (ret != 0 && ret != -FI_EAGAIN) {
 		NCCL_OFI_WARN("Error posting rx buffer. RC: %zd, Error: %s",
@@ -291,14 +289,11 @@ int endpoint::recv(nccl_ofi_cm_conn_msg &conn_msg, size_t size, mr_handle_t mr_h
 }
 
 
-int endpoint::close_ofi_ep()
+void endpoint::close_ofi_ep()
 {
-	if (ofi_ep == nullptr) {
+	if (!ofi_ep.get()) {
 		NCCL_OFI_WARN("ep was already closed");
-		return -EINVAL;
+		return;
 	}
-
-	int ret = fi_close(&ofi_ep->fid);
-	ofi_ep = nullptr;
-	return ret;
+	ofi_ep.reset();
 }

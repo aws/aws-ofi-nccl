@@ -17,6 +17,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_msgbuff.h"
+#include "ofi/nccl_ofi_ofiwrapper.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
 #if HAVE_NVTX_TRACING
@@ -121,10 +122,10 @@ struct nccl_net_ofi_rdma_mr_handle_t : nccl_net_ofi_mr_handle_t {
 	 */
 	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
 		: nccl_net_ofi_mr_handle_t(0),
-		  num_rails(num_rails_arg),
-		  mr(num_rails, nullptr)
+		  num_rails(num_rails_arg)
 	{
 		assert(num_rails > 0);
+		mr.resize(num_rails);
 	}
 
 	/**
@@ -137,7 +138,7 @@ struct nccl_net_ofi_rdma_mr_handle_t : nccl_net_ofi_mr_handle_t {
 	uint16_t num_rails;
 
 	/* Array of size `num_rails' */
-	std::vector<struct fid_mr *> mr;
+	std::vector<fid_mr_ptr> mr;
 };
 
 
@@ -631,12 +632,23 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 
 
 struct nccl_net_ofi_rdma_domain_rail_t {
+	/* Default constructor */
+	nccl_net_ofi_rdma_domain_rail_t() = default;
+
+	/* Move constructor and assignment */
+	nccl_net_ofi_rdma_domain_rail_t(nccl_net_ofi_rdma_domain_rail_t&&) = default;
+	nccl_net_ofi_rdma_domain_rail_t& operator=(nccl_net_ofi_rdma_domain_rail_t&&) = default;
+	
+	/* Delete copy operations since smart pointers are non-copyable */
+	nccl_net_ofi_rdma_domain_rail_t(const nccl_net_ofi_rdma_domain_rail_t&) = delete;
+	nccl_net_ofi_rdma_domain_rail_t& operator=(const nccl_net_ofi_rdma_domain_rail_t&) = delete;
+
 	uint16_t rail_id;
 
 	/* Access domain handles */
-	struct fid_domain *domain;
+	fid_domain_ptr domain;
 
-	struct fid_cq *cq;
+	fid_cq_ptr cq;
 };
 
 
@@ -654,13 +666,13 @@ public:
 	inline struct fid_domain *get_ofi_domain_for_cm() override
 	{
 		assert(!domain_rails.empty());
-		return domain_rails[0].domain;
+		return domain_rails[0].domain.get();
 	}
 
 	inline struct fid_cq *get_ofi_cq_for_cm() override
 	{
 		assert(!domain_rails.empty());
-		return domain_rails[0].cq;
+		return domain_rails[0].cq.get();
 	}
 
 	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device()
@@ -852,10 +864,21 @@ private:
  * specific rail.
  */
 struct nccl_net_ofi_ep_rail {
+	/* Default constructor */
+	nccl_net_ofi_ep_rail() = default;
+	
+	/* Move constructor and assignment */
+	nccl_net_ofi_ep_rail(nccl_net_ofi_ep_rail&&) = default;
+	nccl_net_ofi_ep_rail& operator=(nccl_net_ofi_ep_rail&&) = default;
+	
+	/* Delete copy operations since smart pointers are non-copyable */
+	nccl_net_ofi_ep_rail(const nccl_net_ofi_ep_rail&) = delete;
+	nccl_net_ofi_ep_rail& operator=(const nccl_net_ofi_ep_rail&) = delete;
+
 	uint16_t rail_id;
 
 	/* Local libfabric endpoint handle */
-	struct fid_ep *ofi_ep;
+	fid_ep_ptr ofi_ep;
 
 	/* Name of local libfabric endpoint */
 	char local_ep_name[MAX_EP_ADDR];
@@ -864,7 +887,7 @@ struct nccl_net_ofi_ep_rail {
 	size_t local_ep_name_len;
 
 	/* Address vector handle */
-	struct fid_av *av;
+	fid_av_ptr av;
 
 	/*
 	 * Rx buffer management
@@ -1160,8 +1183,6 @@ protected:
 				nccl_net_ofi_ep_rail_t *ep_rail,
 				uint32_t tclass);
 
-	static void ep_rail_release(nccl_net_ofi_ep_rail_t *rail, int dev_id);
-
 };
 
 /*
@@ -1171,11 +1192,22 @@ protected:
  * specific rail.
  */
 struct nccl_net_ofi_rdma_device_rail_t {
+	/* Default constructor */
+	nccl_net_ofi_rdma_device_rail_t() = default;
+
+	/* Move constructor and assignment */
+	nccl_net_ofi_rdma_device_rail_t(nccl_net_ofi_rdma_device_rail_t&&) = default;
+	nccl_net_ofi_rdma_device_rail_t& operator=(nccl_net_ofi_rdma_device_rail_t&&) = default;
+	
+	/* Delete copy operations since smart pointers are non-copyable */
+	nccl_net_ofi_rdma_device_rail_t(const nccl_net_ofi_rdma_device_rail_t&) = delete;
+	nccl_net_ofi_rdma_device_rail_t& operator=(const nccl_net_ofi_rdma_device_rail_t&) = delete;
+
 	/* NIC info */
 	struct fi_info *info;
 
 	/* Fabric handle */
-	struct fid_fabric *fabric;
+	fid_fabric_ptr fabric;
 };
 
 
