@@ -253,11 +253,16 @@ AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CXXFLAGS.])
        CXXFLAGS="${werror_flags} ${CXXFLAGS} "])
 
+AC_ARG_ENABLE([nccl-net-library],
+      [AS_HELP_STRING([--disable-nccl-net-library],
+           [Do not create shared library libnccl-net.so that is the same as libnccl-net-ofi.so.
+            Useful in cases where you are trying to install multiple plugins in the same container.])])
 AC_ARG_ENABLE([nccl-net-symlink],
       [AS_HELP_STRING([--disable-nccl-net-symlink],
-           [Do not create symlink libnccl-net.so to point at libnccl-net-ofi.so.  Useful in cases where
-	   you are trying to install multiple plugins in the same container.])])
-AM_CONDITIONAL([ENABLE_NCCL_NET_SYMLINK], [test "${enable_nccl_net_symlink}" != "no"])
+           [Deprecated, is equivalent to --disable-nccl-net-library. Do not create
+            shared library libnccl-net.so that is the same as libnccl-net-ofi.so.
+            Useful in cases where you are trying to install multiple plugins in the same container.])])
+AM_CONDITIONAL([ENABLE_NCCL_NET_LIBRARY], [test "${enable_nccl_net_library}" != "no" && test "${enable_nccl_net_symlink}" != "no"])
 
 AC_SUBST([NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS])
 
