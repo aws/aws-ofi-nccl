@@ -33,26 +33,19 @@ sources = \
 	nccl_ofi_dmabuf.cpp \
 	nccl_ofi_ep_addr_list.cpp \
 	nccl_ofi_param.cpp \
-	tracepoint.cpp
-
-if WANT_PLATFORM_AWS
-sources += platform-aws.cpp
-endif
+	tracepoint.cpp \
+	platform-aws.cpp \
+	nccl_ofi_platform.cpp
 
 if ENABLE_NEURON
   sources += nccl_ofi_interface_neuron.cpp
 else
   sources += \
 	nccl_ofi_cuda.cpp \
-	nccl_ofi_interface_nvidia.cpp
-
-  # add the tuner sources into the library
-if WANT_PLATFORM_AWS
-    sources +=  \
+	nccl_ofi_interface_nvidia.cpp \
 	tuner/nccl_ofi_regions.cpp \
 	tuner/nccl_ofi_tuner.cpp \
 	tuner/nccl_ofi_model.cpp
-endif
 endif
 
 # Build an internal-only library that can be used by unit tests as
@@ -100,12 +93,10 @@ symlink_files =
 if ENABLE_NCCL_NET_SYMLINK
 symlink_files += libnccl-net.so
 endif
-if WANT_PLATFORM_AWS
 # NCCL standardized on the libnccl-tuner-<interface> format after we released a
 # plugin with the tuner named libnccl-ofi-tuner.so.  Since they're all symlinks
 # anyway, do both.
 symlink_files += libnccl-ofi-tuner.so libnccl-tuner-ofi.so
-endif
 
 install_plugin_symlinks = { \
   test -z "$$files" \
