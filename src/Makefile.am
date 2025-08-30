@@ -80,15 +80,15 @@ else
 # We always install libnccl-net-ofi.so.  To use the default shared library,
 # either NCCL_NET_PLUGIN=libnccl-net-ofi.so or NCCL_NET_PLUGIN=ofi must be set.
 #
-# To enable the OFI plugin by default, a symlink libnccl-net.so is created.  If
+# To enable the OFI plugin by default, a libnccl-net.so library is created.  If
 # NCCL_NET_PLUGIN is not set, NCCL will attempt to dlopen libnccl-net.so, with
 # dlopen() searching the default search path.  This behavior is optional, as
 # some situations (like the NGC containers) may have multiple network plugins.
 #
 # Recent versions of NCCL include a tuner interface for algorithm/protocol
-# selection.  The tuner code lives in the net plugin, but a symlink is created
-# to libnccl-ofi-tuner.so when the tuner is built (when on AWS).  Differenct
-# versions of NCCL have different tuner loading behaviors:
+# selection.  The tuner code lives in the net plugin, but a libnccl-ofi-tuner.so
+# library is created when the tuner is built (when on AWS).
+# Different versions of NCCL have different tuner loading behaviors:
 #
 #  2.19 - 2.20    Tuner only loaded if NCCL_TUNER_PLUGIN is set to a filename
 #  2.21 -         First look for NCCL_TUNER_PLUGIN, then look for tuner interface
@@ -96,30 +96,27 @@ else
 #
 # By bundling the tuner in the net plugin, we cause the tuner to be used by
 # default on NCCL 2.21 or later.
-symlink_files =
-if ENABLE_NCCL_NET_SYMLINK
-symlink_files += libnccl-net.so
+if ENABLE_NCCL_NET_LIBRARY
+  lib_LTLIBRARIES += libnccl-net.la
+  libnccl_net_la_SOURCES =
+  libnccl_net_la_LIBADD = libinternal_plugin.la
+  libnccl_net_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_net_la_LDFLAGS = -module -avoid-version
 endif
 if WANT_PLATFORM_AWS
 # NCCL standardized on the libnccl-tuner-<interface> format after we released a
-# plugin with the tuner named libnccl-ofi-tuner.so.  Since they're all symlinks
-# anyway, do both.
-symlink_files += libnccl-ofi-tuner.so libnccl-tuner-ofi.so
+# plugin with the tuner named libnccl-ofi-tuner.so.  Create separate libraries
+# for each name.
+  lib_LTLIBRARIES += libnccl-ofi-tuner.la libnccl-tuner-ofi.la
+  libnccl_ofi_tuner_la_SOURCES =
+  libnccl_ofi_tuner_la_LIBADD = libinternal_plugin.la
+  libnccl_ofi_tuner_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
+
+  libnccl_tuner_ofi_la_SOURCES =
+  libnccl_tuner_ofi_la_LIBADD = libinternal_plugin.la
+  libnccl_tuner_ofi_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_tuner_ofi_la_LDFLAGS = -module -avoid-version
 endif
-
-install_plugin_symlinks = { \
-  test -z "$$files" \
-    || { test ! -d "$$dir" && test ! -f "$$dir" && test ! -r "$$dir"; } \
-    || { for file in $$files ; do \
-	echo " ( cd '$$dir' && rm -f $$file && $(LN_S) libnccl-net-ofi.so $$file )"; \
-         $(am__cd) "$$dir" && rm -f $$file && $(LN_S) libnccl-net-ofi.so $$file ; \
-	done } \
-  }
-
-install-exec-hook:
-	@files="$(symlink_files)" ; dir='$(DESTDIR)$(libdir)' ; $(install_plugin_symlinks)
-
-uninstall-local:
-	@files="$(symlink_files)" ; dir='$(DESTDIR)$(libdir)' ; $(am__uninstall_files_from_dir)
 
 endif
