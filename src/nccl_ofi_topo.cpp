@@ -867,9 +867,7 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	 * more information.  We do this here so that there is
 	 * consistency
 	 */
-	if (platform_sort_rails != NULL) {
-		platform_sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
-	}
+	Platform::get_instance().sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
 
 	for (; group_idx < num_groups; ++group_idx) {
 		hwloc_obj_t obj;

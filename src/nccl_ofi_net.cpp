@@ -175,11 +175,9 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	if (platform_init) {
-		ret = platform_init(&provider_filter);
-		if (ret != 0)
-			goto exit;
-	}
+	ret = Platform::get_instance().init(&provider_filter);
+	if (ret != 0)
+		goto exit;
 
 	if (ofi_nccl_progress_model.get_source() != ParamSource::DEFAULT) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Requesting progress model %s",
@@ -829,11 +827,7 @@ nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 		throw std::runtime_error("Base device constructor: device name alloc failed");
 	}
 
-	if (platform_device_set_guid) {
-		platform_device_set_guid(info, this);
-	} else {
-		nccl_net_ofi_device_set_guid(info, this);
-	}
+	Platform::get_instance().device_set_guid(info, this);
 
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);

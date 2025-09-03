@@ -15,6 +15,7 @@ noinst_HEADERS = test-logger.h
 
 noinst_PROGRAMS = \
 	assert \
+	aws_platform_mapper \
 	environ \
 	freelist \
 	msgbuff \
@@ -25,20 +26,15 @@ noinst_PROGRAMS = \
 	histogram_binner \
 	histogram \
 	dlopen_c_test \
-	param
-
-if WANT_PLATFORM_AWS
-noinst_PROGRAMS += aws_platform_mapper
-endif
+	param \
+	platform_detection \
+	platform_detection_none
 
 if !ENABLE_NEURON
-if WANT_PLATFORM_AWS
   AM_LDFLAGS = $(CUDA_LDFLAGS)
   AM_CPPFLAGS += $(CUDA_CPPFLAGS)
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += region_based_tuner
-  region_based_tuner_SOURCES = region_based_tuner.cpp
-endif
 endif
 
 assert_SOURCES = assert.cpp
@@ -54,6 +50,12 @@ histogram_binner_SOURCES = histogram_binner.cpp
 histogram_SOURCES = histogram.cpp
 dlopen_c_test_SOURCES = dlopen_c_test.c
 param_SOURCES = param.cpp
+platform_detection_SOURCES = platform_detection.cpp
+platform_detection_none_SOURCES = platform_detection.cpp
+region_based_tuner_SOURCES = region_based_tuner.cpp
+
+# Set environment variable for platform_detection_none test
+platform_detection_none_TESTS_ENVIRONMENT = OFI_NCCL_FORCE_PRODUCT_NAME=NONE
 
 TESTS = $(noinst_PROGRAMS)
 endif

@@ -5,8 +5,13 @@
 #ifndef NCCL_OFI_PLATFORM_H_
 #define NCCL_OFI_PLATFORM_H_
 
+#include <memory>
+
 #include <rdma/fabric.h>
 #include <rdma/fi_endpoint.h>
+
+/* Forward declaration */
+struct nccl_net_ofi_device_t;
 
 /* Declare platform-specific hooks that can be provided by platform-specific
  * source files (such as the optionally compiled platform_aws.c).  The functions
@@ -58,5 +63,39 @@ void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t nu
  * network device.
  */
 void platform_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) __attribute__((weak));
+
+/* Platform abstraction for runtime platform selection */
+class Platform {
+public:
+	virtual ~Platform() = default;
+	virtual const char* get_name() const = 0;
+	virtual int init(const char **provider_filter) const = 0;
+	virtual int config_endpoint(struct fi_info *info, struct fid_ep *ep) const = 0;
+	virtual void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) const = 0;
+	virtual void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) const;
+
+	static const Platform& get_instance();
+
+private:
+	static std::unique_ptr<Platform> instance;
+};
+
+/* AWS specific optimizations */
+class Aws : public Platform {
+public:
+	const char* get_name() const override { return "AWS"; }
+	int init(const char **provider_filter) const override;
+	int config_endpoint(struct fi_info *info, struct fid_ep *ep) const override;
+	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) const override;
+};
+
+/* Default of no optimizations */
+class Default : public Platform {
+public:
+	const char* get_name() const override { return "Default"; }
+	int init(const char **provider_filter) const override { return 0; }
+	int config_endpoint(struct fi_info *info, struct fid_ep *ep) const override { return 0; }
+	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) const override {}
+};
 
 #endif // End NCCL_OFI_PLATFORM_H_
