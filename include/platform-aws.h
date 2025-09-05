@@ -14,6 +14,7 @@
 #include <string>
 
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_platform.h"
 
 #define PLATFORM_NAME_P6E_GB200 "p6e-gb200"
 
@@ -57,5 +58,14 @@ struct ec2_platform_data *platform_aws_get_platform_map(size_t *len);
 struct ec2_platform_data *platform_aws_get_platform_entry(const char *platform_type,
 							  struct ec2_platform_data *platform_data_list,
 							  size_t platform_data_len);
+
+class Aws : public Platform {
+public:
+	const char* get_name() const override { return "AWS"; }
+	int init(const char **provider_filter) const override;
+	int config_endpoint(struct fi_info *info, struct fid_ep *ep) const override;
+	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) const override;
+	void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) const override;
+};
 
 #endif // End NCCL_OFI_H_
