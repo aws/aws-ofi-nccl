@@ -33,6 +33,7 @@ sources = \
 	nccl_ofi_dmabuf.cpp \
 	nccl_ofi_ep_addr_list.cpp \
 	nccl_ofi_param.cpp \
+	nccl_ofi_platform.cpp \
 	tracepoint.cpp
 
 if WANT_PLATFORM_AWS
