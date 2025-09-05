@@ -21,6 +21,7 @@ AC_DEFUN([AX_CHECK_PLATFORM_AWS],[
   AM_CONDITIONAL([WANT_PLATFORM_AWS], [test "${want_platform_aws}" = "yes"])
   AS_IF([test "${want_platform_aws}" = "yes"],
         [NCCL_OFI_PLATFORM="AWS"
+         AC_DEFINE([WANT_AWS_PLATFORM], [1], [Define to 1 if AWS platform optimizations are enabled])
          AC_MSG_CHECKING([for Libfabric 1.22.0 or greater])
          AC_COMPILE_IFELSE([AC_LANG_PROGRAM(
 [[#include <rdma/fabric.h>

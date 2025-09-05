@@ -353,12 +353,10 @@ int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *d
 		goto error;
 #endif
 	}
-	/* Run platform-specific endpoint configuration hook if declared */
-	if (platform_config_endpoint) {
-		ret = platform_config_endpoint(info, *ep);
-		if (ret != 0)
-			goto error;
-	}
+	/* Run platform-specific endpoint configuration hook */
+	ret = PlatformManager::get_global().get_platform().config_endpoint(info, *ep);
+	if (ret != 0)
+		goto error;
 
 	/* Enable endpoint for communication */
 	ret = fi_enable(*ep);

@@ -11,51 +11,80 @@
 #define PLATFORM_AWS_H_
 
 #include <map>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_platform.h"
 
 #define PLATFORM_NAME_P6E_GB200 "p6e-gb200"
 
-struct ec2_platform_data {
-	const char* name;
-	const char* regex;
-	const char* topology;
-	int default_dup_conns;
-	float latency;
-	bool gdr_required;
-	PROTOCOL default_protocol;
-	bool domain_per_thread;
-	std::map<std::string, std::string> env;
+class PlatformAWS : public Platform {
+public:
+	const char* get_name() const override { return "AWS"; }
+	int get_priority() override { return 100; }
+	int init(const char **provider_filter) override;
+	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
+	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
+	void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) override;
+
+protected:
+	struct ec2_platform_data {
+		const char* name;
+		const char* regex;
+		const char* topology;
+		int default_dup_conns;
+		float latency;
+		bool gdr_required;
+		PROTOCOL default_protocol;
+		bool domain_per_thread;
+		std::map<std::string, std::string> env;
+	};
+
+	struct platform_aws_node_guid {
+		uint8_t func_idx;
+		uint8_t per_card_pci_bus;
+		uint16_t per_card_pci_domain;
+		uint32_t func_mac_low_bytes;
+	};
+
+	static const ec2_platform_data platform_data_map[];
+
+	// Platform data functions
+	const ec2_platform_data *get_platform_data();
+	const ec2_platform_data *get_platform_map(size_t *len) const;
+	static const ec2_platform_data *get_platform_entry(const char *platform_type,
+					      const ec2_platform_data *platform_data_list,
+					      size_t platform_data_len);
+
+	// Endpoint configuration functions
+	int validate_rdma_write(struct fid_ep *ep);
+	int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name, bool *have_ordering);
+	int configure_ep_max_msg_size(struct fid_ep *ep);
+	int configure_nvls_option();
+	int configure_tuner();
+
+	// GUID and rail functions
+	const platform_aws_node_guid* get_node_guid_fields(struct fi_info *info);
+	inline int get_rail_vf_idx(struct fi_info *info) {
+		const auto* fields = get_node_guid_fields(info);
+		return fields ? fields->func_idx : -EIO;
+	}
+
+private:
+	std::mutex mutex_;
+
+	// Cache for GUID fields to avoid repeated sysfs reads
+	std::unordered_map<std::string, platform_aws_node_guid> guid_cache_;
+
+	// Platform data state
+	bool platform_data_init_ = false;
+	const ec2_platform_data *cached_platform_data_ = nullptr;
+
+	// Endpoint config state
+	bool nccl_proto_configured_ = false;
+	bool need_ordering_ = false;
 };
-
-
-struct platform_aws_node_guid {
-	uint8_t func_idx;
-	uint8_t per_card_pci_bus;
-	uint16_t per_card_pci_domain;
-	uint32_t func_mac_low_bytes;
-};
-
-/*
- * @brief        Get the platform data map
- *
- * This function exists solely to test
- * platform_aws_get_platform_entry() against the production data map.
- */
-struct ec2_platform_data *platform_aws_get_platform_map(size_t *len);
-
-
-/*
- * @brief	Returns platform data for current platform type, if found
- *
- * @input	Platform type
- *
- * @return	NULL, if no topology found
- * 		platform data, if match found
- */
-struct ec2_platform_data *platform_aws_get_platform_entry(const char *platform_type,
-							  struct ec2_platform_data *platform_data_list,
-							  size_t platform_data_len);
 
 #endif // End NCCL_OFI_H_
