@@ -546,7 +546,7 @@ static int configure_tuner()
  * 		   if we find no match
  * 		error, on failure
  */
-int platform_init(const char **provider_filter)
+int Aws::init(const char **provider_filter) const
 {
 	int ret = ncclSuccess;
 	struct ec2_platform_data *platform_data;
@@ -694,7 +694,7 @@ exit:
 	return ret;
 }
 
-int platform_config_endpoint(struct fi_info *info, struct fid_ep* endpoint) {
+int Aws::config_endpoint(struct fi_info *info, struct fid_ep* endpoint) const {
 	int ret = 0;
 #if HAVE_CUDA
 	const char *optname_name = "none";
@@ -932,8 +932,14 @@ static int get_rail_vf_idx(struct fi_info *info)
 	return fields->func_idx;
 }
 
-void platform_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device)
-{
+/*
+ * Platform-specific guid property setter
+ *
+ * This overrides the default guid setter which is based on network device
+ * index and IP address. Platforms can set device->guid to be any 64-bit value
+ * as they seem fit to uniquely identify the network device.
+ */
+void Aws::device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) const {
 	const struct platform_aws_node_guid* fields = get_node_guid_fields(info);
 	uint32_t node_id = nccl_ofi_get_unique_node_id();
 
@@ -966,8 +972,7 @@ void platform_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *devic
  * that there is an alternating of the 0th pair index and then the 1st
  * pair index, and so on.
  */
-void platform_sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups)
-{
+void Aws::sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) const {
 	struct fi_info **info_array = NULL;
 	struct fi_info *info_iter = NULL;
 	size_t *vf_array = NULL;
