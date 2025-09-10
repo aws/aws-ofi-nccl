@@ -14,9 +14,30 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 
-#define DECLARE_CUDA_FUNCTION(function) static PFN_##function pfn_##function = NULL
-#define RESOLVE_CUDA_FUNCTION(function)                                                                                 \
-	do {                                                                                                            \
+#define DECLARE_CUDA_FUNCTION(function, version) static PFN_##function##_v##version pfn_##function = NULL
+
+#if CUDART_VERSION >= 13000
+#define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                  \
+		enum cudaDriverEntryPointQueryResult result;                                                            \
+		cudaError_t err =                                                                                       \
+			cudaGetDriverEntryPointByVersion(#function, (void **)&pfn_##function, version, cudaEnableDefault, &result); \
+		if (err != cudaSuccess) {                                                                               \
+			switch (result) {                                                                               \
+			case cudaDriverEntryPointSymbolNotFound:                                                        \
+				NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);                         \
+				break;                                                                                  \
+			case cudaDriverEntryPointVersionNotSufficent:                                                   \
+				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", #function);                \
+				break;                                                                                  \
+			case cudaDriverEntryPointSuccess:                                                               \
+			default:                                                                                        \
+				NCCL_OFI_WARN("Unexpected cudaDriverEntryPointQueryResutlt value %d", (int)result);     \
+				break;                                                                                  \
+			}                                                                                               \
+		}                                                                                                       \
+	} while (0);
+#else
+#define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                   \
 		enum cudaDriverEntryPointQueryResult result;                                                            \
 		cudaError_t err =                                                                                       \
 			cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, &result);       \
@@ -35,14 +56,15 @@
 			}                                                                                               \
 		}                                                                                                       \
 	} while (0);
+#endif
 
-DECLARE_CUDA_FUNCTION(cuCtxGetDevice);
-DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute);
-DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
-DECLARE_CUDA_FUNCTION(cuMemGetAddressRange);
-DECLARE_CUDA_FUNCTION(cuMemAlloc);
-DECLARE_CUDA_FUNCTION(cuMemFree);
-DECLARE_CUDA_FUNCTION(cuMemcpy);
+DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
+DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
+DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
+DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
+DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
+DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
 
 int nccl_net_ofi_cuda_init(void)
 {
@@ -70,13 +92,13 @@ int nccl_net_ofi_cuda_init(void)
 	              driverVersion,
 	              runtimeVersion);
 
-	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice);
-	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute);
-	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange);
-	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange);
-	RESOLVE_CUDA_FUNCTION(cuMemAlloc);
-	RESOLVE_CUDA_FUNCTION(cuMemFree);
-	RESOLVE_CUDA_FUNCTION(cuMemcpy);
+	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
+	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
+	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
+	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemcpy, 4000);
 
 	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
@@ -129,7 +151,7 @@ int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
 
 int nccl_net_ofi_cuda_mem_free(void *ptr)
 {
-       CUresult ret = pfn_cuMemFree((CUdeviceptr)ptr);
+	CUresult ret = pfn_cuMemFree((CUdeviceptr)ptr);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
