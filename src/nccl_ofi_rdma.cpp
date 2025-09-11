@@ -1100,13 +1100,16 @@ static inline int handle_flush_comp(nccl_net_ofi_rdma_req_t *req)
 	if (num_completions == flush_data->total_num_compls &&
 		OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
 
-		/* If the state is already marked complete then
-		 * free the request, else test() has not yet been called
-		 * on the request, so only update request state
-		*/
 		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->type, req, req);
 
+		/* If the state is already marked complete (before getting the completion event),
+		 * decrement num_pending_flush_comps to indicate we've received the completion
+		 * event. Otherwise, test() has not yet been called on the request, so only
+		 * update request state.
+		 */
 		if (req->state == NCCL_OFI_RDMA_REQ_COMPLETED) {
+			auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(req->comm);
+			r_comm->num_pending_flush_comps--;
 			assert(req->free);
 			req->free(req, true);
 		} else {
@@ -2381,10 +2384,12 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 #if HAVE_CUDA
 		if (req->type == NCCL_OFI_RDMA_FLUSH) {
 			/*
-			* Check if the flush is complete and mark it as complete
-			* if the host buffers have been populated with the sentinel value
-			* The request will be freed once all completions are processed.
-			*/
+			 * Check if the flush is complete and mark it as complete
+			 * if the host buffers have been populated with the sentinel value.
+			 * Increment num_pending_flush_comps to indicate we are still waiting,
+			 * on the request's completion event. The request will be freed once
+			 * all completions are processed.
+			 */
 			if (has_flush_completed(req))
 			{
 				req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
@@ -2392,6 +2397,9 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 
 				if (size)
 					*size = req_size;
+
+				auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(req->comm);
+				r_comm->num_pending_flush_comps++;
 				*done = 1;
 				goto exit;
 			}
@@ -3484,12 +3492,6 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
  */
 static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	/* If close message is not enabled, do not send the close message;
-	   destroy the communicator immediately */
-	if (ofi_nccl_disable_close_message() == 1) {
-		return COMM_READY_TO_DESTROY;
-	}
-
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		r_comm->base.base.ep;
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
@@ -3510,6 +3512,19 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 		return ret;
 	}
 
+	/**
+	 * Do not destroy the recv comm until all flush requests that were marked as
+	 * completed before getting completion events finish their completions.
+	 */
+	if (r_comm->num_pending_flush_comps > 0) {
+		return 0;
+	}
+
+	/* If close message is not enabled, do not send the close message;
+	   destroy the communicator immediately */
+	if (ofi_nccl_disable_close_message() == 1) {
+		return COMM_READY_TO_DESTROY;
+	}
 	if (r_comm->send_close_req == NULL) {
 		/* Waiting for all ctrls to complete */
 		uint64_t n_ctrl_sent = r_comm->n_ctrl_sent;
@@ -3815,9 +3830,10 @@ static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	int ret = 0;
 
-	/* If there are still requests in-flight, we need to also close the
-	 * endpoint and invalidate the domain */
-	if (r_comm->num_inflight_reqs > 0) {
+	/* If there are still requests in-flight (pending completions) that are not
+	 * flush requests that we marked as complete in "test" before getting the completion
+	 * event, we need to also close the endpoint and invalidate the domain */
+	if (r_comm->num_inflight_reqs > 0 && r_comm->num_inflight_reqs > r_comm->num_pending_flush_comps) {
 		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
 			      r_comm);
 
