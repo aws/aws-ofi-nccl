@@ -607,6 +607,13 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_cm_receiver *receiver;
 
 	uint64_t num_inflight_reqs;
+
+	/**
+	 * Number of outstanding flush requests that have been marked as completed
+	 * without getting a completion event
+	 */
+	uint64_t num_pending_flush_comps;
+
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
