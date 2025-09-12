@@ -21,6 +21,6 @@ void PlatformManager::register_platform(PlatformPtr&& platform) {
 		// TODO: Add proper resolution mechanism for competing priorities
 		priority++;
 	}
-
+	NCCL_OFI_INFO(NCCL_INIT, "Adding %s platform with %d priority", name, priority);
 	platforms_[priority] = std::move(platform);
 }

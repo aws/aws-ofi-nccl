@@ -152,7 +152,12 @@ public:
 	 *
 	 * @return	Reference to highest priority platform
 	 */
-	inline Platform& get_platform() { return *platforms_.rbegin()->second; }
+	inline Platform& get_platform() {
+		Platform& selected = *platforms_.rbegin()->second;
+		NCCL_OFI_INFO(NCCL_INIT, "Selected platform: %s with priority %d",
+		              selected.get_name(), platforms_.rbegin()->first);
+		return selected;
+	}
 
 	/**
 	 * @brief	Get number of registered platforms (for testing)

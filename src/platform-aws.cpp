@@ -21,6 +21,9 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <memory>
+#include <hwloc.h>
+#include <unistd.h>
 
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
@@ -1046,4 +1049,34 @@ cleanup:
 	}
 
 	return;
+}
+
+bool PlatformAWS::is_aws() const {
+	if (ofi_nccl_force_non_aws.get()) {
+		NCCL_OFI_INFO(NCCL_INIT, "Disabling PlatformAWS optimizations");
+		return false;
+	}
+
+	hwloc_topology_t topo;
+	if (hwloc_topology_init(&topo) != 0) return false;
+
+	auto topology = std::shared_ptr<hwloc_topology>(topo, hwloc_topology_destroy);
+	/* HWLOC API changes introduced in version 2.0.0 - same pattern as nccl_ofi_topo.cpp */
+#if (HWLOC_API_VERSION >= 0x00020000)
+	hwloc_topology_set_io_types_filter(topo, HWLOC_TYPE_FILTER_KEEP_ALL);
+#else
+	unsigned long flags = hwloc_topology_get_flags(topo);
+	flags |= HWLOC_TOPOLOGY_FLAG_WHOLE_IO;
+	hwloc_topology_set_flags(topo, flags);
+#endif
+	if (hwloc_topology_load(topo) != 0) return false;
+
+	hwloc_obj_t obj = nullptr;
+	while ((obj = hwloc_get_next_pcidev(topo, obj)) != nullptr) {
+		if (obj->attr->pcidev.vendor_id == AWS_VENDOR_ID &&
+		    (obj->attr->pcidev.device_id & 0xFFF0) == EFA_DEV) {
+			return true;
+		}
+	}
+	return false;
 }

@@ -30,9 +30,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
-#ifdef WANT_AWS_PLATFORM
 #include "platform-aws.h"
-#endif
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
 
@@ -178,9 +176,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
 
-#ifdef WANT_AWS_PLATFORM
 	PlatformManager::get_global().register_platform(std::make_unique<PlatformAWS>());
-#endif
 
 	ret = PlatformManager::get_global().get_platform().init(&provider_filter);
 	if (ret != 0)
@@ -1058,7 +1054,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 
 	/* Store ref_cnt in local variable in case the endpoint gets deleted */
 	int local_ref_cnt = this->ref_cnt;
-	
+
 	if (local_ref_cnt == 0 || force_cleanup) {
 		/* If this was the endpoint we stored in domain for connection
 		   management, remove that reference as well */
