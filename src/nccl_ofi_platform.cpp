@@ -3,6 +3,12 @@
  */
 
 #include "nccl_ofi_platform.h"
+#include "platform-aws.h"
+
+PlatformManager::PlatformManager() {
+	register_platform(std::make_unique<Default>());
+	register_platform(std::make_unique<PlatformAWS>());
+}
 
 PlatformManager& PlatformManager::get_global() {
 	static PlatformManager manager;
@@ -21,6 +27,6 @@ void PlatformManager::register_platform(PlatformPtr&& platform) {
 		// TODO: Add proper resolution mechanism for competing priorities
 		priority++;
 	}
-
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Adding %s platform with %d priority", name, priority);
 	platforms_[priority] = std::move(platform);
 }

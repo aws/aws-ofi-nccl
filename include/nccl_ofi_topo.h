@@ -310,4 +310,12 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
  */
 int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
 
+/*
+ * @brief	Check if EFA or ENA devices are present in the system
+ *
+ * @return	true, if EFA or ENA devices are detected
+ *		false, otherwise
+ */
+bool nccl_ofi_topo_has_efa_ena_devices();
+
 #endif // End NCCL_NET_OFI_TOPO_H_

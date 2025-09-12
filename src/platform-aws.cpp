@@ -35,6 +35,7 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_rdma.h"
+#include "nccl_ofi_topo.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
@@ -1081,4 +1082,19 @@ cleanup:
 	}
 
 	return;
+}
+
+bool PlatformAWS::is_ec2_instance() {
+	// Validate that platform parameter wasn't set inconsistently between libraries
+	if (ofi_nccl_platform.get_source() == ParamSource::API) {
+		NCCL_OFI_WARN("Platform parameter was set via API call, which may indicate "
+		              "inconsistent configuration between network and tuner libraries");
+	}
+
+	PLATFORM platform_override = ofi_nccl_platform.get();
+	if (platform_override != PLATFORM::AUTO) {
+		return platform_override == PLATFORM::AWS;
+	}
+
+	return nccl_ofi_topo_has_efa_ena_devices();
 }

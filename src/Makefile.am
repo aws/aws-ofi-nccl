@@ -34,11 +34,8 @@ sources = \
 	nccl_ofi_ep_addr_list.cpp \
 	nccl_ofi_param.cpp \
 	nccl_ofi_platform.cpp \
+	platform-aws.cpp \
 	tracepoint.cpp
-
-if WANT_PLATFORM_AWS
-sources += platform-aws.cpp
-endif
 
 if ENABLE_NEURON
   sources += nccl_ofi_interface_neuron.cpp
@@ -48,12 +45,10 @@ else
 	nccl_ofi_interface_nvidia.cpp
 
   # add the tuner sources into the library
-if WANT_PLATFORM_AWS
-    sources +=  \
+  sources +=  \
 	tuner/nccl_ofi_regions.cpp \
 	tuner/nccl_ofi_tuner.cpp \
 	tuner/nccl_ofi_model.cpp
-endif
 endif
 
 # Build an internal-only library that can be used by unit tests as
@@ -104,20 +99,19 @@ if ENABLE_NCCL_NET_LIBRARY
   libnccl_net_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_la_LDFLAGS = -module -avoid-version
 endif
-if WANT_PLATFORM_AWS
+
 # NCCL standardized on the libnccl-tuner-<interface> format after we released a
 # plugin with the tuner named libnccl-ofi-tuner.so.  Create separate libraries
 # for each name.
-  lib_LTLIBRARIES += libnccl-ofi-tuner.la libnccl-tuner-ofi.la
-  libnccl_ofi_tuner_la_SOURCES =
-  libnccl_ofi_tuner_la_LIBADD = libinternal_plugin.la
-  libnccl_ofi_tuner_la_LIBTOOLFLAGS = --tag=CXX
-  libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
+lib_LTLIBRARIES += libnccl-ofi-tuner.la libnccl-tuner-ofi.la
+libnccl_ofi_tuner_la_SOURCES =
+libnccl_ofi_tuner_la_LIBADD = libinternal_plugin.la
+libnccl_ofi_tuner_la_LIBTOOLFLAGS = --tag=CXX
+libnccl_ofi_tuner_la_LDFLAGS = -module -avoid-version
 
-  libnccl_tuner_ofi_la_SOURCES =
-  libnccl_tuner_ofi_la_LIBADD = libinternal_plugin.la
-  libnccl_tuner_ofi_la_LIBTOOLFLAGS = --tag=CXX
-  libnccl_tuner_ofi_la_LDFLAGS = -module -avoid-version
-endif
+libnccl_tuner_ofi_la_SOURCES =
+libnccl_tuner_ofi_la_LIBADD = libinternal_plugin.la
+libnccl_tuner_ofi_la_LIBTOOLFLAGS = --tag=CXX
+libnccl_tuner_ofi_la_LDFLAGS = -module -avoid-version
 
 endif

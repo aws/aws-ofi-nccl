@@ -1722,3 +1722,29 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 
 	return info_list;
 }
+
+bool nccl_ofi_topo_has_efa_ena_devices()
+{
+	hwloc_topology_t topo;
+	if (hwloc_topology_init(&topo) != 0) {
+		return false;
+	}
+
+	auto topology = std::shared_ptr<hwloc_topology>(topo, hwloc_topology_destroy);
+	enable_hwloc_io_types(topo);
+
+	if (hwloc_topology_load(topo) != 0) {
+		return false;
+	}
+
+	hwloc_obj_t obj = nullptr;
+	while ((obj = hwloc_get_next_pcidev(topo, obj)) != nullptr) {
+		// Check for Amazon vendor id and EFA device or ENA device
+		if (obj->attr->pcidev.vendor_id == 0x1D0F &&
+		    (((obj->attr->pcidev.device_id & 0xFFF0) == 0xEFA0 || (obj->attr->pcidev.device_id & 0xFFF0) == 0xEC20) ||
+		     (obj->attr->pcidev.device_id & 0x0FFF) == 0x0EC2)) {
+			return true;
+		}
+	}
+	return false;
+}
