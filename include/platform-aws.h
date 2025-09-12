@@ -23,7 +23,7 @@
 class PlatformAWS : public Platform {
 public:
 	const char* get_name() const override { return "AWS"; }
-	int get_priority() override { return 100; }
+	int get_priority() override { return PLATFORM_PRIORITY * (is_ec2_instance() ? 1 : -1); }
 	int init(const char **provider_filter) override;
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
@@ -72,7 +72,13 @@ protected:
 		return fields ? fields->func_idx : -EIO;
 	}
 
+	// Determine if running on Amazon EC2 instance
+	bool is_ec2_instance();
+
 private:
+	// Constants
+	static constexpr int PLATFORM_PRIORITY = 100;
+
 	std::mutex mutex_;
 
 	// Cache for GUID fields to avoid repeated sysfs reads

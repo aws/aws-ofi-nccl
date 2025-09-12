@@ -17,6 +17,7 @@ public:
 	using PlatformAWS::get_platform_map;
 	using PlatformAWS::get_platform_entry;
 	using PlatformAWS::ec2_platform_data;
+	using PlatformAWS::is_ec2_instance;
 };
 
 /* check that we get the expected response for all our known platforms */
@@ -114,6 +115,14 @@ int main(int argc, char *argv[]) {
 	/* make sure we maintain ordering */
 	ret += check_value(test_map_1, 2, "platform-x", "first");
 	ret += check_value(test_map_1, 2, "platform-xy", "second");
+
+	// Test current environment setting
+	TestablePlatformAWS test_platform;
+	printf("  Current environment - is_ec2_instance(): %s, priority: %d\n",
+	       test_platform.is_ec2_instance() ? "true" : "false",
+	       test_platform.get_priority());
+
+	printf("  Note: Parameter effect visible only on compute nodes with EFA devices\n");
 
 	return ret;
 }
