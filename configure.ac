@@ -137,9 +137,6 @@ CHECK_PKG_HWLOC([],
 CHECK_PKG_VALGRIND()
 CHECK_VAR_REDZONE()
 
-NCCL_OFI_PLATFORM="none"
-AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
-
 AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
       [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
 
@@ -278,5 +275,5 @@ AC_OUTPUT
 echo "*"
 echo "* AWS OFI NCCL plugin has been configured."
 echo "*"
-echo "* Platform-specific optimizations: ${NCCL_OFI_PLATFORM}"
+echo "* Platform optimizations: Runtime detection enabled"
 echo "*"

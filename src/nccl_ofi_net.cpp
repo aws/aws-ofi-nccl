@@ -30,6 +30,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
+#include "platform-aws.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
 
@@ -175,11 +176,11 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	if (platform_init) {
-		ret = platform_init(&provider_filter);
-		if (ret != 0)
-			goto exit;
-	}
+	PlatformManager::get_global().register_platform(std::make_unique<PlatformAWS>());
+
+	ret = PlatformManager::get_global().get_platform().init(&provider_filter);
+	if (ret != 0)
+		goto exit;
 
 	if (ofi_nccl_progress_model.get_source() != ParamSource::DEFAULT) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Requesting progress model %s",
@@ -794,11 +795,7 @@ nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 		throw std::runtime_error("Base device constructor: device name alloc failed");
 	}
 
-	if (platform_device_set_guid) {
-		platform_device_set_guid(info, this);
-	} else {
-		nccl_net_ofi_device_set_guid(info, this);
-	}
+	PlatformManager::get_global().get_platform().device_set_guid(info, this);
 
 	/* Intiaialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);
@@ -1057,7 +1054,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 
 	/* Store ref_cnt in local variable in case the endpoint gets deleted */
 	int local_ref_cnt = this->ref_cnt;
-	
+
 	if (local_ref_cnt == 0 || force_cleanup) {
 		/* If this was the endpoint we stored in domain for connection
 		   management, remove that reference as well */

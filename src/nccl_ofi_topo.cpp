@@ -863,13 +863,11 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	int group_size = num_infos / num_groups + 1;
 
 	/* sort the provider list to match network rail ordering.  See
-	 * the documentation comment for platform_sort_rails() for
+	 * the documentation comment for Platform::sort_rails() for
 	 * more information.  We do this here so that there is
 	 * consistency
 	 */
-	if (platform_sort_rails != NULL) {
-		platform_sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
-	}
+	PlatformManager::get_global().get_platform().sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
 
 	for (; group_idx < num_groups; ++group_idx) {
 		hwloc_obj_t obj;
@@ -1074,7 +1072,7 @@ static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
 	return child;
 }
 
-/* 
+/*
  * @brief	Return PCI device property of PCI device
  *
  * This function reads first `MAX_DEV_PROPERTY_LENGTH` characters from
@@ -1095,7 +1093,7 @@ static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
  *		File name of the device property
  * @return	Pointer to an element of a char array to write device property to.
  *		The array has to be allocated by the caller of this function.
- *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH` 
+ *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH`
  *		characters in addition to the delimiting `\0`.
  * @return	0, on sucess
  *		non-zero, on error

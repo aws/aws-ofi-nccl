@@ -8,17 +8,26 @@
 #include "test-logger.h"
 #include <stdio.h>
 #include <string.h>
+#include <cstdlib>
 
 #include "platform-aws.h"
 
+// Test class to access protected methods
+class TestablePlatformAWS : public PlatformAWS {
+public:
+	using PlatformAWS::get_platform_map;
+	using PlatformAWS::get_platform_entry;
+	using PlatformAWS::ec2_platform_data;
+	using PlatformAWS::is_aws;
+};
 
 /* check that we get the expected response for all our known platforms */
-static int check_value(struct ec2_platform_data *platform_data_list, size_t len,
+static int check_value(const TestablePlatformAWS::ec2_platform_data *platform_data_list, const size_t len,
 		       const char *platform_type, const char *expected_value)
 {
-	struct ec2_platform_data *entry = platform_aws_get_platform_entry(platform_type,
-									  platform_data_list,
-									  len);
+	const TestablePlatformAWS::ec2_platform_data *entry = TestablePlatformAWS::get_platform_entry(platform_type,
+												 platform_data_list,
+												 len);
 
 	if (NULL == entry && expected_value != NULL) {
 		printf("Got NULL reply, expected %s\n", expected_value);
@@ -36,14 +45,14 @@ static int check_value(struct ec2_platform_data *platform_data_list, size_t len,
 	return 0;
 }
 
-
 static int check_known_platforms(void)
 {
-	struct ec2_platform_data *platform_data_list;
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
 	size_t len;
 	int ret = 0;
+	TestablePlatformAWS platform;
 
-	platform_data_list = platform_aws_get_platform_map(&len);
+	platform_data_list = platform.get_platform_map(&len);
 
 	ret += check_value(platform_data_list, len, "trn1.32xlarge", "trn1");
 	ret += check_value(platform_data_list, len, "trn1n.32xlarge", "trn1");
@@ -71,8 +80,7 @@ static int check_known_platforms(void)
 	return ret;
 }
 
-
-static struct ec2_platform_data test_map_1[] = {
+static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 	{
 		.name = "first",
 		.regex = "^platform-x$",
@@ -107,6 +115,30 @@ int main(int argc, char *argv[]) {
 	/* make sure we maintain ordering */
 	ret += check_value(test_map_1, 2, "platform-x", "first");
 	ret += check_value(test_map_1, 2, "platform-xy", "second");
+
+	/* test FORCE_NON_AWS parameter */
+	printf("Testing OFI_NCCL_FORCE_NON_AWS parameter:\n");
+
+	// Test without parameter
+	TestablePlatformAWS test_platform;
+	printf("  Without parameter - is_aws(): %s, priority: %d\n",
+	       test_platform.is_aws() ? "true" : "false",
+	       test_platform.get_priority());
+
+	// Set parameter using setenv
+	setenv("OFI_NCCL_FORCE_NON_AWS", "true", 1);
+
+	// Create new platform object AFTER setting environment
+	TestablePlatformAWS test_platform2;
+	printf("  With FORCE_NON_AWS=true - is_aws(): %s, priority: %d\n",
+	       test_platform2.is_aws() ? "true" : "false",
+	       test_platform2.get_priority());
+
+	// Note: On head nodes without EFA devices, is_aws() returns false regardless
+	// of the FORCE_NON_AWS parameter. On compute nodes with EFA devices:
+	// - Without parameter: is_aws() = true, priority = 100
+	// - With FORCE_NON_AWS=true: is_aws() = false, priority = -100
+	printf("  Note: Parameter effect visible only on compute nodes with EFA devices\n");
 
 	return ret;
 }
