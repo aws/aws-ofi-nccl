@@ -863,13 +863,11 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
 	int group_size = num_infos / num_groups + 1;
 
 	/* sort the provider list to match network rail ordering.  See
-	 * the documentation comment for platform_sort_rails() for
+	 * the documentation comment for Platform::sort_rails() for
 	 * more information.  We do this here so that there is
 	 * consistency
 	 */
-	if (platform_sort_rails != NULL) {
-		platform_sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
-	}
+	PlatformManager::get_global().get_platform().sort_rails(info_list, (size_t)num_infos, (size_t)group_size);
 
 	for (; group_idx < num_groups; ++group_idx) {
 		hwloc_obj_t obj;
