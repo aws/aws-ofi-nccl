@@ -78,10 +78,11 @@ int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size);
  * @brief Uses cuMemGetHandleForAddressRange() to obtain
  * the fd and offset for a dma buf. In case CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE
  * is not supported we retry with flags set to 0.
+ * The ptr and size provided as input must be aligned to page size
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_get_dma_buf_fd(void *ptr, size_t size, int *fd, size_t *offset);
+int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
