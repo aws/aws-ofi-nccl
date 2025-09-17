@@ -168,40 +168,27 @@ int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size)
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
-int nccl_net_ofi_cuda_get_dma_buf_fd(void *ptr, size_t size, int *fd, size_t *offset)
+int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
 {
 	unsigned long long flags = 0;
-	void *base_addr;
-	size_t total_size;
 
-	/*
-	* In order to call cuMemGetHandleForAddressRange we need the ptr
-	* to be host page size aligned. The offset is calculated based on this alignment.
-	*/
-	int res = nccl_net_ofi_cuda_get_base_addr(ptr, &base_addr, &total_size);
-	if (res) {
-		NCCL_OFI_WARN("cuMemGetAddressRange: Could not get base address and size");
-		return res;
-	}
-
-	uintptr_t aligned_ptr = NCCL_OFI_ROUND_DOWN((uintptr_t)base_addr, system_page_size);
-	size_t aligned_size = NCCL_OFI_ROUND_UP(((uintptr_t)base_addr + total_size), system_page_size) - aligned_ptr;
+	assert(NCCL_OFI_IS_PTR_ALIGNED(aligned_ptr, system_page_size));
+	assert(NCCL_OFI_IS_ALIGNED(aligned_size, system_page_size));
 
 # if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
 	flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
 # endif
 
-	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, aligned_ptr, aligned_size,
+	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
 					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
 	if ((ret == CUDA_ERROR_INVALID_VALUE || ret == CUDA_ERROR_NOT_SUPPORTED) && flags != 0) {
 		NCCL_OFI_INFO(NCCL_NET,
 			"cuMemGetHandleForAddressRange failed with flags: %llu, retrying with no flags", flags);
-		ret = pfn_cuMemGetHandleForAddressRange(fd, aligned_ptr, aligned_size,
+		ret = pfn_cuMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
 					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 	}
 
-	*offset = (uintptr_t) ptr - (uintptr_t) aligned_ptr;
-
+	*offset = 0;
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
