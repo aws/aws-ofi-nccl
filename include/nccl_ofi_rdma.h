@@ -585,6 +585,9 @@ typedef struct nccl_net_ofi_rdma_recv_comm_rail {
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_rdma_flush_buffer {
+	/* Base buffer ptr allocated by cuda */
+	void *buffer_base;
+	/* Buffer ptr aligned to page size, derived by rounding up base buffer */
 	void *buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */

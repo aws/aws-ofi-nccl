@@ -2682,6 +2682,7 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
 						int fd, uint64_t offset, size_t size, int type,
 						nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
+	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
@@ -3215,7 +3216,7 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 	 */
 	if (this->flush_buff.buffer != MAP_FAILED) {
 #if HAVE_CUDA
-		ret = nccl_net_ofi_cuda_mem_free(this->flush_buff.buffer);
+		ret = nccl_net_ofi_cuda_mem_free(this->flush_buff.buffer_base);
 #endif
 #if HAVE_NEURON
 		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
@@ -3280,14 +3281,25 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 #if HAVE_CUDA
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
 
-	this->flush_buff.size = system_page_size;
-	ret = nccl_net_ofi_cuda_mem_alloc(&(this->flush_buff.buffer), system_page_size);
+	/*
+	* We allocate twice the system page size since CUDA memory allocation
+	* does not guarantee that the allocated memory will be system page aligned.
+	* Post allocation, we calculate the page aligned ptr and perform
+	* memory registrations on it.
+	*/
+	this->flush_buff.size = 2 * system_page_size;
+	ret = nccl_net_ofi_cuda_mem_alloc(&(this->flush_buff.buffer_base), this->flush_buff.size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
 	}
 
-	/* Copy flush sentinel value into gpu buffer */
+	/*
+	* Calculate the ptr aligned to system page size
+	*/
+	this->flush_buff.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)this->flush_buff.buffer_base, system_page_size);
+
+	/* Copy flush sentinel value into aligned ptr of gpu buffer */
 	ret =  nccl_net_ofi_cuda_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
 							NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
 	if (OFI_UNLIKELY(ret != 0)) {
@@ -3307,13 +3319,16 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		size_t offset = 0;
 		int fd;
 
+		/*
+		* Retrieve the fd and offset and the aligned ptr used for dma buf
+		*/
 		ret = nccl_net_ofi_cuda_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
 			return ret;
 		}
 
-		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %d", fd, offset);
+		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
 
 		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
 						NCCL_PTR_CUDA, &mr_handle);
@@ -3330,7 +3345,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);
 
-		rc = nccl_net_ofi_cuda_mem_free(&this->flush_buff.buffer);
+		rc = nccl_net_ofi_cuda_mem_free(&this->flush_buff.buffer_base);
 		if (rc != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
 				      rc);
