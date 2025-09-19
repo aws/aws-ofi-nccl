@@ -70,6 +70,13 @@
  *
  *    The NVLSTree chunk size can not be larger than the NVLS chunk size,
  *    so we ensure both are set to 512KiB.
+ *
+ *  * NCCL v2.28.3 introduced NCCL_NETDEVS_POLICY to control how NET devices
+ *    are assigned to GPUs. In platforms having multiple GPUs and NICs per
+ *    PCIe switch, setting this policy will change the traffic distribution
+ *    across the NICs, depending on the collective type as well as other
+ *    factors. (Currently AllToAll 0x7 is affected in NCCL v2.28.3.) Thus,
+ *    the best policy setting may vary per platform.
  */
 static struct ec2_platform_data platform_data_map[] = {
 	{
@@ -140,12 +147,40 @@ static struct ec2_platform_data platform_data_map[] = {
 		},
 	},
 	{
+		.name = "p5en/p6-b200",
+		.regex = "^(p5en|p6-b200).*",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.domain_per_thread = true,
+		/*
+		 * Note: Based on empirical testing, setting the
+		 * NCCL_NETDEVS_POLICY=max:1 gives optimal performance
+		 * on platforms with 2 GPUs and 2 NICs per PCIe switch,
+		 * such as P5en and P6-B200.
+		 */
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_NETDEVS_POLICY", "max:1" },
+		},
+	},
+	{
 		.name = "p-series",
 		/*
 		 * While the regex will match against P5 and later
-		 * instance families, we expect this to only apply
-		 * to P5en and later, due to previous entries to
-		 * match P5 and P5e.
+		 * instance families, we expect this to apply to
+		 * P6e-GB200 and later, due to previous entries to
+		 * match P5, P5e, P5en, and P6-B200.
+		 *
+		 * Note: Need to revisit NCCL_NETDEVS_POLICY when
+		 * platforms have different topology or major
+		 * hardware changes.
 		 */
 		.regex = "^p([5-9]|[0-9]{2,}).*",
 		.topology = NULL,
