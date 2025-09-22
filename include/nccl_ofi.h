@@ -19,6 +19,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
+#include "ofi/resource_wrapper.h"
 
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
@@ -148,7 +149,8 @@ struct nccl_net_ofi_req {
 	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
 };
 
-struct nccl_net_ofi_mr_handle_t {
+class nccl_net_ofi_mr_handle_t {
+public:
 	/**
 	 * @brief	Default constructor
 	 */
@@ -458,7 +460,7 @@ public:
 	 * depending on the transport; in that case, this will be the domain object
 	 * associated with the "leader NIC".
 	 */
-	virtual struct fid_domain *get_ofi_domain_for_cm() = 0;
+	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
 
 	/**
 	 * Retrieve an fid_cq object associated with this domain to be used for 
@@ -466,7 +468,7 @@ public:
 	 * on the transport; in that case, this will be the cq object associated with the
 	 * "leader NIC".
 	 */
-	virtual struct fid_cq *get_ofi_cq_for_cm() = 0;
+	virtual ofi_cq_ptr &get_ofi_cq_for_cm() = 0;
 
 	/* Create a new endpoint
 	 *
