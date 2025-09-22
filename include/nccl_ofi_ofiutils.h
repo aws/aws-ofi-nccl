@@ -8,6 +8,7 @@
 #include <rdma/fabric.h>
 
 #include "nccl_ofi_param.h"
+#include "ofi/resource_wrapper.h"
 
 /*
  * Memeory util functions to ensure that the compiler does not optimize
@@ -28,22 +29,68 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    unsigned int *num_prov_infos);
 
 
-/*
- * @brief	Allocates and initialises libfabric endpoint and AV.
- *
- * @param cq:	Completion queue to which the new endpoint will be bound
- * @return	Endpoint ep
- * @return	Address vector av
- */
-int nccl_ofi_ofiutils_init_connection(struct fi_info *info, struct fid_domain *domain,
-				      struct fid_ep **ep,   struct fid_av **av,
-				      struct fid_cq *cq);
-
-/*
+/**
  * @brief	Release libfabric endpoint and address vector
  */
-void nccl_ofi_ofiutils_ep_release(struct fid_ep *ep, struct fid_av *av,
-				  int dev_id);
+void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av, int dev_id);
+
+/**
+ * @brief	Create and initialize libfabric fabric
+ *
+ * @param info:		Fabric info for fabric creation
+ * @return		Result containing error code and fabric pointer
+ */
+ofi_fabric_result nccl_ofi_ofiutils_fabric_create(struct fi_info *info);
+
+/**
+ * @brief	Create and initialize libfabric domain
+ *
+ * @param fabric:	Fabric handle
+ * @param info:		Fabric info for domain creation
+ * @return		Result containing error code and domain pointer
+ */
+ofi_domain_result nccl_ofi_ofiutils_domain_create(ofi_fabric_ptr& fabric, struct fi_info *info);
+
+/**
+ * @brief	Create and initialize libfabric endpoint
+ *
+ * @param info:		Fabric info for endpoint creation
+ * @param domain:	Fabric domain
+ * @param av:		Address vector to which the new endpoint will be bound
+ * @param cq:		Completion queue to which the new endpoint will be bound
+ * @return		Result containing error code and endpoint pointer
+ */
+ofi_ep_result nccl_ofi_ofiutils_ep_create(struct fi_info *info, ofi_domain_ptr &domain,
+					  ofi_av_ptr &av, ofi_cq_ptr &cq);
+
+/**
+ * @brief	Create and initialize libfabric address vector
+ *
+ * @param domain:	Domain handle
+ * @return		Result containing error code and address vector pointer
+ */
+ofi_av_result nccl_ofi_ofiutils_av_create(ofi_domain_ptr &domain);
+
+/**
+ * @brief	Create and initialize libfabric completion queue
+ *
+ * @param domain:	Domain handle
+ * @param cq_attr:	CQ attributes
+ * @return		Result containing error code and completion queue pointer
+ */
+ofi_cq_result nccl_ofi_ofiutils_cq_create(ofi_domain_ptr &domain, struct fi_cq_attr *cq_attr);
+
+/**
+ * @brief	Register memory region with libfabric using fi_mr_regattr
+ *
+ * @param domain:	Domain handle
+ * @param mr_attr:	Memory region attributes structure
+ * @param flags:	Registration flags
+ * @return		Result containing error code and memory region pointer
+ */
+ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain, 
+					   struct fi_mr_attr *mr_attr, 
+					   uint64_t flags);
 
 /*
  * @brief	Free libfabric NIC info list.
