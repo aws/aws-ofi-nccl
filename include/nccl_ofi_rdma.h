@@ -734,6 +734,11 @@ public:
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
+	int regMr(nccl_net_ofi_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type,
+		  void **mr_handle) override;
+
+	int deregMr(nccl_net_ofi_comm_t *comm, nccl_net_ofi_mr_handle_t *mr_handle) override;
+
 	/**
 	 * @brief	Register memory region on RDMA domain
 	 *
@@ -744,9 +749,9 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
-	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
-		   int type,
-		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
+	int reg_mr_impl(nccl_ofi_mr_ckey_ref ckey,
+			int type,
+			nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
 	/**
 	 * @brief	Register memory region on RDMA endpoint
@@ -817,7 +822,7 @@ public:
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
+	int dereg_mr_impl(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
 
 	uint16_t num_rails;
 	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
