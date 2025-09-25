@@ -139,6 +139,34 @@ public:
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
+	int regMr(nccl_net_ofi_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type,
+		  void **mr_handle) override;
+
+	int deregMr(nccl_net_ofi_comm_t *comm, nccl_net_ofi_mr_handle_t *mr_handle) override;
+
+	/**
+	 * @brief	Register memory region on SENDRECV domain
+	 *
+	 * @param	ckey
+	 *		MR cache key reference
+	 * @param	type
+	 *		Type of MR
+	 *
+	 * @return	Memory registration handle
+	 */
+	int reg_mr_impl(nccl_net_ofi_comm_t *comm,
+			nccl_ofi_mr_ckey_ref ckey,
+			int type,
+			nccl_net_ofi_sendrecv_mr_handle_t **mr_handle);
+
+	/**
+	 * @brief	Deregister memory region
+	 *
+	 * @param	mr_handle
+	 *		Memory registration handle
+	 */
+	void dereg_mr_impl(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle);
+
 	/* Access Domain handle */
 	ofi_domain_ptr domain;
 

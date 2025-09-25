@@ -2503,8 +2503,13 @@ void nccl_net_ofi_rdma_domain_t::dereg_mr_on_device(nccl_net_ofi_rdma_mr_handle_
 	delete mr_handle;
 }
 
+int nccl_net_ofi_rdma_domain_t::deregMr(nccl_net_ofi_comm_t *comm,
+					nccl_net_ofi_mr_handle_t *mr_handle)
+{
+	return this->dereg_mr_impl(static_cast<nccl_net_ofi_rdma_mr_handle_t *>(mr_handle));
+}
 
-int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle)
+int nccl_net_ofi_rdma_domain_t::dereg_mr_impl(nccl_net_ofi_rdma_mr_handle_t *mr_handle)
 {
 	if (OFI_UNLIKELY(mr_handle == NULL)) {
 		return 0;
@@ -2613,10 +2618,23 @@ error:
 	return ret;
 }
 
+int nccl_net_ofi_rdma_domain_t::regMr(nccl_net_ofi_comm_t *comm,
+				      nccl_ofi_mr_ckey_ref ckey,
+				      int type,
+				      void **mhandle)
+{
+	pthread_wrapper domain_scoped_lock(&this->domain_lock);
 
-int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
-				       int type,
-				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
+	CHECK_DOMAIN_ACTIVE(this, "regMr");
+
+	return this->reg_mr_impl(ckey, type,
+				 reinterpret_cast<nccl_net_ofi_rdma_mr_handle_t **>(mhandle));
+}
+
+
+int nccl_net_ofi_rdma_domain_t::reg_mr_impl(nccl_ofi_mr_ckey_ref ckey,
+					    int type,
+					    nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -2673,7 +2691,7 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size);
-	return this->reg_mr(&ckey, type, mhandle);
+	return this->reg_mr_impl(&ckey, type, mhandle);
 }
 
 #if HAVE_DECL_FI_MR_DMABUF
@@ -2685,43 +2703,10 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
-	return this->reg_mr(&ckey, type, mhandle);
+	return this->reg_mr_impl(&ckey, type, mhandle);
 }
 #endif
 
-static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-			    nccl_ofi_mr_ckey_ref ckey,
-			    int type, void **mhandle)
-{
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
-        nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
-
-	pthread_wrapper domain_lock(&domain->domain_lock);
-
-	CHECK_DOMAIN_ACTIVE(domain, "reg_mr_send_comm");
-
-	return domain->reg_mr(ckey,
-			      type,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
-}
-
-static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-			    nccl_ofi_mr_ckey_ref ckey,
-			    int type, void **mhandle)
-{
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
-
-	pthread_wrapper domain_lock(&domain->domain_lock);
-
-	CHECK_DOMAIN_ACTIVE(domain, "reg_mr_recv_comm");
-
-	return domain->reg_mr(ckey,
-			      type,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
-}
 
 typedef struct {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
@@ -2753,7 +2738,7 @@ static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size
 
         int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, &mr_handle);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
+		NCCL_OFI_WARN("Failed call to reg_mr_impl: %d", ret);
 		free(freelist_handle);
 		return -EIO;
 	}
@@ -2773,28 +2758,15 @@ static int freelist_deregmr_host_fn(void *handle)
 {
 	freelist_regmr_fn_handle_t *freelist_handle = (freelist_regmr_fn_handle_t *)handle;
 	assert(freelist_handle);
-	int ret = freelist_handle->domain->dereg_mr(freelist_handle->mr_handle);
+	int ret = freelist_handle->domain->dereg_mr_impl(freelist_handle->mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Failed call to dereg_mr");
+		NCCL_OFI_WARN("Failed call to dereg_mr_impl");
 		return -EIO;
 	}
 	free(freelist_handle);
 	return 0;
 }
 
-static int dereg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
-						nccl_net_ofi_mr_handle_t *mhandle)
-{
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)recv_comm->base.ep;
-	assert(ep != NULL);
-
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
-
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return domain->dereg_mr(mr_handle);
-}
 
 /*
  * @brief	Assign an allocated rdma request buffer
@@ -3203,7 +3175,7 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = this->flush_buff.mr_handle;
 	if (mr_handle) {
-		ret = this->dereg_mr(mr_handle);
+		ret = this->dereg_mr_impl(mr_handle);
 	}
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to deregister flush buffer");
@@ -3406,7 +3378,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	assert(domain != NULL);
 
 	/* Deregister mr for control messages */
-	domain->dereg_mr(r_comm->ctrl_mr_handle);
+	domain->dereg_mr_impl(r_comm->ctrl_mr_handle);
 
 	ret = nccl_ofi_freelist_fini(r_comm->ctrl_buff_fl);
 	if (ret != 0) {
@@ -3665,7 +3637,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	assert(domain != NULL);
 
 	/* Deregister control mailbox */
-	domain->dereg_mr(s_comm->ctrl_mr_handle);
+	domain->dereg_mr_impl(s_comm->ctrl_mr_handle);
 
 	/* Release communicator ID */
 	device->comm_idpool.free_id(s_comm->local_comm_id);
@@ -4282,8 +4254,6 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 
 	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
 	r_comm->base.base.dev_id = dev_id;
-	r_comm->base.regMr = reg_mr_recv_comm;
-	r_comm->base.deregMr = dereg_mr_recv_comm;
 	r_comm->base.recv = recv;
 	r_comm->base.flush = flush;
 	r_comm->base.close = recv_close_deferred;
@@ -4888,20 +4858,6 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	return ret;
 }
 
-static int dereg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
-				       nccl_net_ofi_mr_handle_t *mhandle)
-{
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)send_comm->base.ep;
-	assert(ep != NULL);
-
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
-	assert(domain != NULL);
-
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle =
-		(nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	return domain->dereg_mr(mr_handle);
-}
 
 static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 				nccl_net_ofi_rdma_ep_t *ep,
@@ -6068,8 +6024,6 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->base.base.ep = this;
 	ret_s_comm->base.base.dev_id = dev_id;
-	ret_s_comm->base.regMr = reg_mr_send_comm;
-	ret_s_comm->base.deregMr = dereg_mr_send_comm;
 	ret_s_comm->base.send = send;
 	ret_s_comm->base.close = send_close_deferred;
 	ret_s_comm->base.write = rma_write;

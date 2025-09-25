@@ -471,6 +471,30 @@ public:
 	virtual nccl_net_ofi_ep_t *create_endpoint() = 0;
 
 	/**
+	 * @brief	Register memory region (both Host and CUDA)
+	 *
+	 * @param	ckey
+	 *		MR cache key reference
+	 * @param	type
+	 *		Type of MR
+
+	 * @return	Memory handle
+	 * @return	0 on success
+	 *		non-zero on error
+	 */
+	virtual int regMr(nccl_net_ofi_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type,
+			  void **mhandle) = 0;
+
+	/**
+	 * @brief	Deregister memory region (both Host and CUDA)
+	 *
+	 * @return	Memory handle
+	 * @return	0 on success
+	 *		non-zero on error
+	 */
+	virtual int deregMr(nccl_net_ofi_comm_t *comm, nccl_net_ofi_mr_handle_t *mhandle) = 0;
+
+	/**
 	 * @brief	Returns the base domain's device back-pointer.
 	 */
 	inline nccl_net_ofi_device_t *get_device()
@@ -684,6 +708,15 @@ public:
 	virtual int release_ep(bool skip_lock, bool force_cleanup);
 
 	/**
+	 * @brief	Get base domain
+	 */
+	inline nccl_net_ofi_domain_t *get_base_domain()
+	{
+		assert(domain != nullptr);
+		return domain;
+	}
+
+	/**
 	 * @brief	Increments the base endpoint reference count.
 	 */
 	inline void increment_ref_cnt() {
@@ -755,6 +788,15 @@ enum nccl_net_ofi_comm_type_t {
  * and recv communicators.
  */
 struct nccl_net_ofi_comm {
+	/**
+	 * @brief	Get base domain from endpoint
+	 */
+	inline nccl_net_ofi_domain_t *get_base_domain()
+	{
+		assert(ep != nullptr);
+		return ep->get_base_domain();
+	}
+
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
 	int dev_id;
@@ -775,25 +817,6 @@ struct nccl_net_ofi_send_comm {
 	nccl_net_ofi_comm_t base;
 	// TODO: Potentially store this here: int trafficClass;
 
-	/*
-	 * @brief	Register memory region on send communicator (both Host and CUDA)
-	 *
-	 * @return	Memory handle for data send operations
-	 * @return	0 on success
-	 *		non-zero on error
-	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
-
-	/*
-	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
-	 *
-	 * @return	Memory handle for data send operations
-	 * @return	0 on success
-	 *		non-zero on error
-	 */
-	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
-
 	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
 			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
 
@@ -807,25 +830,6 @@ struct nccl_net_ofi_send_comm {
 
 struct nccl_net_ofi_recv_comm {
 	nccl_net_ofi_comm_t base;
-
-	/*
-	 * @brief	Register memory region on recv communicator (both Host and CUDA)
-	 *
-	 * @return	Memory handle for data recv operations
-	 * @return	0 on success
-	 *		non-zero on error
-	 */
-	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
-
-	/*
-	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
-	 *
-	 * @return	Memory handle for data recv operations
-	 * @return	0 on success
-	 *		non-zero on error
-	 */
-	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
 
 	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, size_t *sizes, int *tags,
 			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
