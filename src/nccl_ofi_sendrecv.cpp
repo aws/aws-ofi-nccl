@@ -64,11 +64,6 @@ int nccl_net_ofi_sendrecv_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 }
 
 
-static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
-					nccl_ofi_idpool_t *key_pool,
-					nccl_ofi_mr_cache_t *mr_cache);
-
-
 int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	assert(this->plugin != nullptr);
@@ -524,13 +519,12 @@ typedef struct {
  *		non-zero on error
  */
 static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
-					fid_ep *ofi_ep,
-					nccl_ofi_idpool_t *key_pool,
-					int dev_id,
+					struct fid_ep *ofi_ep,
 					nccl_ofi_mr_ckey_ref ckey,
 					int type,
 					nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
 {
+	int dev_id = domain->get_device()->dev_id;
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
@@ -580,8 +574,8 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 		goto exit;
 	}
 
-	if (key_pool->get_size() != 0) {
-		size_t key = key_pool->allocate_id();
+	if (domain->mr_rkey_pool->get_size() != 0) {
+		size_t key = domain->mr_rkey_pool->allocate_id();
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("MR key allocation failed");
 			ret = -ENOMEM;
@@ -622,7 +616,7 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 	return 0;
 exit:
 	if (ret_handle != nullptr) {
-		sendrecv_comm_mr_base_dereg(ret_handle, key_pool, nullptr);
+		domain->deregMr(nullptr, ret_handle);
 		ret_handle = nullptr;
 	}
 
@@ -680,9 +674,8 @@ exit:
  * @return	0 on success
  *		non-zero on error
  */
-static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t *domain,
-						 fid_ep *ofi_ep,
-						 nccl_ofi_idpool_t *key_pool, int dev_id,
+static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t * domain,
+						 struct fid_ep *ofi_ep,
 						 void *data, size_t size, int type,
 						 nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
 {
@@ -691,12 +684,11 @@ static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t 
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
-	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, &cache_key, type, mr_handle);
+	return sendrecv_mr_buffers_register(domain, ofi_ep, &cache_key, type, mr_handle);
 }
 
 
-static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid_ep *ofi_ep,
-				     nccl_ofi_idpool_t *key_pool, int dev_id,
+static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, struct fid_ep *ofi_ep,
 				     nccl_ofi_mr_ckey_ref ckey, int type,
 				     nccl_net_ofi_sendrecv_mr_handle_t **mhandle)
 {
@@ -715,19 +707,18 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 		return -EINVAL;
 	}
 
-	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, ckey, type, mhandle);
+	return sendrecv_mr_buffers_register(domain, ofi_ep, ckey, type, mhandle);
 }
 
-
-static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
-				       nccl_ofi_idpool_t *key_pool,
-				       nccl_ofi_mr_cache_t *mr_cache)
+int nccl_net_ofi_sendrecv_domain_t::deregMr(nccl_net_ofi_comm_t *comm,
+					    nccl_net_ofi_mr_handle_t *base_mr_handle)
 {
+	auto *mr_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(base_mr_handle);
 	int ret = 0;
 
-	if (OFI_LIKELY(mr_handle == NULL)) {
+	if (OFI_LIKELY(mr_handle == nullptr)) {
 		NCCL_OFI_TRACE(NCCL_NET, "Null MR handle provided. Skipping deregisteration.");
-		return;
+		return 0;
 	}
 
 	if (mr_cache) {
@@ -737,60 +728,50 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 		 * refcnt, or delete the entry for this handle.
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
-		ret = nccl_ofi_mr_cache_del_entry(mr_cache, (void *)mr_handle);
+		ret = nccl_ofi_mr_cache_del_entry(mr_cache,
+						  reinterpret_cast<void *>(mr_handle));
 		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
-			/* Entry must not be deregistered */
-			return;
+			/* Entry was deleted from cache, so we need to deregister MR */
 		}
 	}
 
-	if (key_pool->get_size() != 0 && OFI_LIKELY(mr_handle->mr_key != MR_KEY_INIT_VALUE)) {
-		key_pool->free_id(mr_handle->mr_key);
+	if (mr_rkey_pool->get_size() != 0 && OFI_LIKELY(mr_handle->mr_key != MR_KEY_INIT_VALUE)) {
+		mr_rkey_pool->free_id(mr_handle->mr_key);
 	}
 
 	delete mr_handle;
+	return 0;
 }
 
 
-static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
-				     nccl_ofi_mr_ckey_ref ckey,
-				     int type,
-				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+int nccl_net_ofi_sendrecv_domain_t::regMr(nccl_net_ofi_comm_t *comm,
+					  nccl_ofi_mr_ckey_ref ckey,
+					  int type,
+					  void **mr_handle)
 {
+	pthread_wrapper domain_scoped_lock(&domain_lock);
+
+	CHECK_DOMAIN_ACTIVE(this, "regMr");
+
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
-	nccl_ofi_idpool_t *key_pool = NULL;
-	if (OFI_UNLIKELY(ep == NULL)) {
+	nccl_net_ofi_sendrecv_ep_t *ep = static_cast<nccl_net_ofi_sendrecv_ep_t *>(comm->ep);
+	if (OFI_UNLIKELY(ep == nullptr)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
 	}
 
-	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-	ep->sendrecv_endpoint_get_device();
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
+	if (OFI_UNLIKELY(ep->sendrecv_endpoint_get_domain() != this)) {
+		NCCL_OFI_WARN("reg_mr called with comm not associated with this domain");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	assert(domain != NULL);
-
-	pthread_wrapper domain_lock(&domain->domain_lock);
-
-	CHECK_DOMAIN_ACTIVE(domain, "mr_base_reg");
-
-	int dev_id = device->dev_id;
-
 	int ret = 0;
-	nccl_ofi_mr_cache_t *mr_cache = domain->mr_cache;
 	nccl_net_ofi_sendrecv_mr_handle_t *ret_handle = nullptr;
 
-	if (mr_cache) {
+	if (mr_cache != nullptr) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
 		 * insert a missing entry
@@ -801,16 +782,17 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 		if (ret_handle) {
 			/* Cache hit */
-			goto unlock;
+			nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+			*reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mr_handle) = ret_handle;
+			return 0;
 		}
 		/* Cache miss */
 	}
 
-	key_pool = domain->mr_rkey_pool;
-	ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-					dev_id, ckey, type, &ret_handle);
-	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
-		ret_handle = NULL;
+	ret = sendrecv_mr_base_register(this, ep->ofi_ep.get(), ckey, type,
+					&ret_handle);
+	if (OFI_UNLIKELY(ret_handle == nullptr || ret != 0)) {
+		ret_handle = nullptr;
 		goto unlock;
 	}
 
@@ -820,8 +802,8 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.
 			 */
-			sendrecv_comm_mr_base_dereg(ret_handle, key_pool, NULL);
-			ret_handle = NULL;
+			this->deregMr(nullptr, ret_handle);
+			ret_handle = nullptr;
 			goto unlock;
 		}
 	}
@@ -831,44 +813,8 @@ unlock:
 		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 	}
 
-	*mr_handle = ret_handle;
+	*reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mr_handle) = ret_handle;
 	return ret;
-}
-
-static int sendrecv_send_comm_reg_mr(nccl_net_ofi_send_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
-{
-	return sendrecv_comm_mr_base_reg(&comm->base, ckey, type, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
-}
-
-static int sendrecv_recv_comm_reg_mr(nccl_net_ofi_recv_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle)
-{
-	return sendrecv_comm_mr_base_reg(&comm->base, ckey, type, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
-}
-
-static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
-				       nccl_net_ofi_mr_handle_t *mhandle)
-{
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)recv_comm->base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return -EINVAL;
-	}
-
-	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = ep->sendrecv_endpoint_get_device();
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		return -EINVAL;
-	}
-
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	assert(domain != NULL);
-
-	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain->mr_cache);
-	return 0;
 }
 
 
@@ -1232,10 +1178,8 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
  * 		error, on others
  */
 static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain,
-						       fid_ep *ofi_ep,
-						       nccl_ofi_idpool_t *key_pool,
-						       nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff,
-						       int dev_id)
+						       struct fid_ep *ofi_ep,
+						       nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
@@ -1252,13 +1196,13 @@ static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_dom
 	}
 
 	/* Register flush dummy buffer for provider access */
-	ret = sendrecv_mr_buffers_internal_register(domain, ofi_ep, key_pool, dev_id,
+	ret = sendrecv_mr_buffers_internal_register(domain, ofi_ep,
 						    flush_buff->host_buffer,
 						    system_page_size,
 						    NCCL_PTR_HOST, &mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-			      dev_id);
+			      domain->get_device()->dev_id);
 		ret = nccl_net_ofi_dealloc_mr_buffer(flush_buff->host_buffer,
 						    system_page_size);
 		if (ret != 0) {
@@ -1307,7 +1251,6 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	fi_addr_t remote_ep;
 	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req_t);
-	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
 	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1332,8 +1275,6 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
 	r_comm->base.base.ep = ep;
 	r_comm->base.base.dev_id = dev_id;
-	r_comm->base.regMr = sendrecv_recv_comm_reg_mr;
-	r_comm->base.deregMr = sendrecv_recv_comm_dereg_mr;
 	r_comm->base.recv = sendrecv_recv_comm_recv;
 	r_comm->base.flush = sendrecv_recv_comm_flush;
 	r_comm->base.close = sendrecv_recv_comm_close;
@@ -1372,8 +1313,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep->ofi_ep.get(),
-								  key_pool,
-								  &r_comm->flush_buff, dev_id);
+								  &r_comm->flush_buff);
 		if (OFI_UNLIKELY(ret != 0)) {
 			free(r_comm);
 			return NULL;
@@ -1687,32 +1627,6 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	return 0;
 }
 
-static int sendrecv_send_comm_dereg_mr(nccl_net_ofi_send_comm_t *send_comm,
-				       nccl_net_ofi_mr_handle_t *mhandle)
-{
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)send_comm->base.ep;
-	if (OFI_UNLIKELY(ep == NULL)) {
-		NCCL_OFI_WARN("Invalid endpoint provided");
-		return -EINVAL;
-	}
-
-	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device =
-	ep->sendrecv_endpoint_get_device();
-	if (OFI_UNLIKELY(device == NULL)) {
-		NCCL_OFI_WARN("Invalid device provided");
-		return -EINVAL;
-	}
-
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	assert(domain != NULL);
-
-	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain->mr_cache);
-	return 0;
-}
 
 static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
 				   nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
@@ -1884,8 +1798,6 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->base.base.ep = ep;
 	ret_s_comm->base.base.dev_id = device->dev_id;
-	ret_s_comm->base.regMr = sendrecv_send_comm_reg_mr;
-	ret_s_comm->base.deregMr = sendrecv_send_comm_dereg_mr;
 	ret_s_comm->base.send = sendrecv_send_comm_send;
 	ret_s_comm->base.close = sendrecv_send_comm_close;
 	ret_s_comm->base.write = NULL;

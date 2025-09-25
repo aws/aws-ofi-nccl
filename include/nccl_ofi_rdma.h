@@ -746,6 +746,11 @@ public:
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
+	int regMr(nccl_net_ofi_comm_t * /* comm */, nccl_ofi_mr_ckey_ref ckey, int type,
+		  void **mr_handle) override;
+
+	int deregMr(nccl_net_ofi_comm_t * /* comm */, nccl_net_ofi_mr_handle_t *mr_handle) override;
+
 	/**
 	 * @brief	Register memory region on RDMA domain
 	 *
