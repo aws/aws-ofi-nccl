@@ -17,9 +17,9 @@ int main(int argc, char *argv[])
 	/* Plugin defines */
 	int ndev;
 
-	nccl_net_ofi_send_comm_t *sComm_next = NULL;
+	nccl_net_ofi_xfer_comm_t *sComm_next = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
-	nccl_net_ofi_recv_comm_t *rComm = NULL;
+	nccl_net_ofi_xfer_comm_t *rComm = NULL;
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {};

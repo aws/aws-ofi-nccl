@@ -181,7 +181,7 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rai
 
 static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
-	return (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	return (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 }
 
 /*
@@ -197,7 +197,7 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rai
 
 static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	return (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	return (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 }
 
 
@@ -704,7 +704,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req_t *req,
 static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_comm,
 				 nccl_net_ofi_rdma_req_t *req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(ep != NULL);
 
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
@@ -818,7 +818,7 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req_t *recv_req, nccl_n
 		return -ENOMEM;
 	}
 
-	eager_copy_req->comm = &r_comm->base.base;
+	eager_copy_req->comm = r_comm;
 	eager_copy_req->dev_id = recv_req->dev_id;
 	eager_copy_req->type = NCCL_OFI_RDMA_EAGER_COPY;
 	eager_copy_req->free = free_eager_copy_req;
@@ -842,7 +842,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 					     nccl_net_ofi_rdma_req_t *rx_buff_req)
 {
 	int ret;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 
 	/* Decrease rx buffer count. It will be incremented again when reposting */
 	ret = ep->decrease_rx_buff_cnt(get_rx_buff_data(rx_buff_req)->rail);
@@ -1003,7 +1003,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 			goto exit;
 		}
 
-		NCCL_OFI_TRACE_EAGER_RECV(r_comm->base.base.dev_id, rail_id, r_comm,
+		NCCL_OFI_TRACE_EAGER_RECV(r_comm->dev_id, rail_id, r_comm,
 					  GET_SEQ_NUM_FROM_IMM(cq_entry->data));
 
 		ret = handle_eager_recv(r_comm, GET_SEQ_NUM_FROM_IMM(cq_entry->data), rx_buff_req);
@@ -1533,7 +1533,7 @@ static int receive_progress(nccl_net_ofi_rdma_req_t *req, bool add_to_pending)
 	if (rc == -FI_EAGAIN && add_to_pending) {
 		nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 		/* Extract ep */
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 		/* Place in pending requests queue for next try */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
 		ep->pending_reqs_queue.push_back(req);
@@ -1825,7 +1825,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req_t *req,
 	}
 
 	if (send_data->schedule) {
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 		assert(ep != NULL);
 		nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 		assert(domain != NULL);
@@ -1897,7 +1897,7 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req_t *req,
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 		assert(ep != NULL);
 		nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 		assert(domain != NULL);
@@ -2234,7 +2234,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	nccl_net_ofi_rdma_device_t *device = NULL;
 
 	/* Validate endpoint */
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -2293,7 +2293,7 @@ static inline uint64_t* get_flush_buffer_for_rail(void *ptr, uint16_t rail_id){
 static inline bool has_flush_completed(nccl_net_ofi_rdma_req_t *req)
 {
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
-	nccl_net_ofi_comm_t *base_comm = req->comm;
+	nccl_net_ofi_xfer_comm_t *base_comm = req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
 
 	/* Check if the flush bufffer is populated across ep rails */
@@ -2373,7 +2373,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	       req->type == NCCL_OFI_RDMA_FLUSH);
 
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm = req->comm;
+	nccl_net_ofi_xfer_comm_t *base_comm = req->comm;
 	assert(base_comm != NULL);
 
 	/* Retrieve and validate endpoint */
@@ -2503,7 +2503,7 @@ void nccl_net_ofi_rdma_domain_t::dereg_mr_on_device(nccl_net_ofi_rdma_mr_handle_
 	delete mr_handle;
 }
 
-int nccl_net_ofi_rdma_domain_t::deregMr(nccl_net_ofi_comm_t *comm,
+int nccl_net_ofi_rdma_domain_t::deregMr(nccl_net_ofi_xfer_comm_t *comm,
 					nccl_net_ofi_mr_handle_t *mr_handle)
 {
 	return this->dereg_mr_impl(static_cast<nccl_net_ofi_rdma_mr_handle_t *>(mr_handle));
@@ -2618,7 +2618,7 @@ error:
 	return ret;
 }
 
-int nccl_net_ofi_rdma_domain_t::regMr(nccl_net_ofi_comm_t *comm,
+int nccl_net_ofi_rdma_domain_t::regMr(nccl_net_ofi_xfer_comm_t *comm,
 				      nccl_ofi_mr_ckey_ref ckey,
 				      int type,
 				      void **mhandle)
@@ -2808,7 +2808,7 @@ static inline int insert_recv_segms_req(
 	}
 
 	/* Init receive segments request */
-	recv_segms_req->comm = &r_comm->base.base;
+	recv_segms_req->comm = r_comm;
 	recv_segms_req->dev_id = dev_id;
 	recv_segms_req->type = NCCL_OFI_RDMA_RECV_SEGMS;
 	recv_segms_req->free = free_recv_segms_req;
@@ -2847,7 +2847,7 @@ static inline int allocate_rdma_recv_req(
 	}
 
 	/* Init receive request */
-	req->comm = &r_comm->base.base;
+	req->comm = r_comm;
 	req->dev_id = dev_id;
 	req->type = NCCL_OFI_RDMA_RECV;
 	req->free = free_recv_req;
@@ -2964,7 +2964,7 @@ int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 	return 0;
 }
 
-static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
+static int recv(nccl_net_ofi_xfer_comm_t *recv_comm, int n, void **buffers,
 			 size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles,
 			 nccl_net_ofi_req_t **base_req)
 {
@@ -3005,9 +3005,9 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		return ret;
 	}
 
-	dev_id = r_comm->base.base.dev_id;
+	dev_id = r_comm->dev_id;
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 	assert(ep != NULL);
 
 	domain = ep->rdma_endpoint_get_domain();
@@ -3341,7 +3341,7 @@ static inline void free_rdma_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm) {
 		if (r_comm->ctrl_mailbox) {
 			free(r_comm->ctrl_mailbox);
 		}
-		free(r_comm);
+		delete r_comm;
 	}
 }
 
@@ -3435,8 +3435,8 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
 		return -ENOMEM;
 	}
 
-	send_close_req->comm = &r_comm->base.base;
-	send_close_req->dev_id = r_comm->base.base.dev_id;
+	send_close_req->comm = r_comm;
+	send_close_req->dev_id = r_comm->dev_id;
 	send_close_req->type = NCCL_OFI_RDMA_SEND_CLOSE;
 	send_close_req->free = free_send_close_req;
 	send_close_req->msg_seq_num = 0; /* Unimportant */
@@ -3479,8 +3479,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm_t 
  */
 static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
-		r_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) r_comm->ep;
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 
 	pthread_wrapper domain_lock(&domain->domain_lock);
@@ -3609,7 +3608,7 @@ static inline void free_rdma_send_comm(nccl_net_ofi_rdma_send_comm_t *s_comm) {
 		if (s_comm->ctrl_mailbox) {
 			free(s_comm->ctrl_mailbox);
 		}
-		free(s_comm);
+		delete s_comm;
 	}
 }
 
@@ -3629,7 +3628,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 		return ret;
 	}
 
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->ep;
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	device->rdma_device_set_comm(s_comm->local_comm_id, NULL);
 
@@ -3673,8 +3672,7 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm_t *s_co
 		return COMM_READY_TO_DESTROY;
 	}
 
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
-		s_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->ep;
 
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 
@@ -3811,7 +3809,7 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
  *
  * To directly free the communicator resources, use recv_comm_destroy.
  */
-static int recv_close_deferred(nccl_net_ofi_recv_comm_t *recv_comm)
+static int recv_close_deferred(nccl_net_ofi_xfer_comm_t *recv_comm)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm =
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
@@ -3850,8 +3848,8 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 					nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 					nccl_net_ofi_rdma_req_t **ret_req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
-	int dev_id = r_comm->base.base.dev_id;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	int dev_id = r_comm->dev_id;
 	rdma_req_flush_data_t *flush_data = NULL;
 	*ret_req = NULL;
 
@@ -3862,7 +3860,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 			      dev_id);
 		return -ENOMEM;
 	}
-	req->comm = &r_comm->base.base;
+	req->comm = r_comm;
 	req->dev_id = dev_id;
 	req->type = NCCL_OFI_RDMA_FLUSH;
 	req->free = free_flush_req;
@@ -3889,7 +3887,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	return 0;
 }
 
-static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
+static int flush(nccl_net_ofi_xfer_comm_t *recv_comm, int n, void **buffers,
 				   int *sizes, nccl_net_ofi_mr_handle_t **mhandles,
 				   nccl_net_ofi_req_t **base_req)
 {
@@ -4011,11 +4009,8 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 static inline nccl_net_ofi_rdma_recv_comm_t *calloc_rdma_recv_comm(int num_rails, int num_control_rails)
 {
 	size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
-	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)calloc(1, sizeof(nccl_net_ofi_rdma_recv_comm_t));
-	if (OFI_UNLIKELY(!r_comm)) {
-		NCCL_OFI_WARN("Unable to allocate receive communicator");
-        goto error;
-    }
+
+	auto *r_comm = new nccl_net_ofi_rdma_recv_comm_t;
 
 	r_comm->rails = (nccl_net_ofi_rdma_recv_comm_rail_t *)calloc(num_rails, sizeof(nccl_net_ofi_rdma_recv_comm_rail_t));
     if (OFI_UNLIKELY(!r_comm->rails)) {
@@ -4045,7 +4040,7 @@ error:
 }
 
 static void init_rma_op_req(nccl_net_ofi_rdma_req_t *req,
-			    nccl_net_ofi_comm_t *comm,
+			    nccl_net_ofi_xfer_comm_t *comm,
 			    void *buff, size_t size,
 			    void *desc,
 			    uint64_t remote_buff,
@@ -4092,7 +4087,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
 	}
 	req->free = free_read_req;
 
-	init_rma_op_req(req, &r_comm->base.base, buff, size, desc, remote_buff,
+	init_rma_op_req(req, r_comm, buff, size, desc, remote_buff,
 			remote_mr_key, flags, NCCL_OFI_RDMA_READ);
 
 	*ret_req = req;
@@ -4105,7 +4100,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm_t *r_comm,
  *       	the application
  */
 
-static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size, void* mhandle,
+static int rma_read(nccl_net_ofi_xfer_comm_t *recv_comm, void* dest, size_t size, void* mhandle,
 		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
 {
 	int ret = 0;
@@ -4123,7 +4118,7 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
 		goto error;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 	assert(ep != NULL);
 
 	ret = ep->process_cq_if_pending();
@@ -4252,12 +4247,19 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		goto error;
 	}
 
-	r_comm->base.base.type = NCCL_NET_OFI_RECV_COMM;
-	r_comm->base.base.dev_id = dev_id;
-	r_comm->base.recv = recv;
-	r_comm->base.flush = flush;
-	r_comm->base.close = recv_close_deferred;
-	r_comm->base.read = rma_read;
+	r_comm->type = NCCL_NET_OFI_RECV_COMM;
+	r_comm->dev_id = dev_id;
+	r_comm->num_inflight_reqs = 0;
+	r_comm->num_pending_flush_comps = 0;
+	r_comm->recv = recv;
+	r_comm->flush = flush;
+	r_comm->close = recv_close_deferred;
+	r_comm->read = rma_read;
+	
+	/* send/write operations not supported in recv communicator */
+	r_comm->send = nullptr;
+	r_comm->write = nullptr;
+	r_comm->write_inline = nullptr;
 
 	r_comm->comm_active = true;
 	r_comm->send_close_req = NULL;
@@ -4345,16 +4347,16 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			}
 		}
 
-		r_comm->base.base.ep = ep_for_addr;
+		r_comm->ep = ep_for_addr;
 	} else {
 		/* Use the base l_comm ep */
-		r_comm->base.base.ep = l_comm_ep;
+		r_comm->ep = l_comm_ep;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 
 	/* Add ourselves to ep's lookup array */
-	device->rdma_device_set_comm(r_comm->local_comm_id, &r_comm->base.base);
+	device->rdma_device_set_comm(r_comm->local_comm_id, r_comm);
 
 	/* Allocate array of control communicator rails */
 	r_comm->num_control_rails = num_control_rails;
@@ -4556,10 +4558,10 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 				      nccl_net_ofi_rdma_listen_comm_t *l_comm,
 				      nccl_net_ofi_rdma_recv_comm_t **r_comm_ptr)
 {
-	int dev_id = l_comm->base.base.dev_id;
+	int dev_id = l_comm->dev_id;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep;
 	assert(l_comm_ep != NULL);
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 
@@ -4613,7 +4615,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	receiver = nullptr;
 	l_comm->r_comm = r_comm;
 
-	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->base.base.ep);
+	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->ep);
 	assert(ep != NULL);
 
 	/*
@@ -4646,7 +4648,7 @@ exit:
 
 
 static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
-			   nccl_net_ofi_recv_comm_t **recv_comm)
+			   nccl_net_ofi_xfer_comm_t **recv_comm)
 {
 	int ret = 0;
 
@@ -4657,12 +4659,12 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = l_comm->r_comm;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep;
 	assert(l_comm_ep != NULL);
 
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 	if (l_comm->r_comm) {
-		ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 		assert(ep != NULL);
 	}
 
@@ -4706,7 +4708,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 			return 0;
 		}
 
-		ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+		ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 		assert(ep != NULL);
 
 		l_comm->stage = COMM_CONN_RESP_REQ_PENDING;
@@ -4741,7 +4743,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		delete r_comm->receiver;
 		r_comm->receiver = nullptr;
 
-		*recv_comm = &r_comm->base;
+		*recv_comm = r_comm;
 
 		/* NULL pointer to recv communicator stored in listen
 		 * communicator's state to avoid that `close_listen_recv_comm'
@@ -4786,7 +4788,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *ep = l_comm->base.base.ep;
+	nccl_net_ofi_ep_t *ep = l_comm->ep;
 	assert(ep != NULL);
 
 	if (l_comm->r_comm) {
@@ -4800,7 +4802,7 @@ static int listen_close(nccl_net_ofi_listen_comm_t *listen_comm)
 	delete l_comm->listener;
 	l_comm->listener = nullptr;
 
-	free(l_comm);
+	delete l_comm;
 	ret = ep->release_ep(false, false);
 
 	return ret;
@@ -4832,28 +4834,22 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Build listen_comm */
-	l_comm = static_cast<nccl_net_ofi_rdma_listen_comm_t *>(calloc(
-		1,
-		sizeof(nccl_net_ofi_rdma_listen_comm_t)));
-	if (OFI_UNLIKELY(l_comm == nullptr)) {
-		NCCL_OFI_WARN("Couldn't allocate listen_comm for dev %d", dev_id);
-		ret = -ENOMEM;
-		return ret;
-	}
+	l_comm = new nccl_net_ofi_rdma_listen_comm_t;
 
 	/* Initialize listen communicator */
-	l_comm->base.base.type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->base.base.ep = this;
-	l_comm->base.base.dev_id = dev_id;
-	l_comm->base.accept = accept;
-	l_comm->base.close = listen_close;
+	l_comm->type = NCCL_NET_OFI_LISTEN_COMM;
+	l_comm->stage = COMM_CREATE_START;
+	l_comm->ep = this;
+	l_comm->dev_id = dev_id;
+	l_comm->accept = accept;
+	l_comm->close = listen_close;
 
 	/* Create CM listener */
 	l_comm->listener = domain_ptr->cm->listen();
 
 	*handle = l_comm->listener->get_handle();
 
-	*listen_comm = &l_comm->base;
+	*listen_comm = l_comm;
 
 	return ret;
 }
@@ -4877,7 +4873,7 @@ static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		return -ENOMEM;
 	}
 	req->free = free_write_req;
-	init_rma_op_req(req, &s_comm->base.base, buff, size, desc, remote_buff,
+	init_rma_op_req(req, s_comm, buff, size, desc, remote_buff,
 			remote_mr_key, flags, NCCL_OFI_RDMA_WRITE);
 
 	*ret_req = req;
@@ -4892,7 +4888,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 					bool eager,
 					nccl_net_ofi_rdma_req_t **ret_req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
@@ -4905,8 +4901,8 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm_t *s_comm,
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
 	}
-	req->comm = &s_comm->base.base;
-	req->dev_id = s_comm->base.base.dev_id;
+	req->comm = s_comm;
+	req->dev_id = s_comm->dev_id;
 	req->type = NCCL_OFI_RDMA_SEND;
 	req->free = free_send_req;
 	req->msg_seq_num = msg_seq_num;
@@ -5200,7 +5196,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	assert(req->type == NCCL_OFI_RDMA_RECV);
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
 
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
@@ -5319,7 +5315,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->base.base.ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
@@ -5467,7 +5463,7 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req)
  * @brief	Send a message. This "interface function" is called, indirectly, from
  *       	the application
  */
-static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
+static int send(nccl_net_ofi_xfer_comm_t *send_comm, void *data, size_t size, int tag,
 			 nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **base_req)
 {
 	int ret = 0;
@@ -5496,7 +5492,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 		return ret;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(ep != NULL);
 
 	domain = ep->rdma_endpoint_get_domain();
@@ -5630,7 +5626,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
  *
  * To directly free the communicator resources, use send_comm_destroy.
  */
-static int send_close_deferred(nccl_net_ofi_send_comm_t *send_comm)
+static int send_close_deferred(nccl_net_ofi_xfer_comm_t *send_comm)
 {
 	int ret = 0;
 
@@ -5717,11 +5713,8 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 static inline nccl_net_ofi_rdma_send_comm_t *calloc_rdma_send_comm(int num_rails, int num_control_rails)
 {
 	size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
-	nccl_net_ofi_rdma_send_comm_t *s_comm = (nccl_net_ofi_rdma_send_comm_t *)calloc(1, sizeof(nccl_net_ofi_rdma_send_comm_t));
-	if (OFI_UNLIKELY(!s_comm)) {
-		NCCL_OFI_WARN("Unable to allocate send communicator");
-        goto error;
-    }
+
+	auto *s_comm = new nccl_net_ofi_rdma_send_comm_t;
 
 	s_comm->rails = (nccl_net_ofi_rdma_send_comm_rail_t *)calloc(num_rails, sizeof(nccl_net_ofi_rdma_send_comm_rail_t));
     if (OFI_UNLIKELY(!s_comm->rails)) {
@@ -5893,7 +5886,7 @@ int nccl_net_ofi_rdma_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 /**
  * @brief	Write using DMA writemsg
  */
-static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* desc,
+static int rma_write_impl(nccl_net_ofi_xfer_comm_t *send_comm, void* src, size_t size, void* desc,
 			  uint64_t dest, uint64_t mr_key, uint64_t flags, nccl_net_ofi_req_t ** base_req)
 {
 	int ret = 0;
@@ -5911,7 +5904,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
 		goto error;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->base.base.ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(ep != NULL);
 
 	ret = ep->process_cq_if_pending();
@@ -5970,7 +5963,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t
  *       	the application
  */
 
-static int rma_write(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* mhandle,
+static int rma_write(nccl_net_ofi_xfer_comm_t *send_comm, void* src, size_t size, void* mhandle,
 		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
 {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
@@ -5985,7 +5978,7 @@ static int rma_write(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size
  *       	the application
  */
 
-static int rma_write_inline(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size,
+static int rma_write_inline(nccl_net_ofi_xfer_comm_t *send_comm, void* src, size_t size,
 			  uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t ** base_req)
 {
 	void * desc = NULL;
@@ -6021,14 +6014,21 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 		return -ENOMEM;
 	}
 
-	ret_s_comm->base.base.type = NCCL_NET_OFI_SEND_COMM;
-	ret_s_comm->base.base.ep = this;
-	ret_s_comm->base.base.dev_id = dev_id;
-	ret_s_comm->base.send = send;
-	ret_s_comm->base.close = send_close_deferred;
-	ret_s_comm->base.write = rma_write;
-	ret_s_comm->base.write_inline = rma_write_inline;
+	ret_s_comm->type = NCCL_NET_OFI_SEND_COMM;
+	ret_s_comm->ep = this;
+	ret_s_comm->dev_id = dev_id;
+	ret_s_comm->send = send;
+	ret_s_comm->close = send_close_deferred;
+	ret_s_comm->write = rma_write;
+	ret_s_comm->write_inline = rma_write_inline;
 
+	/* recv/read/flush operations not supported in send communicator */
+	ret_s_comm->recv = nullptr;
+	ret_s_comm->flush = nullptr;
+	ret_s_comm->read = nullptr;
+
+	ret_s_comm->num_inflight_reqs = 0;
+	ret_s_comm->num_inflight_writes = 0;
 	ret_s_comm->comm_active = true;
 
 	/* Initialize next_msg_seq_num to NCCL_OFI_RDMA_MSG_SEQ_NUM_START */
@@ -6057,7 +6057,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	ret_s_comm->local_comm_id = (uint32_t)comm_id;
 
 	/* Add ourselves to ep's lookup array */
-	device->rdma_device_set_comm(ret_s_comm->local_comm_id, &ret_s_comm->base.base);
+	device->rdma_device_set_comm(ret_s_comm->local_comm_id, ret_s_comm);
 
 	/* Allocate communicator rails array */
 	ret_s_comm->num_rails = num_rails;
@@ -6111,7 +6111,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 
 
 int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
-				    nccl_net_ofi_send_comm_t **send_comm,
+				    nccl_net_ofi_xfer_comm_t **send_comm,
 				    int trafficClass)
 {
 	int ret = 0;
@@ -6121,7 +6121,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
-		reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>(comm_state->comm);
+		static_cast<nccl_net_ofi_rdma_send_comm_t *>(comm_state->comm);
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 
@@ -6153,7 +6153,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			return -ENOMEM;
 		}
-		comm_state->comm = &s_comm->base.base;
+		comm_state->comm = s_comm;
 
 		nccl_ofi_rdma_connection_info_t conn_msg;
 
@@ -6196,7 +6196,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 
 	// TODO: Integrate the trafficClass by potentially storing it in the send_comm
 	// structure or a endpoint structure.
-	*send_comm = &s_comm->base;
+	*send_comm = s_comm;
 
 	return ret;
 

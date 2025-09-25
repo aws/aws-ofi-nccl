@@ -24,9 +24,9 @@ int main(int argc, char* argv[])
 
 	/* Plugin defines */
 	int ndev;
-	nccl_net_ofi_send_comm_t *sComm = NULL;
+	nccl_net_ofi_xfer_comm_t *sComm = NULL;
 	nccl_net_ofi_listen_comm_t *lComm = NULL;
-	nccl_net_ofi_recv_comm_t *rComm = NULL;
+	nccl_net_ofi_xfer_comm_t *rComm = NULL;
 	test_nccl_net_t *extNet = NULL;
 	test_nccl_net_device_handle_t *s_ignore, *r_ignore;
 	char src_handle[NCCL_NET_HANDLE_MAXSIZE] = {};

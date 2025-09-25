@@ -21,8 +21,8 @@ static ncclResult_t run_iteration(int dev, int rank, int test_support_gdr, test_
 				  nccl_net_ofi_listen_comm_t *lComm,
 				  void *src_handle, int num_ranks, int peer_rank)
 {
-	nccl_net_ofi_send_comm_t *sComm = nullptr;
-	nccl_net_ofi_recv_comm_t *rComm = nullptr;
+	nccl_net_ofi_xfer_comm_t *sComm = nullptr;
+	nccl_net_ofi_xfer_comm_t *rComm = nullptr;
 	int buffer_type = NCCL_PTR_HOST;
 
 	/* Initialisation for data transfer */

@@ -33,9 +33,9 @@ static ncclResult_t run_iteration(int dev, int rank, int test_support_gdr, test_
 	}
 
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
-	nccl_net_ofi_send_comm_t *sComm = nullptr;
+	nccl_net_ofi_xfer_comm_t *sComm = nullptr;
 	nccl_net_ofi_listen_comm_t *lComm = nullptr;
-	nccl_net_ofi_recv_comm_t *rComm = nullptr;
+	nccl_net_ofi_xfer_comm_t *rComm = nullptr;
 
 	/* Initialisation for data transfer */
 	nccl_net_ofi_req_t *req[NUM_REQUESTS] = {nullptr};
