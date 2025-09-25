@@ -517,6 +517,34 @@ struct nccl_net_ofi_rdma_send_comm_rail_t {
  */
 class nccl_net_ofi_rdma_send_comm_t : public nccl_net_ofi_xfer_comm_t {
 public:
+	/**
+	 * @brief Return RDMA send communicator endpoint
+	 */
+	inline nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	}
+
+	/**
+	 * @brief Return send communicator rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(uint16_t rail_id)
+	{
+		assert(rails);
+		assert(rail_id < num_rails);
+		return &rails[rail_id];
+	}
+
+	/**
+	 * @brief Return send communicator control rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(uint16_t rail_id)
+	{
+		assert(control_rails);
+		assert(rail_id < num_control_rails);
+		return &control_rails[rail_id];
+	}
+	
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 
@@ -598,6 +626,33 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
  */
 class nccl_net_ofi_rdma_recv_comm_t : public nccl_net_ofi_xfer_comm_t {
 public:
+	/**
+	 * @brief Return RDMA recv communicator endpoint
+	 */
+	inline nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	}
+
+	/**
+	 * @brief Return receive communicator rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(uint16_t rail_id)
+	{
+		assert(rails);
+		assert(rail_id < num_rails);
+		return &rails[rail_id];
+	}
+
+	/**
+	 * @brief Return receive communicator control rail with index `rail_id`
+	 */
+	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(uint16_t rail_id)
+	{
+		assert(control_rails);
+		assert(rail_id < num_control_rails);
+		return &control_rails[rail_id];
+	}
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver = nullptr;
@@ -664,6 +719,14 @@ public:
 
 class nccl_net_ofi_rdma_listen_comm_t : public nccl_net_ofi_listen_comm_t {
 public:
+	/**
+	 * @brief Return RDMA listen communicator endpoint
+	 */
+	inline nccl_net_ofi_rdma_ep_t *rdma_listen_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	}
+
 	/* Associated listener from connection manager */
 	nccl_ofi_cm_listener *listener = nullptr;
 
@@ -1460,25 +1523,4 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
 			   bool *found_multi_rail);
 
-/*
- * @brief Return send communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
-								uint16_t rail_id)
-{
-	assert(s_comm->rails);
-	assert(rail_id < s_comm->num_rails);
-	return &s_comm->rails[rail_id];
-}
-
-/*
- * @brief Return receive communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
-								uint16_t rail_id)
-{
-	assert(r_comm->rails);
-	assert(rail_id < r_comm->num_rails);
-	return &r_comm->rails[rail_id];
-}
 #endif // End NCCL_OFI_RDMA_H_

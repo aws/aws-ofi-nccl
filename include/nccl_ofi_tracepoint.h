@@ -31,7 +31,7 @@
 
 #define NCCL_OFI_TRACE_SEND(dev, size, comm, msg_seq_num, request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm,\
-			     rdma_send_comm_get_rail(comm, 0)->remote_addr, \
+			     comm->rdma_send_comm_get_rail(0)->remote_addr, \
 			     msg_seq_num, request, nccl_req); \
 	NCCL_OFI_TRACE_SEND_NVTX(dev, size, comm, msg_seq_num, request, nccl_req); \
 } while(0)
@@ -73,7 +73,7 @@
 
 #define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, \
-			     rdma_recv_comm_get_rail(comm, 0)->remote_addr, size, request, nccl_req); \
+			     comm->rdma_recv_comm_get_rail(0)->remote_addr, size, request, nccl_req); \
 	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
 } while(0)
 
