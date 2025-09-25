@@ -50,36 +50,28 @@ public:
 	ofi_mr_ptr mr;
 };
 
-typedef struct nccl_net_ofi_sendrecv_listen_comm {
-	/* This base listen communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_listen_comm_t base;
-
-	struct fid_ep *local_ep;
+class nccl_net_ofi_sendrecv_listen_comm_t : public nccl_net_ofi_listen_comm_t {
+public:
+	struct fid_ep *local_ep = nullptr;
 	fi_addr_t local_ep_addr;
 	/* Saves temporary state when creating receive communicator object */
 	save_comm_state_t state;
 
-	nccl_ofi_cm_listener *listener;
-} nccl_net_ofi_sendrecv_listen_comm_t;
+	nccl_ofi_cm_listener *listener = nullptr;
+};
 
-typedef struct nccl_net_ofi_sendrecv_send_comm {
-	/* This base send communicator must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_send_comm_t base;
-
+class nccl_net_ofi_sendrecv_send_comm_t : public nccl_net_ofi_xfer_comm_t {
+public:
 	uint64_t num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
 	fi_addr_t local_ep_addr;
-	struct fid_ep *local_ep;
+	struct fid_ep *local_ep = nullptr;
 
-	nccl_ofi_cm_send_connector *connector;
-} nccl_net_ofi_sendrecv_send_comm_t;
+	nccl_ofi_cm_send_connector *connector = nullptr;
+};
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_sendrecv_flush_buffer {
@@ -89,24 +81,20 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
-typedef struct nccl_net_ofi_sendrecv_recv_comm {
-	/* This base receive communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_recv_comm_t base;
-
+class nccl_net_ofi_sendrecv_recv_comm_t : public nccl_net_ofi_xfer_comm_t {
+public:
 	uint64_t num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
 	fi_addr_t local_ep_addr;
-	struct fid_ep *local_ep;
+	struct fid_ep *local_ep = nullptr;
 
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 
-	nccl_ofi_cm_receiver *receiver;
-} nccl_net_ofi_sendrecv_recv_comm_t;
+	nccl_ofi_cm_receiver *receiver = nullptr;
+};
 
 /* Forward declarations needed for sendrecv transport endpoint type */
 class nccl_net_ofi_sendrecv_device_t;
@@ -139,10 +127,10 @@ public:
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
-	int regMr(nccl_net_ofi_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type,
+	int regMr(nccl_net_ofi_xfer_comm_t *comm, nccl_ofi_mr_ckey_ref ckey, int type,
 		  void **mr_handle) override;
 
-	int deregMr(nccl_net_ofi_comm_t *comm, nccl_net_ofi_mr_handle_t *mr_handle) override;
+	int deregMr(nccl_net_ofi_xfer_comm_t *comm, nccl_net_ofi_mr_handle_t *mr_handle) override;
 
 	/**
 	 * @brief	Register memory region on SENDRECV domain
@@ -154,7 +142,7 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
-	int reg_mr_impl(nccl_net_ofi_comm_t *comm,
+	int reg_mr_impl(nccl_net_ofi_xfer_comm_t *comm,
 			nccl_ofi_mr_ckey_ref ckey,
 			int type,
 			nccl_net_ofi_sendrecv_mr_handle_t **mr_handle);
@@ -220,7 +208,7 @@ public:
 		   nccl_net_ofi_listen_comm_t **listen_comm) override;
 
 	int connect(nccl_net_ofi_conn_handle_t *handle,
-		    nccl_net_ofi_send_comm_t **send_comm,
+		    nccl_net_ofi_xfer_comm_t **send_comm,
 		    int trafficClass) override;
 
 	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
@@ -385,7 +373,7 @@ typedef struct nccl_net_ofi_sendrecv_req {
 	nccl_net_ofi_req_t base;
 
 	/* Associated Comm object */
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_xfer_comm_t *comm;
 
 	/* Associated context */
 	nccl_net_ofi_context_t ctx;
