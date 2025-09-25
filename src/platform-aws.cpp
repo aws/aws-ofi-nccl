@@ -168,6 +168,15 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 			{ "NCCL_NETDEVS_POLICY", "max:1" },
+			/* NCCL-tests v2.16.8 revealed inconsistent channel
+			 * initialization in NCCL, regressing 0x7
+			 * collectives. The issue manifests when channels
+			 * initialized for patterns like PAT with 2 NICs
+			 * and subsequently reused by ring algorithm.
+			 * Disabling runtime connect as temporary
+			 * workaround.
+			 */
+			{ "NCCL_RUNTIME_CONNECT", "0" },
 		},
 	},
 	{
