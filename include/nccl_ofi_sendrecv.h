@@ -50,8 +50,20 @@ public:
 	ofi_mr_ptr mr;
 };
 
+/* Forward declarations needed for sendrecv transport endpoint and comm types */
+class nccl_net_ofi_sendrecv_device_t;
+class nccl_net_ofi_sendrecv_ep_t;
+
 class nccl_net_ofi_sendrecv_listen_comm_t : public nccl_net_ofi_listen_comm_t {
 public:
+	/**
+	 * @brief Return SENDRECV listen communicator endpoint
+	 */
+	inline nccl_net_ofi_sendrecv_ep_t *sendrecv_listen_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
+	}
+
 	struct fid_ep *local_ep = nullptr;
 	fi_addr_t local_ep_addr;
 	/* Saves temporary state when creating receive communicator object */
@@ -62,6 +74,14 @@ public:
 
 class nccl_net_ofi_sendrecv_send_comm_t : public nccl_net_ofi_xfer_comm_t {
 public:
+	/**
+	 * @brief Return SENDRECV send communicator endpoint
+	 */
+	inline nccl_net_ofi_sendrecv_ep_t *sendrecv_send_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
+	}
+
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 
@@ -83,6 +103,14 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 
 class nccl_net_ofi_sendrecv_recv_comm_t : public nccl_net_ofi_xfer_comm_t {
 public:
+	/**
+	 * @brief Return SENDRECV recv communicator endpoint
+	 */
+	inline nccl_net_ofi_sendrecv_ep_t *sendrecv_recv_comm_get_ep()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(ep);
+	}
+
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = nullptr;
 
@@ -95,9 +123,6 @@ public:
 
 	nccl_ofi_cm_receiver *receiver = nullptr;
 };
-
-/* Forward declarations needed for sendrecv transport endpoint type */
-class nccl_net_ofi_sendrecv_device_t;
 
 
 /*
