@@ -30,9 +30,6 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
-#ifdef WANT_AWS_PLATFORM
-#include "platform-aws.h"
-#endif
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
 
@@ -177,10 +174,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
-
-#ifdef WANT_AWS_PLATFORM
-	PlatformManager::get_global().register_platform(std::make_unique<PlatformAWS>());
-#endif
 
 	ret = PlatformManager::get_global().get_platform().init(&provider_filter);
 	if (ret != 0)

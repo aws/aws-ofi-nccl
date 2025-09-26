@@ -26,20 +26,15 @@ noinst_PROGRAMS = \
 	histogram \
 	dlopen_c_test \
 	param \
-	platform_manager
-
-if WANT_PLATFORM_AWS
-noinst_PROGRAMS += aws_platform_mapper
-endif
+	platform_manager \
+	aws_platform_mapper
 
 if !ENABLE_NEURON
-if WANT_PLATFORM_AWS
   AM_LDFLAGS = $(CUDA_LDFLAGS)
   AM_CPPFLAGS += $(CUDA_CPPFLAGS)
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += region_based_tuner
   region_based_tuner_SOURCES = region_based_tuner.cpp
-endif
 endif
 
 assert_SOURCES = assert.cpp

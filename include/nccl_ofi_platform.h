@@ -136,23 +136,20 @@ public:
 	static PlatformManager& get_global();
 
 	/**
-	 * @brief	Register a platform with the manager
-	 *
-	 * 		Platforms are automatically sorted by priority in the internal map.
-	 * 		Higher priority values take precedence and duplicates are dropped.
-	 *
-	 * @param	platform	Platform instance to register (moved)
-	 */
-	void register_platform(PlatformPtr&& platform);
-
-	/**
 	 * @brief	Get the highest priority platform instance
 	 *
 	 * 		Returns the platform with the highest priority value.
 	 *
 	 * @return	Reference to highest priority platform
 	 */
-	inline Platform& get_platform() { return *platforms_.rbegin()->second; }
+	inline Platform& get_platform() {
+		// std::map sorts by priority key; rbegin() gives highest priority
+		auto it = platforms_.rbegin();
+		Platform& selected = *it->second;
+		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Selected platform: %s with priority %d",
+		              selected.get_name(), it->first);
+		return selected;
+	}
 
 	/**
 	 * @brief	Get number of registered platforms (for testing)
@@ -167,9 +164,21 @@ protected:
 	 *		instance is meant to be used in the plugin and the unit
 	 *		tests leverage the protected scope.
 	 */
-	PlatformManager() {
-		register_platform(std::make_unique<Default>());
-	}
+	PlatformManager();
+
+	/**
+	 * @brief	Register a platform with the manager
+	 *
+	 * 		Platforms are automatically sorted by priority in the internal map.
+	 * 		Higher priority values take precedence and duplicates are dropped.
+	 * 		This can only be done in the constructor as all platform must be
+	 * 		added on the created of this object to allow the tuner and the plugin
+	 * 		to operate consistently.
+	 *
+	 * @param	platform	Platform instance to register (moved)
+	 */
+	void register_platform(PlatformPtr&& platform);
+
 
 private:
 	std::map<int, PlatformPtr> platforms_;
