@@ -509,6 +509,24 @@ struct nccl_net_ofi_rdma_send_comm_rail_t {
 	struct fid_ep *local_ep;
 };
 
+#define RET_IF_NULLPTR(obj, obj_type, ret_value)       \
+do						       \
+{						       \
+	if(obj == nullptr) {			       \
+		NCCL_OFI_WARN("%s is null", obj_type); \
+		return ret_value;		       \
+	}					       \
+} while (0);
+
+#define GOTO_IF_NULLPTR(obj, obj_type, label)	       \
+do						       \
+{						       \
+	if(obj == nullptr) {			       \
+		NCCL_OFI_WARN("%s is null", obj_type); \
+		goto label;			       \
+	}					       \
+} while (0);
+
 /**
  * @brief	RDMA send communicator
  *
@@ -530,7 +548,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(uint16_t rail_id)
 	{
-		assert(rails);
+		RET_IF_NULLPTR(rails, "send comm rails", nullptr);
 		assert(rail_id < num_rails);
 		return &rails[rail_id];
 	}
@@ -540,7 +558,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(uint16_t rail_id)
 	{
-		assert(control_rails);
+		RET_IF_NULLPTR(rails, "send comm control rails", nullptr);
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
@@ -639,7 +657,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(uint16_t rail_id)
 	{
-		assert(rails);
+		RET_IF_NULLPTR(rails, "recv comm rails", nullptr);
 		assert(rail_id < num_rails);
 		return &rails[rail_id];
 	}
@@ -649,7 +667,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(uint16_t rail_id)
 	{
-		assert(control_rails);
+		RET_IF_NULLPTR(rails, "send comm control rails", nullptr);
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
