@@ -10,22 +10,24 @@
 #include "nccl_ofi_platform.h"
 #include "test-logger.h"
 
-// Test helper class to access protected constructor
+// Test helper class to access protected constructor and methods
 class TestPlatformManager : public PlatformManager {
 public:
 	using PlatformManager::PlatformManager;
+	using PlatformManager::register_platform;
 };
 
 // Dummy test platform for registration testing
 class TestPlatform : public Default {
 public:
 	const char* get_name() const override { return "TestPlatform"; }
-	int get_priority() override { return 10; }
+	int get_priority() override { return 200; }
 };
 
 class CopyTestPlatform : public TestPlatform {
 public:
 	const char* get_name() const override { return "CopyTestPlatform"; }
+	int get_priority() override { return 300; }
 };
 
 static int test_default_platform_creation()
@@ -59,16 +61,9 @@ static int test_platform_manager_default_registration()
 
 	TestPlatformManager manager;
 
-	if (manager.get_platform_count() < 1) {
-		NCCL_OFI_WARN("Expected at least 1 platform registered by default, got %zu",
+	if (manager.get_platform_count() < 2) {
+		NCCL_OFI_WARN("Expected at least 2 platforms registered by default, got %zu",
 		              manager.get_platform_count());
-		ret++;
-	}
-
-	Platform& platform = manager.get_platform();
-	if (strcmp(platform.get_name(), "Default") != 0) {
-		NCCL_OFI_WARN("Expected Default platform to be registered by default, got %s",
-		              platform.get_name());
 		ret++;
 	}
 
@@ -112,11 +107,15 @@ static int test_registration_functionality()
 		ret++;
 	}
 
-	// Default, TestPlatform, CopyTestPlatform
-	assert(count_after == 3);
+	// Default, AWS, TestPlatform, CopyTestPlatform
+	if (count_after != 4) {
+		NCCL_OFI_WARN("Expected 4 platforms total, got %zu", count_after);
+		ret++;
+	}
+	
 	auto& platform = manager.get_platform();
 	if (strcmp(platform.get_name(), "CopyTestPlatform") != 0) {
-		NCCL_OFI_WARN("Expected CopyTestPlatform platform to be registered by default, got %s",
+		NCCL_OFI_WARN("Expected CopyTestPlatform platform to be selected (highest priority), got %s",
 		              platform.get_name());
 		ret++;
 	}
