@@ -38,22 +38,6 @@ AC_DEFUN([CHECK_PKG_NVTX], [
         [nvtx_tracing=1],
         [nvtx_tracing=0])
 
-  AC_ARG_ENABLE([nvtx_trace_per_comm], AS_HELP_STRING([--enable-nvtx-trace-per-comm],
-                                       [Collect NVTX traces in a "per-communicator" view, which associates parent
-                                       send/recv events with constituent events (segments, controls).]))
-  AS_IF([test "${enableval}" = "yes" -a "x${nvtx_tracing}" = "x1"], [nvtx_trace_per_comm=${nvtx_tracing}], [nvtx_trace_per_comm=0])
-
-  AC_ARG_ENABLE([nvtx_trace_per_dev],  AS_HELP_STRING([--enable-nvtx-trace-per-dev],
-                                       [Collect NVTX traces in a "per-device" view, which associates sub-events with
-                                       an EFA device, showing activity on each device.]))
-  AS_IF([test "${enableval}" = "yes" -a "x${nvtx_tracing}" = "x1"], [nvtx_trace_per_dev=${nvtx_tracing}], [nvtx_trace_per_dev=0])
-
-  AC_DEFINE_UNQUOTED([NCCL_OFI_NVTX_TRACE_PER_COMM], [$nvtx_trace_per_comm], [Defined to 1 if NVTX traces are collected per-communicator])
-  AC_DEFINE_UNQUOTED([NCCL_OFI_NVTX_TRACE_PER_DEV], [$nvtx_trace_per_dev], [Defined to 1 if NVTX traces are collected per-device])
-
-  AS_IF([test "${nvtx_trace_per_comm}" -ne 0 -a "${nvtx_trace_per_dev}" -ne 0],
-        AC_MSG_ERROR([Error: setting both nvtx_trace_per_comm and nvtx_trace_per_dev is currently not supported]))
-
   AS_UNSET([check_pkg_found])
   AS_UNSET([check_pkg_define])
   AS_UNSET([check_pkg_CPPFLAGS_save])
