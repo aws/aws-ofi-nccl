@@ -59,12 +59,6 @@ static int test_platform_manager_default_registration()
 
 	TestPlatformManager manager;
 
-	if (manager.get_platform_count() < 1) {
-		NCCL_OFI_WARN("Expected at least 1 platform registered by default, got %zu",
-		              manager.get_platform_count());
-		ret++;
-	}
-
 	Platform& platform = manager.get_platform();
 	if (strcmp(platform.get_name(), "Default") != 0) {
 		NCCL_OFI_WARN("Expected Default platform to be registered by default, got %s",
@@ -81,43 +75,26 @@ static int test_registration_functionality()
 
 	TestPlatformManager manager;
 
-	auto count_before = manager.get_platform_count();
 	manager.register_platform(std::make_unique<Default>());
-	auto count_after = manager.get_platform_count();
-
-	if (count_after != count_before) {
-		NCCL_OFI_WARN("Platform count changed after duplicate registration: %zu -> %zu",
-		              count_before, count_after);
+	auto& platform1 = manager.get_platform();
+	if (strcmp(platform1.get_name(), "Default") != 0 || platform1.get_priority() != Default().get_priority()) {
+		NCCL_OFI_WARN("Expected Default platform to be registered by default, got %s",
+		              platform1.get_name());
 		ret++;
 	}
 
-	// Test positive case
-	count_before = manager.get_platform_count();
 	manager.register_platform(std::make_unique<TestPlatform>());
-	count_after = manager.get_platform_count();
-
-	if (count_after != count_before + 1) {
-		NCCL_OFI_WARN("Expected platform count to increase by 1, got %zu -> %zu",
-		              count_before, count_after);
+	auto& platform2 = manager.get_platform();
+	if (strcmp(platform2.get_name(), "TestPlatform") != 0 || platform2.get_priority() != TestPlatform().get_priority()) {
+		NCCL_OFI_WARN("Expected TestPlatform to be registered, got %s",
+		              platform2.get_name());
 		ret++;
 	}
 
-	count_before = manager.get_platform_count();
 	manager.register_platform(std::make_unique<CopyTestPlatform>());
-	count_after = manager.get_platform_count();
-
-	if (count_after != count_before + 1) {
-		NCCL_OFI_WARN("Expected platform count to increase by 1, got %zu -> %zu",
-		              count_before, count_after);
-		ret++;
-	}
-
-	// Default, TestPlatform, CopyTestPlatform
-	assert(count_after == 3);
-	auto& platform = manager.get_platform();
-	if (strcmp(platform.get_name(), "CopyTestPlatform") != 0) {
-		NCCL_OFI_WARN("Expected CopyTestPlatform platform to be registered by default, got %s",
-		              platform.get_name());
+	auto& platform3 = manager.get_platform();
+	if (&platform2 != &platform3) {
+		NCCL_OFI_WARN("Expected platform2 and platform3 to be the same object");
 		ret++;
 	}
 
