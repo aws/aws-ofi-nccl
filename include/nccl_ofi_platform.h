@@ -11,6 +11,7 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_endpoint.h>
 
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_system.h"
 
 /**
@@ -138,12 +139,14 @@ public:
 	/**
 	 * @brief	Register a platform with the manager
 	 *
-	 * 		Platforms are automatically sorted by priority in the internal map.
-	 * 		Higher priority values take precedence and duplicates are dropped.
+	 * 		Platforms are selected by priority. Higher priority values take
+	 * 		precedence. This can only be done in the constructor as all platforms
+	 * 		must be added during object creation to allow the tuner and plugin
+	 * 		to operate consistently.
 	 *
 	 * @param	platform	Platform instance to register (moved)
 	 */
-	void register_platform(PlatformPtr&& platform);
+	void register_platform(PlatformPtr&& candidate_platform);
 
 	/**
 	 * @brief	Get the highest priority platform instance
@@ -152,14 +155,18 @@ public:
 	 *
 	 * @return	Reference to highest priority platform
 	 */
-	inline Platform& get_platform() { return *platforms_.rbegin()->second; }
+	inline Platform& get_platform() { return *platform; }
 
 	/**
-	 * @brief	Get number of registered platforms (for testing)
+	 * @brief   Register all available platform implementations
 	 *
-	 * @return	Number of platforms in the manager
+	 * This static function registers all available platform implementations with
+	 * the PlatformManager. It is called during initialization to set up the
+	 * platform hierarchy based on priorities and topology information.
+	 *
 	 */
-	inline size_t get_platform_count() { return platforms_.size(); }
+	static void register_all_platforms();
+
 protected:
 	/**
 	 * @brief	Default constructor
@@ -172,7 +179,8 @@ protected:
 	}
 
 private:
-	std::map<int, PlatformPtr> platforms_;
+	int current_priority = -1;
+	PlatformPtr platform = nullptr;
 };
 
 
