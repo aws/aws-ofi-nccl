@@ -247,16 +247,24 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
  * @brief	Allocate and initialize nccl_ofi_topo_t struct
  *
  * Create a nccl_ofi_topo_t struct that stores the hardware topology
- * of the machine and add libfabric NIC info structs to their
- * corresponding topology nodes. Note that this function duplicates
- * the info structs.
+ * of the machine.
  *
- * @param	info_list
- *		List of libfabric NIC info structs
  * @return	NCCL OFI hardware topology, on success
  *		NULL, on others
  */
-nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list);
+nccl_ofi_topo_t *nccl_ofi_topo_create();
+
+/*
+ * @brief	Populate topology with provider data
+ *
+ * @param	ofi_topo
+ *		NCCL OFI topology created with nccl_ofi_topo_create()
+ * @param	info_list
+ *		List of libfabric NIC info structs
+ * @return	0, on success
+ *		non-zero, on others
+ */
+int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list);
 
 /*
  * @brief	Write NCCL topology file based on NCCL OFI topology
@@ -309,5 +317,15 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
  *		non-zero, on error
  */
 int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
+
+/*
+ * @brief	Check if topology has EFA/ENA devices
+ *
+ * @param	topo
+ * 		The topology
+ * @return	true, if EFA or ENA device detected
+ *		false, topo is null or EFA/ENA device not detected.
+ */
+bool nccl_ofi_topo_has_efa_ena_devices(nccl_ofi_topo_t* topo);
 
 #endif // End NCCL_NET_OFI_TOPO_H_
