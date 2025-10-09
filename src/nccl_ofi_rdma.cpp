@@ -7067,10 +7067,16 @@ nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_
 	int num_devices = 0;
 
 	/* Create NCCL OFI topology */
-	this->topo = nccl_ofi_topo_create(provider_list);
+	this->topo = nccl_ofi_topo_create();
 	if (!this->topo) {
 		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
 		throw std::runtime_error("rdma plugin constructor: topo creation failed");
+	}
+
+	ret = nccl_ofi_topo_populate(this->topo, provider_list);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to populate topology");
+		throw std::runtime_error("rdma plugin constructor: topology population failed");
 	}
 
 	ret = nccl_ofi_topo_group(this->topo);
