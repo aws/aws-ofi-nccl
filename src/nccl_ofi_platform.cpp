@@ -29,9 +29,10 @@ void PlatformManager::register_platform(PlatformPtr&& candidate_platform) {
 	}
 }
 
-void PlatformManager::register_all_platforms() {
+void PlatformManager::register_all_platforms(nccl_ofi_topo_t* topo) {
 #ifdef WANT_AWS_PLATFORM
 	auto& manager = PlatformManager::get_global();
-	manager.register_platform(std::make_unique<PlatformAWS>());
+	auto platform = std::make_unique<PlatformAWS>(topo);
+	manager.register_platform(std::move(platform));
 #endif
 }

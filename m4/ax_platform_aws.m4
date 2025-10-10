@@ -11,6 +11,7 @@ AC_DEFUN([AX_CHECK_PLATFORM_AWS],[
      [AS_HELP_STRING([--enable-platform-aws],
          [Enable AWS-specific configuration and optimizations.  (default: Enabled if on EC2 instance)])])
 
+  ENABLED_PLATFORMS="Default"
   want_platform_aws="${enable_platform_aws}"
   AS_IF([test "${want_platform_aws}" = ""],
         [AX_CHECK_EC2_INSTANCE([want_platform_aws="yes"], [want_platform_aws="no"])])
@@ -21,6 +22,7 @@ AC_DEFUN([AX_CHECK_PLATFORM_AWS],[
   AM_CONDITIONAL([WANT_PLATFORM_AWS], [test "${want_platform_aws}" = "yes"])
   AS_IF([test "${want_platform_aws}" = "yes"],
         [NCCL_OFI_PLATFORM="AWS"
+         ENABLED_PLATFORMS="${ENABLED_PLATFORMS}, AWS"
          AC_DEFINE([WANT_AWS_PLATFORM], [1], [Define to 1 if AWS platform optimizations are enabled])
          AC_MSG_CHECKING([for Libfabric 1.22.0 or greater])
          AC_COMPILE_IFELSE([AC_LANG_PROGRAM(

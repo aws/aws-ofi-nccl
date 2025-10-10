@@ -1276,7 +1276,7 @@ public:
 	/**
 	 * @brief	Default RDMA plugin constructor
 	 */
-	nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list);
+	nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo);
 
 	/**
 	 * @brief	Default RDMA plugin destructor
@@ -1464,7 +1464,8 @@ protected:
  */
 int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
-			   bool *found_multi_rail);
+			   bool *found_multi_rail,
+			   nccl_ofi_topo_t *topo);
 
 /*
  * @brief Return send communicator rail with index `rail_id`
