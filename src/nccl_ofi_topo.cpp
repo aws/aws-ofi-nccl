@@ -21,16 +21,17 @@
 #include "nccl_ofi_platform.h"
 
 #if HAVE_CUDA
-static const uint8_t target_class_id = 0x03;		/* Display controller class */
-static const unsigned short target_vendor_id = 0x10de;	/* NVIDIA */
+static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
+static const unsigned short target_vendor_ids[] = { 0x10de }; /* NVIDIA */
 #elif HAVE_ROCM
-static const uint8_t target_class_id = 0x03;		/* Display controller class */
-static const unsigned short target_vendor_id = 0x1002;	/* AMD */
+// AMD GPUs can appear as either "Display controller" or "Processing accelerator"
+static const uint8_t target_class_ids[] = { 0x03, 0x12 };
+static const unsigned short target_vendor_ids[] = { 0x1002 }; /* AMD */
 #elif HAVE_NEURON
 // No multi-rail grouping for neuron, pick an invalid class and vendor so that
 // no devices will be found.
-static const uint8_t target_class_id = 0;
-static const unsigned short target_vendor_id = 0;
+static const uint8_t target_class_ids[] = { 0 };
+static const unsigned short target_vendor_ids[] = { 0 };
 #else
 #error "No target device pcie information available"
 #endif
@@ -170,8 +171,22 @@ static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
 	   the class code. */
 	class_code = obj->attr->pcidev.class_id >> 8;
 
-	class_match = target_class_id == class_code;
-	vendor_match = obj->attr->pcidev.vendor_id == target_vendor_id;
+	class_match = false;
+	for (size_t i = 0 ; i < sizeof(target_class_ids) / sizeof(target_class_ids[0]) ; i++) {
+		if (target_class_ids[i] == class_code) {
+			class_match = true;
+			break;
+		}
+	}
+
+	vendor_match = false;
+	for (size_t i = 0 ; i < sizeof(target_vendor_ids) / sizeof(target_vendor_ids[0]) ; i++) {
+		if (target_vendor_ids[i] == obj->attr->pcidev.vendor_id) {
+			vendor_match = true;
+			break;
+		}
+	}
+
         *res = class_match && vendor_match;
         return 0;
 }
