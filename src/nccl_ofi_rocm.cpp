@@ -22,20 +22,16 @@ int nccl_net_ofi_gpu_init(void)
 	int driverVersion = -1;
 	int runtimeVersion = -1;
 
-	{
-		hipError_t res = hipDriverGetVersion(&driverVersion);
-		if (res != hipSuccess) {
-			NCCL_OFI_WARN("Failed to query HIP driver version.");
-			return -EINVAL;
-		}
+	hipError_t res = hipDriverGetVersion(&driverVersion);
+	if (res != hipSuccess) {
+		NCCL_OFI_WARN("Failed to query HIP driver version.");
+		return -EINVAL;
 	}
-
-	{
-		hipError_t res = hipRuntimeGetVersion(&runtimeVersion);
-		if (res != hipSuccess) {
-			NCCL_OFI_WARN("Failed to query HIP runtime version.");
-			return -EINVAL;
-		}
+	
+	res = hipRuntimeGetVersion(&runtimeVersion);
+	if (res != hipSuccess) {
+		NCCL_OFI_WARN("Failed to query HIP runtime version.");
+		return -EINVAL;
 	}
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
@@ -43,7 +39,7 @@ int nccl_net_ofi_gpu_init(void)
 	              driverVersion,
 	              runtimeVersion);
 
-  NCCL_OFI_WARN("HIP flush disabled");
+	NCCL_OFI_WARN("HIP flush disabled");
 	cuda_flush = false;
 
   return 0;
@@ -51,7 +47,7 @@ int nccl_net_ofi_gpu_init(void)
 
 int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void)
 {
-  return -EPERM;
+	return -EPERM;
 }
 
 int nccl_net_ofi_cuda_get_num_devices(void)
@@ -70,22 +66,22 @@ int nccl_net_ofi_cuda_get_active_device_idx(void)
 
 int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
 {
-  int ret = 0;
-  int cuda_device = -1;
-  unsigned int mem_type;
-  unsigned int device_ordinal;
+	int ret = 0;
+	int cuda_device = -1;
+	unsigned int mem_type;
+	unsigned int device_ordinal;
 
-  hipError_t cuda_ret_mem = hipPointerGetAttribute(&device_ordinal, HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL, data);
-  hipError_t cuda_ret_dev = hipPointerGetAttribute(&mem_type, HIP_POINTER_ATTRIBUTE_MEMORY_TYPE, data);
+	hipError_t cuda_ret_mem = hipPointerGetAttribute(&device_ordinal, HIP_POINTER_ATTRIBUTE_DEVICE_ORDINAL, data);
+	hipError_t cuda_ret_dev = hipPointerGetAttribute(&mem_type, HIP_POINTER_ATTRIBUTE_MEMORY_TYPE, data);
 
-  if (cuda_ret_mem != hipSuccess || cuda_ret_dev != hipSuccess) {
-  	ret = -ENOTSUP;
-        NCCL_OFI_WARN("Invalid buffer pointer provided");
-        goto exit;
-  }
-  exit:
-    *dev_id = cuda_device;
-    return ret;
+	if (cuda_ret_mem != hipSuccess || cuda_ret_dev != hipSuccess) {
+		ret = -ENOTSUP;
+		NCCL_OFI_WARN("Invalid buffer pointer provided");
+		goto exit;
+	}
+exit:
+	*dev_id = cuda_device;
+	return ret;
 }
 
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void)

@@ -329,7 +329,14 @@ static int set_mr_req_attr(uint64_t mr_key,
 		break;
 #if HAVE_GPU
 	case NCCL_PTR_CUDA:
-		mr_attr->iface = HAVE_CUDA ? FI_HMEM_CUDA : FI_HMEM_ROCR;
+		#if HAVE_CUDA
+			mr_attr->iface = FI_HMEM_CUDA;
+		#elif HAVE_ROCR
+			mr_attr->iface = FI_HMEM_ROCR;
+		#else
+			NCCL_OFI_WARN("Invalid Device Interface");
+			goto exit;
+		#endif
 
 		/* Get CUDA device ID */
 		ret = nccl_net_ofi_get_cuda_device_for_addr(
