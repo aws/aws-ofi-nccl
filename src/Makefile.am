@@ -70,26 +70,66 @@ libinternal_plugin_la_SOURCES = $(sources)
 libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS) $(ROCM_LDFLAGS)
 libinternal_plugin_la_LIBADD  = $(CUDA_LIBS) $(ROCM_LIBS)
 
+lib_LTLIBRARIES =
+
 if ENABLE_NEURON
-  lib_LTLIBRARIES = libnccom-net.la
+  lib_LTLIBRARIES += libnccom-net.la
   libnccom_net_la_SOURCES =
   libnccom_net_la_LIBADD = libinternal_plugin.la
   libnccom_net_la_LIBTOOLFLAGS = --tag=CXX
   libnccom_net_la_LDFLAGS = -module -avoid-version
-else
-  lib_LTLIBRARIES = libnccl-net-ofi.la
+endif
+
+# For both NCCL and RCCL,we always install lib{n,r}ccl-net-ofi.so.  To use the
+# default shared library, either NCCL_NET_PLUGIN=lib{n,r}ccl-net-ofi.so or
+# NCCL_NET_PLUGIN=ofi must be set.
+#
+# To enable the OFI plugin by default, a lib{n,r}ccl-net.so library is created.
+# If NCCL_NET_PLUGIN is not set, NCCL will attempt to dlopen lib{n,r}ccl-net.so,
+# with dlopen() searching the default search path.  This behavior is optional,
+# as some situations (like the NGC containers) may have multiple network
+# plugins.
+
+if HAVE_ROCM
+
+if ENABLE_NCCL_NET_LIBRARY
+  lib_LTLIBRARIES += librccl-net.la
+  librccl_net_la_SOURCES =
+  librccl_net_la_LIBADD = libinternal_plugin.la
+  librccl_net_la_LIBTOOLFLAGS = --tag=CXX
+  librccl_net_la_LDFLAGS = -module -avoid-version
+endif
+
+  lib_LTLIBRARIES += librccl-net-ofi.la
+  librccl_net_ofi_la_SOURCES =
+  librccl_net_ofi_la_LIBADD = libinternal_plugin.la
+  librccl_net_ofi_la_LIBTOOLFLAGS = --tag=CXX
+  librccl_net_ofi_la_LDFLAGS = -module -avoid-version
+
+endif
+
+
+if HAVE_CUDA
+
+if ENABLE_NCCL_NET_LIBRARY
+  lib_LTLIBRARIES += libnccl-net.la
+  libnccl_net_la_SOURCES =
+  libnccl_net_la_LIBADD = libinternal_plugin.la
+  libnccl_net_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_net_la_LDFLAGS = -module -avoid-version
+endif
+
+  lib_LTLIBRARIES += libnccl-net-ofi.la
   libnccl_net_ofi_la_SOURCES =
-  libnccl_net_ofi_la_LIBADD = libinternal_plugin.la $(CUDA_LIBS) $(ROCM_LIBS)
+  libnccl_net_ofi_la_LIBADD = libinternal_plugin.la
   libnccl_net_ofi_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_ofi_la_LDFLAGS = -module -avoid-version
 
-# We always install libnccl-net-ofi.so.  To use the default shared library,
-# either NCCL_NET_PLUGIN=libnccl-net-ofi.so or NCCL_NET_PLUGIN=ofi must be set.
-#
-# To enable the OFI plugin by default, a libnccl-net.so library is created.  If
-# NCCL_NET_PLUGIN is not set, NCCL will attempt to dlopen libnccl-net.so, with
-# dlopen() searching the default search path.  This behavior is optional, as
-# some situations (like the NGC containers) may have multiple network plugins.
+
+if WANT_PLATFORM_AWS
+# The tuner is normally built into the net plugin shared library, supporting
+# recent NCCL versions by default.  For historical reasons, we build a separate
+# tuner library on Nvidia platforms.
 #
 # Recent versions of NCCL include a tuner interface for algorithm/protocol
 # selection.  The tuner code lives in the net plugin, but a libnccl-ofi-tuner.so
@@ -102,24 +142,7 @@ else
 #
 # By bundling the tuner in the net plugin, we cause the tuner to be used by
 # default on NCCL 2.21 or later.
-if ENABLE_NCCL_NET_LIBRARY
-  lib_LTLIBRARIES += libnccl-net.la
-  libnccl_net_la_SOURCES =
-  libnccl_net_la_LIBADD = libinternal_plugin.la
-  libnccl_net_la_LIBTOOLFLAGS = --tag=CXX
-  libnccl_net_la_LDFLAGS = -module -avoid-version
-
-if HAVE_ROCM
-  lib_LTLIBRARIES += librccl-net.la
-  librccl_net_la_SOURCES =
-  librccl_net_la_LIBADD = libinternal_plugin.la
-  librccl_net_la_LIBTOOLFLAGS = --tag=CXX
-  librccl_net_la_LDFLAGS = -module -avoid-version
-endif
-
-endif
-
-if WANT_PLATFORM_AWS
+#
 # NCCL standardized on the libnccl-tuner-<interface> format after we released a
 # plugin with the tuner named libnccl-ofi-tuner.so.  Create separate libraries
 # for each name.
