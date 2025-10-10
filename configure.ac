@@ -310,5 +310,5 @@ AC_OUTPUT
 echo "*"
 echo "* AWS OFI NCCL plugin has been configured."
 echo "*"
-echo "* Platform-specific optimizations: ${NCCL_OFI_PLATFORM}"
+echo "* Enabled Platforms: ${ENABLED_PLATFORMS}"
 echo "*"

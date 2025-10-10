@@ -19,6 +19,7 @@
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_system.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_platform.h"
 
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "tuner/nccl_ofi_tuner_model.h"
@@ -59,13 +60,25 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 
+	/* Create topology for platform detection */
+	auto topo = nccl_ofi_topo_create();
+	PlatformManager::register_all_platforms(topo);
+	nccl_ofi_topo_free(topo);
+
 	/*
 	 * Retrieve platform type and pass to Region and Model based tuner support check functions.
 	 * If both Region and Model based tuner are not supported, log a warning and exit.
 	 */
-	platform_type = nccl_net_ofi_get_product_name();
+	auto platform_name = PlatformManager::get_global().get_platform().get_name();
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Tuner selected platform: %s", platform_name);
+	if (strcmp(platform_name, "AWS") == 0) {
+		platform_type = nccl_net_ofi_get_product_name();
+	}
+
+	/* Default platform or other non-AWS platforms should use internal tuner */
 	if (platform_type == NULL) {
-		NCCL_OFI_WARN("NCCL_OFI_TUNER is not available because platform type is unavailable.");
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
+			"NCCL_OFI_TUNER is not available because platform type is unavailable.");
 		goto exit;
 	}
 

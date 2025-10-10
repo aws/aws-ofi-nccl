@@ -7061,17 +7061,13 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 }
 
 
-nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list)
+nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo)
 {
 	int ret = 0;
 	int num_devices = 0;
 
-	/* Create NCCL OFI topology */
-	this->topo = nccl_ofi_topo_create();
-	if (!this->topo) {
-		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
-		throw std::runtime_error("rdma plugin constructor: topo creation failed");
-	}
+	/* Use shared topology and populate with filtered providers */
+	this->topo = global_topo;
 
 	ret = nccl_ofi_topo_populate(this->topo, provider_list);
 	if (ret != 0) {
@@ -7113,7 +7109,8 @@ nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_
 
 int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
-			   bool *found_multiple_rails)
+			   bool *found_multiple_rails,
+			   nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	struct fi_info *provider_list = NULL;
@@ -7239,7 +7236,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		return -ENOTSUP;
 	}
 
-	plugin = new nccl_net_ofi_rdma_plugin_t(provider_list);
+	plugin = new nccl_net_ofi_rdma_plugin_t(provider_list, topo);
 
 	/**
 	 * NCCL's topology detection will set NIC PCIe link speed based on the

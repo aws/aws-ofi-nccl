@@ -165,7 +165,7 @@ public:
 	 * platform hierarchy based on priorities and topology information.
 	 *
 	 */
-	static void register_all_platforms();
+	static void register_all_platforms(nccl_ofi_topo_t* topo);
 
 protected:
 	/**

@@ -14,6 +14,7 @@
 // Test class to access protected methods
 class TestablePlatformAWS : public PlatformAWS {
 public:
+	TestablePlatformAWS() : PlatformAWS(nullptr) {}
 	using PlatformAWS::get_platform_map;
 	using PlatformAWS::get_platform_entry;
 	using PlatformAWS::ec2_platform_data;

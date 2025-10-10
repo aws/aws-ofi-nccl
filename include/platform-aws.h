@@ -17,13 +17,21 @@
 
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_platform.h"
+#include "nccl_ofi_topo.h"
 
 #define PLATFORM_NAME_P6E_GB200 "p6e-gb200"
 
 class PlatformAWS : public Platform {
 public:
+	PlatformAWS(nccl_ofi_topo_t* topo) {
+		if (topo == nullptr) {
+			NCCL_OFI_WARN("AWS platform priority: -1 (topo not set)");
+		} else if (nccl_ofi_topo_has_efa_ena_devices(topo)) {
+			platform_priority = 100;
+		}
+	}
 	const char* get_name() const override { return "AWS"; }
-	int get_priority() override { return 100; }
+	int get_priority() override { return platform_priority; }
 	int init(const char **provider_filter) override;
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
@@ -85,6 +93,9 @@ private:
 	// Endpoint config state
 	bool nccl_proto_configured_ = false;
 	bool need_ordering_ = false;
+
+	// Priority for platform selection
+	int platform_priority = -1;
 };
 
 #endif // End NCCL_OFI_H_
