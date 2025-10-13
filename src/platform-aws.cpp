@@ -681,8 +681,10 @@ int PlatformAWS::init(const char **provider_filter)
 		env_manager::getInstance().insert_envvar("NCCL_TOPO_FILE", topology_path, false);
 	}
 
-	if (nic_dup_conns == 0 && platform_data)
-		nic_dup_conns = platform_data->default_dup_conns;
+	if (ofi_nccl_nic_dup_conns.get_source() == ParamSource::DEFAULT &&
+	    platform_data != NULL) {
+		ofi_nccl_nic_dup_conns.set(platform_data->default_dup_conns);
+	}
 
 	if (ofi_nccl_net_latency.get_source() == ParamSource::DEFAULT) {
 		if (platform_data && platform_data->latency >= 0.0) {
