@@ -473,7 +473,34 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		goto error;
 	}
 
-	/* Change default values as set by NIC attributes */
+	/*
+	 * Determine the scope of MRs for providers to report global registration
+	 * support to NCCL.
+	 * NCCL uses regIsGlobal to determine support for User Registrations via
+	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
+	 * support this model (since NCCL maintains a per-domain registration
+	 * cache which requires (domain-)global registrations.
+	 * Also, if we have different domains for different threads, registrations
+	 * are not reported as global even if they are tied to the domain.
+	 */
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
+		props->regIsGlobal = 0;
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
+	} else {
+		props->regIsGlobal = 1;
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations supported");
+	}
+
+	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
+
+	props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov);
+	if (props->dmabuf_support) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
+	}
+
+	/*
+	 * the rest of the checks require NIC attributes to be filled in by libfabric
+	 */
 	nic_info = nic_prov->nic;
 	if (nic_info == nullptr) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
@@ -491,24 +518,6 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		}
 		props->name = strdup(nic_info->device_attr->name);
 		assert(props->name != nullptr);
-	}
-
-	/*
-	 * Determine the scope of MRs for providers to report global registration
-	 * support to NCCL.
-	 * NCCL uses regIsGlobal to determine support for User Registrations via
-	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
-	 * support this model (since NCCL maintains a per-domain registration
-	 * cache which requires (domain-)global registrations.
-	 * Also, if we have different domains for different threads, registrations
-	 * are not reported as global even if they are tied to the domain.
-	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
-		props->regIsGlobal = 0;
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
-	} else {
-		props->regIsGlobal = 1;
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations supported");
 	}
 
 	/* Speed reported in Mbps */
@@ -602,13 +611,6 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		ret = -ENOTSUP;
 		goto error;
 #endif
-	}
-
-	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
-
-       props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov);
-	if (props->dmabuf_support) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
 	}
 
 	goto exit;
