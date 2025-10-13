@@ -44,12 +44,6 @@ enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
  * platforms and should be disabled by default */
 bool cuda_flush = false;
 
-/* number of duplicate providers to create for each discovered
- * provider, including renaming to cause NCCL to create additional
- * rings to use the connections
- */
-int nic_dup_conns = 0;
-
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
    const), but will not change during execution.  Therefore, it may be
@@ -172,7 +166,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 #endif
 
 	/* configuration parameters */
-	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
 
 	if (platform_init) {
@@ -327,7 +320,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * created the first endpoint, so this check needs to be way
 	 * down here
 	 */
-	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
+	if (ofi_nccl_nic_dup_conns.get() > 0 && support_gdr != GDR_UNSUPPORTED) {
 		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
 		ret = -ENOTSUP;
 		goto exit;
@@ -539,7 +532,7 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		props->pci_path = NULL;
 	}
 
-	if (nic_dup_conns > 1) {
+	if (ofi_nccl_nic_dup_conns.get() > 1) {
 #if HAVE_CUDA
 		int num_gpus_visible = nccl_net_ofi_cuda_get_num_devices();
 		int active_cuda_device = nccl_net_ofi_cuda_get_active_device_idx();
