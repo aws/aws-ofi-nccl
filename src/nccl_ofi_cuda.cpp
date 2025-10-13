@@ -123,20 +123,6 @@ int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
 }
 
 
-int nccl_net_ofi_cuda_get_num_devices(void)
-{
-	int count = -1;
-	cudaError_t res = cudaGetDeviceCount(&count);
-	return res == cudaSuccess ? count : -1;
-}
-
-int nccl_net_ofi_cuda_get_active_device_idx(void)
-{
-	int index = -1;
-	cudaError_t res = cudaGetDevice(&index);
-	return res == cudaSuccess ? index : -1;
-}
-
 int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
 {
 	CUdeviceptr d_ptr;
