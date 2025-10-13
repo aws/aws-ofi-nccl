@@ -30,22 +30,6 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
 int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void);
 
 /*
- * @brief	wraps cudaGetDevice()
-
- * @return	0 on success
- *		-1 on error
- */
-int nccl_net_ofi_cuda_get_num_devices(void);
-
-/*
- * @brief	wraps cudaGetDeviceCount()
-
- * @return	0 on success
- *		-1 on error
- */
-int nccl_net_ofi_cuda_get_active_device_idx(void);
-
-/*
  * @brief wraps cuMemAlloc()
  * @return	0 on success
  *		-1 on error
