@@ -509,6 +509,24 @@ struct nccl_net_ofi_rdma_send_comm_rail_t {
 	struct fid_ep *local_ep;
 };
 
+#define RET_IF_NULLPTR(obj, obj_type, ret_value)       \
+do						       \
+{						       \
+	if(obj == nullptr) {			       \
+		NCCL_OFI_WARN("%s is null", obj_type); \
+		return ret_value;		       \
+	}					       \
+} while (0);
+
+#define GOTO_IF_NULLPTR(obj, obj_type, label)	       \
+do						       \
+{						       \
+	if(obj == nullptr) {			       \
+		NCCL_OFI_WARN("%s is null", obj_type); \
+		goto label;			       \
+	}					       \
+} while (0);
+
 /**
  * @brief	RDMA send communicator
  *
