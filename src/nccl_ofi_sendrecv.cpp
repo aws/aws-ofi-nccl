@@ -2550,6 +2550,13 @@ found:
 			/* just in case */
 			tmp->next = NULL;
 
+			/* locality doesn't really make sense for dup_conns
+			 * usage (such as P3dn), and having a bunch of NICs have
+			 * the same PCI path confuses NCCL into thinking they're
+			 * the same NIC).  So dump the PCI information.
+			 */
+			tmp->nic = NULL;
+
 			if (!output_head)
 				output_head = tmp;
 
