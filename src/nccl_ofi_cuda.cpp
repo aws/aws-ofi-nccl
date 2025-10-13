@@ -58,10 +58,15 @@
 	} while (0);
 #endif
 
+DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
+#if HAVE_CUDA_GDRFLUSH_SUPPORT
+DECLARE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
+#endif
 DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
 DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
@@ -71,34 +76,35 @@ int nccl_net_ofi_cuda_init(void)
 	int driverVersion = -1;
 	int runtimeVersion = -1;
 
-	{
-		cudaError_t res = cudaDriverGetVersion(&driverVersion);
-		if (res != cudaSuccess) {
-			NCCL_OFI_WARN("Failed to query CUDA driver version.");
-			return -EINVAL;
-		}
+	cudaError_t res = cudaRuntimeGetVersion(&runtimeVersion);
+	if (res != cudaSuccess) {
+		NCCL_OFI_WARN("Failed to query CUDA runtime version.");
+		return -EINVAL;
 	}
 
-	{
-		cudaError_t res = cudaRuntimeGetVersion(&runtimeVersion);
-		if (res != cudaSuccess) {
-			NCCL_OFI_WARN("Failed to query CUDA runtime version.");
-			return -EINVAL;
-		}
-	}
-
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-	              "Using CUDA driver version %d with runtime %d",
-	              driverVersion,
-	              runtimeVersion);
-
+	RESOLVE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
+#if HAVE_CUDA_GDRFLUSH_SUPPORT
+	RESOLVE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
+#endif
 	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+	RESOLVE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemcpy, 4000);
+
+	CUresult cu_ret = pfn_cuDriverGetVersion(&driverVersion);
+	if (cu_ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to query CUDA driver version.");
+		return -EINVAL;
+	}
+
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+		      "Using CUDA driver version %d with runtime %d",
+		      driverVersion,
+		      runtimeVersion);
 
 	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
@@ -113,10 +119,15 @@ int nccl_net_ofi_cuda_init(void)
 int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
 {
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
-	static_assert(CUDA_VERSION >= 11030, "Requires cudart>=11.3");
-	cudaError_t ret = cudaDeviceFlushGPUDirectRDMAWrites(cudaFlushGPUDirectRDMAWritesTargetCurrentDevice,
-	                                                     cudaFlushGPUDirectRDMAWritesToOwner);
-	return (ret == cudaSuccess) ? 0 : -EPERM;
+	CUresult ret;
+
+	if (pfn_cuFlushGPUDirectRDMAWrites == NULL) {
+		return -EPERM;
+	}
+
+	ret = pfn_cuFlushGPUDirectRDMAWrites(CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TARGET_CURRENT_CTX,
+					     CU_FLUSH_GPU_DIRECT_RDMA_WRITES_TO_OWNER);
+	return (ret == CUDA_SUCCESS) ? 0 : -EPERM;
 #else
 	return -EPERM;
 #endif
@@ -178,26 +189,24 @@ int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
-int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id)
+int nccl_net_ofi_get_cuda_device_for_addr(void *ptr, int *dev_id)
 {
-	struct cudaPointerAttributes attrs = {};
-	cudaError_t res = cudaPointerGetAttributes(&attrs, data);
-	if (res != cudaSuccess) {
+	void *data[2];
+	CUpointer_attribute attributes[2];
+	unsigned int memtype;
+
+	attributes[0] = CU_POINTER_ATTRIBUTE_MEMORY_TYPE;
+	data[0] = &memtype;
+	attributes[1] = CU_POINTER_ATTRIBUTE_DEVICE_ORDINAL;
+	data[1] = dev_id;
+
+	CUresult ret = pfn_cuPointerGetAttributes(2, attributes, data, (CUdeviceptr)ptr);
+	if (ret != CUDA_SUCCESS || memtype != CU_MEMORYTYPE_DEVICE) {
+		*dev_id = -1;
 		return -EINVAL;
 	}
 
-	switch (attrs.type) {
-	case cudaMemoryTypeManaged:
-	case cudaMemoryTypeDevice:
-		*dev_id = attrs.device;
-		return 0;
-	case cudaMemoryTypeUnregistered:
-	case cudaMemoryTypeHost:
-	default:
-		NCCL_OFI_WARN("Invalid buffer pointer provided");
-		*dev_id = -1;
-		return -EINVAL;
-	};
+	return 0;
 }
 
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void)
