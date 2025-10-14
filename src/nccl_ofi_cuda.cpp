@@ -64,7 +64,9 @@ DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 DECLARE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
 #endif
+#if HAVE_CUDA_DMABUF_SUPPORT
 DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
+#endif
 DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
@@ -88,7 +90,9 @@ int nccl_net_ofi_cuda_init(void)
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 	RESOLVE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
 #endif
+#if HAVE_CUDA_DMABUF_SUPPORT
 	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
+#endif
 	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 	RESOLVE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
@@ -167,6 +171,7 @@ int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size)
 
 int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
 {
+#if HAVE_CUDA_DMABUF_SUPPORT
 	unsigned long long flags = 0;
 
 	assert(NCCL_OFI_IS_PTR_ALIGNED(aligned_ptr, system_page_size));
@@ -187,6 +192,9 @@ int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int
 
 	*offset = 0;
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+#else
+	return -EINVAL;
+#endif
 }
 
 int nccl_net_ofi_get_cuda_device_for_addr(void *ptr, int *dev_id)
