@@ -2507,7 +2507,7 @@ found:
 	/* Allow for multiple virtual nics per nic to increase
 	 * throughput for NICs that do not handle single QP situations
 	 * well. */
-	if (nic_dup_conns > 1) {
+	if (ofi_nccl_nic_dup_conns.get() > 1) {
 		struct fi_info *input_iter, *tmp, *output_head, *output_tail;
 
 		/* The goal of the next chunk of code is to make
@@ -2529,7 +2529,7 @@ found:
 		 * look like more appealing paths; see the dup_conns
 		 * code in the PCIe path discovery logic.
 		 */
-		num_providers *= nic_dup_conns;
+		num_providers *= ofi_nccl_nic_dup_conns.get();
 
 		input_iter = NULL;
 		output_head = output_tail = NULL;
@@ -2552,6 +2552,13 @@ found:
 			/* just in case */
 			tmp->next = NULL;
 
+			/* locality doesn't really make sense for dup_conns
+			 * usage (such as P3dn), and having a bunch of NICs have
+			 * the same PCI path confuses NCCL into thinking they're
+			 * the same NIC).  So dump the PCI information.
+			 */
+			tmp->nic = NULL;
+
 			if (!output_head)
 				output_head = tmp;
 
@@ -2569,7 +2576,7 @@ found:
 		provider_list = output_head;
 
 		NCCL_OFI_INFO(NCCL_INIT, "DUP_CONNS of %d changing device count to %d",
-			      nic_dup_conns, num_providers);
+			      ofi_nccl_nic_dup_conns.get(), num_providers);
 	}
 
 	ret = nccl_net_ofi_query_provider_capabilities(provider_list, num_providers);

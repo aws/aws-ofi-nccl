@@ -96,12 +96,6 @@ extern enum gdr_support_level_t support_gdr;
  * platforms and should be disabled by default */
 extern bool cuda_flush;
 
-/* number of duplicate providers to create for each discovered
- * provider, including renaming to cause NCCL to create additional
- * rings to use the connections
- */
-extern int nic_dup_conns;
-
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
    const), but will not change during execution.  Therefore, it may be

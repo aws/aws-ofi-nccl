@@ -49,12 +49,6 @@ enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
  * platforms and should be disabled by default */
 bool cuda_flush = false;
 
-/* number of duplicate providers to create for each discovered
- * provider, including renaming to cause NCCL to create additional
- * rings to use the connections
- */
-int nic_dup_conns = 0;
-
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
    const), but will not change during execution.  Therefore, it may be
@@ -177,7 +171,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 #endif
 
 	/* configuration parameters */
-	nic_dup_conns = ofi_nccl_nic_dup_conns();
 	cq_read_count = ofi_nccl_cq_read_count();
 
 #ifdef WANT_AWS_PLATFORM
@@ -334,7 +327,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 * created the first endpoint, so this check needs to be way
 	 * down here
 	 */
-	if (nic_dup_conns > 0 && support_gdr != GDR_UNSUPPORTED) {
+	if (ofi_nccl_nic_dup_conns.get() > 0 && support_gdr != GDR_UNSUPPORTED) {
 		NCCL_OFI_WARN("NCCL_OFI_NIC_DUP_CONNS set on platform that supports GPUDirect RDMA.  This configuration is not supported.");
 		ret = -ENOTSUP;
 		goto exit;
@@ -482,7 +475,34 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		goto error;
 	}
 
-	/* Change default values as set by NIC attributes */
+	/*
+	 * Determine the scope of MRs for providers to report global registration
+	 * support to NCCL.
+	 * NCCL uses regIsGlobal to determine support for User Registrations via
+	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
+	 * support this model (since NCCL maintains a per-domain registration
+	 * cache which requires (domain-)global registrations.
+	 * Also, if we have different domains for different threads, registrations
+	 * are not reported as global even if they are tied to the domain.
+	 */
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
+		props->regIsGlobal = 0;
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
+	} else {
+		props->regIsGlobal = 1;
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations supported");
+	}
+
+	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
+
+	props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov);
+	if (props->dmabuf_support) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
+	}
+
+	/*
+	 * the rest of the checks require NIC attributes to be filled in by libfabric
+	 */
 	nic_info = nic_prov->nic;
 	if (nic_info == nullptr) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
@@ -500,24 +520,6 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		}
 		props->name = strdup(nic_info->device_attr->name);
 		assert(props->name != nullptr);
-	}
-
-	/*
-	 * Determine the scope of MRs for providers to report global registration
-	 * support to NCCL.
-	 * NCCL uses regIsGlobal to determine support for User Registrations via
-	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
-	 * support this model (since NCCL maintains a per-domain registration
-	 * cache which requires (domain-)global registrations.
-	 * Also, if we have different domains for different threads, registrations
-	 * are not reported as global even if they are tied to the domain.
-	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
-		props->regIsGlobal = 0;
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
-	} else {
-		props->regIsGlobal = 1;
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations supported");
 	}
 
 	/* Speed reported in Mbps */
@@ -544,80 +546,6 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 	if (ret != 0) {
 		ret = 0;
 		props->pci_path = NULL;
-	}
-
-	if (nic_dup_conns > 1) {
-#if HAVE_CUDA
-		int num_gpus_visible = nccl_net_ofi_cuda_get_num_devices();
-		int active_cuda_device = nccl_net_ofi_cuda_get_active_device_idx();
-		int gpus_per_conn = -1;
-		int c = 0;
-
-		if (!(num_gpus_visible > 0)) {
-			NCCL_OFI_WARN("Error getting CUDA device count");
-			ret = -ENOTSUP;
-			goto error;
-		}
-
-		if (active_cuda_device < 0 || active_cuda_device >= num_gpus_visible) {
-			NCCL_OFI_WARN("Error getting current CUDA device");
-			ret = -ENOTSUP;
-			goto error;
-		}
-
-		gpus_per_conn = num_gpus_visible / num_devices;
-		if (gpus_per_conn == 0) gpus_per_conn = 1;
-
-		/* The goal is to have gpus_per_conn gpus in the local
-		 * system think that any given virtual nic is the one
-		 * that they should use, and that it is different than
-		 * the other NICs in the system.  We do this by only
-		 * leaving a valid device id in pci_path when
-		 * active_cuda_device / gpus_per_comm is equal to the
-		 * NIC dev index we're currently querying.  For the
-		 * others, we provide a PCIPath that points at the PCI
-		 * Bus itself, which NCCL will interpret to be on a
-		 * different complex than the bus (assuming the NIC
-		 * BUS and GPU BUS are the same).
-		 *
-		 * There are a bunch of assumptions in this logic,
-		 * such that the physical NICs in the system don't
-		 * have PCI affinity with the GPUs.  Given that we've
-		 * already established that GPUDirect doesn't work,
-		 * this is probably ok; any affinity is lost by
-		 * bouncing through host buffers anyway.
-		 */
-		if ((active_cuda_device / gpus_per_conn != dev_id) && props->pci_path) {
-			for (c = strlen(props->pci_path); props->pci_path[c] != '/'; c--) {
-				props->pci_path[c] = '\0';
-			}
-		}
-		NCCL_OFI_TRACE(NCCL_INIT,
-			       "Returning synthetic PCI path for device %d of %s",
-			       dev_id,
-			       props->pci_path);
-
-		snprintf(props->name,
-			 FI_NAME_MAX + 2,
-			 "%s-%x",
-			 nic_info->device_attr->name,
-			 dev_id);
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Adjusted dev %d device name to %s",
-			       dev_id,
-			       props->name);
-#else
-		NCCL_OFI_WARN("NIC_DUP_CONNS enabled on platform that does not support NIC_DUP_CONNS.  This should not happen.");
-		ret = -ENOTSUP;
-		goto error;
-#endif
-	}
-
-	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
-
-       props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov);
-	if (props->dmabuf_support) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
 	}
 
 	goto exit;
