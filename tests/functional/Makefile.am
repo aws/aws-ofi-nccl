@@ -11,7 +11,7 @@ AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 AM_CPPFLAGS += $(MPI_CPPFLAGS) $(CUDA_CPPFLAGS)
 AM_LDFLAGS = $(MPI_LDFLAGS) $(CUDA_LDFLAGS)
-LDADD = $(top_builddir)/src/libinternal_plugin.la $(MPI_LIBS) $(CUDA_LIBS)
+LDADD = $(top_builddir)/src/libinternal_plugin.la $(MPI_LIBS) $(CUDA_LIBS) $(CUDA_RUNTIME_LIBS)
 
 # this is a little jenky, but we've always assumed we had wrapper compilers
 # available for MPI.  We don't want to just override CXX to get mpicxx used,
