@@ -32,26 +32,34 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AS_IF([test -n "${with_cuda}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-cuda=${with_cuda}"])
 
   AS_IF([test -z "${with_cuda}" -o "${with_cuda}" = "yes"],
-        [],
+        [# Use system CUDA installation
+         AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
+               [CUDA_LIBS="-lrt -ldl"],  # Dynamic: only link support libs, not cudart
+               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"])  # Static: link cudart_static
+         LIBS="${CUDA_LIBS} ${LIBS}"],
         [test "${with_cuda}" = "no"],
         [check_pkg_found=no],
         [cuda_realpath="$(realpath ${with_cuda})"
          cuda_ldpath="${cuda_realpath}/lib64"
          CUDA_LDFLAGS="-L${cuda_ldpath}"
          CUDA_CPPFLAGS="-isystem ${cuda_realpath}/include"
-         CUDA_LIBS="-l${cudart_lib} -lrt -ldl"
+         AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
+               [CUDA_LIBS="-lrt -ldl"],  # Dynamic: only link support libs, not cudart
+               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"])  # Static: link cudart_static
          LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
          LIBS="${CUDA_LIBS} ${LIBS}"
          CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"
         ])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
-        [AC_SEARCH_LIBS(
-         [cudaGetDriverEntryPoint],
-         [${cudartlib}],
-         [],
-         [check_pkg_found=no],
-         [-ldl -lrt])])
+        [AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
+               [AC_MSG_NOTICE([Skipping cudaGetDriverEntryPoint library search for dynamic linking])],
+               [AC_SEARCH_LIBS(
+                 [cudaGetDriverEntryPoint],
+                 [${cudart_lib}],
+                 [],
+                 [check_pkg_found=no],
+                 [-ldl -lrt])])])
 
   check_cuda_gdr_flush_define=0
   AS_IF([test "${check_pkg_found}" = "yes"],
@@ -101,7 +109,11 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_SUPPORT], [${check_cuda_dmabuf_define}], [Defined to 1 if CUDA DMA-BUF support is available])
   AC_DEFINE_UNQUOTED([HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE], [${check_cuda_dmabuf_mapping_type_pcie}], [Defined to 1 if CUDA DMA mapping type PCIE support is available])
   AC_DEFINE_UNQUOTED([HAVE_CUDA_GDRFLUSH_SUPPORT], [${check_cuda_gdr_flush_define}], [Defined to 1 if CUDA cuFlushGPUDirectRDMAWrites support is available])
+  AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
+        [AC_DEFINE_UNQUOTED([ENABLE_CUDART_DYNAMIC], [1], [Defined to 1 if CUDA dynamic runtime linking is enabled])],
+        [AC_DEFINE_UNQUOTED([ENABLE_CUDART_DYNAMIC], [0], [Defined to 0 if CUDA dynamic runtime linking is disabled])])
   AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
+  AM_CONDITIONAL([ENABLE_CUDART_DYNAMIC], [test "x${enable_cudart_dynamic}" = "xyes"])
 
   AC_SUBST([CUDA_LDFLAGS])
   AC_SUBST([CUDA_CPPFLAGS])
