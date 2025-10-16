@@ -81,6 +81,37 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  */
 #define NUM_NUM_SEG_BITS ((uint64_t)4)
 
+/*
+ * @brief	Communicator ID bitmask
+ */
+#define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
+
+/*
+ * @brief	Extract communicator ID from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_COMM_ID_FROM_IMM(data) (((data) >> NCCL_OFI_RDMA_SEQ_BITS) & COMM_ID_MASK)
+
+/*
+ * @brief	Number of segments bitmask for immediate data
+ */
+#define MSG_NUM_SEG_MASK (((uint64_t)1 << NUM_NUM_SEG_BITS) - 1)
+
+/*
+ * @brief	Extract message sequence number from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
+
+/*
+ * @brief	Extract number of segments from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
+
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -754,6 +785,11 @@ public:
 		assert(rail_id < num_rails);
 		return &domain_rails[rail_id];
 	}
+
+	/**
+	 * Read completion queue and process entries.
+	 */
+	int ofi_process_cq();
 
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;

@@ -23,6 +23,18 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Initializing");
 
+	/* GIN only supports RDMA transport protocol */
+	if (ofi_nccl_protocol.get() != PROTOCOL::RDMA) {
+		NCCL_OFI_WARN("GIN only supports RDMA transport protocol.");
+		return ncclInternalError;
+	}
+
+	/* We make the global MR assumption in various places. */
+	if (endpoint_mr) {
+		NCCL_OFI_WARN("GIN plugin does not support FI_MR_ENDPOINT");
+		return ncclInternalError;
+	}
+
 	*ctx = new nccl_ofi_gin_ctx();
 
 	return ncclSuccess;
@@ -76,6 +88,8 @@ static ncclResult_t nccl_ofi_gin_listen(void* ctx, int dev, void* handle, void**
 		return ncclInternalError;
 	}
 
+	/* Note: although the GIN plugin uses its own endpoint type, we still need
+	   the RDMA transport endpoint to set up the bootstrap AG ring. */
 	nccl_net_ofi_ep_t *ep = device->get_ep();
 	assert(ep != nullptr);
 

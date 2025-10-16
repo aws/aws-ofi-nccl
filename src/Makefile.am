@@ -38,9 +38,11 @@ sources = \
 
 if ENABLE_GIN
 sources += \
-	gin/nccl_ofi_gin.cpp \
 	gin/nccl_ofi_gin_allgather.cpp \
-	gin/nccl_ofi_gin_api.cpp
+	gin/nccl_ofi_gin_api.cpp \
+	gin/nccl_ofi_gin_ep.cpp \
+	gin/nccl_ofi_gin_reqs.cpp \
+	gin/nccl_ofi_gin.cpp
 endif
 
 if WANT_PLATFORM_AWS

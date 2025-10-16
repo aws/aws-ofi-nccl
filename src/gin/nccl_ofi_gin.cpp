@@ -59,7 +59,7 @@ static inline void set_flush_buff_info(nccl_net_ofi_rdma_domain_t *domain,
 }
 
 
-static inline int rail_addr_insert(nccl_net_ofi_ep_rail_t &rail, const nccl_ofi_rdma_ep_name_t &ep_addr,
+static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_rdma_ep_name_t &ep_addr,
 				   int peer_rank, fi_addr_t &ofi_addr,
 				   std::unordered_map<fi_addr_t, uint64_t> &rank_map)
 {
@@ -117,12 +117,16 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 	}
 
 	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	auto *domain = rdma_ep->rdma_endpoint_get_domain();
+	auto *device = rdma_ep->rdma_endpoint_get_device();
+
+	nccl_ofi_gin_ep_t *gin_ep = new nccl_ofi_gin_ep_t(domain);
+
 	std::vector<rdma_gin_connect_handle> all_handles(nranks, rdma_gin_connect_handle{ });
 	rdma_gin_connect_handle &my_gin_handle = all_handles[rank];
 
-	const int num_rails = rdma_ep->num_rails;
-	const int num_control_rails = rdma_ep->num_control_rails;
-	auto *device = rdma_ep->rdma_endpoint_get_device();
+	const int num_rails = gin_ep->num_rails;
+	const int num_control_rails = gin_ep->num_rails;
 	size_t comm_id = device->comm_idpool.allocate_id();
 	if (OFI_UNLIKELY(comm_id == FI_KEY_NOTAVAIL)) {
 		NCCL_OFI_WARN("No comm id available");
@@ -133,21 +137,29 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 	my_gin_handle.num_rails = num_rails;
 	my_gin_handle.num_control_rails = num_control_rails;
 	for (int i = 0; i < num_rails; ++i) {
-		nccl_net_ofi_ep_rail_t *rail = &rdma_ep->rails[i];
-		my_gin_handle.ep_names[i].ep_name_len = rail->local_ep_name_len;
-		memcpy(my_gin_handle.ep_names[i].ep_name, rail->local_ep_name,
-		       rail->local_ep_name_len);
+		nccl_ofi_gin_ep_rail_t &rail = gin_ep->rails[i];
+		nccl_ofi_rdma_ep_name_t &out_name = my_gin_handle.ep_names[i];
+		out_name.ep_name_len = MAX_EP_ADDR;
+		ret = fi_getname(&rail.ofi_ep.get()->fid, out_name.ep_name, &out_name.ep_name_len);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_getname failed; RC: %d", ret);
+			return ret;
+		}
 	}
 	for (int i = 0; i < num_control_rails; ++i) {
-		nccl_net_ofi_ep_rail_t *rail = &rdma_ep->control_rails[i];
-		my_gin_handle.control_ep_names[i].ep_name_len = rail->local_ep_name_len;
-		memcpy(my_gin_handle.control_ep_names[i].ep_name, rail->local_ep_name,
-		       rail->local_ep_name_len);
+		nccl_ofi_gin_ep_rail_t &rail = gin_ep->control_rails[i];
+		nccl_ofi_rdma_ep_name_t &out_name = my_gin_handle.control_ep_names[i];
+		out_name.ep_name_len = MAX_EP_ADDR;
+		ret = fi_getname(&rail.ofi_ep.get()->fid, out_name.ep_name, &out_name.ep_name_len);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_getname failed; RC: %d", ret);
+			return ret;
+		}
 	}
-	set_flush_buff_info(rdma_ep->rdma_endpoint_get_domain(), my_gin_handle);
+	set_flush_buff_info(domain, my_gin_handle);
 
 	nccl_ofi_gin_comm *gin_comm = new nccl_ofi_gin_comm
-		(ep, device->dev_id, my_gin_handle.comm_id, rank, nranks,
+		(gin_ep, device->dev_id, my_gin_handle.comm_id, rank, nranks,
 		 s_comm, r_comm, gin_ctx->gdr_handle);
 
 	device->rdma_device_set_comm(comm_id, gin_comm);
@@ -155,7 +167,7 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 
 	ret = nccl_ofi_freelist_init_mr
 		(sizeof(nccl_net_ofi_rdma_signal_metadata_msg_t), 16, 16, 0, nullptr, nullptr,
-		 freelist_regmr_host_fn, freelist_deregmr_host_fn, rdma_ep->rdma_endpoint_get_domain(),
+		 freelist_regmr_host_fn, freelist_deregmr_host_fn, domain,
 		 1, &gin_comm->metadata_fl);
 	if (ret != 0) {
 		return ret;
@@ -174,13 +186,13 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 		remote_rank_comm.flush_buff_addr = gin_handle.flush_buff_addr;
 
 		for (int r = 0; r < num_rails; ++r) {
-			ret = rail_addr_insert(rdma_ep->control_rails[r], gin_handle.control_ep_names[r], i,
+			ret = rail_addr_insert(gin_ep->control_rails[r], gin_handle.control_ep_names[r], i,
 					       remote_rank_comm.control_address[r], gin_comm->ctrl_rank_map[r]);
 			if (ret != 0) {
 				return ret;
 			}
 
-			ret = rail_addr_insert(rdma_ep->rails[r], gin_handle.ep_names[r], i,
+			ret = rail_addr_insert(gin_ep->rails[r], gin_handle.ep_names[r], i,
 					       remote_rank_comm.address[r], gin_comm->rank_map[r]);
 			if (ret != 0) {
 				return ret;
@@ -197,7 +209,7 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 static inline int writedata_ack(nccl_ofi_gin_comm *gin_comm, unsigned int peer_rank,
 				unsigned int msg_seq_num)
 {
-	/* For now, always send acks on rail 0 */
+	/* For now, always send acks on control rail 0 */
 	const int rail_id = 0;
 
 	auto *req = new nccl_net_ofi_gin_writeack_req_t(gin_comm);
@@ -206,16 +218,14 @@ static inline int writedata_ack(nccl_ofi_gin_comm *gin_comm, unsigned int peer_r
 	uint32_t peer_comm_id = rank_comm.comm_id;
 	uint32_t imm_data = GET_RDMA_WRITE_IMM_DATA(peer_comm_id, msg_seq_num, WRITEDATA_ACK_NSEG);
 
-	auto *rdma_ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(gin_comm->ep);
-	auto *domain = rdma_ep->rdma_endpoint_get_domain();
-
-	auto *ofi_ep = rdma_ep->rdma_endpoint_get_rail(rail_id)->ofi_ep.get();
+	auto *domain = gin_comm->ep->domain;
+	auto *ofi_ep = gin_comm->ep->control_rails[rail_id].ofi_ep.get();
 
 	auto *desc = fi_mr_desc(domain->flush_buff.mr_handle->mr[rail_id].get());
 
 	auto op = [=] {
 		ssize_t rc = fi_writedata(ofi_ep, domain->flush_buff.buffer, 0, desc, imm_data,
-					  rank_comm.address[0], rank_comm.flush_buff_addr,
+					  rank_comm.control_address[0], rank_comm.flush_buff_addr,
 					  rank_comm.flush_buff_mr_key[rail_id], &(req->ctx.ofi_ctx));
 		if (rc != 0 && rc != -FI_EAGAIN) {
 			NCCL_OFI_WARN("Failed call to fi_writedata; RC: %zd", rc);
@@ -437,7 +447,7 @@ int gin_handle_signal_metadata_completion(nccl_ofi_gin_comm *gin_comm, fi_addr_t
 int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int type, uint64_t offset,
 		       int fd, uint64_t mrFlags, rdma_gin_mr_handle** mr_handle_out)
 {
-	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep);
+	auto *gin_ep = comm->ep;
 	void *local_handle = nullptr;
 
 	/* Register buffer with local send comm */
@@ -459,7 +469,7 @@ int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int typ
 	rdma_gin_remote_mr &my_remote_mr = mr_handle->remote_mr[comm->rank];
 
 	my_remote_mr.address = reinterpret_cast<uintptr_t>(data);
-	my_remote_mr.num_rails = rdma_ep->num_rails;
+	my_remote_mr.num_rails = gin_ep->num_rails;
 
 	if (type == NCCL_PTR_CUDA) {
 		assert(comm->gdr_handle != nullptr);
@@ -488,7 +498,7 @@ int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int typ
 	}
 
 	auto *rdma_mr_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(local_handle);
-	for (int i = 0; i < rdma_ep->num_rails; ++i) {
+	for (unsigned i = 0; i < gin_ep->num_rails; ++i) {
 		my_remote_mr.mr_key[i] = fi_mr_key(rdma_mr_handle->mr[i].get());
 		if (my_remote_mr.mr_key[i] == FI_KEY_NOTAVAIL) {
 			delete mr_handle;
@@ -608,12 +618,12 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 		return -EINVAL;
 	}
 
-	auto *rdma_ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(gin_comm->ep);
+	auto *gin_ep = gin_comm->ep;
 	auto &rank_comm = gin_comm->rank_comms[rank];
 	uint16_t msg_seq_num = rank_comm.next_target_seq_num;
 	uint32_t remote_comm_id = rank_comm.comm_id;
 	uint16_t rail_id = gin_comm->next_rail_id;
-	gin_comm->next_rail_id = (gin_comm->next_rail_id + 1) % rdma_ep->num_rails;
+	gin_comm->next_rail_id = (gin_comm->next_rail_id + 1) % gin_ep->num_rails;
 
 	int ret = 0;
 	nccl_net_ofi_gin_tx_req_t *write_req = nullptr;
@@ -630,7 +640,7 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 		uint64_t data = GET_RDMA_WRITE_IMM_DATA(remote_comm_id, msg_seq_num, 1);
 
 		auto op = [=]() {
-			ssize_t rc = fi_writedata(rdma_ep->rails[rail_id].ofi_ep.get(), src, size, desc, data,
+			ssize_t rc = fi_writedata(gin_ep->rails[rail_id].ofi_ep.get(), src, size, desc, data,
 						  rank_comm.address[rail_id], dest,
 						  dest_remote_mr.mr_key[rail_id],
 						  &(write_req->ctx.ofi_ctx));
@@ -674,8 +684,8 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 	nccl_net_ofi_gin_tx_req_t *send_req = new nccl_net_ofi_gin_tx_req_t();
 
 	auto op = [=]() {
-		ssize_t rc = fi_send(rdma_ep->rails[rail_id].ofi_ep.get(), metadata_send, sizeof(*metadata_send),
-				     fi_mr_desc(fl_handle->mr_handle->mr[rail_id].get()), rank_comm.address[rail_id],
+		ssize_t rc = fi_send(gin_ep->control_rails[rail_id].ofi_ep.get(), metadata_send, sizeof(*metadata_send),
+				     fi_mr_desc(fl_handle->mr_handle->mr[rail_id].get()), rank_comm.control_address[rail_id],
 				     &send_req->ctx.ofi_ctx);
 		if (rc != 0 && rc != -FI_EAGAIN) {
 			NCCL_OFI_WARN("fi_send failed with RC %zd", rc);
@@ -731,4 +741,48 @@ int nccl_ofi_gin_comm::process_pending_reqs()
 	}
 
 	return 0;
+}
+
+
+int nccl_ofi_gin_comm::progress()
+{
+	auto *rdma_domain = ep->domain;
+	int ret = rdma_domain->ofi_process_cq();
+	if (ret != 0) {
+		return ret;
+	}
+
+	ret = process_pending_reqs();
+
+	return ret;
+}
+
+int nccl_ofi_gin_comm::close()
+{
+	int ret = 0;
+
+	while (outstanding_ack_counter > 0) {
+		ret = progress();
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	delete ep;
+
+	ret = nccl_ofi_freelist_fini(metadata_fl);
+	if (ret != 0) {
+		return ret;
+	}
+
+	ret = s_comm->close(s_comm);
+	if (ret != 0) {
+		return ret;
+	}
+	ret = r_comm->close(r_comm);
+	if (ret != 0) {
+		return ret;
+	}
+
+	return ret;
 }

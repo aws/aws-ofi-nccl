@@ -42,40 +42,9 @@
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
 /*
- * @brief	Communicator ID bitmask
- */
-#define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
-
-/*
  * @brief	Signifier for an invalid Communicator ID
  */
 #define COMM_ID_INVALID            (COMM_ID_MASK)
-
-/*
- * @brief	Number of segments bitmask for immediate data
- */
-#define MSG_NUM_SEG_MASK (((uint64_t)1 << NUM_NUM_SEG_BITS) - 1)
-
-/*
- * @brief	Extract communicator ID from write completion immediate data
- *
- * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
- */
-#define GET_COMM_ID_FROM_IMM(data) (((data) >> NCCL_OFI_RDMA_SEQ_BITS) & COMM_ID_MASK)
-
-/*
- * @brief	Extract message sequence number from write completion immediate data
- *
- * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
- */
-#define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
-
-/*
- * @brief	Extract number of segments from write completion immediate data
- *
- * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
- */
-#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
 
 /*
  * Return value from some functions indicating that the communicator is
@@ -1391,7 +1360,7 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
 	for (uint64_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
 		void *op_ctx = cq_entry[comp_idx].op_context;
 
-		if (cq_entry[comp_idx].flags & FI_REMOTE_WRITE) {
+		if (!op_ctx && (cq_entry[comp_idx].flags & FI_REMOTE_WRITE)) {
 
 			ret = handle_write_comp(&cq_entry[comp_idx], src_addrs[comp_idx],
 						device, rail_id);
@@ -1720,15 +1689,11 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	int ret;
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
-	nccl_net_ofi_rdma_device_t *device = domain_ptr->rdma_domain_get_device();
 
-	for (uint16_t rail_id = 0; rail_id != domain_ptr->num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_domain_rail_t *rail = domain_ptr->rdma_domain_get_rail(rail_id);
-
-		ret = ofi_process_cq_rail(device, rail);
-		if (ret != 0) {
-			goto exit;
-		}
+	ret = domain_ptr->ofi_process_cq();
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Failed call to ofi_process_cq: %d", ret);
+		goto exit;
 	}
 
 	/* Process any pending requests */
@@ -6491,6 +6456,21 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 	return ret;
 }
 
+int nccl_net_ofi_rdma_domain_t::ofi_process_cq()
+{
+	nccl_net_ofi_rdma_device_t *rdma_device = this->rdma_domain_get_device();
+
+	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+		nccl_net_ofi_rdma_domain_rail_t *rail = this->rdma_domain_get_rail(rail_id);
+
+		int ret = ofi_process_cq_rail(rdma_device, rail);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return 0;
+}
 
 nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
 {

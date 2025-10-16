@@ -8,6 +8,7 @@
 #include "nccl_ofi_freelist.h"
 
 #include "gin/nccl_ofi_gin_types.h"
+#include "gin/nccl_ofi_gin_ep.h"
 #include <deque>
 
 struct nccl_ofi_gin_listen_comm
@@ -90,6 +91,8 @@ struct nccl_ofi_gin_comm : nccl_net_ofi_comm_t
 	int rank;
 	int nranks;
 
+	nccl_ofi_gin_ep_t *ep;
+
 	/* AG ring */
 	nccl_net_ofi_send_comm_t *s_comm;
 	nccl_net_ofi_recv_comm_t *r_comm;
@@ -129,7 +132,7 @@ struct nccl_ofi_gin_comm : nccl_net_ofi_comm_t
 	/* Pointer to the context's GDRCopy handle (created during initialization) */
 	gdr_t gdr_handle;
 
-	nccl_ofi_gin_comm(nccl_net_ofi_ep_t *ep_, int dev_id_,
+	nccl_ofi_gin_comm(nccl_ofi_gin_ep_t *ep_, int dev_id_,
 			  uint32_t local_comm_id_,
 			  int rank_,
 			  int nranks_,
@@ -137,11 +140,12 @@ struct nccl_ofi_gin_comm : nccl_net_ofi_comm_t
 			  nccl_net_ofi_recv_comm_t *r_comm_,
 			  gdr_t gdr_handle_) :
 		nccl_net_ofi_comm_t{.type = NCCL_NET_OFI_GIN_COMM,
-				    .ep = ep_,
+				    .ep = nullptr, /* The GIN EP does not conform to this interface */
 				    .dev_id = dev_id_},
 		local_comm_id(local_comm_id_),
 		rank(rank_),
 		nranks(nranks_),
+		ep(ep_),
 		s_comm(s_comm_),
 		r_comm(r_comm_),
 		rank_comms(),
@@ -158,45 +162,10 @@ struct nccl_ofi_gin_comm : nccl_net_ofi_comm_t
 	std::deque<std::function<ssize_t()>> pending_requests;
 
 	/* Progress the completion queue and try posting any pending requests */
-	int progress() {
-		auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(this->ep);
-		int ret = rdma_ep->ofi_process_cq();
-		if (ret != 0) {
-			return ret;
-		}
-
-		ret = process_pending_reqs();
-
-		return ret;
-	}
+	int progress();
 
 	/* Close the GIN comm, waiting for any outstanding requests as necessary. */
-	int close() {
-		int ret = 0;
-
-		while (outstanding_ack_counter > 0) {
-			ret = progress();
-			if (ret != 0) {
-				return ret;
-			}
-		}
-
-		ret = nccl_ofi_freelist_fini(metadata_fl);
-		if (ret != 0) {
-			return ret;
-		}
-
-		ret = s_comm->close(s_comm);
-		if (ret != 0) {
-			return ret;
-		}
-		ret = r_comm->close(r_comm);
-		if (ret != 0) {
-			return ret;
-		}
-
-		return ret;
-	}
+	int close();
 
 private:
 	int process_pending_reqs();
