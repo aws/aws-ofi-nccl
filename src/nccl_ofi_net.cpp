@@ -30,9 +30,6 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_platform.h"
-#ifdef WANT_AWS_PLATFORM
-#include "platform-aws.h"
-#endif
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_system.h"
 
@@ -137,6 +134,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	nccl_net_ofi_ep_t *ep = NULL;
 	nccl_net_ofi_device_t *device = NULL;
 	nccl_ofi_properties_t properties;
+	nccl_ofi_topo_t *topo = nullptr;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -171,9 +169,17 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	cq_read_count = ofi_nccl_cq_read_count();
 
-#ifdef WANT_AWS_PLATFORM
-	PlatformManager::get_global().register_platform(std::make_unique<PlatformAWS>());
-#endif
+	topo = nccl_ofi_topo_create();
+	if (!topo) {
+		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
+		ret = -ENODEV;
+		goto exit;
+	}
+
+	PlatformManager::register_all_platforms(topo);
+
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Plugin selected platform: %s",
+	       PlatformManager::get_global().get_platform().get_name());
 
 	ret = PlatformManager::get_global().get_platform().init(&provider_filter);
 	if (ret != 0)
@@ -214,7 +220,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 				goto exit;
 			}
 		} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
-			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy);
+			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy, topo);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize rdma protocol");
 				goto exit;
@@ -226,7 +232,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 		try {
 			ret = nccl_net_ofi_rdma_init(provider_filter, &rdma_plugin,
-						     &have_multiple_rails);
+						     &have_multiple_rails, topo);
 		}
 		catch (const std::exception &e) {
 			NCCL_OFI_WARN("Caught exception in rdma_init: %s", e.what());
@@ -355,8 +361,12 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
  exit:
 	if (ret != 0) {
+		if (topo) {
+			nccl_ofi_topo_free(topo);
+		}
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
 	}
+	// On success, topology ownership is transferred to plugin
 	return ret;
 }
 
