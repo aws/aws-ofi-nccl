@@ -374,4 +374,19 @@ OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
 OFI_NCCL_PARAM_VALUE_SET(PROGRESS_MODEL, (UNSPEC)(AUTO)(MANUAL))
 OFI_NCCL_PARAM(PROGRESS_MODEL, progress_model,  "PROGRESS_MODEL", PROGRESS_MODEL::UNSPEC)
 
+/*
+ * NVTX Tracing dimension. Valid options are PER_COMM, PER_DEV, 
+ * and NONE, with the default set to NONE (disabled).
+ *
+ * PER_COMM: Collect NVTX traces in a "per-device" view, which associates sub-events with
+ * an EFA device, showing activity on each device.
+ *
+ * PER_DEV: Collect NVTX traces in a "per-communicator" view, which associates parent
+ * send/recv events with constituent events (segments, controls.
+ *
+ * NONE: Nothing is traced, and therefore disabled.
+ */
+OFI_NCCL_PARAM_VALUE_SET(NVTX_TRACE_DIMENSION, (NONE)(PER_COMM)(PER_DEV))
+OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSION", NVTX_TRACE_DIMENSION::NONE)
+
 #endif // End NCCL_OFI_PARAM_H_
