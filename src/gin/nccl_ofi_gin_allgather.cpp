@@ -31,7 +31,7 @@ int nccl_ofi_gin_allgather(struct nccl_ofi_gin_comm *comm, void *data, size_t si
 	srank = comm->rank;
 	for (i = 0; i < comm->nranks - 1; i++) {
 		rrank = (srank-1+comm->nranks) % comm->nranks;
-		tag = 3; /* "because" */
+		tag = 0; /* ignored by plugin */
 		while (!rreq || !sreq) {
 			if (!rreq) {
 				buf = ((char*)data) + (rrank*size);

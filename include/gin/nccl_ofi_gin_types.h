@@ -21,9 +21,6 @@ struct nccl_ofi_gin_ep_t;
 struct nccl_ofi_gin_ep_rail_t;
 
 struct nccl_net_ofi_rdma_signal_metadata_msg_t {
-	/* Message type, must be NCCL_OFI_RDMA_SIGNAL_METADATA */
-	uint32_t type:NCCL_OFI_RDMA_CTRL_TYPE_BITS;
-
 	/* Message sequence number */
 	uint32_t msg_seq_num:NCCL_OFI_RDMA_SEQ_BITS;
 

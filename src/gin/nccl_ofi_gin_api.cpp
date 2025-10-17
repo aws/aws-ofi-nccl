@@ -15,6 +15,10 @@
 #include "gin/nccl_ofi_gin_types.h"
 #include "gin/nccl_ofi_gin_reqs.h"
 
+/* Maximum GIN request size -- set to 2 GiB
+   NCCL-GIN doesn't appear to actually check this limit. */
+#define GIN_MAX_COLL_SIZE (2*1024*1024*1024UL)
+
 static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
 {
 	if (ofi_log_function == nullptr) {
@@ -75,7 +79,7 @@ static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t*
 	props->vProps.ndevs = 1;
 	props->vProps.devs[0] = dev;
 	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
-	props->maxCollBytes = (2*1024*1024*1024L);
+	props->maxCollBytes = GIN_MAX_COLL_SIZE;
 
 	return ncclSuccess;
 }

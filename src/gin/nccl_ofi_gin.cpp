@@ -694,7 +694,6 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_sym_mr
 		(metadata_elem->ptr);
 	freelist_regmr_fn_handle_t *fl_handle =
 		(freelist_regmr_fn_handle_t *)metadata_elem->mr_handle;
-	metadata_send->type = NCCL_OFI_RDMA_MSG_GIN_METADATA;
 	metadata_send->msg_seq_num = msg_seq_num;
 	metadata_send->num_segments = nseg;
 	metadata_send->remote_comm_id = remote_comm_id;

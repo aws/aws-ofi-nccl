@@ -34,10 +34,6 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
-#if HAVE_GIN
-#include "gin/nccl_ofi_gin.h"
-#endif
-
 /* Message buffer size -- maximum span of simultaneous inflight messages */
 #define NCCL_OFI_RDMA_MSGBUFF_SIZE 256
 
@@ -958,27 +954,6 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 			goto exit;
 		}
 		break;
-#if HAVE_GIN
-	case NCCL_OFI_RDMA_MSG_GIN_METADATA: {
-
-		auto *metadata = static_cast<const nccl_net_ofi_rdma_signal_metadata_msg_t *>
-			(get_rx_buff_data(rx_buff_req)->rx_buff_fl_elem->ptr);
-
-		auto *gin_comm = static_cast<nccl_ofi_gin_comm *>
-			(device->rdma_device_get_comm(metadata->remote_comm_id));
-		assert(gin_comm->type == NCCL_NET_OFI_GIN_COMM);
-
-		ret = gin_handle_signal_metadata_completion(gin_comm, src_addr, rail_id, metadata);
-
-		/* Attempt to re-post rx buffer */
-		ret = ep->repost_rx_buff(rx_buff_req);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to repost rx buff");
-			return ret;
-		}
-		break;
-	}
-#endif
 	default:
 		NCCL_OFI_WARN("Recv completion with unexpected type");
 		ret = -EINVAL;
@@ -1068,15 +1043,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, fi_addr_t
 	if (comm->type == NCCL_NET_OFI_RECV_COMM) {
 		auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(comm);
 		return rdma_handle_write_completion(device, r_comm, msg_seq_num, total_segms, len);
-	}
-#if HAVE_GIN
-	else if (comm->type == NCCL_NET_OFI_GIN_COMM) {
-		auto *gin_comm = static_cast<nccl_ofi_gin_comm *>(comm);
-		return gin_handle_signal_write_completion(gin_comm, src_addr, rail_id, msg_seq_num,
-							  total_segms, len);
-	}
-#endif
-	else {
+	} else {
 		NCCL_OFI_WARN("Invalid comm type");
 		return -EINVAL;
 	}
