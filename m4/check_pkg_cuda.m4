@@ -32,11 +32,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AS_IF([test -n "${with_cuda}"], [NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS="$NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS --with-cuda=${with_cuda}"])
 
   AS_IF([test -z "${with_cuda}" -o "${with_cuda}" = "yes"],
-        [# Use system CUDA installation
-         AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
-               [CUDA_LIBS="-lrt -ldl"],  # Dynamic: only link support libs, not cudart
-               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"])  # Static: link cudart_static
-         LIBS="${CUDA_LIBS} ${LIBS}"],
+        [],
         [test "${with_cuda}" = "no"],
         [check_pkg_found=no],
         [cuda_realpath="$(realpath ${with_cuda})"
@@ -44,8 +40,8 @@ AC_DEFUN([CHECK_PKG_CUDA], [
          CUDA_LDFLAGS="-L${cuda_ldpath}"
          CUDA_CPPFLAGS="-isystem ${cuda_realpath}/include"
          AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
-               [CUDA_LIBS="-lrt -ldl"],  # Dynamic: only link support libs, not cudart
-               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"])  # Static: link cudart_static
+               [CUDA_LIBS="-lrt -ldl"],
+               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"])
          LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
          LIBS="${CUDA_LIBS} ${LIBS}"
          CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"
