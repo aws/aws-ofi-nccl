@@ -331,7 +331,7 @@ static int set_mr_req_attr(uint64_t mr_key,
 	case NCCL_PTR_CUDA:
 		#if HAVE_CUDA
 			mr_attr->iface = FI_HMEM_CUDA;
-		#elif HAVE_ROCR
+		#elif HAVE_ROCM
 			mr_attr->iface = FI_HMEM_ROCR;
 		#else
 			NCCL_OFI_WARN("Invalid Device Interface");

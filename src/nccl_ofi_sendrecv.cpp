@@ -553,7 +553,14 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 		if (support_fi_rma) {
 			mr_attr.access |= FI_REMOTE_READ;
 		}
-		mr_attr.iface = HAVE_CUDA ? FI_HMEM_CUDA: FI_HMEM_ROCR;
+		#if HAVE_CUDA
+			mr_attr.iface = FI_HMEM_CUDA;
+		#elif HAVE_ROCM
+			mr_attr.iface = FI_HMEM_ROCR;
+		#else
+			NCCL_OFI_WARN("Invalid Device Interface");
+			goto exit;
+		#endif
 
 		/* Get CUDA device ID */
 		ret = nccl_net_ofi_get_cuda_device_for_addr((void *)nccl_ofi_mr_ckey_baseaddr(ckey),

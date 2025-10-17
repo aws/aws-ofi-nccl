@@ -42,7 +42,7 @@ int nccl_net_ofi_gpu_init(void)
 	NCCL_OFI_WARN("HIP flush disabled");
 	cuda_flush = false;
 
-  return 0;
+	return 0;
 }
 
 int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void)
