@@ -22,6 +22,8 @@
 #include "nccl_ofi.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_sendrecv.h"
@@ -546,12 +548,19 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 		}
 		mr_attr.iface = FI_HMEM_SYSTEM;
 		break;
-#if HAVE_CUDA
+#if HAVE_GPU
 	case NCCL_PTR_CUDA:
 		if (support_fi_rma) {
 			mr_attr.access |= FI_REMOTE_READ;
 		}
-		mr_attr.iface = FI_HMEM_CUDA;
+		#if HAVE_CUDA
+			mr_attr.iface = FI_HMEM_CUDA;
+		#elif HAVE_ROCM
+			mr_attr.iface = FI_HMEM_ROCR;
+		#else
+			NCCL_OFI_WARN("Invalid Device Interface");
+			goto exit;
+		#endif
 
 		/* Get CUDA device ID */
 		ret = nccl_net_ofi_get_cuda_device_for_addr((void *)nccl_ofi_mr_ckey_baseaddr(ckey),
@@ -703,7 +712,7 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 	/* Validate type of buffer */
 	bool valid_buffer_type = false;
 	if (type == NCCL_PTR_HOST) valid_buffer_type = true;
-#if HAVE_CUDA
+#if HAVE_GPU
 	if (type == NCCL_PTR_CUDA) valid_buffer_type = true;
 #endif
 #if HAVE_NEURON
@@ -1098,9 +1107,9 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 
 #if HAVE_CUDA
 	if (cuda_flush) {
-		ret = nccl_net_ofi_cuda_flush_gpudirect_rdma_writes();
+		ret = nccl_net_ofi_gpu_flush_gpudirect_rdma_writes();
 		if (ret != 0) {
-			NCCL_OFI_WARN("Error performing CUDA GDR flush");
+			NCCL_OFI_WARN("Error performing GPU GDR flush");
 		}
 		goto exit;
 	}
