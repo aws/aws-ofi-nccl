@@ -140,7 +140,7 @@ CHECK_PKG_GDRCOPY([found_gdrcopy="yes"], [found_gdrcopy="no"])
 enable_gin=yes
 # GDRCopy is a requirement for the GIN plugin.
 AS_IF([test "${found_gdrcopy}" != "yes"], [enable_gin=no])
-# Only enable GIN for CUDA build_func_tests
+# Only enable GIN for CUDA builds
 AS_IF([test "${have_device_interface}" != "cuda"], [enable_gin=no])
 
 AS_IF([test "${enable_gin}" == "yes"], [AC_DEFINE([HAVE_GIN], [1], [Defined to 1 if GIN code is compiled in])])

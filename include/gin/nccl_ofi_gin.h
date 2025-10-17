@@ -29,9 +29,12 @@ struct nccl_ofi_gin_rank_comm
 	fi_addr_t control_address[MAX_NUM_RAILS];
 	fi_addr_t address[MAX_NUM_RAILS];
 
-	/* Information for remote flush buffer (target for ack writes) */
-	uint64_t flush_buff_addr;
-	uint64_t flush_buff_mr_key[MAX_NUM_RAILS];
+	/* Signal acks are zero-byte RDMA writes (with imm data)
+	   sent from receiver to sender. These writes are required to
+	   target a valid buffer on both sender and receiver, so this
+	   address tracks the empty buffer for each rank */
+	uint64_t write_ack_buff_addr;
+	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 
 	/* A sequence number, stored at initiator, exclusively for this (target) peer rank.
 	   This allows the remote rank to enforce ordering of signal delivery */
@@ -43,10 +46,12 @@ struct nccl_ofi_gin_rank_comm
 	 */
 	uint16_t next_delivered_signal_seq_num;
 
-	/* Flag indicating the given sequence number (mode max_requests) is in use
-	   at initiator side. This allows initiator to track in-use sequence numbers
-	   to avoid overflow and only mark iputSignal complete when the target has
-	   delivered the signal atomic. */
+	/* Flag, stored at initiator, indicating the given sequence number (mod
+	   max_requests) is in use at initiator side. This allows initiator to
+	   track in-use sequence numbers to avoid overflow and only mark
+	   iputSignal complete when it has received the ack from the target,
+	   which has delivered the signal atomic.
+	   */
 	bool active_put_signal[NCCL_OFI_MAX_REQUESTS];
 };
 
@@ -58,7 +63,7 @@ struct rdma_gin_remote_mr
 	uint64_t mr_key[MAX_NUM_RAILS];
 };
 
-struct rdma_gin_mr_handle
+struct rdma_gin_sym_mr_handle
 {
 	/* Local address of memory registration */
 	void *addr;
@@ -120,7 +125,7 @@ struct nccl_ofi_gin_comm : nccl_net_ofi_comm_t
 
 	   TODO: we could also just pass this in the handle to avoid a map
 	   lookup. Not sure yet if that is the right thing to do. */
-	std::unordered_map<void *, rdma_gin_mr_handle *> mr_handle_map;
+	std::unordered_map<void *, rdma_gin_sym_mr_handle *> mr_handle_map;
 
 	/* For rail scheduling. Currently we do round-robin among rails.
 	   TODO:
@@ -182,13 +187,13 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 		nccl_ofi_gin_comm** gin_comm_out);
 
 int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int type, uint64_t offset,
-		       int fd, uint64_t mrFlags, rdma_gin_mr_handle** mr_handle_out);
+		       int fd, uint64_t mrFlags, rdma_gin_sym_mr_handle** mr_handle_out);
 
-int gin_deregMrSym(nccl_ofi_gin_comm* comm, rdma_gin_mr_handle* mr_handle);
+int gin_deregMrSym(nccl_ofi_gin_comm* comm, rdma_gin_sym_mr_handle* mr_handle);
 
-int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_handle* srcMhandle,
-		   size_t size, uint64_t dstOff, rdma_gin_mr_handle* dstMhandle,
-		   uint32_t rank, uint64_t signalOff, rdma_gin_mr_handle* signalMhandle,
+int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_sym_mr_handle* srcMhandle,
+		   size_t size, uint64_t dstOff, rdma_gin_sym_mr_handle* dstMhandle,
+		   uint32_t rank, uint64_t signalOff, rdma_gin_sym_mr_handle* signalMhandle,
 		   uint64_t signalValue, uint32_t signalOp, nccl_net_ofi_req_t** request);
 
 int gin_handle_signal_metadata_completion(nccl_ofi_gin_comm *gin_comm, fi_addr_t src_addr, uint16_t rail_id,

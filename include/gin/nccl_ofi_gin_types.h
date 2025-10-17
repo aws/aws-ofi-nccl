@@ -31,7 +31,7 @@ struct nccl_net_ofi_rdma_signal_metadata_msg_t {
 	* on the receiver side */
 	uint32_t remote_comm_id:NCCL_OFI_RDMA_COMM_ID_BITS;
 
-	uint32_t num_write_segments;
+	uint32_t num_segments;
 
 	uint64_t signal_base_address;
 	uint64_t signal_offset;

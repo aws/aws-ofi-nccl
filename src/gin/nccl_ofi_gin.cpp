@@ -40,8 +40,8 @@ struct rdma_gin_connect_handle
 	nccl_ofi_rdma_ep_name_t ep_names[MAX_NUM_RAILS];
 
 	/* Flush addr and its mr_key */
-	uint64_t flush_buff_addr;
-	uint64_t flush_buff_mr_key[MAX_NUM_RAILS];
+	uint64_t write_ack_buff_addr;
+	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 };
 
 
@@ -49,12 +49,12 @@ static inline void set_flush_buff_info(nccl_net_ofi_rdma_domain_t *domain,
 				       rdma_gin_connect_handle &handle)
 {
 	auto &flush_buff = domain->flush_buff;
-	handle.flush_buff_addr = reinterpret_cast<uint64_t>(flush_buff.buffer);
+	handle.write_ack_buff_addr = reinterpret_cast<uint64_t>(flush_buff.buffer);
 	/* Set mr key for first rail */
 	for (int i = 0; i < domain->num_rails; ++i) {
 		uint64_t key = fi_mr_key(flush_buff.mr_handle->mr[i].get());
 		assert_always(key != FI_KEY_NOTAVAIL);
-		handle.flush_buff_mr_key[i] = key;
+		handle.write_ack_buff_mr_key[i] = key;
 	}
 }
 
@@ -183,7 +183,7 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 		nccl_ofi_gin_rank_comm &remote_rank_comm = gin_comm->rank_comms[i];
 		remote_rank_comm.comm_id = gin_handle.comm_id;
 		remote_rank_comm.next_target_seq_num = 0;
-		remote_rank_comm.flush_buff_addr = gin_handle.flush_buff_addr;
+		remote_rank_comm.write_ack_buff_addr = gin_handle.write_ack_buff_addr;
 
 		for (int r = 0; r < num_rails; ++r) {
 			ret = rail_addr_insert(gin_ep->control_rails[r], gin_handle.control_ep_names[r], i,
@@ -197,7 +197,7 @@ int gin_connect(nccl_ofi_gin_ctx* gin_ctx, nccl_net_ofi_conn_handle_t* handles[]
 			if (ret != 0) {
 				return ret;
 			}
-			remote_rank_comm.flush_buff_mr_key[r] = gin_handle.flush_buff_mr_key[r];
+			remote_rank_comm.write_ack_buff_mr_key[r] = gin_handle.write_ack_buff_mr_key[r];
 		}
 	}
 
@@ -225,8 +225,8 @@ static inline int writedata_ack(nccl_ofi_gin_comm *gin_comm, unsigned int peer_r
 
 	auto op = [=] {
 		ssize_t rc = fi_writedata(ofi_ep, domain->flush_buff.buffer, 0, desc, imm_data,
-					  rank_comm.control_address[0], rank_comm.flush_buff_addr,
-					  rank_comm.flush_buff_mr_key[rail_id], &(req->ctx.ofi_ctx));
+					  rank_comm.control_address[0], rank_comm.write_ack_buff_addr,
+					  rank_comm.write_ack_buff_mr_key[rail_id], &(req->ctx.ofi_ctx));
 		if (rc != 0 && rc != -FI_EAGAIN) {
 			NCCL_OFI_WARN("Failed call to fi_writedata; RC: %zd", rc);
 		}
@@ -255,7 +255,7 @@ static inline int do_gin_signal(nccl_ofi_gin_comm *gin_comm,
 	uint64_t add_value = metadata.signal_value;
 
 	/* Pull the mr */
-	rdma_gin_mr_handle *mr_handle = gin_comm->mr_handle_map.at(signal_base);
+	rdma_gin_sym_mr_handle *mr_handle = gin_comm->mr_handle_map.at(signal_base);
 
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		auto *d_ptr = reinterpret_cast<uint64_t*>(
@@ -294,7 +294,7 @@ static inline int iput_signal_recv_req_completion(nccl_ofi_gin_comm *gin_comm, u
 {
 	int ret = 0;
 
-	if (req->metadata.signal_base_address != 0) {
+	if (req->metadata_received) {
 		ret = do_gin_signal(gin_comm, req->metadata);
 		if (ret != 0) {
 			return ret;
@@ -345,7 +345,7 @@ static inline int iput_signal_deliver_all(nccl_ofi_gin_comm *gin_comm, uint64_t 
 		if (it != gin_comm->outstanding_iput_signal_recv_reqs.end()) {
 			auto *req = it->second;
 
-			if (req->num_seg_completions == req->total_segments && req->metadata_received) {
+			if (req->num_seg_completions == req->total_segments) {
 				rank_comm.next_delivered_signal_seq_num =
 					(rank_comm.next_delivered_signal_seq_num + 1)
 					& MSG_SEQ_NUM_MASK;
@@ -422,8 +422,8 @@ int gin_handle_signal_metadata_completion(nccl_ofi_gin_comm *gin_comm, fi_addr_t
 	if (it == gin_comm->outstanding_iput_signal_recv_reqs.end()) {
 		/* No entry yet for this thing... */
 		auto *req = new nccl_net_ofi_gin_iputsignal_recv_req { };
-		req->num_seg_completions = 0;
-		req->total_segments = metadata_msg->num_write_segments;
+		req->num_seg_completions = 1;
+		req->total_segments = metadata_msg->num_segments;
 		req->metadata = *metadata_msg;
 		req->metadata_received = true;
 		gin_comm->outstanding_iput_signal_recv_reqs[map_key] = req;
@@ -437,6 +437,7 @@ int gin_handle_signal_metadata_completion(nccl_ofi_gin_comm *gin_comm, fi_addr_t
 		req->metadata = *metadata_msg;
 
 		req->metadata_received = true;
+		req->num_seg_completions += 1;
 		ret = iput_signal_deliver_all(gin_comm, peer_rank);
 	}
 
@@ -444,7 +445,7 @@ int gin_handle_signal_metadata_completion(nccl_ofi_gin_comm *gin_comm, fi_addr_t
 }
 
 int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int type, uint64_t offset,
-		       int fd, uint64_t mrFlags, rdma_gin_mr_handle** mr_handle_out)
+		       int fd, uint64_t mrFlags, rdma_gin_sym_mr_handle** mr_handle_out)
 {
 	auto *gin_ep = comm->ep;
 	void *local_handle = nullptr;
@@ -459,7 +460,7 @@ int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int typ
 		return -EIO;
 	}
 
-	auto *mr_handle = new rdma_gin_mr_handle{};
+	auto *mr_handle = new rdma_gin_sym_mr_handle{};
 	mr_handle->addr = data;
 	mr_handle->size = size;
 	mr_handle->local_comm_handle = local_handle;
@@ -523,7 +524,7 @@ int gin_regMrSymDmaBuf(nccl_ofi_gin_comm* comm, void* data, size_t size, int typ
 	return 0;
 }
 
-int gin_deregMrSym(nccl_ofi_gin_comm* comm, rdma_gin_mr_handle* mr_handle)
+int gin_deregMrSym(nccl_ofi_gin_comm* comm, rdma_gin_sym_mr_handle* mr_handle)
 {
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		int iret = gdr_unmap(comm->gdr_handle, mr_handle->gdr_mr_handle, mr_handle->gdr_mapped_ptr,
@@ -606,9 +607,9 @@ static int gin_iputsignal_req_test(nccl_net_ofi_req_t *base_req, int *done, int 
 	return 0;
 }
 
-int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_handle* srcMhandle,
-		   size_t size, uint64_t dstOff, rdma_gin_mr_handle* dstMhandle,
-		   uint32_t rank, uint64_t signalOff, rdma_gin_mr_handle* signalMhandle,
+int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_sym_mr_handle* srcMhandle,
+		   size_t size, uint64_t dstOff, rdma_gin_sym_mr_handle* dstMhandle,
+		   uint32_t rank, uint64_t signalOff, rdma_gin_sym_mr_handle* signalMhandle,
 		   uint64_t signalValue, uint32_t signalOp, nccl_net_ofi_req_t** request)
 {
 	if (signalOp != 0 /* null op */ && signalOp != NCCL_NET_SIGNAL_OP_INC &&
@@ -624,6 +625,28 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 	uint16_t rail_id = gin_comm->next_rail_id;
 	gin_comm->next_rail_id = (gin_comm->next_rail_id + 1) % gin_ep->num_rails;
 
+	/* Given NCCL's max request limit, this slot shouldn't currently be in
+	   use. */
+	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS])) {
+		assert(false);
+		return -EBUSY;
+	}
+
+	uint16_t nseg = 0;
+	if (size > 0) {
+		/* If this putSignal has nonzero size, we will send a
+		   write-immediate with the actual data */
+		nseg += 1;
+	}
+	if (signalOp != 0) {
+		/* If a signal update was requested, we will send metadata with
+		the signal destination address and update value */
+		nseg += 1;
+	}
+
+	/* If we have nothing to do, we don't handle this correctly yet. */
+	assert_always(nseg > 0);
+
 	int ret = 0;
 	nccl_net_ofi_gin_tx_req_t *write_req = nullptr;
 
@@ -636,7 +659,7 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 
 		auto &dest_remote_mr = dstMhandle->remote_mr[rank];
 		uint64_t dest = dest_remote_mr.address + dstOff;
-		uint64_t data = GET_RDMA_WRITE_IMM_DATA(remote_comm_id, msg_seq_num, 1);
+		uint64_t data = GET_RDMA_WRITE_IMM_DATA(remote_comm_id, msg_seq_num, nseg);
 
 		auto op = [=]() {
 			ssize_t rc = fi_writedata(gin_ep->rails[rail_id].ofi_ep.get(), src, size, desc, data,
@@ -673,12 +696,18 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 		(freelist_regmr_fn_handle_t *)metadata_elem->mr_handle;
 	metadata_send->type = NCCL_OFI_RDMA_MSG_GIN_METADATA;
 	metadata_send->msg_seq_num = msg_seq_num;
-	metadata_send->num_write_segments = (size > 0) ? 1 : 0;
+	metadata_send->num_segments = nseg;
 	metadata_send->remote_comm_id = remote_comm_id;
 	metadata_send->signal_base_address = (signalMhandle ? signalMhandle->remote_mr[rank].address
 						: 0);
 	metadata_send->signal_offset = signalOff;
-	metadata_send->signal_value = signalValue;
+	if (signalOp == NCCL_NET_SIGNAL_OP_INC) {
+		metadata_send->signal_value = 1;
+	} else if (signalOp == NCCL_NET_SIGNAL_OP_ADD) {
+		metadata_send->signal_value = signalValue;
+	} else {
+		metadata_send->signal_value = 0;
+	}
 
 	nccl_net_ofi_gin_tx_req_t *send_req = new nccl_net_ofi_gin_tx_req_t();
 
@@ -712,10 +741,6 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_mr_han
 	req->write_req = write_req;
 	req->send_req = send_req;
 
-	if (rank_comm.active_put_signal[req->msg_seq_num % NCCL_OFI_MAX_REQUESTS]) {
-		delete req;
-		return -EBUSY;
-	}
 	rank_comm.active_put_signal[req->msg_seq_num % NCCL_OFI_MAX_REQUESTS] = true;
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & MSG_SEQ_NUM_MASK;
 
