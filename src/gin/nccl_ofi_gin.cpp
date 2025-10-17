@@ -313,8 +313,6 @@ static inline int iput_signal_recv_req_completion(nccl_ofi_gin_comm *gin_comm, u
 	size_t n_removed = gin_comm->outstanding_iput_signal_recv_reqs.erase(map_key);
 	assert_always(n_removed == 1);
 
-	delete req;
-
 	return ret;
 }
 
@@ -352,10 +350,11 @@ static inline int iput_signal_deliver_all(nccl_ofi_gin_comm *gin_comm, uint64_t 
 					(rank_comm.next_delivered_signal_seq_num + 1)
 					& MSG_SEQ_NUM_MASK;
 				ret = iput_signal_recv_req_completion(gin_comm, peer_rank, map_key, req);
-
 				if (ret != 0) {
 					return ret;
 				}
+
+				delete req;
 			} else {
 				/* No more signals to deliver */
 				break;

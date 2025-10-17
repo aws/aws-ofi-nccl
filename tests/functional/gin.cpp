@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -21,15 +21,13 @@ static void get_ext(ncclNet_v10_t **extNet, ncclGin_v11_t **extGin)
 
 	*extNet = (ncclNet_v10_t *)dlsym(netPluginLib, "ncclNetPlugin_v10");
 	if (*extNet == NULL) {
-		NCCL_OFI_WARN("NetPlugin, could not find %s symbol",
-			      "ncclNetPlugin_v10");
+		NCCL_OFI_WARN("NetPlugin, could not find ncclNetPlugin_v10 symbol");
 		assert(false);
 	}
 
 	*extGin = (ncclGin_v11_t *)dlsym(netPluginLib, "ncclGinPlugin_v11");
-	if (extGin == NULL) {
-		NCCL_OFI_WARN("NetPlugin, could not find %s symbol",
-			      "ncclGinPlugin_v11");
+	if (*extGin == NULL) {
+		NCCL_OFI_WARN("NetPlugin, could not find ncclGinPlugin_v11 symbol");
 		assert(false);
 	}
 }
@@ -141,6 +139,10 @@ int main(int argc, char *argv[])
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 				"Network supports communication using CUDA buffers. Dev: %d", dev);
 		buffer_type = NCCL_PTR_CUDA;
+	} else {
+		/* We aren't currently interested in the non-GDR use case for GIN */
+		NCCL_OFI_WARN("Network does not support communication using CUDA buffers. Dev: %d", dev);
+		return 1;
 	}
 
 	void *listenComm = nullptr;
@@ -160,14 +162,12 @@ int main(int argc, char *argv[])
 				     &collComm));
 	assert(collComm != nullptr);
 
-	assert(buffer_type == NCCL_PTR_CUDA);
-
 	void *buff = nullptr;
 	OFINCCLCHECK(allocate_buff(&buff, SEND_SIZE, buffer_type));
 	OFINCCLCHECK(initialize_buff(buff, SEND_SIZE, buffer_type));
 
 	/* Collective memory registration */
-	void *mhandle = nullptr, *gin_mhandle;
+	void *mhandle = nullptr, *gin_mhandle = nullptr;
 	constexpr uint64_t mrFlags = 0; /* TODO FORCE_SO */
 	OFINCCLCHECK(extGin->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
 				      &mhandle, &gin_mhandle));
@@ -175,7 +175,7 @@ int main(int argc, char *argv[])
 
 	void *signal_buf = nullptr;
 	OFINCCLCHECK(allocate_buff(&signal_buf, sizeof(uint64_t), buffer_type));
-	CUDACHECK(cudaMemset(signal_buf, 0, sizeof(uint64_t)));
+	OFINCCLCHECK(initialize_buff(buff, SEND_SIZE, buffer_type, 0));
 	CUDACHECK(cudaStreamSynchronize(cudaStreamDefault));
 
 	void *signalMhandle = nullptr, *gin_signalMhandle = nullptr;
@@ -236,7 +236,8 @@ int main(int argc, char *argv[])
 	for (int i = 0; i < SEND_SIZE; ++i) {
 		if (verif_buf[i] != send_val) {
 			NCCL_OFI_WARN("Test failed: verif_buf did not have expected value");
-			NCCL_OFI_WARN("Index %d, expected %hu but got %hu", i, send_val, verif_buf[i]);
+			NCCL_OFI_WARN("Rank %d, Index %d, expected %hu but got %hu", rank,
+				      i, send_val, verif_buf[i]);
 			return 1;
 		}
 	}
