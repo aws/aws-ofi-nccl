@@ -6,6 +6,8 @@
 #include "config.h"
 
 #include <errno.h>
+#include <dlfcn.h>
+#include <memory>
 #include <cudaTypedefs.h>
 #include <cuda_runtime_api.h>
 
@@ -14,50 +16,62 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
 
-#define DECLARE_CUDA_FUNCTION(function, version) static PFN_##function##_v##version pfn_##function = NULL
+/* CUDA Runtime function pointers - only for functions without driver equivalents */
+static cudaError_t (*pfn_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
 
-#if CUDART_VERSION >= 13000
-#define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                  \
-		enum cudaDriverEntryPointQueryResult result;                                                            \
-		cudaError_t err =                                                                                       \
-			cudaGetDriverEntryPointByVersion(#function, (void **)&pfn_##function, version, cudaEnableDefault, &result); \
-		if (err != cudaSuccess) {                                                                               \
-			switch (result) {                                                                               \
-			case cudaDriverEntryPointSymbolNotFound:                                                        \
-				NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);                         \
-				break;                                                                                  \
-			case cudaDriverEntryPointVersionNotSufficent:                                                   \
-				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", #function);                \
-				break;                                                                                  \
-			case cudaDriverEntryPointSuccess:                                                               \
-			default:                                                                                        \
-				NCCL_OFI_WARN("Unexpected cudaDriverEntryPointQueryResutlt value %d", (int)result);     \
-				break;                                                                                  \
-			}                                                                                               \
-		}                                                                                                       \
-	} while (0);
-#else
-#define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                   \
-		enum cudaDriverEntryPointQueryResult result;                                                            \
-		cudaError_t err =                                                                                       \
-			cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, &result);       \
-		if (err != cudaSuccess) {                                                                               \
-			switch (result) {                                                                               \
-			case cudaDriverEntryPointSymbolNotFound:                                                        \
-				NCCL_OFI_WARN("Failed to resolve CUDA function %s", #function);             	        \
-				break;                                                                                  \
-			case cudaDriverEntryPointVersionNotSufficent:                                                   \
-				NCCL_OFI_WARN("Insufficient driver to use CUDA function %s", #function);                \
-				break;                                                                                  \
-			case cudaDriverEntryPointSuccess:                                                               \
-			default:                                                                                        \
-				NCCL_OFI_WARN("Unexpected cudaDriverEntryPointQueryResutlt value %d", (int)result);     \
-				break;                                                                                  \
-			}                                                                                               \
-		}                                                                                                       \
-	} while (0);
+/* Both entry point functions for cross-version compatibility */
+static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(const char *symbol, void **funcPtr, unsigned int cudaVersion, unsigned long long flags, enum cudaDriverEntryPointQueryResult *driverStatus) = NULL;
+static cudaError_t (*pfn_cudaGetDriverEntryPoint)(const char *symbol, void **funcPtr, unsigned long long flags, enum cudaDriverEntryPointQueryResult *driverStatus) = NULL;
+
+#if ENABLE_CUDART_DYNAMIC
+
+struct DlcloseDeleter {
+	void operator()(void* handle) const {
+		if (handle != nullptr) {
+			dlclose(handle);
+		}
+	}
+};
+
+/* Global unique_ptr to automatically call dlclose when plugin is unloaded */
+static std::unique_ptr<void, DlcloseDeleter> cudaruntime_lib;
 #endif
 
+#define DECLARE_CUDA_FUNCTION(function, version) static PFN_##function##_v##version pfn_##function = NULL
+
+/* Simple function resolution with fallback for cross-version compatibility */
+#define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                  \
+		enum cudaDriverEntryPointQueryResult result = cudaDriverEntryPointSymbolNotFound;                   \
+		cudaError_t err = cudaErrorUnknown;                                                                     \
+		bool resolved = false;                                                                                  \
+		/* Try versioned entry point first (CUDA 13+ preferred) */                                             \
+		if (pfn_cudaGetDriverEntryPointByVersion != NULL) {                                                    \
+			err = pfn_cudaGetDriverEntryPointByVersion(#function, (void **)&pfn_##function, version, cudaEnableDefault, &result); \
+			if (err == cudaSuccess && pfn_##function != NULL) {                                             \
+				resolved = true;                                                                         \
+			}                                                                                               \
+		}                                                                                                       \
+		/* Fallback to legacy entry point for CUDA 12 compatibility */                                         \
+		if (!resolved && pfn_cudaGetDriverEntryPoint != NULL) {                                                \
+			err = pfn_cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, &result); \
+			if (err == cudaSuccess && pfn_##function != NULL) {                                             \
+				resolved = true;                                                                         \
+			}                                                                                               \
+		}                                                                                                       \
+		if (!resolved) {                                                                                        \
+			NCCL_OFI_WARN("Failed to resolve CUDA function %s (last error: %d, result: %d)", #function, err, result);                             \
+			return -ENOTSUP;                                                                                \
+		}                                                                                                       \
+	} while (0);
+
+#define LOAD_CUDA_RUNTIME_SYM(handle, sym)                                   \
+	pfn_##sym = (decltype(pfn_##sym))dlsym(handle, #sym);                 \
+	if (pfn_##sym == NULL) {                                              \
+		NCCL_OFI_WARN("Failed to load CUDA runtime symbol %s", #sym);     \
+		return -ENOTSUP;                                                  \
+	}
+
+/* Use driver APIs wherever possible - they are version-stable */
 DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
@@ -77,12 +91,57 @@ int nccl_net_ofi_cuda_init(void)
 {
 	int driverVersion = -1;
 	int runtimeVersion = -1;
+	cudaError_t res;
+	CUresult cu_ret;
 
-	cudaError_t res = cudaRuntimeGetVersion(&runtimeVersion);
+#if ENABLE_CUDART_DYNAMIC
+	/* Dynamic loading for binaries when static library support disabled */
+	/* Load library only once and keep it loaded for program lifetime */
+	if (cudaruntime_lib == nullptr) {
+		(void) dlerror(); /* Clear any previous errors */
+		cudaruntime_lib = std::unique_ptr<void, DlcloseDeleter>(dlopen("libcudart.so", RTLD_NOW));
+		if (!cudaruntime_lib) {
+			NCCL_OFI_WARN("Failed to find CUDA Runtime library: %s", dlerror());
+			return -ENOTSUP;
+		}
+	}
+
+	LOAD_CUDA_RUNTIME_SYM(cudaruntime_lib.get(), cudaRuntimeGetVersion);
+
+	/* Get runtime version first to determine which entry point functions to load */
+	res = pfn_cudaRuntimeGetVersion(&runtimeVersion);
 	if (res != cudaSuccess) {
 		NCCL_OFI_WARN("Failed to query CUDA runtime version.");
 		return -EINVAL;
 	}
+
+	if (runtimeVersion >= 13000) {
+		LOAD_CUDA_RUNTIME_SYM(cudaruntime_lib.get(), cudaGetDriverEntryPointByVersion);
+	} else {
+		LOAD_CUDA_RUNTIME_SYM(cudaruntime_lib.get(), cudaGetDriverEntryPoint);
+	}
+
+	if (pfn_cudaGetDriverEntryPointByVersion == NULL && pfn_cudaGetDriverEntryPoint == NULL) {
+		NCCL_OFI_WARN("No CUDA driver entry point functions available in runtime");
+		return -ENOTSUP;
+	}
+#else
+	/* Static CUDA runtime - use direct function calls */
+	pfn_cudaRuntimeGetVersion = cudaRuntimeGetVersion;
+
+	/* Get runtime version first to determine which entry point functions to use */
+	res = cudaRuntimeGetVersion(&runtimeVersion);
+	if (res != cudaSuccess) {
+		NCCL_OFI_WARN("Failed to query CUDA runtime version.");
+		return -EINVAL;
+	}
+
+#if CUDART_VERSION >= 13000
+	pfn_cudaGetDriverEntryPointByVersion = cudaGetDriverEntryPointByVersion;
+#else
+	pfn_cudaGetDriverEntryPoint = cudaGetDriverEntryPoint;
+#endif
+#endif
 
 	RESOLVE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
@@ -99,16 +158,16 @@ int nccl_net_ofi_cuda_init(void)
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemcpy, 4000);
 
-	CUresult cu_ret = pfn_cuDriverGetVersion(&driverVersion);
+	cu_ret = pfn_cuDriverGetVersion(&driverVersion);
 	if (cu_ret != CUDA_SUCCESS) {
 		NCCL_OFI_WARN("Failed to query CUDA driver version.");
 		return -EINVAL;
 	}
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-		      "Using CUDA driver version %d with runtime %d",
-		      driverVersion,
-		      runtimeVersion);
+	              "Using CUDA driver version %d with runtime %d",
+	              driverVersion,
+	              runtimeVersion);
 
 	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
@@ -136,7 +195,6 @@ int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void)
 	return -EPERM;
 #endif
 }
-
 
 int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
 {
