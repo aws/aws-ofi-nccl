@@ -557,7 +557,9 @@ int gin_deregMrSym(nccl_ofi_gin_comm* comm, rdma_gin_sym_mr_handle* mr_handle)
 static void gin_iputsignal_req_free(nccl_net_ofi_req_t *base_req)
 {
 	auto *req = reinterpret_cast<nccl_net_ofi_gin_iputsignal_req_t *>(base_req);
-	nccl_ofi_freelist_entry_free(req->gin_comm->metadata_fl, req->metadata_elem);
+	if (req->metadata_elem) {
+		nccl_ofi_freelist_entry_free(req->gin_comm->metadata_fl, req->metadata_elem);
+	}
 	delete req;
 }
 
@@ -683,58 +685,65 @@ int gin_iputSignal(nccl_ofi_gin_comm* gin_comm, uint64_t srcOff, rdma_gin_sym_mr
 		}
 	}
 
-	nccl_ofi_freelist_elem_t *metadata_elem =
-		nccl_ofi_freelist_entry_alloc(gin_comm->metadata_fl);
-	if (!metadata_elem) {
-		delete write_req;
-		return -ENOMEM;
-	}
+	nccl_ofi_freelist_elem_t *metadata_elem = nullptr;
+	nccl_net_ofi_gin_tx_req_t *send_req = nullptr;
 
-	auto *metadata_send = static_cast<nccl_net_ofi_rdma_signal_metadata_msg_t *>
-		(metadata_elem->ptr);
-	freelist_regmr_fn_handle_t *fl_handle =
-		(freelist_regmr_fn_handle_t *)metadata_elem->mr_handle;
-	metadata_send->msg_seq_num = msg_seq_num;
-	metadata_send->num_segments = nseg;
-	metadata_send->remote_comm_id = remote_comm_id;
-	metadata_send->signal_base_address = (signalMhandle ? signalMhandle->remote_mr[rank].address
-						: 0);
-	metadata_send->signal_offset = signalOff;
-	if (signalOp == NCCL_NET_SIGNAL_OP_INC) {
-		metadata_send->signal_value = 1;
-	} else if (signalOp == NCCL_NET_SIGNAL_OP_ADD) {
-		metadata_send->signal_value = signalValue;
-	} else {
-		metadata_send->signal_value = 0;
-	}
+	if (signalOp != 0) {
 
-	nccl_net_ofi_gin_tx_req_t *send_req = new nccl_net_ofi_gin_tx_req_t();
-
-	auto op = [=]() {
-		ssize_t rc = fi_send(gin_ep->control_rails[rail_id].ofi_ep.get(), metadata_send, sizeof(*metadata_send),
-				     fi_mr_desc(fl_handle->mr_handle->mr[rail_id].get()), rank_comm.control_address[rail_id],
-				     &send_req->ctx.ofi_ctx);
-		if (rc != 0 && rc != -FI_EAGAIN) {
-			NCCL_OFI_WARN("fi_send failed with RC %zd", rc);
+		metadata_elem =	nccl_ofi_freelist_entry_alloc(gin_comm->metadata_fl);
+		if (!metadata_elem) {
+			delete write_req;
+			return -ENOMEM;
 		}
 
-		return rc;
-	};
-	ret = op();
-	if (ret == -FI_EAGAIN) {
-		gin_comm->pending_requests.push_back(op);
-		ret = 0;
-	} else if (ret != 0) {
-		delete write_req;
-		delete send_req;
-		nccl_ofi_freelist_entry_free(gin_comm->metadata_fl, metadata_elem);
-		return ret;
+		auto *metadata_send = static_cast<nccl_net_ofi_rdma_signal_metadata_msg_t *>
+			(metadata_elem->ptr);
+		freelist_regmr_fn_handle_t *fl_handle =
+			(freelist_regmr_fn_handle_t *)metadata_elem->mr_handle;
+		metadata_send->msg_seq_num = msg_seq_num;
+		metadata_send->num_segments = nseg;
+		metadata_send->remote_comm_id = remote_comm_id;
+		metadata_send->signal_base_address = (signalMhandle ? signalMhandle->remote_mr[rank].address
+							: 0);
+		metadata_send->signal_offset = signalOff;
+		if (signalOp == NCCL_NET_SIGNAL_OP_INC) {
+			metadata_send->signal_value = 1;
+		} else if (signalOp == NCCL_NET_SIGNAL_OP_ADD) {
+			metadata_send->signal_value = signalValue;
+		} else {
+			metadata_send->signal_value = 0;
+		}
+
+		send_req = new nccl_net_ofi_gin_tx_req_t();
+
+		auto op = [=]() {
+			ssize_t rc = fi_send(gin_ep->control_rails[rail_id].ofi_ep.get(),
+					     metadata_send, sizeof(*metadata_send),
+					     fi_mr_desc(fl_handle->mr_handle->mr[rail_id].get()),
+					     rank_comm.control_address[rail_id],
+					     &send_req->ctx.ofi_ctx);
+			if (rc != 0 && rc != -FI_EAGAIN) {
+				NCCL_OFI_WARN("fi_send failed with RC %zd", rc);
+			}
+
+			return rc;
+		};
+		ret = op();
+		if (ret == -FI_EAGAIN) {
+			gin_comm->pending_requests.push_back(op);
+			ret = 0;
+		} else if (ret != 0) {
+			delete write_req;
+			delete send_req;
+			nccl_ofi_freelist_entry_free(gin_comm->metadata_fl, metadata_elem);
+			return ret;
+		}
 	}
 
 	auto *req = new nccl_net_ofi_gin_iputsignal_req_t {};
 	req->base.test = gin_iputsignal_req_test;
 	req->gin_comm = gin_comm;
-	req->msg_seq_num = metadata_send->msg_seq_num;
+	req->msg_seq_num = msg_seq_num;
 	req->metadata_elem = metadata_elem;
 	req->peer_rank = rank;
 	req->write_req = write_req;
