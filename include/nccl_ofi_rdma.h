@@ -71,6 +71,47 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  */
 #define NCCL_OFI_RDMA_SEQ_BITS     (10)
 
+/*
+ * @brief	Message sequence number bitmask for immediate data
+ */
+#define MSG_SEQ_NUM_MASK (((uint64_t)1 << NCCL_OFI_RDMA_SEQ_BITS) - 1)
+
+/*
+ * @brief	Number of bits used for number of segments value
+ */
+#define NUM_NUM_SEG_BITS ((uint64_t)4)
+
+/*
+ * @brief	Communicator ID bitmask
+ */
+#define COMM_ID_MASK               (((uint64_t)1 << NCCL_OFI_RDMA_COMM_ID_BITS) - 1)
+
+/*
+ * @brief	Extract communicator ID from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_COMM_ID_FROM_IMM(data) (((data) >> NCCL_OFI_RDMA_SEQ_BITS) & COMM_ID_MASK)
+
+/*
+ * @brief	Number of segments bitmask for immediate data
+ */
+#define MSG_NUM_SEG_MASK (((uint64_t)1 << NUM_NUM_SEG_BITS) - 1)
+
+/*
+ * @brief	Extract message sequence number from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_SEQ_NUM_FROM_IMM(data) ((data) & MSG_SEQ_NUM_MASK)
+
+/*
+ * @brief	Extract number of segments from write completion immediate data
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
+
 typedef enum nccl_net_ofi_rdma_req_state {
 	NCCL_OFI_RDMA_REQ_CREATED = 0,
 	NCCL_OFI_RDMA_REQ_PENDING,
@@ -289,6 +330,7 @@ typedef struct {
 	 * Used mostly when the network xfer is sliced across multiple rails */
 	uint16_t xferred_rail_id;
 } rdma_req_rma_op_data_t;
+
 
 typedef struct {
 	/* True for eager messages */
@@ -742,6 +784,11 @@ public:
 		assert(rail_id < num_rails);
 		return &domain_rails[rail_id];
 	}
+
+	/**
+	 * Read completion queue and process entries.
+	 */
+	int ofi_process_cq();
 
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
@@ -1487,4 +1534,41 @@ static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_n
 	assert(rail_id < r_comm->num_rails);
 	return &r_comm->rails[rail_id];
 }
+
+typedef struct {
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
+	nccl_net_ofi_rdma_domain_t *domain;
+} freelist_regmr_fn_handle_t;
+
+/**
+ * Register host memory for use with the given communicator
+ *
+ * This interface is suitable for use with freelist_init_mr.
+ *
+ * @param	data
+ *		Pointer to memory region. Must be aligned to page size.
+ * @param	size
+ *		Size of memory region. Must be a multiple of page size.
+ */
+int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size, void **handle);
+
+
+/**
+ * Deregister host memory registered with freelist_regmr_host_fn
+ *
+ * This interface is suitable for use with a freelist.
+ */
+int freelist_deregmr_host_fn(void *handle);
+
+
+/*
+ * @brief	Build write completion immediate data from comm ID, message seq
+ *		number and number of segments used to transfer RDMA write
+ *
+ * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
+ */
+#define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
+	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
+
+
 #endif // End NCCL_OFI_RDMA_H_

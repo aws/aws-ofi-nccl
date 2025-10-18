@@ -15,6 +15,7 @@ using namespace nccl_ofi_cm;
 
 static inline int cm_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 					 struct fi_cq_entry *cq_entry_base,
+					 fi_addr_t src_addr,
 					 uint16_t rail_id)
 {
 	nccl_ofi_cm_req *req = cpp_container_of(ctx, &nccl_ofi_cm_req::ctx);

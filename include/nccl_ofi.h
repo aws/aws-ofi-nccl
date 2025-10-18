@@ -189,7 +189,7 @@ struct nccl_net_ofi_context {
 	 * 		   Ignored in SENDRECV protocol
 	 */
 	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
-			       uint16_t rail_id);
+			       fi_addr_t src_addr, uint16_t rail_id);
 
 	/**
 	 * Callback to be invoked upon completion-with-error of the request
@@ -744,6 +744,7 @@ enum nccl_net_ofi_comm_type_t {
 	NCCL_NET_OFI_LISTEN_COMM,
 	NCCL_NET_OFI_SEND_COMM,
 	NCCL_NET_OFI_RECV_COMM,
+	NCCL_NET_OFI_GIN_COMM,
 };
 
 /**
@@ -803,6 +804,9 @@ struct nccl_net_ofi_send_comm {
 		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req);
 	int (*write_inline)(nccl_net_ofi_send_comm_t *, void* src, size_t size,
 			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request);
+	int (*write_to_addr)(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* mhandle,
+		     fi_addr_t dest_addr, uint64_t dest, uint64_t *mr_key, bool is_writedata,
+		     uint64_t data, nccl_net_ofi_req_t ** base_req);
 };
 
 struct nccl_net_ofi_recv_comm {
