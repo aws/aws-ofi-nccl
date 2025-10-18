@@ -2092,6 +2092,15 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
+	/* Close OFI resources in the correct dependency order:
+	 * 1. ofi_ep (depends on av, cq, domain)
+	 * 2. av (depends on domain)
+	 * The cq and domain are owned by the domain object and will be
+	 * cleaned up when the domain is destroyed.
+	 */
+	this->ofi_ep.reset();
+	this->av.reset();
+
 	assert(ret == 0);
 
 	return ret;

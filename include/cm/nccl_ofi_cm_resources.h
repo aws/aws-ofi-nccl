@@ -199,14 +199,12 @@ public:
 	/* Endpoint for CM operations */
 	endpoint ep;
 
-private:
-	/* Size of the transport-specific data in the connect messages This must
-	   be initialized before get_conn_msg{_data}_size() is called. */
-	size_t conn_msg_data_size;
-
-public:
-	/* Manages registered connect-message buffers */
-	conn_msg_buffer_manager buff_mgr;
+	/* Manages registered connect-message buffers
+	 * Use unique_ptr so we can control destruction order explicitly.  The
+	 * buff_mgr must be destroyed BEFORE the endpoint is closed. Memory
+	 * registrations must be deregistered before closing the endpoint.
+	 */
+	std::unique_ptr<conn_msg_buffer_manager> buff_mgr;
 
 	/**
 	 * Map from ID to callback functions for connect (resp) msg rx events.
@@ -260,6 +258,10 @@ public:
 	size_t get_conn_msg_size() { return sizeof(nccl_ofi_cm_conn_msg) + conn_msg_data_size; }
 
 private:
+	/* Size of the transport-specific data in the connect messages This must
+	   be initialized before get_conn_msg{_data}_size() is called. */
+	size_t conn_msg_data_size;
+
 	uint64_t next_connector_id;
 
 	/* List of requests for CM rx buffers */

@@ -70,13 +70,13 @@ nccl_ofi_cm_req::nccl_ofi_cm_req()
 
 nccl_ofi_cm_rx_req::nccl_ofi_cm_rx_req(cm_resources &_resources) :
 	resources(_resources),
-	rx_elem(resources.buff_mgr.allocate_conn_msg())
+	rx_elem(resources.buff_mgr->allocate_conn_msg())
 { }
 
 
 nccl_ofi_cm_rx_req::~nccl_ofi_cm_rx_req()
 {
-	resources.buff_mgr.free_conn_msg(rx_elem);
+	resources.buff_mgr->free_conn_msg(rx_elem);
 }
 
 int nccl_ofi_cm_rx_req::progress()
@@ -90,7 +90,7 @@ int nccl_ofi_cm_rx_req::progress()
 nccl_ofi_cm_send_conn_req::nccl_ofi_cm_send_conn_req(cm_resources &_resources, fi_addr_t _dest_addr,
 				std::function<void()> _done_callback) :
 	resources(_resources),
-	send_elem(resources.buff_mgr.allocate_conn_msg()),
+	send_elem(resources.buff_mgr->allocate_conn_msg()),
 	dest_addr(_dest_addr),
 	done_callback(_done_callback)
 { }
@@ -100,7 +100,7 @@ nccl_ofi_cm_send_conn_req::nccl_ofi_cm_send_conn_req(cm_resources &_resources, f
  */
 nccl_ofi_cm_send_conn_req::~nccl_ofi_cm_send_conn_req()
 {
-	resources.buff_mgr.free_conn_msg(send_elem);
+	resources.buff_mgr->free_conn_msg(send_elem);
 }
 
 
@@ -126,7 +126,7 @@ nccl_ofi_cm_send_conn_resp_req::nccl_ofi_cm_send_conn_resp_req
 	 std::function<void()> _done_callback) :
 
 	resources(_resources),
-	send_elem(resources.buff_mgr.allocate_conn_msg()),
+	send_elem(resources.buff_mgr->allocate_conn_msg()),
 	dest_addr(_dest_addr),
 	done_callback(_done_callback)
 {
@@ -162,7 +162,7 @@ nccl_ofi_cm_send_conn_resp_req::nccl_ofi_cm_send_conn_resp_req
 
 nccl_ofi_cm_send_conn_resp_req::~nccl_ofi_cm_send_conn_resp_req()
 {
-	resources.buff_mgr.free_conn_msg(send_elem);
+	resources.buff_mgr->free_conn_msg(send_elem);
 }
 
 int nccl_ofi_cm_send_conn_resp_req::progress()

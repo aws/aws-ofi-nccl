@@ -123,14 +123,18 @@ int pending_requests_queue::process_pending_reqs()
 
 
 cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_size) :
+	cm_mutex(),
 	ep(domain),
-	conn_msg_data_size(_conn_msg_data_size),
-	buff_mgr(ep, get_conn_msg_size()),
+	buff_mgr(nullptr),
 	callback_map(),
 	pending_reqs_queue(),
+	conn_msg_data_size(_conn_msg_data_size),
 	next_connector_id(0),
 	rx_reqs()
 {
+	/* Construct buff_mgr after ep is initialized */
+	buff_mgr = std::make_unique<conn_msg_buffer_manager>(ep, get_conn_msg_size());
+
 	const size_t num_rx_reqs = ofi_nccl_cm_num_rx_buffers();
 
 	if (num_rx_reqs < 1) {
@@ -152,19 +156,24 @@ cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_
 
 cm_resources::~cm_resources()
 {
-	/* Resources can be destructed in the usual reverse-order, with one exception:
-	   The endpoint must be closed first, since posted buffers and requests cannot
-	   be freed until the endpoint is closed.
+	/* Libfabric resources must be closed in strict dependency order to avoid
+	 * EBUSY errors:
+	 * 1. Cancel/free any pending operations (rx_reqs)
+	 * 2. Deregister memory (buff_mgr)
+	 * 3. Close endpoint
+	 * 4. Close av
+	 * 5. Domain and cq are owned by the transport domain and cleaned up separately
 	 */
-	ep.close_ofi_ep();
 
-	/* Free all requests. (A unique_ptr would be better here so these can be freed
-	   automatically) */
 	for (auto &req : rx_reqs) {
 		delete req;
 		req = nullptr;
 	}
 	rx_reqs.clear();
+
+	buff_mgr.reset();
+
+	ep.close_ofi_ep();
 }
 
 #define MR_KEY_INIT_VALUE FI_KEY_NOTAVAIL
