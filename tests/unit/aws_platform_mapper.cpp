@@ -53,12 +53,13 @@ static int check_known_platforms(void)
 
 	platform_data_list = platform.get_platform_map(&len);
 
-	ret += check_value(platform_data_list, len, "trn1.32xlarge", "trn1");
-	ret += check_value(platform_data_list, len, "trn1n.32xlarge", "trn1");
-	ret += check_value(platform_data_list, len, "trn1.2xlarge", "trn1");
-	ret += check_value(platform_data_list, len, "trn2.48xlarge", "trn2");
-	ret += check_value(platform_data_list, len, "trn2u.48xlarge", "trn2");
+	ret += check_value(platform_data_list, len, "trn1.32xlarge", "Trainium Family");
+	ret += check_value(platform_data_list, len, "trn1n.32xlarge", "Trainium Family");
+	ret += check_value(platform_data_list, len, "trn1.2xlarge", "Trainium Family");
+	ret += check_value(platform_data_list, len, "trn2.48xlarge", "Trainium Family");
+	ret += check_value(platform_data_list, len, "trn2u.48xlarge", "Trainium Family");
 	ret += check_value(platform_data_list, len, "inf2.48xlarge", "inf");
+	ret += check_value(platform_data_list, len, "trn3.48xlarge", "Trainium Family");
 	ret += check_value(platform_data_list, len, "p3.2xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.8xlarge", NULL);
 	ret += check_value(platform_data_list, len, "p3.16xlarge", NULL);
