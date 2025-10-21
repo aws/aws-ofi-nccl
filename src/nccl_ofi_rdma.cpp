@@ -1309,7 +1309,7 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
 	for (uint64_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
 		void *op_ctx = cq_entry[comp_idx].op_context;
 
-		if (cq_entry[comp_idx].flags & FI_REMOTE_WRITE) {
+		if (!op_ctx && (cq_entry[comp_idx].flags & FI_REMOTE_WRITE)) {
 
 			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
 			if (ret != 0) {
@@ -6899,6 +6899,9 @@ static void get_hints(struct fi_info *hints)
 	 * rx buffer cleanup and if peer to peer is disabled at
 	 * the NCCL level.  */
 	hints->caps |= FI_LOCAL_COMM | FI_REMOTE_COMM;
+
+	/* GIN currently requires completions source information */
+	hints->caps |= FI_SOURCE;
 
 	hints->mode = FI_CONTEXT | FI_CONTEXT2;
 

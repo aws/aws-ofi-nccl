@@ -744,6 +744,7 @@ enum nccl_net_ofi_comm_type_t {
 	NCCL_NET_OFI_LISTEN_COMM,
 	NCCL_NET_OFI_SEND_COMM,
 	NCCL_NET_OFI_RECV_COMM,
+	NCCL_NET_OFI_GIN_COMM,
 };
 
 /**
