@@ -6,6 +6,9 @@ on:
       - release/**
       - v**
 
+permissions:
+  contents: read
+
 jobs:
   amazonlinux:
     strategy:
