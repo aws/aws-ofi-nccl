@@ -7007,6 +7007,10 @@ static void get_hints(struct fi_info *hints)
 	 * acks during shutdown, so allow users to override requested model. */
 	hints->domain_attr->control_progress = nccl_ofi_translate_progress_enum(ofi_nccl_progress_model.get());
 	hints->domain_attr->data_progress = nccl_ofi_translate_progress_enum(ofi_nccl_progress_model.get());
+
+	/* The RDMA transport requires fi_writedata support with 32 bits (4
+	   bytes) of immediate data */
+	hints->domain_attr->cq_data_size = 4;
 }
 
 
@@ -7201,7 +7205,15 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
-		return ncclInvalidArgument;
+		return -ENOTSUP;
+	}
+
+	/* We requested 4 bytes for cq_data_size. getinfo should not have
+	   returned a provider that doesn't meet this requirement, but double
+	   check here. */
+	if (provider_list->domain_attr->cq_data_size < 4) {
+		NCCL_OFI_WARN("Provider does not support 4 bytes of immediate data, required for RDMA transport");
+		return -ENOTSUP;
 	}
 
 	/* 
