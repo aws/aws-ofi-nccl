@@ -1224,6 +1224,7 @@ static nccl_net_ofi_rdma_req_t *rdma_context_get_req(nccl_net_ofi_context_t *ctx
  */
 static inline int rdma_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 					   struct fi_cq_entry *cq_entry_base,
+					   fi_addr_t src_addr,
 					   uint16_t rail_id)
 {
 	int ret = 0;
@@ -1348,6 +1349,7 @@ static inline int rdma_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 
 
 static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
+					   fi_addr_t *src_addrs,
 					   uint64_t num_cqes,
 					   nccl_net_ofi_rdma_device_t *device,
 					   uint16_t rail_id)
@@ -1379,7 +1381,7 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
 							   ofi_ctx);
 
 		ret = ctx->handle_cq_entry(ctx, reinterpret_cast<struct fi_cq_entry *>(&cq_entry[comp_idx]),
-					   rail_id);
+					   src_addrs[comp_idx], rail_id);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Context progress failed: %d", ret);
 			return ret;
@@ -1628,14 +1630,15 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 static int ofi_process_cq_rail(nccl_net_ofi_rdma_device_t *device, nccl_net_ofi_rdma_domain_rail_t *rail)
 {
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
+	fi_addr_t src_addrs[cq_read_count];
 	ssize_t rc = 0;
 	int ret = 0;
 
 	while (true) {
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(rail->cq.get(), cqe_buffers, cq_read_count);
+		rc = fi_cq_readfrom(rail->cq.get(), cqe_buffers, cq_read_count, src_addrs);
 		if (rc > 0) {
-			ret = rdma_process_completions(cqe_buffers, rc, device, rail->rail_id);
+			ret = rdma_process_completions(cqe_buffers, src_addrs, rc, device, rail->rail_id);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		} else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {

@@ -185,6 +185,7 @@ static inline void *sendrecv_req_get_ofi_context(nccl_net_ofi_sendrecv_req_t *re
 
 static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 					struct fi_cq_entry *cq_entry_base,
+					fi_addr_t src_addr,
 					uint16_t rail_id)
 {
 	auto cq_entry = reinterpret_cast<struct fi_cq_tagged_entry *>(cq_entry_base);
@@ -234,6 +235,7 @@ static int sendrecv_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
  *		error, on others
  */
 static inline int sendrecv_process_completions(struct fi_cq_tagged_entry *cq_entry,
+					       fi_addr_t *src_addrs,
 					       size_t num_cqes)
 {
 	int ret = 0;
@@ -252,7 +254,9 @@ static inline int sendrecv_process_completions(struct fi_cq_tagged_entry *cq_ent
 
 		ret = ctx->handle_cq_entry(ctx,
 					   reinterpret_cast<struct fi_cq_entry *>
-					   (&cq_entry[comp_idx]), 0);
+					   (&cq_entry[comp_idx]),
+					   src_addrs[comp_idx],
+					   0);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Context progress failed: %d", ret);
 			return ret;
@@ -281,13 +285,14 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 	 */
 	struct fi_cq_err_entry err_buffer = {};
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
+	fi_addr_t src_addrs[cq_read_count];
 
 	while (true) {
 		/* Receive completions for the given endpoint */
-		rc = fi_cq_read(cq, cqe_tagged_buffers, cq_read_count);
+		rc = fi_cq_readfrom(cq, cqe_tagged_buffers, cq_read_count, src_addrs);
 		if (rc > 0) {
 			ret = sendrecv_process_completions(
-				cqe_tagged_buffers, rc);
+				cqe_tagged_buffers, src_addrs, rc);
 			if (OFI_UNLIKELY(ret != 0))
 				goto exit;
 		}

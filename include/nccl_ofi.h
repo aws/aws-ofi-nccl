@@ -189,7 +189,7 @@ struct nccl_net_ofi_context {
 	 * 		   Ignored in SENDRECV protocol
 	 */
 	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
-			       uint16_t rail_id);
+			       fi_addr_t src_addr, uint16_t rail_id);
 
 	/**
 	 * Callback to be invoked upon completion-with-error of the request
