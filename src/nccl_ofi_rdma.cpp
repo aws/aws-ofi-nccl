@@ -1638,15 +1638,11 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 	int ret;
 
 	nccl_net_ofi_rdma_domain_t *domain_ptr = rdma_endpoint_get_domain();
-	nccl_net_ofi_rdma_device_t *device = domain_ptr->rdma_domain_get_device();
 
-	for (uint16_t rail_id = 0; rail_id != domain_ptr->num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_domain_rail_t *rail = domain_ptr->rdma_domain_get_rail(rail_id);
-
-		ret = ofi_process_cq_rail(device, rail);
-		if (ret != 0) {
-			goto exit;
-		}
+	ret = domain_ptr->ofi_process_cq();
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Failed call to ofi_process_cq: %d", ret);
+		goto exit;
 	}
 
 	/* Process any pending requests */
@@ -6445,6 +6441,21 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 	return ret;
 }
 
+int nccl_net_ofi_rdma_domain_t::ofi_process_cq()
+{
+	nccl_net_ofi_rdma_device_t *rdma_device = this->rdma_domain_get_device();
+
+	for (uint16_t rail_id = 0; rail_id != this->num_rails; ++rail_id) {
+		nccl_net_ofi_rdma_domain_rail_t *rail = this->rdma_domain_get_rail(rail_id);
+
+		int ret = ofi_process_cq_rail(rdma_device, rail);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return 0;
+}
 
 nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
 {

@@ -786,6 +786,11 @@ public:
 		return &domain_rails[rail_id];
 	}
 
+	/**
+	 * Read completion queue and process entries.
+	 */
+	int ofi_process_cq();
+
 	/* Caller must hold the device lock */
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
