@@ -152,12 +152,6 @@ cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_
 
 cm_resources::~cm_resources()
 {
-	/* Resources can be destructed in the usual reverse-order, with one exception:
-	   The endpoint must be closed first, since posted buffers and requests cannot
-	   be freed until the endpoint is closed.
-	 */
-	ep.close_ofi_ep();
-
 	/* Free all requests. (A unique_ptr would be better here so these can be freed
 	   automatically) */
 	for (auto &req : rx_reqs) {
