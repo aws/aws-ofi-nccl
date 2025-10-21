@@ -154,7 +154,18 @@ CHECK_PKG_HWLOC([],
 AC_DEFINE_UNQUOTED([HAVE_CUDA], [${do_cuda}], [Defined to 1 if CUDA is available])
 AM_CONDITIONAL([HAVE_CUDA], [test ${do_cuda} = 1])
 
+# GDRCopy is required for GIN plugin -- see check below.
 CHECK_PKG_GDRCOPY([found_gdrcopy="yes"], [found_gdrcopy="no"])
+
+# Check whether to enable the GIN plugin
+enable_gin=yes
+# GDRCopy is a requirement for the GIN plugin.
+AS_IF([test "${found_gdrcopy}" != "yes"], [enable_gin=no])
+# Only enable GIN for CUDA builds
+AS_IF([test "${have_device_interface}" != "cuda"], [enable_gin=no])
+
+AS_IF([test "${enable_gin}" == "yes"], [AC_DEFINE([HAVE_GIN], [1], [Defined to 1 if GIN code is compiled in])])
+AM_CONDITIONAL([ENABLE_GIN], [test "${enable_gin}" == "yes"])
 
 CHECK_PKG_VALGRIND()
 CHECK_VAR_REDZONE()
