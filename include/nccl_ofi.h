@@ -304,6 +304,12 @@ public:
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
 
 	/**
+	 * Retrieve all fi_info objects associated with this device. There may
+	 * be more than one info per device, depending on the transport.
+	 */
+	virtual std::vector<struct fi_info *> get_ofi_infos() = 0;
+
+	/**
 	 * @brief	Increment base device's unreleased_inactive_domain_counter
 	 */
 	inline void inc_unreleased_inactive_domain_counter()
@@ -455,6 +461,14 @@ public:
 	 * associated with the "leader NIC".
 	 */
 	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
+
+	/**
+	 * Retrieve the fid_domain objects associated with this plugin domain.
+	 *
+	 * There may be more than one fid_domain per domain, depending on the
+	 * transport.
+	 */
+	virtual std::vector<ofi_domain_ptr *> get_ofi_domains() = 0;
 
 	/**
 	 * Retrieve an fid_cq object associated with this domain to be used for 
