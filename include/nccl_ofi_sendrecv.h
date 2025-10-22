@@ -126,6 +126,17 @@ public:
 	{
 		return domain;
 	}
+
+	inline ofi_domain_ptr &get_ofi_domain(uint16_t rail_id = 0) override
+	{
+		assert(rail_id == 0);
+		return domain;
+	}
+
+	inline uint16_t get_ofi_num_rails() override
+	{
+		return 1;
+	}
 	
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
 	{
@@ -314,6 +325,12 @@ public:
 
 	inline struct fi_info *get_ofi_info_for_cm() override
 	{
+		return info;
+	}
+
+	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) override
+	{
+		assert(rail_id == 0);
 		return info;
 	}
 

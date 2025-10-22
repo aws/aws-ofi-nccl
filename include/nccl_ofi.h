@@ -292,6 +292,17 @@ public:
 	 */
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
 
+	/**
+	 * Retrieve fi_info object associated with this device with rail index.
+	 * There may be more than one info per device, depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin. While we should
+	 * be able to just pass the fabric/domain objects and call fi_getinfo()
+	 * instead, currently this doesn't work with EFA provider. Once that
+	 * works, that is the preferred approach.
+	 */
+	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) = 0;
+
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
 	 * of performance tradeoffs (be sure to read the domain
@@ -422,6 +433,22 @@ public:
 	 * associated with the "leader NIC".
 	 */
 	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
+
+	/**
+	 * Retrieve the fid_domain object associated with this plugin domain
+	 * with rail index. There may be more than one fid_domain per domain,
+	 * depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin currently. We will
+	 * have the transport implement the GIN API which will be addressed in
+	 * follow-up PRs.
+	 */
+	virtual ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) = 0;
+
+	/**
+	 * @brief       Returns number of rails.
+	 */
+	virtual uint16_t get_ofi_num_rails() = 0;
 
 	/* Create a new endpoint
 	 *
