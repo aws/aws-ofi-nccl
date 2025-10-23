@@ -189,7 +189,7 @@ struct nccl_net_ofi_context {
 	 * 		   Ignored in SENDRECV protocol
 	 */
 	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
-			       uint16_t rail_id);
+			       fi_addr_t src_addr, uint16_t rail_id);
 
 	/**
 	 * Callback to be invoked upon completion-with-error of the request
@@ -744,6 +744,7 @@ enum nccl_net_ofi_comm_type_t {
 	NCCL_NET_OFI_LISTEN_COMM,
 	NCCL_NET_OFI_SEND_COMM,
 	NCCL_NET_OFI_RECV_COMM,
+	NCCL_NET_OFI_GIN_COMM,
 };
 
 /**
