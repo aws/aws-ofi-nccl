@@ -186,7 +186,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	/* This is ugly, but here's the basic protocol selection
 	 * logic:
-	 *   1. if the user set NCCL_OFI_PROTOCOL, use that.
+	 *   1. if the user set OFI_NCCL_PROTOCOL, use that.
 	 *   2. if the platform init set nccl_ofi_selected_protocol,
 	 *      use that.
 	 *   3. If the rdma protocol reports multiple nics per device
