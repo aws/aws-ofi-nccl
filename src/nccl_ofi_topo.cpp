@@ -617,10 +617,8 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	return 0;
 }
 
-nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
+nccl_ofi_topo_t *nccl_ofi_topo_create()
 {
-	int ret = 0;
-
 	/* Allocate NCCL OFI topology */
 	nccl_ofi_topo_t *ofi_topo = (nccl_ofi_topo_t *)calloc(1, sizeof(nccl_ofi_topo_t));
 	if (!ofi_topo) {
@@ -644,20 +642,32 @@ nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list)
 		goto error;
 	}
 
+	return ofi_topo;
+
+ error:
+	nccl_ofi_topo_free(ofi_topo);
+	return NULL;
+}
+
+int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list)
+{
+	int ret = 0;
+
+	if (!ofi_topo) {
+		NCCL_OFI_WARN("Invalid topology");
+		return -EINVAL;
+	}
+
 	/* Add user data to topology nodes that have a nic or NVIDIA
 	 * GPU in their subtree. Also, add libfabric NIC info structs
 	 * to user data to topology nodes corresponding to the NICs. */
 	ret = set_user_data(ofi_topo, info_list);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Data decoration failed.");
-		goto error;
+		return ret;
 	}
 
-	return ofi_topo;
-
- error:
-	nccl_ofi_topo_free(ofi_topo);
-	return NULL;
+	return 0;
 }
 
 /*
@@ -1748,4 +1758,36 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 	}
 
 	return info_list;
+}
+
+bool nccl_ofi_topo_has_efa_ena_devices(nccl_ofi_topo_t* topo) {
+	if (topo == nullptr || topo->topo == nullptr) {
+		return false;
+	}
+
+	hwloc_obj_t obj = nullptr;
+	while ((obj = hwloc_get_next_pcidev(topo->topo, obj)) != nullptr) {
+		// Check Amazon vendor id
+		if (obj->attr->pcidev.vendor_id == 0x1D0F) {
+			auto device_id = obj->attr->pcidev.device_id;
+
+			// Check EFA and ENA devices
+			if ((device_id & 0xFFF0) == 0xEFA0 ||
+				(device_id & 0xFFF0) == 0xEC20) {
+				return true;
+			}
+
+			// Explicit check reserved EC2 device ids
+			switch (device_id) {
+				case 0x0EC2:
+				case 0x1EC2:
+				case 0x2EC2:
+				case 0x3EC2:
+					return true;
+				default:
+					break;
+			}
+		}
+	}
+	return false;
 }
