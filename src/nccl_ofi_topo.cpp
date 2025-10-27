@@ -1324,43 +1324,6 @@ static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,
 }
 
 /*
- * @brief	Read link speed and width of topology node and its parent topology node from file system and return minimum
- *
- * @param	node
- *		PCI device or bridge topology node. Parent of `node` must be a bridge topology node.
- * @param	is_nic
- *		True if device is a libfabric NIC
- * @return	Link speed index into `pci_gen`, on success.
- * @return	Link width, on success.
- * @return	0, on sucess
- *		non-zero, on error
- */
-static int get_pci_device_min_speed(hwloc_obj_t node, bool is_nic, size_t *speed_idx,
-				    size_t *width)
-{
-	int ret;
-	hwloc_obj_t parent_node = node->parent;
-
-	size_t device_width, port_width;
-	size_t device_speed_idx, port_speed_idx;
-
-	/* Read speed and width */
-	if ((ret = get_pci_device_speed(node, is_nic, &device_speed_idx, &device_width))) {
-		return ret;
-	}
-
-	/* Read speed and width of parent topology node to retrieve port speed and width. */
-	if ((ret = get_pci_device_speed(parent_node, is_nic, &port_speed_idx, &port_width))) {
-		return ret;
-	}
-
-	*speed_idx = std::min(device_speed_idx, port_speed_idx);
-	*width = std::min(device_width, port_width);
-
-	return 0;
-}
-
-/*
  * @brief	Write cpu opening tag to NCCL topology file
  *
  * @param	node
@@ -1480,11 +1443,12 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 	union hwloc_obj_attr_u *attr = node->attr;
 
 	/* Retrieve link speed and width of NIC */
-	if ((ret = get_pci_device_min_speed(node, true, &speed_idx, &width))) {
+	if ((ret = get_pci_device_speed(node, true, &speed_idx, &width))) {
 		NCCL_OFI_WARN("Failed to retrieve PCI speed and width of NIC");
 		return ret;
 	}
 
+	NCCL_OFI_TRACE(NCCL_INIT, "Starting NIC information: group size \"%d\", NIC speed \"%s\",  width \"%zu\"", group_size, pcie_gen[speed_idx], width);
 	/* Scale NIC speed and width up to the speed of the GPU. Since
 	 * NICs are grouped, GPU topology node is attached to the NIC
 	 * topology node. */
@@ -1495,10 +1459,12 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 		assert(gpu);
 
 		/* Retrieve link speed and width of GPU */
-		if ((ret = get_pci_device_min_speed(gpu, false, &gpu_speed_idx, &gpu_width))) {
+		if ((ret = get_pci_device_speed(gpu, false, &gpu_speed_idx, &gpu_width))) {
 			NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
 			return ret;
 		}
+
+		NCCL_OFI_TRACE(NCCL_INIT, "GPU information: GPU speed \"%s\",  width \"%zu\"", pcie_gen[gpu_speed_idx], gpu_width);
 
 		/* In case we have multiple NICs in the group,
 		 * increase link speed if possible and decrease NIC
@@ -1514,7 +1480,16 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 			width *= 2;
 			group_size /= 2;
 		}
+
+		/* Still have multiple NICs in the group despite maxing out the link speed
+		 * and width to match the GPU max. Not reporting the full network capabilities
+		 * of the NICs in the group */
+		if (group_size > 1) {
+			NCCL_OFI_INFO(NCCL_INIT, "still have NIC group size %d after matching GPU max link speed and width", group_size);
+		}
 	}
+
+	NCCL_OFI_TRACE(NCCL_INIT, "Final NIC information: group size \"%d\", NIC speed \"%s\",  width \"%zu\"", group_size, pcie_gen[speed_idx], width);
 
 	if ((ret = write_pci_tag(file, indent, attr, speed_idx, width)) != 0) {
 		NCCL_OFI_WARN("Failed to write PCI NIC tag");
