@@ -1369,8 +1369,22 @@ static uint64_t calculateChunkSizeTreeLL128(uint64_t message_size, int nChannels
 	return final_chunksize;
 }
 
+/*
+* Calculate the best number of channel for PAT. Based on empirical data.
+*/
+static int calculateBestNChannelPat(uint64_t message_size, size_t num_nodes) {
+	int bestNChannel = 0;
 
-static int calculateBestNChannel(uint64_t message_size, int log2_nnodes) {
+	if (message_size <= (num_nodes * 65536)) {
+		bestNChannel = 1;
+	} else if (message_size <= (num_nodes * 65536 * 2)) {
+		bestNChannel = 2;
+	}
+
+	return bestNChannel;
+}
+
+static int calculateBestNChannelTree(uint64_t message_size, int log2_nnodes) {
     const int channels[] = {16, 24, 32};
     int bestNChannel = 0;
     uint64_t maxChunkSize = 0;
@@ -1544,7 +1558,14 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 	    (nBytes >= 4 * 1024 * 1024) && (nBytes <= 32 * 1024 * 1024) &&
 	    (algorithm == NCCL_ALGO_TREE) && (protocol == NCCL_PROTO_LL128) &&
 	    (region_ctx->dims.num_nodes * 8 == region_ctx->dims.num_ranks)) {
-		*nChannels = calculateBestNChannel(nBytes, region_ctx->log2_nnodes);
+		*nChannels = calculateBestNChannelTree(nBytes, region_ctx->log2_nnodes);
+	}
+
+	/* Selecting best nChannels for P6 platform PAT AG/RS 0x7 */
+	if ((region_ctx->platform == NCCL_OFI_TUNER_P6) && (nBytes <= 32 * 1024 * 1024) &&
+		(algorithm == NCCL_ALGO_PAT) && (protocol == NCCL_PROTO_SIMPLE) &&
+		(region_ctx->dims.num_nodes == region_ctx->dims.num_ranks)) {
+		*nChannels = calculateBestNChannelPat(nBytes, region_ctx->dims.num_nodes);
 	}
 
 	NCCL_OFI_INFO(NCCL_TUNING, "Setting nChannels to %d at nBytes=%ld.", *nChannels, nBytes);
