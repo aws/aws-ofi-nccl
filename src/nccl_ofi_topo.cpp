@@ -1443,6 +1443,9 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 	 * NICs are grouped, GPU topology node is attached to the NIC
 	 * topology node. */
 	if (group_size > 1) {
+		if (!NCCL_OFI_IS_POWER_OF_TWO(group_size)) {
+			group_size = NCCL_OFI_ROUND_UP_TO_POWER_OF_TWO(group_size);
+		}
 		hwloc_obj_t gpu = userdata->gpu_group_node;
 		size_t gpu_width;
 		size_t gpu_speed_idx;
