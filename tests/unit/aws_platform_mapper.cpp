@@ -73,6 +73,16 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p-series");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7e.8xlarge", "g7e.8xlarge");
+	ret += check_value(platform_data_list, len, "g7.8xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7e.12xlarge", "g7e");
+	ret += check_value(platform_data_list, len, "g7e.24xlarge", "g7e");
+	ret += check_value(platform_data_list, len, "g7e.48xlarge", "g7e");
+	ret += check_value(platform_data_list, len, "g7e.xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7e.1xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7e.2xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7e.4xlarge", NULL);
+	ret += check_value(platform_data_list, len, "g7.48xlarge", NULL);
 
 	// obviously future platforms
 	ret += check_value(platform_data_list, len, "p100.2048xlarge", "p-series");
