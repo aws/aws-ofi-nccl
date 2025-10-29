@@ -209,6 +209,17 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.env = {},
 	},
 	{
+		.name = "g7e",
+		.regex = "^g7e\\.(8|12|24|48)xlarge",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.domain_per_thread = true,
+		.env = {},
+	},
+	{
 		.name = "trn1",
 		.regex = "^trn1.*",
 		.topology = NULL,
