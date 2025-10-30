@@ -138,14 +138,14 @@ static inline ncclResult_t allocate_buff(void **buf, size_t size, int buffer_typ
 	return ncclSuccess;
 }
 
-static inline ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
+static inline ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type, int value='1')
 {
 	switch (buffer_type) {
 	case NCCL_PTR_CUDA:
-		CUDACHECK(cudaMemset(buf, '1', size));
+		CUDACHECK(cudaMemset(buf, value, size));
 		break;
 	case NCCL_PTR_HOST:
-		memset(buf, '1', size);
+		memset(buf, value, size);
 		break;
 	default:
 		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
