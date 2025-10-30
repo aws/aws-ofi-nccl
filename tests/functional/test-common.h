@@ -67,6 +67,11 @@ typedef ncclNet_v9_t test_nccl_net_t;
 typedef ncclNetProperties_v9_t test_nccl_properties_t;
 typedef ncclNetDeviceHandle_v9_t test_nccl_net_device_handle_t;
 
+// Convenience aliases for testing
+using ListenComms = std::vector<nccl_net_ofi_listen_comm_t*>;
+using SendComms = std::vector<nccl_net_ofi_send_comm_t*>;
+using RecvComms = std::vector<nccl_net_ofi_recv_comm_t*>;
+
 static void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 		   int line, const char *fmt, ...)
 {
@@ -100,6 +105,23 @@ static void logger(ncclDebugLogLevel level, unsigned long flags, const char *fil
 	printf("\n");
 	va_end(vargs);
 #pragma GCC diagnostic pop
+}
+
+/**
+ * Generate unique MPI tags for rank pair communication
+ *
+ * In multi-threaded scenarios, both communicating ranks must use the same tag
+ * for MPI_Sendrecv operations. This function ensures deterministic tag generation
+ * by using the minimum rank as a base multiplied by a large offset, plus a
+ * thread-safe atomic counter for uniqueness.
+ *
+ * @param rank_pair_min The minimum rank of the communicating pair (std::min(rank1, rank2))
+ * @return Unique tag that will be identical for both ranks in the pair
+ */
+inline int generate_unique_tag(int rank_pair_min)
+{
+	static std::atomic<int> tag_counter(0);
+	return rank_pair_min * 10000 + tag_counter.fetch_add(1);
 }
 
 static inline void print_dev_props(int dev, test_nccl_properties_t *props)
@@ -322,13 +344,13 @@ static inline ncclResult_t post_send(test_nccl_net_t* ext_net,
 {
 	*request = nullptr;
 
-	NCCL_OFI_TRACE(NCCL_NET, "Posting send: buf=%p, size=%zu, tag=%d, mhandle=%p",
-		send_buf, size, tag, mhandle);
-
-	// Call plugin's isend function
-	OFINCCLCHECK(ext_net->isend(scomm, send_buf, size, tag, mhandle, request));
-
-	NCCL_OFI_TRACE(NCCL_NET, "Send posted successfully: request=%p", *request);
+	// Retry until we get a valid request
+	while (*request == nullptr) {
+		NCCL_OFI_TRACE(NCCL_NET, "Posting send: buf=%p, size=%zu, tag=%d, mhandle=%p",
+		 send_buf, size, tag, mhandle);
+		OFINCCLCHECK(ext_net->isend(scomm, send_buf, size, tag, mhandle, request));
+		NCCL_OFI_TRACE(NCCL_NET, "Send posted successfully: request=%p", *request);
+	}
 	return ncclSuccess;
 }
 
@@ -358,11 +380,12 @@ inline ncclResult_t post_recv(test_nccl_net_t* ext_net,
 			      void** mhandles,
 			      void** requests)
 {
-	NCCL_OFI_TRACE(NCCL_NET, "Posting receive: n_recv=%d", n_recv);
-
-	OFINCCLCHECK(ext_net->irecv(rcomm, n_recv, recv_bufs, sizes, tags, mhandles, requests));
-
-	NCCL_OFI_TRACE(NCCL_NET, "Receive posted successfully");
+	// Retry until we get a valid request
+	while (*requests == nullptr) {
+		NCCL_OFI_TRACE(NCCL_NET, "Posting receive: n_recv=%d", n_recv);
+		OFINCCLCHECK(ext_net->irecv(rcomm, n_recv, recv_bufs, sizes, tags, mhandles, requests));
+		NCCL_OFI_TRACE(NCCL_NET, "Receive posted successfully");
+	}
 	return ncclSuccess;
 }
 
@@ -702,7 +725,37 @@ static inline ncclResult_t mpi_validate_size(int size, int expected_size)
 	return ncclSuccess;
 }
 
-static test_nccl_net_t *get_extNet(void)
+/**
+ * @brief Determines GDR (GPUDirect RDMA) support for all available network devices
+ *
+ * This function queries all available network devices and checks if they support
+ * GPUDirect RDMA operations. For each device, it retrieves properties and determines
+ * GDR support based on the device's pointer support capabilities.
+ *
+ * @param ext_net Pointer to the NCCL network plugin interface
+ *
+ * @return std::shared_ptr<int[]> Array of GDR support flags for each device, where:
+ *         - Each element is 1 if the corresponding device supports GDR, 0 if not
+ *         - Array index corresponds to device index
+ *         - Returns nullptr if device query fails or properties cannot be retrieved
+ *         - Array size equals the number of available devices
+ */
+static inline std::shared_ptr<int[]> get_support_gdr(test_nccl_net_t* ext_net) {
+	int ndev;
+	if (ext_net->devices(&ndev)) return nullptr;
+	auto gdr_support = std::shared_ptr<int[]>(static_cast<int*>(malloc(sizeof(int) * ndev)), free);
+
+	for (int dev = 0; dev < ndev; dev++) {
+		test_nccl_properties_t props = {};
+		if (ext_net->getProperties(dev, &props) != ncclSuccess) return nullptr;
+
+		print_dev_props(dev, &props);
+		gdr_support[dev] = is_gdr_supported_nic(props.ptrSupport);
+	}
+	return gdr_support;
+}
+
+__attribute_maybe_unused__ static test_nccl_net_t *get_extNet(void)
 {
 	void *netPluginLib = NULL;
 	test_nccl_net_t *extNet = NULL;
@@ -721,5 +774,212 @@ static test_nccl_net_t *get_extNet(void)
 
 	return extNet;
 }
+
+/**
+ * Simple test scenario class
+ */
+class TestScenario {
+public:
+	struct ThreadContext {
+		size_t thread_id;
+		test_nccl_net_t* ext_net;
+		ListenComms lcomms;
+		SendComms scomms;
+		RecvComms rcomms;
+		ncclResult_t result;
+		TestScenario* scenario;
+	};
+
+	TestScenario(std::string&& scenario_name, size_t num_threads_per_process = 0)
+	: name(std::move(scenario_name)) {
+		threads.resize(num_threads_per_process);
+		thread_contexts.resize(num_threads_per_process);
+	}
+
+	virtual ~TestScenario() = default;
+
+	void set_ext_net(test_nccl_net_t* net) { ext_net = net; }
+
+	virtual ncclResult_t setup(ThreadContext& ctx) { return ncclSuccess; }
+
+	virtual ncclResult_t run(ThreadContext& ctx) = 0;
+
+	virtual ncclResult_t teardown(ThreadContext& ctx) {
+		MPI_Barrier(MPI_COMM_WORLD);
+		return ncclSuccess;
+	}
+
+	ncclResult_t execute() {
+		NCCL_OFI_INFO(NCCL_NET, "Running: %s", this->name.c_str());
+
+		// Single-threaded: create context and execute on main thread
+		if (threads.size() == 0) {
+			thread_contexts.resize(1);
+			thread_contexts[0].thread_id = 0;
+			thread_contexts[0].ext_net = ext_net;
+			thread_contexts[0].scenario = this;
+			thread_contexts[0].result = ncclSuccess;
+
+			OFINCCLCHECK(setup(thread_contexts[0]));
+			OFINCCLCHECK(run(thread_contexts[0]));
+			OFINCCLCHECK(teardown(thread_contexts[0]));
+			return thread_contexts[0].result;
+		}
+
+		// Execute on pthreads
+		for (size_t i = 0; i < thread_contexts.size(); i++) {
+			thread_contexts[i].thread_id = i;
+			thread_contexts[i].ext_net = ext_net;
+			thread_contexts[i].scenario = this;
+			thread_contexts[i].result = ncclSuccess;
+		}
+
+		// Create threads
+		for (size_t i = 0; i < threads.size(); i++) {
+			int ret = pthread_create(&threads[i], nullptr,
+			    thread_function, &thread_contexts[i]);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to create thread %zu: %s", i, strerror(ret));
+
+				// Clean up threads that were created
+				for (size_t j = 0; j < i; j++) {
+					pthread_join(threads[j], nullptr);
+				}
+				return ncclSystemError;
+			}
+		}
+
+		// Wait for all threads to complete
+		ncclResult_t final_result = ncclSuccess;
+		for (size_t i = 0; i < threads.size(); i++) {
+			int ret = pthread_join(threads[i], nullptr);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Failed to join thread %zu: %s", i, strerror(ret));
+				final_result = ncclSystemError;
+			}
+
+			// Check thread execution result
+			if (thread_contexts[i].result != ncclSuccess) {
+				NCCL_OFI_WARN("Thread %zu failed with result %d", i, thread_contexts[i].result);
+				final_result = thread_contexts[i].result;
+			}
+		}
+
+		if (final_result != ncclSuccess) {
+			return final_result;
+		}
+
+		return ncclSuccess;
+	}
+
+protected:
+	static void* thread_function(void* arg) {
+		ThreadContext* ctx = static_cast<ThreadContext*>(arg);
+		TestScenario* scenario = ctx->scenario;
+
+		ncclResult_t result = ncclSuccess;
+
+		// Execute the sequence - continue to teardown even if setup/run fails
+		if ((result = scenario->setup(*ctx)) != ncclSuccess) {
+			NCCL_OFI_WARN("Thread %zu setup failed", ctx->thread_id);
+			ctx->result = result;
+		}
+
+		if (result == ncclSuccess && (result = scenario->run(*ctx)) != ncclSuccess) {
+			NCCL_OFI_WARN("Thread %zu run failed", ctx->thread_id);
+			ctx->result = result;
+		}
+
+		// Always call teardown to ensure cleanup happens
+		ncclResult_t teardown_result = scenario->teardown(*ctx);
+		if (teardown_result != ncclSuccess) {
+			NCCL_OFI_WARN("Thread %zu teardown failed", ctx->thread_id);
+			if (result == ncclSuccess) {
+				ctx->result = teardown_result;
+			}
+		}
+
+		// Set final result if not already set
+		if (ctx->result == ncclSuccess) {
+			ctx->result = result;
+		}
+
+		return nullptr;
+	}
+
+	test_nccl_net_t* ext_net = nullptr;
+	std::string name;
+	std::vector<ThreadContext> thread_contexts;
+	std::vector<pthread_t> threads;
+
+};
+
+/**
+ * Test registry for collecting test scenarios
+ */
+class TestSuite {
+public:
+	TestSuite() {
+		net_plugin_handle = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
+		if (net_plugin_handle == nullptr) {
+			throw std::runtime_error(std::string("Unable to load libnccl-net.so: ") + dlerror());
+		}
+
+		ext_net = static_cast<test_nccl_net_t*>(
+			dlsym(net_plugin_handle, STR(NCCL_PLUGIN_SYMBOL)));
+		if (ext_net == nullptr) {
+			throw std::runtime_error("Could not find symbol");
+		}
+	}
+
+	~TestSuite() {
+		if (net_plugin_handle != nullptr) {
+			dlclose(net_plugin_handle);
+		}
+	}
+
+	void add(TestScenario* scenario) {
+		tests.push_back(scenario);
+	}
+
+	ncclResult_t setup() {
+		int rank, local_rank, size;
+		OFINCCLCHECK(mpi_init_ranks(&rank, &size, &local_rank));
+		OFINCCLCHECK(mpi_validate_size(size, 2));
+		return ncclSuccess;
+	}
+
+	ncclResult_t teardown() {
+		int ret = MPI_Finalize();
+		if (ret != MPI_SUCCESS) {
+			NCCL_OFI_WARN("MPI_Finalize failed: %d", ret);
+			return ncclSystemError;
+		}
+		return ncclSuccess;
+	}
+
+	ncclResult_t run_all() {
+		OFINCCLCHECK(setup());
+		OFINCCLCHECK(ext_net->init(&logger));
+
+		int passed = 0;
+		for (const auto& test : tests) {
+			test->set_ext_net(ext_net);
+			if (test->execute() == ncclSuccess) {
+				passed++;
+			}
+		}
+
+		OFINCCLCHECK(teardown());
+
+		NCCL_OFI_INFO(NCCL_NET, "Results: %d/%zu passed", passed, tests.size());
+		return (passed == static_cast<int>(tests.size())) ? ncclSuccess : ncclSystemError;
+	}
+
+private:
+	void* net_plugin_handle = nullptr;
+	test_nccl_net_t* ext_net = nullptr;
+	std::vector<TestScenario*> tests;
+};
 
 #endif // End TEST_COMMON_H_
