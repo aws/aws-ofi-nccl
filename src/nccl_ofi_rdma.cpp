@@ -294,19 +294,13 @@ exit:
 /*
  * @brief	Set memory registration request attributes
  *
- * @param	key_pool
- *		Device key pool
- * @param	data
- *		Memory region to be registered
- * @param	size
- *		Size of the memory region
- * @param	type
- *		Pointer type
+ * @param	mr_key	Memory registration key
+ * @param	ckey	ckey representing base address and attributes
+ * @param	flags	Output registration flags (optional)
+ * @param	type	Pointer type
+ * @param	mr_attr	Output attribute structure
  *
- * @return	Populated Memory registration attribute, on success
- * @return	Populated I/O vector, on success
- * @return	0 on success
- *		non-zero on error
+ * @return	0 on success, negative error code on failure
  */ 
 static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
