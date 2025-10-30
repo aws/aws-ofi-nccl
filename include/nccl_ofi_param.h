@@ -379,4 +379,20 @@ OFI_NCCL_PARAM(PROGRESS_MODEL, progress_model,  "PROGRESS_MODEL", PROGRESS_MODEL
  */
 OFI_NCCL_PARAM(std::string, platform, "PLATFORM", "");
 
+/*
+ * NVTX Tracing dimension. Valid options are PER_COMM and PER_DEV, 
+ * with the default set to PER_COMM.
+ *
+ * PER_COMM: Collect NVTX traces in a "per-device" view, which associates sub-events with
+ * an EFA device, showing activity on each device.
+ *
+ * PER_DEV: Collect NVTX traces in a "per-communicator" view, which associates parent
+ * send/recv events with constituent events (segments, controls.
+ *
+ * This environment variable would not take any effect, 
+ * unless --with-nvtx / HAVE_NVTX compile time flag is enabled.
+ */
+OFI_NCCL_PARAM_VALUE_SET(NVTX_TRACE_DIMENSION, (PER_COMM)(PER_DEV))
+OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSION", NVTX_TRACE_DIMENSION::PER_COMM)
+
 #endif // End NCCL_OFI_PARAM_H_

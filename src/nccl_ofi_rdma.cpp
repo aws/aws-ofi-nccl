@@ -3433,9 +3433,11 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm_t *r_comm)
 	}
 
 	/* Destroy domain */
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
-	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
-		nvtxDomainDestroy(r_comm->nvtx_domain[i]);
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
+		for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
+			nvtxDomainDestroy(r_comm->nvtx_domain[i]);
+		}
 	}
 #endif
 
@@ -3671,9 +3673,11 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm_t *s_comm)
 	device->comm_idpool.free_id(s_comm->local_comm_id);
 
 	/* Destroy domain */
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
-	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
-		nvtxDomainDestroy(s_comm->nvtx_domain[i]);
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
+		for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i) {
+			nvtxDomainDestroy(s_comm->nvtx_domain[i]);
+		}
 	}
 #endif
 
@@ -4491,13 +4495,15 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 		return NULL;
 	}
 
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
-	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
-	{
-		/* Create nvtx domain */
-		char name[64];
-		snprintf(name, 64, "aws-ofi-nccl r_comm %p_%d", r_comm, i);
-		r_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
+		for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
+		{
+			/* Create nvtx domain */
+			char name[64];
+			snprintf(name, 64, "aws-ofi-nccl r_comm %p_%d", r_comm, i);
+			r_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+		}
 	}
 #endif
 
@@ -6129,13 +6135,15 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 		goto error;
 	}
 
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_COMM
-	for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
-	{
-		/* Create nvtx domain */
-		char name[64];
-		snprintf(name, 64, "aws-ofi-nccl s_comm %p_%d", ret_s_comm, i);
-		ret_s_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
+		for (int i = 0; i < NCCL_OFI_N_NVTX_DOMAIN_PER_COMM; ++i)
+		{
+			/* Create nvtx domain */
+			char name[64];
+			snprintf(name, 64, "aws-ofi-nccl s_comm %p_%d", ret_s_comm, i);
+			ret_s_comm->nvtx_domain[i] = nvtxDomainCreateA(name);
+		}
 	}
 #endif
 	*s_comm = ret_s_comm;
@@ -6825,6 +6833,15 @@ int nccl_net_ofi_rdma_device_t::cleanup_resources()
 		}
 	}
 
+	/* Destroy domain */
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) {
+		for (int i = 0; i < this->num_rails; ++i) {
+			nvtxDomainDestroy(this->nvtx_domain[i]);
+		}
+	}
+#endif
+
 	this->release_device_ofi_resources();
 
 	assert(ret == 0);
@@ -6936,12 +6953,14 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	}
 
 	/* NVTX domain */
-#if HAVE_NVTX_TRACING && NCCL_OFI_NVTX_TRACE_PER_DEV
-	for (int i = 0; i < this->num_rails; ++i) {
-		/* Create nvtx domain */
-		char name[64];
-		snprintf(name, 64, "aws-ofi-nccl dev %d_%d", dev_id, i);
-		this->nvtx_domain[i] = nvtxDomainCreateA(name);
+#if HAVE_NVTX_TRACING
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) {
+		for (int i = 0; i < this->num_rails; ++i) {
+			/* Create nvtx domain */
+			char buf[64];
+			snprintf(buf, 64, "aws-ofi-nccl dev %d_%d", dev_id, i);
+			this->nvtx_domain[i] = nvtxDomainCreateA(buf);
+		}
 	}
 #endif
 }
