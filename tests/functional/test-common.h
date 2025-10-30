@@ -949,4 +949,140 @@ static test_nccl_net_t *get_extNet(void)
 	return extNet;
 }
 
+struct MpiContext {
+	int rank;
+	int size;
+	int local_rank;
+};
+
+/**
+ * Simple test scenario class
+ */
+class TestScenario {
+public:
+	TestScenario(std::string&& scenario_name) : name(std::move(scenario_name)), ext_net(get_extNet()) {}
+	virtual ~TestScenario() {
+		if (ext_net) {
+			void* handle = dlopen("libnccl-net.so", RTLD_NOLOAD | RTLD_NOW | RTLD_LOCAL);
+			if (handle) {
+				if (dlclose(handle) != 0) {
+					NCCL_OFI_WARN("Failed to close plugin library: %s", dlerror());
+				}
+			}
+		}
+	}
+
+	virtual ncclResult_t setup() = 0;
+	virtual ncclResult_t run() = 0;
+	virtual ncclResult_t teardown() = 0;
+
+	ncclResult_t execute() {
+		NCCL_OFI_INFO(NCCL_NET, "Running: %s", this->name.c_str());
+
+		if (!ext_net) return ncclInternalError;
+
+		ncclResult_t result = setup();
+		if (result != ncclSuccess) {
+			NCCL_OFI_WARN("Setup failed: %d", result);
+			return result;
+		}
+
+		result = run();
+		if (result != ncclSuccess) {
+			NCCL_OFI_WARN("Test failed: %d", result);
+		}
+
+		ncclResult_t teardown_result = teardown();
+		if (teardown_result != ncclSuccess) {
+			NCCL_OFI_WARN("Teardown failed: %d", teardown_result);
+			return (result != ncclSuccess) ? result : teardown_result;
+		}
+
+		return result;
+	}
+
+	void set_mpi_ctx(MpiContext& ctx) {
+		this->mpi_ctx = ctx;
+	}
+protected:
+	std::string name;
+	MpiContext mpi_ctx;
+	test_nccl_net_t* ext_net;
+};
+
+/**
+ * Thread context for multi-threaded connection tests
+ */
+struct ConnectionThreadContext {
+	int thread_id;
+	int dev;
+	int peer_rank;
+	int tag;
+	int rank;
+	int size;
+	test_nccl_net_t* ext_net;
+	ncclResult_t result;
+	pthread_barrier_t* setup_barrier;
+	pthread_barrier_t* test_barrier;
+	pthread_barrier_t* cleanup_barrier;
+
+	ConnectionThreadContext() : thread_id(0), dev(0), peer_rank(0), tag(0),
+		rank(0), size(0), ext_net(nullptr), result(ncclSuccess),
+		setup_barrier(nullptr), test_barrier(nullptr), cleanup_barrier(nullptr) {}
+};
+
+/**
+ * Test registry for collecting test scenarios
+ */
+class TestSuite {
+private:
+	MpiContext mpi_ctx;
+	std::vector<TestScenario*> tests;
+
+public:
+	void add(TestScenario* scenario) {
+		tests.push_back(scenario);
+	}
+
+	ncclResult_t setup() {
+		OFINCCLCHECK(mpi_init_ranks(&this->mpi_ctx.rank, &this->mpi_ctx.size, &this->mpi_ctx.local_rank));
+
+		// Set MPI context for all tests after MPI is initialized
+		for (auto& test : tests) {
+			test->set_mpi_ctx(this->mpi_ctx);
+		}
+
+		return ncclSuccess;
+	}
+
+	ncclResult_t teardown() {
+		int ret = MPI_Finalize();
+		if (ret != MPI_SUCCESS) {
+			NCCL_OFI_WARN("MPI_Finalize failed: %d", ret);
+			return ncclSystemError;
+		}
+		return ncclSuccess;
+	}
+
+	ncclResult_t run_all() {
+		ncclResult_t result = setup();
+		if (result != ncclSuccess) {
+			return result;
+		}
+
+		int passed = 0;
+
+		for (const auto& test : tests) {
+			if (test->execute() == ncclSuccess) {
+				passed++;
+			}
+		}
+
+		teardown();
+
+		NCCL_OFI_INFO(NCCL_NET, "Results: %d/%zu passed", passed, tests.size());
+		return (passed == static_cast<int>(tests.size())) ? ncclSuccess : ncclSystemError;
+	}
+};
+
 #endif // End TEST_COMMON_H_
