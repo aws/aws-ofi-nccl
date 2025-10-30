@@ -58,6 +58,8 @@
         }								\
 } while(false);
 
+#define PROC_NAME_IDX(i) ((i) * MPI_MAX_PROCESSOR_NAME)
+
 // Can be changed when porting new versions to the plugin
 #define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v9
 
@@ -821,6 +823,110 @@ static inline ncclResult_t init_cuda_for_thread(int cuda_device)
 
 	NCCL_OFI_TRACE(NCCL_NET, "CUDA initialized successfully for thread with device %d", cuda_device);
 	return ncclSuccess;
+}
+
+/**
+ * Initialize MPI and get rank information
+ *
+ * @param rank       Output: current rank
+ * @param size       Output: total ranks
+ * @param local_rank Output: local rank on node
+ * @return ncclSuccess on success
+ */
+static inline ncclResult_t mpi_init_ranks(int* rank, int* size, int* local_rank)
+{
+	MPI_Init(nullptr, nullptr);
+	MPI_Comm_rank(MPI_COMM_WORLD, rank);
+	MPI_Comm_size(MPI_COMM_WORLD, size);
+
+	/* Get processor names to calculate local rank */
+	char proc_name[MPI_MAX_PROCESSOR_NAME];
+	int proc_name_len;
+	MPI_Get_processor_name(proc_name, &proc_name_len);
+
+	std::shared_ptr<char[]> all_proc_names(
+		static_cast<char*>(malloc(sizeof(char) * (*size) * MPI_MAX_PROCESSOR_NAME)),
+		free
+	);
+	if (!all_proc_names) {
+		NCCL_OFI_WARN("Failed to allocate memory for processor names");
+		return ncclInternalError;
+	}
+
+	memcpy(&(all_proc_names.get()[PROC_NAME_IDX(*rank)]), proc_name, MPI_MAX_PROCESSOR_NAME);
+	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, all_proc_names.get(),
+	       MPI_MAX_PROCESSOR_NAME, MPI_BYTE, MPI_COMM_WORLD);
+
+	/* Calculate local rank */
+	*local_rank = 0;
+	for (int i = 0; i < *size; i++) {
+		if (!strcmp(&(all_proc_names.get()[PROC_NAME_IDX(*rank)]),
+	      &(all_proc_names.get()[PROC_NAME_IDX(i)]))) {
+			if (i < *rank) {
+				(*local_rank)++;
+			}
+		}
+	}
+
+	NCCL_OFI_INFO(NCCL_INIT, "MPI initialized: rank %d/%d, local_rank %d, host %s",
+	              *rank, *size, *local_rank, proc_name);
+
+	return ncclSuccess;
+}
+
+/**
+ * Validate expected rank count
+ */
+static inline ncclResult_t mpi_validate_size(int size, int expected_size)
+{
+	if (size != expected_size) {
+		NCCL_OFI_WARN("Expected %d ranks but got %d", expected_size, size);
+		return ncclInvalidArgument;
+	}
+	return ncclSuccess;
+}
+
+/**
+ * Initialize network and get device information
+ *
+ * @param ext_net    ext_net Network interface
+ * @param ndev       ndev Number of devices
+ * @return ncclSuccess on success
+ */
+static inline ncclResult_t mpi_init_network(test_nccl_net_t* ext_net, int* ndev)
+{
+	OFINCCLCHECK(ext_net->init(&logger));
+	OFINCCLCHECK(ext_net->devices(ndev));
+
+	NCCL_OFI_INFO(NCCL_NET, "Network initialized with %d devices", *ndev);
+	return ncclSuccess;
+}
+
+/**
+ * Check if device supports GDR
+ *
+ * @param ext_net    ext_net Network interface
+ * @param dev       dev Network device
+ * @return ncclSuccess on success
+ */
+static inline int mpi_device_supports_gdr(test_nccl_net_t* ext_net, int dev)
+{
+	test_nccl_properties_t props = {};
+	if (ext_net->getProperties(dev, &props) != ncclSuccess) {
+		return 0;
+	}
+	return is_gdr_supported_nic(props.ptrSupport);
+}
+
+/**
+ * Get buffer type for device (NCCL_PTR_HOST or NCCL_PTR_CUDA)
+ */
+static inline int mpi_get_buffer_type(test_nccl_net_t* ext_net, int dev, bool force_host = false)
+{
+	if (force_host) {
+		return NCCL_PTR_HOST;
+	}
+	return mpi_device_supports_gdr(ext_net, dev) ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
 }
 
 static test_nccl_net_t *get_extNet(void)
