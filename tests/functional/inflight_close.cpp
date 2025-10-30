@@ -13,8 +13,6 @@
 
 #include "test-common.h"
 
-#define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
-
 #define RESTART_ITERS 10
 
 static ncclResult_t run_iteration(int dev, int rank, int test_support_gdr, test_nccl_net_t *extNet,
