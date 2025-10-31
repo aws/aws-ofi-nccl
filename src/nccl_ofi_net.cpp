@@ -287,10 +287,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			      ofi_nccl_protocol.get_string());
 	}
 
-	plugin->domain_per_thread = ofi_nccl_domain_per_thread.get();
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Creating one domain per %s",
-		      plugin->domain_per_thread ? "thread" : "process");
-
 	ret = plugin->complete_init();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to initialize %s protocol", ofi_nccl_protocol.get_string());
@@ -310,7 +306,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	device = plugin->get_device(0);
 
-	ep = device->get_ep();
+	/* get the endpoint from the default domain, domain_key = 0 */
+	ep = device->get_ep(0);
 	if (ep == nullptr) {
 		goto exit;
 	}
@@ -492,10 +489,8 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 	 * the NCCL API. If providers tie MRs to endpoints, the plugin can not
 	 * support this model (since NCCL maintains a per-domain registration
 	 * cache which requires (domain-)global registrations.
-	 * Also, if we have different domains for different threads, registrations
-	 * are not reported as global even if they are tied to the domain.
 	 */
-	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT || this->domain_per_thread) {
+	if (nic_prov->domain_attr->mr_mode & FI_MR_ENDPOINT) {
 		props->regIsGlobal = 0;
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Global registrations are not supported");
 	} else {
@@ -656,18 +651,13 @@ void nccl_net_ofi_device_t::remove_domain_from_map(nccl_net_ofi_domain_t *domain
 }
 
 
-nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_impl()
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_impl(unsigned int domain_key)
 {
 	nccl_net_ofi_domain_t *domain = nullptr;
-	long lookup_key = 0;
 
 	assert(this->plugin != nullptr);
 
-	if (this->plugin->domain_per_thread) {
-		lookup_key = nccl_net_ofi_gettid();
-	}
-
-	auto domain_iter = this->domain_table.find(lookup_key);
+	auto domain_iter = this->domain_table.find(domain_key);
 
 	if (domain_iter != this->domain_table.end()) {
 		domain = domain_iter->second;
@@ -679,7 +669,7 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_imp
 			return nullptr;
 		}
 
-		this->domain_table.insert(std::pair(lookup_key, domain));
+		this->domain_table.insert(std::pair(domain_key, domain));
 
 		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
 			       domain,
@@ -691,25 +681,25 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_imp
 }
 
 
-nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain()
+nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain(unsigned int domain_key)
 {
 	nccl_net_ofi_domain_t *domain = nullptr;
 
 	pthread_wrapper scoped_device_lock(&this->device_lock);
-	domain = this->nccl_net_ofi_device_get_domain_impl();
+	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
 
 	return domain;
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep()
+nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key)
 {
 	nccl_net_ofi_domain_t *domain = nullptr;
 	nccl_net_ofi_ep_t *ep = nullptr;
 
 	pthread_wrapper scoped_device_lock(&this->device_lock);
 
-	domain = this->nccl_net_ofi_device_get_domain_impl();
+	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
 	if (domain == nullptr) {
 		return nullptr;
 	}
@@ -837,9 +827,13 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 
 	pthread_wrapper scoped_domain_lock(&this->domain_lock);
 
-	ep = this->endpoint;
+	long lookup_key = nccl_net_ofi_gettid();
 
-	if (ep == nullptr) {
+	auto ep_iter = this->ep_table.find(lookup_key);
+
+	if (ep_iter != this->ep_table.end()) {
+                ep = ep_iter->second;
+        } else {
 		ep = this->create_endpoint();
 		if (ep == nullptr) {
 			NCCL_OFI_WARN("Creating new endpoint for domain %p failed",
@@ -847,7 +841,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 			return nullptr;
 		}
 
-		this->endpoint = ep;
+		this->ep_table.insert(std::pair(lookup_key, ep));
 		this->increment_ref_cnt();
 
 		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created",
@@ -856,22 +850,6 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 
 	ep->increment_ref_cnt();
 	return ep;
-}
-
-
-void nccl_net_ofi_domain_t::invalidate()
-{
-	if (this->domain_active == true) {
-		this->domain_active = false;
-
-		pthread_wrapper lock(&this->device->device_lock);
-
-		/* Remove this domain from the thread->domain table so that it
-		   is not used for future communicators */
-		this->device->remove_domain_from_map(this);
-
-		this->device->inc_unreleased_inactive_domain_counter();
-	}
 }
 
 
@@ -894,13 +872,9 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 		if (!skip_device_lock) {
 			nccl_net_ofi_mutex_lock(&device_ptr->device_lock);
 		}
-		/* Remove this domain from the domain table if it was active.
-		   If not, it was already removed in domain_invalidate. */
-		if (this->domain_active) {
-			device_ptr->remove_domain_from_map(this);
-		} else {
-			device_ptr->dec_unreleased_inactive_domain_counter();
-		}
+
+		/* Remove this domain from the domain table */
+		device_ptr->remove_domain_from_map(this);
 
 		// domain->free below is going to free the domain lock
 		// and we've removed the domain from the hash table,
@@ -927,9 +901,8 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 
 
 nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg)
-	: domain_active(true),
-	  device(device_arg),
-	  ref_cnt(0)
+	: device(device_arg),
+	ref_cnt(0)
 {
 	int ret;
 

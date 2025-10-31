@@ -31,8 +31,13 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 
 /**
  * @brief	Release libfabric endpoint and address vector
+ *		Release libfabric completion queue if free_cq
+ *		argument is 'true'. Completion queue release is
+ *		made conditional because it will be required to
+ *		handle deferred comm close scenarios
  */
-void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av, int dev_id);
+void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av,
+				  ofi_cq_ptr& cq, int dev_id, bool free_cq = false);
 
 /**
  * @brief	Create and initialize libfabric fabric
@@ -117,6 +122,9 @@ inline enum fi_progress nccl_ofi_translate_progress_enum(PROGRESS_MODEL model_ty
 		break;
 	case PROGRESS_MODEL::MANUAL:
 		ret = FI_PROGRESS_MANUAL;
+		break;
+	case PROGRESS_MODEL::UNIFIED:
+		ret = FI_PROGRESS_CONTROL_UNIFIED;
 		break;
 	}
 
