@@ -14,6 +14,8 @@
 #include "nccl_ofi_param.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#elif HAVE_ROCM
+#include "nccl_ofi_rocm.h"
 #endif
 
 /*
@@ -60,12 +62,12 @@ int nccl_ofi_dmabuf_viable()
 		return false;
 	}
 
-	/* Disable DMA-BUF if using CUDA and CUDA does not report DMA-BUF
+	/* Disable DMA-BUF if using CUDA or ROCm and the platform does not report DMA-BUF
 	 * support in device attributes. */
-#if HAVE_CUDA
+#if HAVE_GPU
 	if (!nccl_net_ofi_cuda_have_dma_buf_attr()) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-		               "Will not attempt to use DMA-BUF, CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED was false.");
+		               "Will not attempt to use DMA-BUF, device does not support DMA-BUF.");
 		return false;
 	}
 #endif
