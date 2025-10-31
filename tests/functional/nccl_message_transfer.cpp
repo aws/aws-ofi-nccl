@@ -13,8 +13,6 @@
 
 #include "test-common.h"
 
-#define PROC_NAME_IDX(i) (i * MPI_MAX_PROCESSOR_NAME)
-
 int main(int argc, char* argv[])
 {
 	ncclResult_t res = ncclSuccess;
