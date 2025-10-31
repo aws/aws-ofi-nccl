@@ -1095,7 +1095,7 @@ static inline int handle_flush_comp(nccl_net_ofi_rdma_req_t *req)
 	ret = inc_req_completion(req, 0, flush_data->total_num_compls);
 #endif
 
-#if HAVE_CUDA
+#if HAVE_GPU
 
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	int num_completions = ++(req->ncompls);
@@ -2386,7 +2386,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	*/
 	if (req->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
-#if HAVE_CUDA
+#if HAVE_GPU
 		if (req->type == NCCL_OFI_RDMA_FLUSH) {
 			/*
 			 * Check if the flush is complete and mark it as complete
@@ -3208,7 +3208,7 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 	 * Clean up the flush buffer only if it was mapped correctly
 	 */
 	if (this->flush_buff.buffer != MAP_FAILED) {
-#if HAVE_CUDA
+#if HAVE_GPU
 		ret = nccl_net_ofi_cuda_mem_free(this->flush_buff.buffer_base);
 #endif
 #if HAVE_NEURON
@@ -3271,12 +3271,12 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	}
 #endif
 
-#if HAVE_CUDA
+#if HAVE_GPU
 	int rc;
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
 
 	/*
-	* We allocate twice the system page size since CUDA memory allocation
+	* We allocate twice the system page size since GPU memory allocation
 	* does not guarantee that the allocated memory will be system page aligned.
 	* Post allocation, we calculate the page aligned ptr and perform
 	* memory registrations on it.
@@ -5408,7 +5408,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
  exit:
 	return (int)rc;
 }
-#elif HAVE_CUDA
+#elif HAVE_GPU
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
 	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
@@ -5454,10 +5454,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 
  exit:
 	return (int)rc;
-}
-#else
-static int post_flush_req(nccl_net_ofi_rdma_req_t *req) {
-	return -FI_EOPNOTSUPP;
 }
 #endif
 

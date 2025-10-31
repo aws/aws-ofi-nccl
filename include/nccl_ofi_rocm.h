@@ -31,18 +31,33 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
 int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void);
 
 /*
- * @brief	wraps cudaGetDevice()
+ * @brief wraps hipMalloc()
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_get_num_devices(void);
+int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size);
 
 /*
- * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
- * @return	true if attr is fetched successfully and true.
- *		    false otherwise.
+ * @brief wraps hipFree()
+ * @return	0 on success
+ *		-1 on error
  */
-int nccl_net_ofi_cuda_get_active_device_idx(void);
+int nccl_net_ofi_cuda_mem_free(void *ptr);
+
+/*
+ * @brief wraps hipMemcpy() from host to device
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size);
+
+/*
+ * @brief Obtain the fd and offset for a dma buf.
+ * The ptr and size provided as input must be aligned to page size
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
 bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
