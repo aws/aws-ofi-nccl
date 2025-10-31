@@ -102,6 +102,23 @@ static void logger(ncclDebugLogLevel level, unsigned long flags, const char *fil
 #pragma GCC diagnostic pop
 }
 
+/**
+ * Generate unique MPI tags for rank pair communication
+ *
+ * In multi-threaded scenarios, both communicating ranks must use the same tag
+ * for MPI_Sendrecv operations. This function ensures deterministic tag generation
+ * by using the minimum rank as a base multiplied by a large offset, plus a
+ * thread-safe atomic counter for uniqueness.
+ *
+ * @param rank_pair_min The minimum rank of the communicating pair (std::min(rank1, rank2))
+ * @return Unique tag that will be identical for both ranks in the pair
+ */
+inline int generate_unique_tag(int rank_pair_min)
+{
+	static std::atomic<int> tag_counter(0);
+	return rank_pair_min * 10000 + tag_counter.fetch_add(1);
+}
+
 static inline void print_dev_props(int dev, test_nccl_properties_t *props)
 {
         NCCL_OFI_TRACE(NCCL_NET, "****************** Device %d Properties ******************", dev);
