@@ -138,15 +138,6 @@ OFI_NCCL_PARAM_VALUE_SET(PROTOCOL, (SENDRECV)(RDMA))
 OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
 
 /*
- * Override the platform default for domain allocation, with
- * respect to the process or thread.
- *
- * 0: Allocate one domain per process
- * 1: Allocate one domain per thread
- */
-OFI_NCCL_PARAM(bool, domain_per_thread, "DOMAIN_PER_THREAD", false);
-
-/*
  * Disable the native RDMA write support check when using the "RDMA" protocol
  * for send/recv operations on AWS platforms. When the check is disabled, the
  * "RDMA" protocol can be used even on platforms where native RDMA write is not
@@ -371,7 +362,7 @@ OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
  * Progress mode requested.  Valid options are AUTO, MANUAL,
  * and UNSPEC, with the default set to UNSPEC.
  */
-OFI_NCCL_PARAM_VALUE_SET(PROGRESS_MODEL, (UNSPEC)(AUTO)(MANUAL))
+OFI_NCCL_PARAM_VALUE_SET(PROGRESS_MODEL, (UNSPEC)(AUTO)(MANUAL)(UNIFIED))
 OFI_NCCL_PARAM(PROGRESS_MODEL, progress_model,  "PROGRESS_MODEL", PROGRESS_MODEL::UNSPEC)
 
 /*

@@ -119,16 +119,12 @@ class nccl_net_ofi_sendrecv_device_t;
  */
 class nccl_net_ofi_sendrecv_domain_t : public nccl_net_ofi_domain_t {
 public:
-	nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg);
+	nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg,
+				       unsigned int domain_key = 0);
 	
 	inline ofi_domain_ptr &get_ofi_domain_for_cm() override
 	{
 		return domain;
-	}
-	
-	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
-	{
-		return cq;
 	}
 	
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
@@ -142,21 +138,8 @@ public:
 	/* Access Domain handle */
 	ofi_domain_ptr domain;
 
-	/* Completion Queue handle */
-	ofi_cq_ptr cq;
-
-	/** 
-	 * Connection manager for this domain
-	 * 
-	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
-	 * safely be initialized in the domain constructor. Currently cm can't
-	 * be initialized in the domain constructor initializer list since it
-	 * expects the domain passed in as an argument to have already 
-	 * initialized Libfabric and ID pool resources. As well, cm can't be 
-	 * initialized at the end of the domain constructor since
-	 * nccl_ofi_connection_manager doesn't have a default constructor.
-	 */
-	nccl_ofi_connection_manager *cm = nullptr;
+	/* The domain index or a key in the domain table */
+	unsigned int domain_key;
 
 protected:
 	/**
@@ -216,6 +199,14 @@ public:
 	}
 
 	/**
+	 * @brief Return completion queue associated with this endpoint for CM to use.
+	 */
+	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
+	{
+		return cq;
+	}
+
+	/**
 	 * Abort an endpoint when a communicator using it still has inflight requests
 	 *
 	 * This function will
@@ -241,6 +232,21 @@ public:
 	/* Endpoint handle to communicate to */
 	ofi_ep_ptr ofi_ep;
 
+	/* Completion Queue handle */
+	ofi_cq_ptr cq;
+
+	/**
+	 * Connection manager for this domain
+	 *
+	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
+	 * safely be initialized in the endpoint constructor. Currently cm can't
+	 * be initialized in the endpoint constructor initializer list since it
+	 * expects the endpoint passed in as an argument to have already
+	 * initialized Libfabric and ID pool resources. As well, cm can't be
+	 * initialized at the end of the endpoint constructor since
+	 * nccl_ofi_connection_manager doesn't have a default constructor.
+	 */
+	nccl_ofi_connection_manager *cm = nullptr;
 protected:
 	/**
 	 * @brief	Destructor.
@@ -344,7 +350,7 @@ protected:
 
 	int cleanup_resources() override;
 
-	nccl_net_ofi_domain_t *create_domain() override;
+	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 
 	/**
 	 * @brief	Allocates and initialises various libfabric resources like

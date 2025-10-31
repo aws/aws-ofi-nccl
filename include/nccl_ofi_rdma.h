@@ -703,8 +703,6 @@ public:
 
 	/* Access domain handles */
 	ofi_domain_ptr domain;
-
-	ofi_cq_ptr cq;
 };
 
 
@@ -714,21 +712,15 @@ public:
 	 * @brief	Default constructor.
 	 * 
 	 * Calls base domain class constructor, sets up RDMA domain resources like domain
-	 * rails, message scheduler, endpoint address list, flush buffer, and 
-	 * connection manager.
+	 * rails, message scheduler, endpoint address list, and flush buffer.
 	 */	
-	nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *domain_args);
+	nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *domain_args,
+				   unsigned int domain_key = 0);
 	
 	inline ofi_domain_ptr &get_ofi_domain_for_cm() override
 	{
 		assert(!domain_rails.empty());
 		return domain_rails[0].domain;
-	}
-
-	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
-	{
-		assert(!domain_rails.empty());
-		return domain_rails[0].cq;
 	}
 
 	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device()
@@ -843,19 +835,6 @@ public:
 	/* Message scheduler */
 	nccl_net_ofi_scheduler_t *scheduler = nullptr;
 
-	/** 
-	 * Associated connection manager
-	 * 
-	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
-	 * safely be initialized in the domain constructor. Currently cm can't
-	 * be initialized in the domain constructor initializer list since it
-	 * expects the domain passed in as an argument to have already 
-	 * initialized Libfabric and ID pool resources. As well, cm can't be 
-	 * initialized at the end of the domain constructor since
-	 * nccl_ofi_connection_manager doesn't have a default constructor.
-	 */
-	nccl_ofi_connection_manager *cm = nullptr;
-
 protected:
 	/**
 	 * @brief	RDMA domain destructor.
@@ -935,6 +914,9 @@ public:
 	nccl_net_ofi_ep_rail_t& operator=(const nccl_net_ofi_ep_rail_t&) = delete;
 
 	uint16_t rail_id;
+
+	/* Completion Queue handle */
+	ofi_cq_ptr cq;
 
 	/* Address vector handle */
 	ofi_av_ptr av;
@@ -1048,6 +1030,16 @@ public:
 		assert(!control_rails.empty());
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
+	}
+
+	/**
+	 * @brief Return completion queue associated with this endpoint for CM to use.
+	 * 	  Return the one from the leading NIC
+	 */
+	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
+	{
+		assert(!rails.empty());
+		return rails[0].cq;
 	}
 
 	/**
@@ -1208,6 +1200,19 @@ public:
 	   receive communicator */
 	bool is_endpoint_per_communicator_ep;
 
+	/**
+	 * Associated connection manager
+	 *
+	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
+	 * safely be initialized in the endpoint constructor. Currently cm can't
+	 * be initialized in the endpoint constructor initializer list since it
+	 * expects the endpoint passed in as an argument to have already
+	 * initialized Libfabric and ID pool resources. As well, cm can't be
+	 * initialized at the end of the endpoint constructor since
+	 * nccl_ofi_connection_manager doesn't have a default constructor.
+	 */
+	nccl_ofi_connection_manager *cm = nullptr;
+
 protected:
 	/**
 	 * @brief	Initialize rx buffer data of endpoint
@@ -1233,8 +1238,12 @@ protected:
 
 	/**
 	 * @brief	Release libfabric resources of rdma endpoint
+	 *              Release libfabric completion queue only if free_cq
+	 *          	argument is 'true'. Completion queue release is
+	 *              made conditional because it will be required to
+	 *              handle deferred comm close scenarios
 	 */
-	void release_rdma_ep_resources(int dev_id);
+	void release_rdma_ep_resources(int dev_id, bool free_cq = false);
 
 	static int ep_rail_init(int dev_id, uint16_t rail_id,
 				nccl_net_ofi_rdma_device_rail_t *dev_rail,
@@ -1419,7 +1428,7 @@ protected:
 
 	int cleanup_resources() override;
 
-	nccl_net_ofi_domain_t *create_domain() override;
+	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 
 	/**
 	 * @brief	Allocates and initializes various libfabric resources to make rdma

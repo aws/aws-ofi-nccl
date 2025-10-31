@@ -475,12 +475,18 @@ ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
 
 
 /**
- * @brief	Release libfabric endpoint, address vector, and completion queue
+ * @brief	Release libfabric endpoint, address vector
+ *		Release libfabric completion queue if free_cq
+ *		argument is 'true'. Completion queue release is
+ *		made conditional because it will be required to
+ *		handle deferred comm close scenarios
  */
-void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av, int dev_id)
+void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av, ofi_cq_ptr& cq,
+				  int dev_id, bool free_cq)
 {
 	ep.reset();
 	av.reset();
+	if (free_cq) cq.reset();
 
 	NCCL_OFI_TRACE(NCCL_NET, "Libfabric endpoint and address vector of dev #%d is released", dev_id);
 }
