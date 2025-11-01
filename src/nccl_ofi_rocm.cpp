@@ -92,3 +92,53 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void)
 {
 	return false;
 }
+
+int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
+{
+	hipError_t ret = hipMalloc(ptr, size);
+	if (ret != hipSuccess) {
+		return -EINVAL;
+	}
+	return 0;
+}
+
+int nccl_net_ofi_cuda_mem_free(void *ptr)
+{
+	hipError_t ret = hipFree(ptr);
+	return ret == hipSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
+{
+	hipError_t ret = hipMemcpy(dst, src, size, hipMemcpyHostToDevice);
+	return ret == hipSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size)
+{
+	int ret = 0;
+	void* addr = NULL;
+	size_t allocSize = 0;
+	hipError_t hip_ret = hipMemGetAddressRange(&addr, &allocSize, (hipDeviceptr_t)ptr);
+	if (hip_ret != hipSuccess) {
+		/* Fall back to original behavior if hipMemGetAddressRange fails */
+		*base = (void *)ptr;
+		*size = 0;
+	} else {
+		*base = addr;
+		*size = allocSize;
+	}
+	return ret;
+}
+
+int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
+{
+#if defined(HIP_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD)
+	hipError_t ret = hipMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
+						      HIP_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+	*offset = 0;
+	return ret == hipSuccess ? 0 : -EINVAL;
+#else
+	return -ENOTSUP;
+#endif
+}
