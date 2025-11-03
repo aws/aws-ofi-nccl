@@ -709,7 +709,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm_t *s_
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 
-	send_data->remote_buff = s_comm->ctrl_mailbox[slot].buff_addr;
+	send_data->remote_buff_offset = s_comm->ctrl_mailbox[slot].buff_offset;
 	send_data->remote_len = s_comm->ctrl_mailbox[slot].buff_len;
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
@@ -2599,6 +2599,11 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 		ret_handle->mr[rail_id] = std::move(mr_result.resource);
 	}
 
+	/* Store base address of registered memory region for offset calculations.
+	 * For virtual address mode, base_addr is 0 so offset equals the virtual address.
+	 * For offset mode, base_addr is the actual buffer address. */
+	ret_handle->base_addr = virt_addr_mr ? 0 : nccl_ofi_mr_ckey_baseaddr(ckey);
+
 	*mhandle = ret_handle;
 	return 0;
 
@@ -2899,7 +2904,8 @@ static inline int allocate_rdma_recv_req(
 	* wrap around works fine too */
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	r_comm->ctrl_mailbox[slot].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
-	r_comm->ctrl_mailbox[slot].buff_addr = (uint64_t)buff;
+	/* Calculate offset from MR base address. For virtual address mode, base_addr is 0. */
+	r_comm->ctrl_mailbox[slot].buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
 	r_comm->ctrl_mailbox[slot].buff_len = size;
 	if (recv_completion_optional) {
 		r_comm->ctrl_mailbox[slot].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
@@ -5040,18 +5046,19 @@ static int post_rdma_write(nccl_net_ofi_rdma_req_t *req,
 	void *desc = fi_mr_desc(rail_mr_handle);
 
 	ssize_t rc;
-	/* Post RDMA write */
+
+	/* Post RDMA write using offset from base address */
 	if (no_target_completion) {
 		rc = fi_write(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
 					xfer_info->msg_size, desc,
 					comm_rail->remote_addr,
-					send_data->remote_buff + xfer_info->offset,
+					send_data->remote_buff_offset + xfer_info->offset,
 					send_data->remote_mr_key[rail_id], rdma_req_get_ofi_context(req, rail_id));
 	} else {
 		rc = fi_writedata(comm_rail->local_ep, (void*)((uintptr_t)send_data->buff + xfer_info->offset),
 					xfer_info->msg_size, desc, send_data->wdata,
 					comm_rail->remote_addr,
-					send_data->remote_buff + xfer_info->offset,
+					send_data->remote_buff_offset + xfer_info->offset,
 					send_data->remote_mr_key[rail_id], rdma_req_get_ofi_context(req, rail_id));
 	}
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
@@ -5347,9 +5354,11 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 		return -EIO;
 	}
 
+	uintptr_t buff_offset = (uintptr_t)rx_buff - rx_mr_handle->base_addr;
 	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->dst_buff,
 			     rx_buff_data->recv_len, desc, comm_rail->local_addr,
-			     (uint64_t)rx_buff, rx_key, rdma_req_get_ofi_context(req, rx_rail_id));
+			     buff_offset,
+			     rx_key, rdma_req_get_ofi_context(req, rx_rail_id));
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Error posting RDMA ctrl request. RC: %zd, Error: %s",
@@ -5391,11 +5400,12 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 		}
 
 		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
-		uint64_t host_buff_addr = (uint64_t)f_buff->buffer + (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
+		uintptr_t host_buff_addr = (uintptr_t)f_buff->buffer + (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
+		uintptr_t buff_offset = (uintptr_t)flush_data->data - flush_data->mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
 			(void *)host_buff_addr,
 			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
-			(uint64_t)(virt_addr_mr ? flush_data->data : 0),
+			buff_offset,
 			cuda_key, rdma_req_get_ofi_context(req, rail_id));
 
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
@@ -5440,10 +5450,11 @@ static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 		}
 
 		uint64_t *host_buff_addr = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
+		uintptr_t buff_offset = (uintptr_t)domain->flush_buff.buffer - domain->flush_buff.mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
 			(void *)host_buff_addr,
 			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
-			(uint64_t)domain->flush_buff.buffer,
+			buff_offset,
 			cuda_key, rdma_req_get_ofi_context(req, rail_id));
 		if ((rc != 0) && (rc != -FI_EAGAIN)) {
 			NCCL_OFI_WARN("Error posting flush request. RC: %zd, Error: %s",
@@ -5712,8 +5723,8 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 	/* Send s_comm's local comm ID to be transferred to receiver */
 	conn_msg->comm_id = local_comm_id;
 
-	/* Send s_comm's control mailbox addr to receiver */
-	conn_msg->ctrl_addr = (uint64_t)ctrl_msg;
+	/* Send s_comm's control mailbox offset to receiver */
+	conn_msg->ctrl_addr = (uintptr_t)ctrl_msg - ctrl_msg_mr_handle->base_addr;
 
 	/* Send s_comm's control mailbox mr_key */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
