@@ -133,7 +133,8 @@ public:
 	 */
 	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
 		: nccl_net_ofi_mr_handle_t(0),
-		  num_rails(num_rails_arg)
+		  num_rails(num_rails_arg),
+		  base_addr(0)
 	{
 		mr.resize(num_rails);
 	}
@@ -149,6 +150,9 @@ public:
 
 	/* Array of size `num_rails' */
 	std::vector<ofi_mr_ptr> mr;
+
+	/* Base address of the registered memory region for offset calculation */
+	uintptr_t base_addr;
 };
 
 /* @brief Control message Flags
@@ -165,8 +169,10 @@ public:
  */
 typedef struct nccl_net_ofi_ctrl_msg {
 
-	/* Destination buffer address */
-	uint64_t buff_addr;
+	/* Destination buffer offset from base address.
+	 * For virtual address mode, base address is 0, so this is the virtual address.
+	 * For offset mode, this is the offset from the MR base address. */
+	uintptr_t buff_offset;
 
 	/* mr keys to write to the destination buffer.
 	* TODO: We are currently burning 32B for the mr_key and this needs to
@@ -293,8 +299,8 @@ typedef struct {
 typedef struct {
 	/* True for eager messages */
 	bool eager;
-	/* Remote destination buffer address */
-	uint64_t remote_buff;
+	/* Remote destination buffer offset from base address */
+	uintptr_t remote_buff_offset;
 	/* Remote buffer length */
 	uint64_t remote_len;
 	/* Remote MR key */
