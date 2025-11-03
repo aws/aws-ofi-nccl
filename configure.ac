@@ -154,6 +154,8 @@ CHECK_PKG_HWLOC([],
 AC_DEFINE_UNQUOTED([HAVE_CUDA], [${do_cuda}], [Defined to 1 if CUDA is available])
 AM_CONDITIONAL([HAVE_CUDA], [test ${do_cuda} = 1])
 
+CHECK_PKG_GDRCOPY([found_gdrcopy="yes"], [found_gdrcopy="no"])
+
 CHECK_PKG_VALGRIND()
 CHECK_VAR_REDZONE()
 
