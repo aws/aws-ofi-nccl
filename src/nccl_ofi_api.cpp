@@ -26,57 +26,9 @@ nccl_net_ofi_plugin_t *plugin = NULL;
 nccl_ofi_logger_t ofi_log_function = NULL;
 
 
-static ncclResult_t nccl_net_ofi_retval_translate_impl(int retval)
-{
-	/*
-	 * This translates both ISO C errnos as well as libfabric errnos (up to
-	 * FI_ERRNO_OFFSET they are synonymous).
-	 */
-	switch (retval) {
-	case 0:
-		return ncclSuccess;
-		break;
-	case -EINVAL:
-		/*
-		 * Per ext-net docs, invalid arguments to plugin calls should
-		 * return ncclInternalError. Although a ncclInvalidArgument is defined,
-		 * it is suggested that ext-net plugins not pass these up and
-		 * leave NCCL API argument validation to NCCL.
-		 */
-		return ncclInternalError;
-		break;
-	case -EMSGSIZE:
-		return ncclInvalidUsage;
-		break;
-	case -ECONNABORTED:
-	case -ECONNRESET:
-	case -ECONNREFUSED:
-	case -ENOTCONN:
-	case -EHOSTDOWN:
-	case -EHOSTUNREACH:
-		/*
-		 * Pass up ncclRemoteError (introduced in NCCL 2.13.4, but
-		 * missing in ext-net documentation) for any unrecoverable peer
-		 * reachability errors.
-		 */
-		return ncclRemoteError;
-		break;
-	default:
-		/*
-		 * Catch-all for other errors, including lifabric-specific error
-		 * codes.
-		 */
-		return ncclSystemError;
-		break;
-	}
-
-	return ncclSystemError;
-}
-
-
 /* Check return will be more helpful if the function printed from
  * NCCL_OFI_WARN() is the API function which returned the error code.
- * So both nccl_net_ofi_retval_translate() and check_return() are
+ * So both nccl_net_ofi_retval_translate_impl() and check_return() are
  * implemented as macros to make the __PRETTY_FUNCTION__ in
  * NCCL_OFI_WARN() have a reasonable value.
  *
@@ -94,11 +46,11 @@ static ncclResult_t nccl_net_ofi_retval_translate_impl(int retval)
 		check_return_retval;					\
 	})
 
-#define nccl_net_ofi_retval_translate(ret)				\
+#define nccl_net_ofi_retval_translate_impl(ret)				\
 	({								\
 		ncclResult_t retval_translate_nccl_retval;		\
 		int retval_translate_tmp_ret = ret;			\
-		retval_translate_nccl_retval = check_return(nccl_net_ofi_retval_translate_impl(retval_translate_tmp_ret)); \
+		retval_translate_nccl_retval = check_return(nccl_net_ofi_retval_translate(retval_translate_tmp_ret)); \
 		retval_translate_nccl_retval;			        \
 	})
 
@@ -160,7 +112,7 @@ ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
 		ret = nccl_net_ofi_create_plugin(&plugin);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Initializing plugin failed");
-			return nccl_net_ofi_retval_translate(ret);
+			return nccl_net_ofi_retval_translate_impl(ret);
 		}
 	}
 	catch (const std::exception &e) {
@@ -168,9 +120,13 @@ ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
 		ret = -EINVAL;
 	}
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
+nccl_net_ofi_plugin_t *nccl_net_ofi_get_plugin()
+{
+	return plugin;
+}
 
 ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
 {
@@ -185,7 +141,7 @@ ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
 	rc = atexit(nccl_net_ofi_fini_v2);
 	if (rc != 0) {
 		NCCL_OFI_WARN("Adding cleanup function failed");
-		return nccl_net_ofi_retval_translate(rc);
+		return nccl_net_ofi_retval_translate_impl(rc);
 	}
 
 	return ret;
@@ -227,7 +183,7 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 	}
 
 	int ret = device->get_properties(ofi_properties);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -292,7 +248,7 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 	if (ret != 0 && ep != nullptr) {
 		ep->release_ep(false, false);
 	}
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -410,7 +366,7 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 		ep->release_ep(false, false);
 	}
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -431,7 +387,7 @@ ncclResult_t nccl_net_ofi_accept_v2(void* listenComm, void** recvComm)
 	}
 
 error:
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -490,7 +446,7 @@ ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
 	}
 
 error:
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -553,7 +509,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 #else
 	if (fd != -1) {
 		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
-		return nccl_net_ofi_retval_translate(-EINVAL);
+		return nccl_net_ofi_retval_translate_impl(-EINVAL);
 	}
 	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
 #endif
@@ -579,7 +535,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 		break;
 	}
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -621,7 +577,7 @@ ncclResult_t nccl_net_ofi_deregMr_v2(void *comm, void *mhandle)
 		break;
 	}
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -664,7 +620,7 @@ ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
 	}
 
 	int ret = send_comm->send(send_comm, data, size, tag, handle, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -745,7 +701,7 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 	}
 
 	int ret = recv_comm->recv(recv_comm, n, data, sizes, tags, handles, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -766,7 +722,7 @@ ncclResult_t nccl_net_ofi_test_v2(void* req, int* done, int* size)
 
 	nccl_net_ofi_req_t *base_req = (nccl_net_ofi_req_t *)req;
 	int ret = base_req->test(base_req, done, size);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -835,7 +791,7 @@ ncclResult_t nccl_net_ofi_iflush_v5(void* rComm, int n, void** buffers, int* siz
 	}
 
 	int ret = recv_comm->flush(recv_comm, n, buffers, sizes, handles, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -862,7 +818,7 @@ ncclResult_t nccl_net_ofi_closeSend_v2(void *sComm)
 
 	int ret = send_comm->close(send_comm);
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -889,7 +845,7 @@ ncclResult_t nccl_net_ofi_closeRecv_v2(void *rComm)
 
 	int ret = recv_comm->close(recv_comm);
 
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -913,7 +869,7 @@ ncclResult_t nccl_net_ofi_closeListen_v2(void *lComm)
 	}
 
 	int ret = listen_comm->close(listen_comm);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -940,7 +896,7 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 	}
 
 	ret = mhandle_ptr->get_mr_key(mr_key);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -968,7 +924,7 @@ ncclResult_t nccl_net_ofi_iwrite_v5(void* sComm, void* src, size_t size, void* m
 	}
 
 	int ret = send_comm->write(send_comm, src, size, mhandle, dest, mr_key, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -996,7 +952,7 @@ ncclResult_t nccl_net_ofi_iwrite_inline_v5(void* sComm, void* src, size_t size,
 	}
 
 	int ret = send_comm->write_inline(send_comm, src, size, dest, mr_key, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
@@ -1024,7 +980,7 @@ ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* m
 	}
 
 	int ret = recv_comm->read(recv_comm, dest, size, mhandle, src, mr_key, base_req);
-	return nccl_net_ofi_retval_translate(ret);
+	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
