@@ -935,7 +935,7 @@ protected:
 	 * @return	0, on success
 	 * 		error, on others
 	 */
-	int alloc_and_reg_flush_buff(int dev_id);
+	int alloc_and_reg_flush_buff(int dev_id, nccl_net_ofi_rdma_ep_t *ep);
 
 	/**
 	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
