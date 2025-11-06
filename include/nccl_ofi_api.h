@@ -11,6 +11,70 @@
 
 struct nccl_ofi_properties;
 
+/**
+ * Return pointer to global plugin object. This allows using net plugin
+ * functionality (such as devices and domains) in other parts of the code.
+ *
+ * Requires that nccl_net_ofi_init has been called.
+ */
+nccl_net_ofi_plugin_t *nccl_net_ofi_get_plugin();
+
+
+/**
+ * Translate an errno (returned by Libfabric and internal plugin functions) to a
+ * ncclResult_t (returned to NCCL per net API)
+ *
+ * This is used to translate the return value of a plugin call to an
+ * ncclResult_t.
+ */
+static inline ncclResult_t nccl_net_ofi_retval_translate(int retval)
+{
+	/*
+	 * This translates both ISO C errnos as well as libfabric errnos (up to
+	 * FI_ERRNO_OFFSET they are synonymous).
+	 */
+	switch (retval) {
+	case 0:
+		return ncclSuccess;
+		break;
+	case -EINVAL:
+		/*
+		 * Per ext-net docs, invalid arguments to plugin calls should
+		 * return ncclInternalError. Although a ncclInvalidArgument is defined,
+		 * it is suggested that ext-net plugins not pass these up and
+		 * leave NCCL API argument validation to NCCL.
+		 */
+		return ncclInternalError;
+		break;
+	case -EMSGSIZE:
+		return ncclInvalidUsage;
+		break;
+	case -ECONNABORTED:
+	case -ECONNRESET:
+	case -ECONNREFUSED:
+	case -ENOTCONN:
+	case -EHOSTDOWN:
+	case -EHOSTUNREACH:
+		/*
+		 * Pass up ncclRemoteError (introduced in NCCL 2.13.4, but
+		 * missing in ext-net documentation) for any unrecoverable peer
+		 * reachability errors.
+		 */
+		return ncclRemoteError;
+		break;
+	default:
+		/*
+		 * Catch-all for other errors, including lifabric-specific error
+		 * codes.
+		 */
+		return ncclSystemError;
+		break;
+	}
+
+	return ncclSystemError;
+}
+
+
 ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction);
 ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction);
 ncclResult_t nccl_net_ofi_fini_v6();
