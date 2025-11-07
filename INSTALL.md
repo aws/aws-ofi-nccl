@@ -28,6 +28,12 @@ dependencies with the following flags:
   --with-hwloc=PATH       Path to non-standard HWLOC installation
 ```
 
+If you want to build the plugin with RCCL support for AMD GPUs, replace `--with-cuda=PATH` with the following:
+
+```
+  --with-rocm=PATH        Path to non-standard ROCm installation
+```
+
 By default, the configure script attempts to auto-detect whether it is running
 on an AWS EC2 instance, and if so enables AWS-specific optimizations. These
 optimizations can be enabled regardless of build machine with the following

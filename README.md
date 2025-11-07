@@ -4,6 +4,9 @@ AWS OFI NCCL is a plug-in which enables EC2 developers to use
 [libfabric](https://github.com/ofiwg/libfabric) as a network provider while
 running [NVIDIA's NCCL](https://github.com/NVIDIA/nccl) based applications.
 
+This plug-in also has support for libfabric as a network provider while
+running [AMD's RCCL](https://github.com/ROCm/rccl) based applications.
+
 ## Overview
 
 Machine learning frameworks running on top of NVIDIA GPUs use a library called
