@@ -81,7 +81,6 @@ DECLARE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
 #if HAVE_CUDA_DMABUF_SUPPORT
 DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 #endif
-DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
@@ -152,7 +151,6 @@ int nccl_net_ofi_gpu_init(void)
 #if HAVE_CUDA_DMABUF_SUPPORT
 	RESOLVE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 #endif
-	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 	RESOLVE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
@@ -217,13 +215,6 @@ int nccl_net_ofi_cuda_mem_free(void *ptr)
 int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
 {
 	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
-	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
-}
-
-int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size)
-{
-	CUresult ret;
-	ret = pfn_cuMemGetAddressRange((CUdeviceptr *)base, size, (CUdeviceptr)ptr);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
