@@ -51,14 +51,6 @@ int nccl_net_ofi_cuda_mem_free(void *ptr);
 int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size);
 
 /*
- * @brief wraps cuMemGetAddressRange() to get the base addr and size
- * of a given pointer
- * @return	0 on success
- *		-1 on error
- */
-int nccl_net_ofi_cuda_get_base_addr(const void *ptr, void **base, size_t *size);
-
-/*
  * @brief Uses cuMemGetHandleForAddressRange() to obtain
  * the fd and offset for a dma buf. In case CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE
  * is not supported we retry with flags set to 0.
