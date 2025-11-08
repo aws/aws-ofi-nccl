@@ -76,13 +76,13 @@
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
 /**
- * Check if domain is active
+ * Check if endpoint is active
  *
- * Caller is assumed to hold the domain lock
+ * Caller is assumed to hold the endpoint lock
  */
-#define CHECK_DOMAIN_ACTIVE(domain, fn_name) \
-	if (OFI_UNLIKELY(!domain->domain_active)) { \
-		NCCL_OFI_WARN("Called " fn_name " on request with inactive domain"); \
+#define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
+	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
+		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
 
@@ -303,30 +303,17 @@ public:
 	 */
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
 
-	/**
-	 * @brief	Increment base device's unreleased_inactive_domain_counter
-	 */
-	inline void inc_unreleased_inactive_domain_counter()
-	{
-		++unreleased_inactive_domain_counter;
-	}
-
-	/**
-	 * @brief	Decrement base device's unreleased_inactive_domain_counter
-	 */
-	inline void dec_unreleased_inactive_domain_counter()
-	{
-		--unreleased_inactive_domain_counter;
-	}
-
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
 	 * of performance tradeoffs (be sure to read the domain
 	 * description below).
 	 */
-	nccl_net_ofi_domain_t *get_domain();
+	nccl_net_ofi_domain_t *get_domain(unsigned int domain_key = 0);
 
-	nccl_net_ofi_ep_t *get_ep();
+	/* Retrieve an endpoint associated with this device under the requested
+	 * domain scope.
+	 */
+	nccl_net_ofi_ep_t *get_ep(unsigned int domain_key = 0);
 
 	/**
 	 * implementation of retreiving a domain from a device.  This code
@@ -335,7 +322,7 @@ public:
 	 * the device->get_ep call, hold the lock while we're also creating
 	 * the ep.
 	 */
-	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl();
+	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(unsigned int domain_key = 0);
 
 	/**
 	 * @brief	Erase all domain_table elements matching the provided domain
@@ -395,7 +382,7 @@ protected:
 	 * implementation of get_domain() and should not be called
 	 * from the more general case.
 	 */
-	virtual nccl_net_ofi_domain_t *create_domain() = 0;
+	virtual nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) = 0;
 
 	/**
 	 * release all domains and endpoints. This function is a private
@@ -407,16 +394,7 @@ protected:
 	/**
 	 * hash table indexed by thread id of active domains.
 	 */
-	std::unordered_map<long, nccl_net_ofi_domain_t *> domain_table;
-
-	/**
-	 * Number of domains that have been deactivated but not freed
-	 *
-	 * This counter is used for a diagnostic when the device is finalized,
-	 * to track inactive domains (which aren't in the domain table) which
-	 * were never closed
-	 */
-	size_t unreleased_inactive_domain_counter = 0;
+	std::unordered_map<unsigned int, nccl_net_ofi_domain_t *> domain_table;
 
 	/** 
 	 * Track whether the cleanup_resources function was already called to avoid calling
@@ -455,14 +433,6 @@ public:
 	 * associated with the "leader NIC".
 	 */
 	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
-
-	/**
-	 * Retrieve an fid_cq object associated with this domain to be used for 
-	 * connection management. There may be more than one fid_cq per domain, depending
-	 * on the transport; in that case, this will be the cq object associated with the
-	 * "leader NIC".
-	 */
-	virtual ofi_cq_ptr &get_ofi_cq_for_cm() = 0;
 
 	/* Create a new endpoint
 	 *
@@ -542,25 +512,26 @@ public:
 
 	pthread_mutex_t domain_lock;
 
-	/*
-	 * Boolean flag indicating whether the domain is still valid and usable
-	 *
-	 * When a communicator is closed with inflight requests, the domain is
-	 * marked inactive, preventing further use of communicators on the
-	 * domain. Transports should check the domain_active flag before using
-	 * OFI resources associated with the domain (CQs, endpoints, AVs)
-	 *
-	 * This flag is protected by domain_lock
+	/**
+	 * @brief       Erase all ep_table elements matching the provided ep
 	 */
-	bool domain_active;
+	void remove_ep_from_map(nccl_net_ofi_ep_t *ep);
 
 	/**
-	 * Invalidate domain. Marks the domain as inactive and removes it from the
-	 * thread->domain map, so future communicators do not use this domain.
-	 *
-	 * Caller is assumed to hold domain_lock
+	 * @brief       Increment base domain's unreleased_inactive_ep_counter
 	 */
-	virtual void invalidate();
+	inline void inc_unreleased_inactive_ep_counter()
+	{
+		++unreleased_inactive_ep_counter;
+	}
+
+	/**
+	 * @brief       Decrement base domain's unreleased_inactive_ep_counter
+	 */
+	inline void dec_unreleased_inactive_ep_counter()
+	{
+		--unreleased_inactive_ep_counter;
+	}
 
 protected:
 	/**
@@ -598,6 +569,30 @@ protected:
 	 * of endpoints created on this domain. When it reaches 0, the
 	 * domain can be destroyed. */
 	size_t ref_cnt;
+
+	/* The Domain index or a key in the device domain table */
+	unsigned int domain_key;
+
+	/**
+	 * release all endpoints. This function is a private
+	 * function, which is called only during cleanup_resources() to free allocated
+	 * endpoints.
+	 */
+	int release_all_ep();
+
+	/**
+	 * hash table indexed by thread id of active endpoints.
+	 */
+	std::unordered_map<long, nccl_net_ofi_ep_t *> ep_table;
+
+	/**
+	 * Number of endpoints that have been deactivated but not freed
+	 *
+	 * This counter is used for a diagnostic when the domain is closed,
+	 * to track inactive ednpoint (which aren't in the ep table) which
+	 * were never closed
+	 */
+	size_t unreleased_inactive_ep_counter = 0;
 
 	/** 
 	 * Track whether the cleanup_resources function was already called to avoid calling
@@ -668,6 +663,14 @@ public:
 			    int trafficClass) = 0;
 
 	/**
+	 * Retrieve an fid_cq object associated with this endpoint to be used for
+	 * connection management. There may be more than one fid_cq, depending
+	 * on the transport; in that case, this will be the cq object associated with the
+	 * "leader NIC".
+	 */
+	virtual ofi_cq_ptr &get_ofi_cq_for_cm() = 0;
+
+	/**
 	 * @brief	Release nccl_ofi_ep.
 	 *
 	 * Decrease reference counter. Release resources and free
@@ -696,6 +699,28 @@ public:
 	inline void decrement_ref_cnt() {
 		ref_cnt--;
 	}
+
+	pthread_mutex_t ep_lock;
+
+	/*
+	 * Boolean flag indicating whether the endpoint is still valid and usable
+	 *
+	 * When a communicator is closed with inflight requests, the endpoint is
+	 * marked inactive, preventing further use of communicators on the
+	 * endpoint. Transports should check the ep_active flag before using
+	 * OFI resources associated with the endpoint (CQs, endpoints, AVs)
+	 *
+	 * This flag is protected by ep_lock
+	 */
+	bool ep_active;
+
+	/**
+	 * Invalidate endpoint. Marks the endpoint as inactive and removes it from the
+	 * thread->ep map, so future communicators do not use this endpoint.
+	 *
+	 * Caller is assumed to hold ep_lock
+	 */
+	virtual void invalidate();
 
 protected:
 	/**
@@ -927,15 +952,6 @@ public:
 					 int dev_id,
 					 int num_devices,
 					 nccl_ofi_properties_t *props);
-
-	/*
-	 * Determine whether to allocate the domain per process or per
-	 * thread.
-	 * false: allocate domain per process
-	 * true: allocate domain per thread
-	 */
-	bool domain_per_thread;
-
 protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;

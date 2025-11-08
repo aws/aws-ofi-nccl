@@ -158,6 +158,8 @@ int main(int argc, char* argv[])
 					peer_rank);
 		}
 
+		MPI_Barrier(MPI_COMM_WORLD);
+
 		OFINCCLCHECK(extNet->closeListen((void *)lComm));
 		lComm = NULL;
 		OFINCCLCHECK(extNet->closeSend((void *)sComm));

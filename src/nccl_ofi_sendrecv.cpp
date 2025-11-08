@@ -35,14 +35,15 @@
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
 
+
 /**
- * Check if domain is active
+ * Check if endpoint is active
  *
- * Caller is assumed to hold the domain lock
+ * Caller is assumed to hold the ep lock
  */
-#define CHECK_DOMAIN_ACTIVE(domain, fn_name) \
-	if (OFI_UNLIKELY(!domain->domain_active)) { \
-		NCCL_OFI_WARN("Called " fn_name " on request with inactive domain"); \
+#define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
+	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
+		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
 
@@ -476,14 +477,13 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	pthread_wrapper domain_lock(&domain->domain_lock);
+	pthread_wrapper eplock(&ep->ep_lock);
 
-	CHECK_DOMAIN_ACTIVE(domain, "sendrecv_req_test");
+	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
 
 	/* Process more completions unless the current request is completed */
 	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
-		ret = sendrecv_cq_process(domain->cq.get());
+		ret = sendrecv_cq_process(ep->cq.get());
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
@@ -791,8 +791,6 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 
 	pthread_wrapper domain_lock(&domain->domain_lock);
 
-	CHECK_DOMAIN_ACTIVE(domain, "mr_base_reg");
-
 	int dev_id = device->dev_id;
 
 	int ret = 0;
@@ -928,9 +926,9 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	pthread_wrapper domain_lock(&domain->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "recv");
+	pthread_wrapper eplock(&ep->ep_lock);
+
+	CHECK_ENDPOINT_ACTIVE(ep, "recv");
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight reqs. */
 	if (OFI_UNLIKELY(r_comm->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
@@ -950,7 +948,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 	}
 
 	/* Progress NCCL OFI */
-	ret = sendrecv_cq_process(domain->cq.get());
+	ret = sendrecv_cq_process(ep->cq.get());
 	if (OFI_UNLIKELY(ret != 0))
 		goto error;
 
@@ -1016,13 +1014,13 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 
 void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 {
-	pthread_wrapper domain_lock(&this->domain->domain_lock);
+	pthread_wrapper lock(&this->ep_lock);
 
 	int dev_id = this->domain->get_device()->dev_id;
 
 	nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, dev_id);
 
-	this->domain->invalidate();
+	this->invalidate();
 }
 
 
@@ -1098,9 +1096,10 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
 	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(r_comm->base.base.ep);
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
-	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain_ptr, "flush");
+
+	pthread_wrapper eplock(&ep->ep_lock);
+
+	CHECK_ENDPOINT_ACTIVE(ep, "flush");
 
 	if (ofi_nccl_gdr_flush_disable() || support_gdr == GDR_UNSUPPORTED)
 		goto exit;
@@ -1197,7 +1196,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 			 * Process completions so that you have enough
 			 * resources for issuing fi_read
 			 */
-			ret = sendrecv_cq_process(domain_ptr->cq.get());
+			ret = sendrecv_cq_process(ep->cq.get());
 			if (OFI_UNLIKELY(ret != 0))
 				goto error;
 		} else {
@@ -1446,9 +1445,9 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper domain_lock(&domain->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "accept");
+	pthread_wrapper eplock(&ep->ep_lock);
 
+	CHECK_ENDPOINT_ACTIVE(ep, "accept");
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device =
@@ -1480,7 +1479,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
-		ret = sendrecv_cq_process(domain->cq.get());
+		ret = sendrecv_cq_process(ep->cq.get());
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -1536,7 +1535,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * cleanup and return receive communicator. */
 
 		/* Progress our engine to get completions */
-		ret = sendrecv_cq_process(domain->cq.get());
+		ret = sendrecv_cq_process(ep->cq.get());
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -1639,10 +1638,12 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_listen_comm_t *l_comm = nullptr;
 	int dev_id = 0;
 	int num_addrs;
+
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
-	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain_ptr, "listen");
+	pthread_wrapper eplock(&this->ep_lock);
+
+	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_sendrecv_device_t *device = domain_ptr->sendrecv_domain_get_device();
@@ -1687,7 +1688,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	l_comm->local_ep = this->ofi_ep.get();
 	l_comm->local_ep_addr = local_ep_addr;
 
-	l_comm->listener = domain_ptr->cm->listen();
+	l_comm->listener = this->cm->listen();
 
 	/* Build handle */
 	*handle = l_comm->listener->get_handle();
@@ -1743,10 +1744,9 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
-	pthread_wrapper domain_lock(&domain->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain, "send");
+	pthread_wrapper eplock(&ep->ep_lock);
 
+	CHECK_ENDPOINT_ACTIVE(ep, "send");
 
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
@@ -1787,7 +1787,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		      s_comm->remote_ep, s_comm->tag, sendrecv_req_get_ofi_context(req));
 	if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
 		/* Make progress for next try */
-		ret = sendrecv_cq_process(domain->cq.get());
+		ret = sendrecv_cq_process(ep->cq.get());
 		/* Return NULL request */
 		*base_req = NULL;
 		goto error;
@@ -2011,11 +2011,13 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 {
 	int ret = 0;
 	*send_comm = nullptr;
+
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
-	pthread_wrapper domain_lock(&domain_ptr->domain_lock);
-	CHECK_DOMAIN_ACTIVE(domain_ptr, "connect");
+	pthread_wrapper eplock(&this->ep_lock);
+
+	CHECK_ENDPOINT_ACTIVE(this, "connect");
 
 	nccl_ofi_connection_info_t conn_info = { };
 	
@@ -2046,11 +2048,11 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 			return ret;
 		}
 
-		s_comm->connector = domain_ptr->cm->connect(*handle, &conn_info, sizeof(conn_info));
+		s_comm->connector = this->cm->connect(*handle, &conn_info, sizeof(conn_info));
 	}
 
 	/* Progress our engine to get completions */
-	ret = sendrecv_cq_process(this->sendrecv_endpoint_get_domain()->cq.get());
+	ret = sendrecv_cq_process(this->cq.get());
 	if (OFI_UNLIKELY(ret != 0)) {
 		free(s_comm);
 		return ret;
@@ -2101,6 +2103,14 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
+	if (this->cm) {
+		delete this->cm;
+		this->cm = nullptr;
+	}
+
+	int dev_id = this->domain->get_device()->dev_id;
+	nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, dev_id);
+
 	assert(ret == 0);
 
 	return ret;
@@ -2136,6 +2146,19 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 	this->max_tag = device->max_tag;
 
 	ofi_domain_ptr &ofi_domain = this->sendrecv_endpoint_get_ofi_domain();
+
+	/* Create the completion queue */
+	struct fi_cq_attr cq_attr = {};
+	cq_attr.format = FI_CQ_FORMAT_TAGGED;
+	cq_attr.size = ofi_nccl_cq_size();
+	auto cq_result =  nccl_ofi_ofiutils_cq_create(ofi_domain, &cq_attr);
+	if (OFI_UNLIKELY(cq_result.is_failure())) {
+		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
+			       cq_result.error_code, fi_strerror(-cq_result.error_code));
+		throw std::runtime_error("SEND RECV endpoint constructor: ofi cq creation failed");
+	}
+	this->cq = std::move(cq_result.resource);
+
 	auto av_result = nccl_ofi_ofiutils_av_create(ofi_domain);
 	if (OFI_UNLIKELY(av_result.is_failure())) {
 		throw std::runtime_error("sendrecv endpoint constructor: failed to init av");
@@ -2143,25 +2166,35 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 	this->av = std::move(av_result.resource);
 
 	auto ep_result = nccl_ofi_ofiutils_ep_create(device->info, ofi_domain, this->av,
-						     domain_arg->cq);
+						     this->cq);
 	if (OFI_UNLIKELY(ep_result.is_failure())) {
 		throw std::runtime_error("sendrecv endpoint constructor: failed to init endpoint");
 	}
 	this->ofi_ep = std::move(ep_result.resource);
+
+	this->cm = new nccl_ofi_connection_manager(*domain_arg, *this,
+						   sizeof(nccl_ofi_connection_info_t));
 }
 
 
 int nccl_net_ofi_sendrecv_domain_t::cleanup_resources()
 {
 	int ret = 0;
+	int err_code = 0;
 
 	/* cleanup_resources should only be called once per domain instance */
 	assert(!this->called_cleanup_resources);
 	this->called_cleanup_resources = true;
 
-	if (this->cm) {
-		delete this->cm;
-		this->cm = nullptr;
+	if (!this->ep_table.empty()) {
+		NCCL_OFI_INFO(NCCL_NET, "%zu SENDRECV endpoints still active at close",
+			      this->ep_table.size());
+		err_code = this->release_all_ep();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("Cleanup of SENDRECV domain failed. RC: %d, ERROR: %s",
+				      err_code, fi_strerror(-err_code));
+			ret = -EINVAL;
+		}
 	}
 
 	assert(ret == 0);
@@ -2178,11 +2211,10 @@ nccl_net_ofi_sendrecv_domain_t::~nccl_net_ofi_sendrecv_domain_t()
 }
 
 
-nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg)
+nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg,
+							       unsigned int domain_key_arg)
 	: nccl_net_ofi_domain_t(device_arg)
 {
-	struct fi_cq_attr cq_attr = {};
-
 	auto domain_result = nccl_ofi_ofiutils_domain_create(device_arg->fabric,
 							     device_arg->info);
 	if (OFI_UNLIKELY(domain_result.is_failure())) {
@@ -2191,26 +2223,13 @@ nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_send
 		throw std::runtime_error("SENDRECV domain constructor: domain creation failed");
 	}
 	this->domain = std::move(domain_result.resource);
-
-	/* Create a domain-shared completion queue */
-	cq_attr.format = FI_CQ_FORMAT_TAGGED;
-	cq_attr.size = ofi_nccl_cq_size();
-	auto cq_result =  nccl_ofi_ofiutils_cq_create(this->domain, &cq_attr);
-	if (OFI_UNLIKELY(cq_result.is_failure())) {
-		NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-				cq_result.error_code, fi_strerror(-cq_result.error_code));
-		throw std::runtime_error("RDMA domain constructor: ofi cq creation failed");
-	}
-	this->cq = std::move(cq_result.resource);
-
-	this->cm = new nccl_ofi_connection_manager(*this,
-						   sizeof(nccl_ofi_connection_info_t));
+	this->domain_key = domain_key_arg;
 }
 
 
-nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_t::create_domain()
+nccl_net_ofi_domain_t *nccl_net_ofi_sendrecv_device_t::create_domain(unsigned int domain_key)
 {
-	auto *domain = new nccl_net_ofi_sendrecv_domain_t(this);
+	auto *domain = new nccl_net_ofi_sendrecv_domain_t(this, domain_key);
 
 	return domain;
 }
