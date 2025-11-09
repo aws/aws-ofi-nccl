@@ -2622,7 +2622,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		pthread_wrapper mr_cache_lock(&this->mr_cache->lock);
 
 		ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
-			nccl_ofi_mr_cache_lookup_entry(this->mr_cache, ckey));
+			nccl_ofi_mr_cache_lookup_entry(this->mr_cache, ckey, endpoint_mr));
 		if (ret_handle) {
 			/* Cache hit */
 			*mhandle = ret_handle;
@@ -2637,6 +2637,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 
 		ret = nccl_ofi_mr_cache_insert_entry(this->mr_cache,
 						     ckey,
+						     endpoint_mr,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (this->dereg_mr_no_lock(ret_handle) != 0) {
@@ -2664,7 +2665,11 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size);
+	/* TODO: When the endpoint mr feature is supported for RDMA plugin
+	 * pass the endpoint during the mr key create below. For now, we are
+	 * passing nullptr
+	 */
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 	return this->reg_mr(&ckey, type, mhandle);
 }
 
@@ -2676,7 +2681,11 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
+	/* TODO: When the endpoint mr feature is supported for RDMA plugin
+	 * pass the endpoint during the mr key create below. For now, we are
+	 * passing nullptr
+	 */
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, nullptr);
 	return this->reg_mr(&ckey, type, mhandle);
 }
 #endif

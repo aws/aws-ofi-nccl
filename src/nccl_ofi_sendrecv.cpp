@@ -690,7 +690,7 @@ exit:
  *		non-zero on error
  */
 static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t *domain,
-						 fid_ep *ofi_ep,
+						 nccl_net_ofi_sendrecv_ep_t *ep,
 						 nccl_ofi_idpool_t *key_pool, int dev_id,
 						 void *data, size_t size, int type,
 						 nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
@@ -699,8 +699,8 @@ static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t 
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
-	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, &cache_key, type, mr_handle);
+	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
+	return sendrecv_mr_buffers_register(domain, ep->ofi_ep.get(), key_pool, dev_id, &cache_key, type, mr_handle);
 }
 
 
@@ -804,7 +804,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(
-			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey));
+			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey, endpoint_mr));
 
 		if (ret_handle) {
 			/* Cache hit */
@@ -822,7 +822,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 	}
 
 	if (mr_cache) {
-		ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, ret_handle);
+		ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, endpoint_mr, ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.
@@ -1240,7 +1240,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
  * 		error, on others
  */
 static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain,
-						       fid_ep *ofi_ep,
+						       nccl_net_ofi_sendrecv_ep_t *ep,
 						       nccl_ofi_idpool_t *key_pool,
 						       nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff,
 						       int dev_id)
@@ -1260,7 +1260,7 @@ static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_dom
 	}
 
 	/* Register flush dummy buffer for provider access */
-	ret = sendrecv_mr_buffers_internal_register(domain, ofi_ep, key_pool, dev_id,
+	ret = sendrecv_mr_buffers_internal_register(domain, ep, key_pool, dev_id,
 						    flush_buff->host_buffer,
 						    system_page_size,
 						    NCCL_PTR_HOST, &mr_handle);
@@ -1379,7 +1379,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	 */
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
-		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep->ofi_ep.get(),
+		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep,
 								  key_pool,
 								  &r_comm->flush_buff, dev_id);
 		if (OFI_UNLIKELY(ret != 0)) {

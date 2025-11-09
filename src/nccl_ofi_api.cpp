@@ -518,14 +518,14 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 
 #if HAVE_DECL_FI_MR_DMABUF
 	const nccl_ofi_mr_ckey_t cache_key = (fd == -1)
-		? nccl_ofi_mr_ckey_mk_vec(data, size)
-		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
+		? nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep)
+		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, base_comm->ep);
 #else
 	if (fd != -1) {
 		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
 		return nccl_net_ofi_retval_translate_impl(-EINVAL);
 	}
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep);
 #endif
 
 	nccl_net_ofi_send_comm_t *send_comm = NULL;
