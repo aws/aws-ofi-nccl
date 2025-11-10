@@ -147,13 +147,35 @@ cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_
 
 cm_resources::~cm_resources()
 {
-	/* Resources can be destructed in the usual reverse-order, with one exception:
-	   The endpoint must be closed first, since posted buffers and requests cannot
-	   be freed until the endpoint is closed.
+	/* Libfabric imposes two key cleanup constraints:
+	 *
+	 * 1. Memory registrations (MRs) associated with an endpoint must be closed
+	 *    before the endpoint itself.
+	 *
+	 * 2. Memory buffers used with Libfabric transmission interfaces must not be
+	 *    released, deregistered, or reused until either a completion event is
+	 *    received or fi_close() on the endpoint returns. For receive buffers,
+	 *    this typically requires cancellation support, which not all providers
+	 *    implement.
+	 *
+	 * For non-FI_MR_ENDPOINT providers:
+	 *   We close the endpoint here before buffer cleanup. The first constraint
+	 *   does not apply (MRs are not bound to the endpoint), and closing the
+	 *   endpoint satisfies the second constraint.
+	 *
+	 * For FI_MR_ENDPOINT providers:
+	 *   We skip closing the endpoint here, as there are MRs still associated
+	 *   with this endpoint. The remaining cleanup code is not entirely correct,
+	 *   as the MR cleanup that happens as part of buffer class destruction only
+	 *   obeys the first rule, and not the second. To properly support
+	 *   FI_MR_ENDPOINT, the buffers also need to be cancelled, but this code
+	 *   appears to work with CXI, so is a reasonable first step.
 	 */
-	int ret = ep.close_ofi_ep();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to close OFI endpoint: %d", ret);
+	if (!endpoint_mr) {
+		int ret = ep.close_ofi_ep();
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to close OFI endpoint: %d", ret);
+		}
 	}
 
 	/* Free all requests. (A unique_ptr would be better here so these can be freed
