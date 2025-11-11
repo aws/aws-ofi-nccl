@@ -488,7 +488,12 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 
 	props->max_mr_key_size = nic_prov->domain_attr->mr_key_size;
 
-	props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov);
+	/* We only claim DMA-BUF is supported when GDR is supported. In NCCL's logic, when plugin
+	 * claims support for `NCCL_PTR_DMABUF`, NCCL thinks that it should be able to use GDR.
+	 * So, on platform that doesn't support GDR, we should not advertise support for DMA-BUF
+	 * to prevent NCCL from using GDR.
+	 */
+	props->dmabuf_support = nccl_ofi_dmabuf_viable_and_supported(nic_prov) & (support_gdr == GDR_SUPPORTED);
 	if (props->dmabuf_support) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "DMA-BUF support is advertised in properties.");
 	}
