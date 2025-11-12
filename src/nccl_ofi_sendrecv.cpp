@@ -562,8 +562,8 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 			goto exit;
 		#endif
 
-		/* Get CUDA device ID */
-		ret = nccl_net_ofi_get_cuda_device_for_addr((void *)nccl_ofi_mr_ckey_baseaddr(ckey),
+		/* Get GPU device ID */
+		ret = nccl_net_ofi_get_gpu_device_for_addr((void *)nccl_ofi_mr_ckey_baseaddr(ckey),
 		                                            &mr_attr.device.cuda);
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;

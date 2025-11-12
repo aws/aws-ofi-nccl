@@ -167,7 +167,7 @@ int nccl_net_ofi_gpu_init(void)
 	              driverVersion,
 	              runtimeVersion);
 
-	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_cuda_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
+	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_gpu_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
 		cuda_flush = true;
 	} else {
@@ -194,7 +194,7 @@ int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void)
 #endif
 }
 
-int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
+int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
 {
 	CUdeviceptr d_ptr;
 	CUresult ret = pfn_cuMemAlloc(&d_ptr, size);
@@ -206,19 +206,19 @@ int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size)
 	return 0;
 }
 
-int nccl_net_ofi_cuda_mem_free(void *ptr)
+int nccl_net_ofi_gpu_mem_free(void *ptr)
 {
 	CUresult ret = pfn_cuMemFree((CUdeviceptr)ptr);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
-int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
+int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 {
 	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
-int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
 {
 #if HAVE_CUDA_DMABUF_SUPPORT
 	unsigned long long flags = 0;
@@ -246,7 +246,7 @@ int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int
 #endif
 }
 
-int nccl_net_ofi_get_cuda_device_for_addr(void *ptr, int *dev_id)
+int nccl_net_ofi_get_gpu_device_for_addr(void *ptr, int *dev_id)
 {
 	void *data[2];
 	CUpointer_attribute attributes[2];
@@ -266,7 +266,7 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *ptr, int *dev_id)
 	return 0;
 }
 
-bool nccl_net_ofi_cuda_have_gdr_support_attr(void)
+bool nccl_net_ofi_gpu_have_gdr_support_attr(void)
 {
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 	if (pfn_cuCtxGetDevice == NULL || pfn_cuDeviceGetAttribute == NULL) {
@@ -292,7 +292,7 @@ bool nccl_net_ofi_cuda_have_gdr_support_attr(void)
 #endif
 }
 
-bool nccl_net_ofi_cuda_have_dma_buf_attr(void)
+bool nccl_net_ofi_gpu_have_dma_buf_attr(void)
 {
 #if HAVE_CUDA_DMABUF_SUPPORT
 	static_assert(CUDA_VERSION >= 11070, "Requires cudart>=11.7");
