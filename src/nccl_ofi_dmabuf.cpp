@@ -65,7 +65,7 @@ int nccl_ofi_dmabuf_viable()
 	/* Disable DMA-BUF if using CUDA or ROCm and the platform does not report DMA-BUF
 	 * support in device attributes. */
 #if HAVE_GPU
-	if (!nccl_net_ofi_cuda_have_dma_buf_attr()) {
+	if (!nccl_net_ofi_gpu_have_dma_buf_attr()) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
 		               "Will not attempt to use DMA-BUF, device does not support DMA-BUF.");
 		return false;

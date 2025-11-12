@@ -332,8 +332,8 @@ static int set_mr_req_attr(uint64_t mr_key,
 			goto exit;
 		#endif
 
-		/* Get CUDA device ID */
-		ret = nccl_net_ofi_get_cuda_device_for_addr(
+		/* Get GPU device ID */
+		ret = nccl_net_ofi_get_gpu_device_for_addr(
 			(void*)nccl_ofi_mr_ckey_baseaddr(ckey),
 			&mr_attr->device.cuda);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -3215,7 +3215,7 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 	 */
 	if (this->flush_buff.buffer != MAP_FAILED) {
 #if HAVE_GPU
-		ret = nccl_net_ofi_cuda_mem_free(this->flush_buff.buffer_base);
+		ret = nccl_net_ofi_gpu_mem_free(this->flush_buff.buffer_base);
 #endif
 #if HAVE_NEURON
 		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
@@ -3288,7 +3288,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	* memory registrations on it.
 	*/
 	this->flush_buff.size = 2 * system_page_size;
-	ret = nccl_net_ofi_cuda_mem_alloc(&(this->flush_buff.buffer_base), this->flush_buff.size);
+	ret = nccl_net_ofi_gpu_mem_alloc(&(this->flush_buff.buffer_base), this->flush_buff.size);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
@@ -3300,7 +3300,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	this->flush_buff.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)this->flush_buff.buffer_base, system_page_size);
 
 	/* Copy flush sentinel value into aligned ptr of gpu buffer */
-	ret =  nccl_net_ofi_cuda_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
+	ret =  nccl_net_ofi_gpu_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
 							NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
@@ -3322,7 +3322,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		/*
 		* Retrieve the fd and offset and the aligned ptr used for dma buf
 		*/
-		ret = nccl_net_ofi_cuda_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
+		ret = nccl_net_ofi_gpu_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
 			return ret;
@@ -3345,7 +3345,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      dev_id);
 
-		rc = nccl_net_ofi_cuda_mem_free(&this->flush_buff.buffer_base);
+		rc = nccl_net_ofi_gpu_mem_free(&this->flush_buff.buffer_base);
 		if (rc != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
 				      rc);

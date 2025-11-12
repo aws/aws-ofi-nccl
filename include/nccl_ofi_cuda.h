@@ -9,17 +9,17 @@
 int nccl_net_ofi_gpu_init(void);
 
 /*
- * @brief	Gets the CUDA device associated with the buffer
+ * @brief	Gets the GPU device associated with the buffer
  *
  * @param	data
- *		Pointer to CUDA buffer.
+ *		Pointer to GPU buffer.
  *
- * @return	Valid CUDA device ID on success
+ * @return	Valid GPU device ID on success
  *		-1 on error
  * @return	0 on success
  *		-EINVAL on error
  */
-int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
+int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
  * @brief	wraps cudaFlushGPUDirectRDMAWrites() with default args.
@@ -34,7 +34,7 @@ int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void);
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size);
+int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size);
 
 /*
  * @brief wraps cuMemFree()
@@ -42,13 +42,13 @@ int nccl_net_ofi_cuda_mem_alloc(void **ptr, size_t size);
  *		-1 on error
  */
 
-int nccl_net_ofi_cuda_mem_free(void *ptr);
+int nccl_net_ofi_gpu_mem_free(void *ptr);
 /*
  * @brief wraps cuMemcpy() from host to device
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size);
+int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
 
 /*
  * @brief Uses cuMemGetHandleForAddressRange() to obtain
@@ -58,7 +58,7 @@ int nccl_net_ofi_cuda_mem_copy_host_to_device(void *dst, void *src, size_t size)
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
@@ -66,7 +66,7 @@ int nccl_net_ofi_cuda_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int
  * @return	true if attr is fetched successfully and true.
  *		    false otherwise.
  */
-bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
+bool nccl_net_ofi_gpu_have_dma_buf_attr(void);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED
@@ -74,6 +74,6 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
  * @return	true if attr is fetched successfully and true.
  *		    false otherwise
  */
-bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
+bool nccl_net_ofi_gpu_have_gdr_support_attr(void);
 
 #endif  // End NCCL_OFI_CUDA_H_
