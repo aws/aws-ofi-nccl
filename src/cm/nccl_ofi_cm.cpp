@@ -12,8 +12,8 @@
 #include "cm/nccl_ofi_cm.h"
 
 nccl_ofi_connection_manager::nccl_ofi_connection_manager
-	(nccl_net_ofi_domain_t &domain, size_t conn_msg_data_size) :
-	resources(domain, conn_msg_data_size)
+	(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep, size_t conn_msg_data_size) :
+	resources(domain, ep, conn_msg_data_size)
 {
 }
 

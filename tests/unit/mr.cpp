@@ -13,8 +13,12 @@
 static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *expected_val)
 {
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);;
-	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey);
+	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
+	 * the the mr key create below. For now, we are
+	 * passing nullptr
+	 */
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);;
+	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey, false);
 	if (result != expected_val) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_lookup_entry returned unexpected result. Expected: %p. Actual: %p",
 			expected_val, result);
@@ -31,8 +35,12 @@ static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
 		 void *handle, int expected_ret)
 {
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size);
-	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, handle);
+	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
+	 * the the mr key create below. For now, we are
+	 * passing nullptr
+	 */
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);
+	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, false, handle);
 	if (ret != expected_ret) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_insert_entry returned unexpected result. Expected: %d. Actual: %d",
 			expected_ret, ret);
@@ -64,8 +72,12 @@ static inline bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, in
 
 static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintptr_t expected_base, size_t expected_size)
 {
+	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
+	 * the the mr key create below. For now, we are
+	 * passing nullptr
+	 */
 	/* iovec only */
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec((void*)addr, size);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec((void*)addr, size, nullptr);
 	uintptr_t page_base = nccl_ofi_mr_ckey_baseaddr(&ckey);
 	size_t aligned_size = nccl_ofi_mr_ckey_len(&ckey);
 	if (page_base != expected_base || aligned_size != expected_size) {

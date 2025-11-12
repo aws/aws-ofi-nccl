@@ -475,7 +475,7 @@ ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
 
 
 /**
- * @brief	Release libfabric endpoint, address vector, and completion queue
+ * @brief	Release libfabric endpoint, address vector
  */
 void nccl_ofi_ofiutils_ep_release(ofi_ep_ptr& ep, ofi_av_ptr& av, int dev_id)
 {

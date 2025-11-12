@@ -110,7 +110,8 @@ static inline void compute_page_address(uintptr_t addr,
 }
 
 void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
-				     nccl_ofi_mr_ckey_ref ckey)
+				     nccl_ofi_mr_ckey_ref ckey,
+				     bool is_endpoint_mr)
 {
 	uintptr_t page_addr;
 	size_t pages;
@@ -129,6 +130,8 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 			/* cache missed */
 			cache->miss_count++;
 			return NULL;
+		} else if (is_endpoint_mr && (ckey->ep != cache->slots[slot]->ep)) {
+                        continue;
 		} else if ((page_addr >= cache->slots[slot]->addr) &&
 			   ((page_addr - cache->slots[slot]->addr) /
 				    cache->system_page_size +
@@ -149,6 +152,7 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache,
 
 int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
 				   nccl_ofi_mr_ckey_ref ckey,
+				   bool is_endpoint_mr,
 				   void *handle)
 {
 	uintptr_t page_addr;
@@ -196,6 +200,7 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
 			entry->pages = pages;
 			entry->refcnt = 1;
 			entry->handle = handle;
+			entry->ep = ckey->ep;
 
 			cache->used++;
 			NCCL_OFI_TRACE(NCCL_NET,
@@ -205,7 +210,8 @@ int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache,
 			               nccl_ofi_mr_ckey_type_str(ckey),
 			               slot);
 			goto out;
-		} else if ((page_addr >= cache->slots[slot]->addr) &&
+		} else if ((!(is_endpoint_mr && (cache->slots[slot]->ep != ckey->ep))) &&
+			   (page_addr >= cache->slots[slot]->addr) &&
 			   ((page_addr - cache->slots[slot]->addr) /
 				    cache->system_page_size +
 			    pages) <= cache->slots[slot]->pages) {
