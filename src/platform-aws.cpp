@@ -243,7 +243,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 75.0,
 		.gdr_required = true,
-		.default_protocol = PROTOCOL::SENDRECV,
+		.default_protocol = PROTOCOL::RDMA,
 		.domain_per_thread = true,
 		.env = {},
 	},
