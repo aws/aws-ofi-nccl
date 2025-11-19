@@ -900,6 +900,14 @@ public:
 	 */
 	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
 
+	/**
+	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int dealloc_and_dereg_flush_buff();
+
 	uint16_t num_rails;
 	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
 
@@ -936,14 +944,6 @@ protected:
 	 * 		error, on others
 	 */
 	int alloc_and_reg_flush_buff(int dev_id, nccl_net_ofi_rdma_ep_t *ep);
-
-	/**
-	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
-	 *
-	 * @return	0, on success
-	 * 		error, on others
-	 */			    
-	int dealloc_and_dereg_flush_buff();
 
 private:
 	template <nccl_ofi_rdma_rail_type_t rail_type>
