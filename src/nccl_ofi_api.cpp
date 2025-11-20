@@ -208,6 +208,13 @@ ncclResult_t nccl_net_ofi_listen_v2(int dev, void* handle, void** listenComm)
 
 ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 {
+	/* use the default access and resource domains */
+	return nccl_net_ofi_listen_v11_neuron(dev_id, handle, lComm, 0, 0);
+}
+
+ncclResult_t nccl_net_ofi_listen_v11_neuron(int dev_id, void *handle, void **lComm,
+					    unsigned int domain_key, unsigned int resource_key)
+{
 	int ret = 0;
 	nccl_net_ofi_device_t *device = nullptr;
 	nccl_net_ofi_ep_t *ep = nullptr;
@@ -232,7 +239,7 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
 		}
 
 		/* Retrieve and validate endpoint */
-		ep = device->get_ep();
+		ep = device->get_ep(domain_key);
 		if (OFI_UNLIKELY(ep == nullptr)) {
 			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
 			return check_return(ncclInternalError);
@@ -306,6 +313,13 @@ ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
  */
 ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, int trafficClass)
 {
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect_v11_neuron(dev_id, handle, sComm, trafficClass, 0, 0);
+}
+
+ncclResult_t nccl_net_ofi_connect_v11_neuron(int dev_id, void *handle, void **sComm, int trafficClass,
+					     unsigned int domain_key, unsigned int resource_key)
+{
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
@@ -332,7 +346,7 @@ ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, in
 				return check_return(ncclInternalError);
 			}
 
-			ep = device->get_ep();
+			ep = device->get_ep(domain_key);
 			if (OFI_UNLIKELY(ep == nullptr)) {
 				return check_return(ncclInternalError);
 			}
@@ -504,14 +518,14 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 
 #if HAVE_DECL_FI_MR_DMABUF
 	const nccl_ofi_mr_ckey_t cache_key = (fd == -1)
-		? nccl_ofi_mr_ckey_mk_vec(data, size)
-		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data);
+		? nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep)
+		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, base_comm->ep);
 #else
 	if (fd != -1) {
 		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
 		return nccl_net_ofi_retval_translate_impl(-EINVAL);
 	}
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size);
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep);
 #endif
 
 	nccl_net_ofi_send_comm_t *send_comm = NULL;

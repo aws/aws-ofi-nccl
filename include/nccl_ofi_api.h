@@ -82,6 +82,8 @@ ncclResult_t nccl_net_ofi_devices_v2(int *ndev);
 ncclResult_t nccl_net_ofi_get_properties(int dev, struct nccl_ofi_properties *ofi_properties);
 ncclResult_t nccl_net_ofi_listen_v2(int dev, void *handle, void **listenComm);
 ncclResult_t nccl_net_ofi_listen_v5(int dev, void* handle, void **listenComm);
+ncclResult_t nccl_net_ofi_listen_v11_neuron(int dev, void* handle, void **listenComm,
+					    unsigned int domain_key, unsigned int resource_key);
 // Nvidia introduced the ability to have part of the communication driven by a
 // cuda kernel, which requires a version-specific device pointer be passed
 // through the accept/connect APIs.  Rather than list all those connect calls
@@ -89,6 +91,8 @@ ncclResult_t nccl_net_ofi_listen_v5(int dev, void* handle, void **listenComm);
 ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void **sendComm);
 ncclResult_t nccl_net_ofi_connect_v5(int dev, void* handle, void **sendComm);
 ncclResult_t nccl_net_ofi_connect_v10(int dev, void *handle, void **sendComm, int trafficClass);
+ncclResult_t nccl_net_ofi_connect_v11_neuron(int dev, void *handle, void **sendComm, int trafficClass,
+					     unsigned int domain_key, unsigned int resource_key);
 ncclResult_t nccl_net_ofi_accept_v2(void *listenComm, void **recvComm);
 ncclResult_t nccl_net_ofi_accept_v5(void* listenComm, void** recvComm);
 ncclResult_t nccl_net_ofi_regMr_v2(void *comm, void *data, int size, int type,

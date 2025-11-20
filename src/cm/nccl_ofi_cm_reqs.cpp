@@ -162,6 +162,14 @@ nccl_ofi_cm_send_conn_resp_req::nccl_ofi_cm_send_conn_resp_req
 
 nccl_ofi_cm_send_conn_resp_req::~nccl_ofi_cm_send_conn_resp_req()
 {
+	/* TODO: Flush any pending send conn resp requests. This is required
+	 * for the `complete_immediately` mode where the receiver/rComm is
+	 * returned to the application without waiting for the send
+	 * complete for this request. If the application closes the
+	 * rComms immediately, then the sender rank will never receive
+	 * the response back from receiver and hence the application will
+	 * never be able to complete the sComm creation.
+	 */
 	resources.buff_mgr.free_conn_msg(send_elem);
 }
 
