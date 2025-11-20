@@ -6,12 +6,12 @@
 using namespace nccl_ofi_cm;
 
 
-endpoint::endpoint(nccl_net_ofi_domain_t &domain) :
+endpoint::endpoint(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep) :
 	ofi_domain(domain.get_ofi_domain_for_cm()),
 	mr_key_pool(*(domain.mr_rkey_pool))
 {
 	fi_info *info = domain.get_device()->get_ofi_info_for_cm();
-	ofi_cq_ptr &cq = domain.get_ofi_cq_for_cm();
+	ofi_cq_ptr &cq = ep.get_ofi_cq_for_cm();
 
 	auto av_result = nccl_ofi_ofiutils_av_create(this->ofi_domain);
 	if (OFI_UNLIKELY(av_result.is_failure())) {
@@ -122,8 +122,9 @@ int pending_requests_queue::process_pending_reqs()
 }
 
 
-cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, size_t _conn_msg_data_size) :
-	ep(domain),
+cm_resources::cm_resources(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep_arg,
+			   size_t _conn_msg_data_size) :
+	ep(domain, ep_arg),
 	conn_msg_data_size(_conn_msg_data_size),
 	buff_mgr(ep, get_conn_msg_size()),
 	callback_map(),

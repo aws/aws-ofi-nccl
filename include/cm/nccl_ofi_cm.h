@@ -226,16 +226,21 @@ public:
 	 *
 	 * @param domain:
 	 *      OFI domain object to which the CM endpoint will be bound.
-	 *      The CM will create its own endpoint, bound to the domain's CQ.
+	 *      The CM will create its own endpoint, bound to the CQ provided
+	 *      via the plugin endpoint argument.
 	 *      Ops submitted through the CM code will have a context pointer to
 	 *      nccl_net_ofi_context_t, with appropriate completion handling
 	 *      functions
+	 *
+	 * @param ep:
+	 * 	plugin endpoint object holding the CQ required for CM
 	 *
 	 * @param conn_msg_data_size:
 	 *      size of transport-specific part of connect and connect response
 	 *      messages
 	 */
-	nccl_ofi_connection_manager(nccl_net_ofi_domain_t &domain, size_t conn_msg_data_size);
+	nccl_ofi_connection_manager(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep,
+				    size_t conn_msg_data_size);
 
 	/**
 	 * Destructor. Finalizes CM endpoint and other state.

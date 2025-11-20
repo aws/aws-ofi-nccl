@@ -27,6 +27,11 @@ enum nccl_ofi_mr_ckey_type {
 };
 typedef enum nccl_ofi_mr_ckey_type nccl_ofi_mr_ckey_type_t;
 
+/* Forward declare the enpoint class which will be defined
+ * in nccl_ofi.h
+ */
+class nccl_net_ofi_ep_t;
+
 struct nccl_ofi_mr_ckey {
 	union {
 		struct iovec iovec;
@@ -34,6 +39,7 @@ struct nccl_ofi_mr_ckey {
 		struct fi_mr_dmabuf fi_mr_dmabuf;
 #endif
 	};
+	nccl_net_ofi_ep_t *ep;
 	enum nccl_ofi_mr_ckey_type type;
 };
 
@@ -112,13 +118,15 @@ static inline void nccl_ofi_mr_ckey_round(size_t *len, void **base_addr, const c
 }
 
 #if HAVE_DECL_FI_MR_DMABUF
-static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t offset, size_t len, void *base_addr)
+static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t offset, size_t len,
+							    void *base_addr, nccl_net_ofi_ep_t *ep_ptr)
 {
 	nccl_ofi_mr_ckey_t cache_key = {};
 	cache_key.fi_mr_dmabuf.fd = fd;
 	cache_key.fi_mr_dmabuf.offset = offset;
 	cache_key.fi_mr_dmabuf.len = len;
 	cache_key.fi_mr_dmabuf.base_addr = base_addr;
+	cache_key.ep = ep_ptr;
 	cache_key.type = NCCL_OFI_MR_CKEY_DMABUF;
 	return cache_key;
 }
@@ -135,7 +143,8 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t off
  *
  * @return cache key
  */
-static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len)
+static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t iov_len,
+							 nccl_net_ofi_ep_t *ep_ptr)
 {
 #if !HAVE_NEURON
 	nccl_ofi_mr_ckey_round(&iov_len, &iov_base, "iovec");
@@ -143,6 +152,7 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_vec(void *iov_base, size_t 
 	nccl_ofi_mr_ckey_t cache_key = {};
 	cache_key.iovec.iov_base = iov_base;
 	cache_key.iovec.iov_len = iov_len;
+	cache_key.ep = ep_ptr;
 	cache_key.type = NCCL_OFI_MR_CKEY_IOVEC;
 	return cache_key;
 }
@@ -178,6 +188,7 @@ typedef struct nccl_ofi_reg_entry {
 	size_t pages;
 	int refcnt;
 	void *handle;
+	nccl_net_ofi_ep_t *ep;
 } nccl_ofi_reg_entry_t;
 
 /**
@@ -212,7 +223,8 @@ void nccl_ofi_mr_cache_finalize(nccl_ofi_mr_cache_t *cache);
  * If entry is found, refcnt is increased
  * @return mr handle if found, or NULL if not found
  */
-void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey);
+void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey,
+				     bool is_endpoint_mr);
 
 /**
  * Insert a new cache entry with the given address and size
@@ -221,7 +233,8 @@ void *nccl_ofi_mr_cache_lookup_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_cke
  *	   -ENOMEM, on allocation failure
  *	   -EEXIST, if matching entry already exists in cache
  */
-int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey, void *handle);
+int nccl_ofi_mr_cache_insert_entry(nccl_ofi_mr_cache_t *cache, nccl_ofi_mr_ckey_ref ckey,
+				   bool is_endpoint_mr, void *handle);
 
 /**
  * Decrement refcnt of entry with given handle. If refcnt was reduced to 0,

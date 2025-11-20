@@ -87,7 +87,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -101,7 +100,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -115,7 +113,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 150.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -126,7 +123,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -137,7 +133,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -154,7 +149,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		/*
 		 * Note: Based on empirical testing, setting the
 		 * NCCL_NETDEVS_POLICY=max:1 gives optimal performance
@@ -188,7 +182,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -205,7 +198,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -216,7 +208,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -230,7 +221,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -244,7 +234,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -255,7 +244,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
-		.domain_per_thread = true,
 		.env = {},
 	},
 	{
@@ -266,7 +254,6 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
-		.domain_per_thread = true,
 		.env = {},
 	},
 };
@@ -733,10 +720,6 @@ int PlatformAWS::init(const char **provider_filter)
 
 	if (select_efa && ofi_nccl_protocol.get_source() == ParamSource::DEFAULT && platform_data) {
 		ofi_nccl_protocol.set(platform_data->default_protocol);
-	}
-
-	if (ofi_nccl_domain_per_thread.get_source() == ParamSource::DEFAULT && platform_data) {
-		ofi_nccl_domain_per_thread.set(platform_data->domain_per_thread);
 	}
 
 	return ret;

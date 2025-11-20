@@ -46,7 +46,6 @@ protected:
 		float latency;
 		bool gdr_required;
 		PROTOCOL default_protocol;
-		bool domain_per_thread;
 		std::map<std::string, std::string> env;
 	};
 
