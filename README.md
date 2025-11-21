@@ -49,8 +49,8 @@ GitHub issues or (better yet) patches are appreciated.
 To build the plugin, you need to have
 [Libfabric](http://github.com/ofiwg/libfabric/) and
 [HWLOC](https://www.open-mpi.org/projects/hwloc/) installed prior to
-building the plugin., If you want to run the included multi-node
-tests, you also need  an MPI Implementation installed.  Each release of the
+building the plugin. If you want to run the included multi-node
+tests, you also need an MPI Implementation installed.  Each release of the
 plugin has a list of dependency versions in the top-level README.md
 file.
 

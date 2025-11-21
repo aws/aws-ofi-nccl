@@ -26,7 +26,7 @@
  * An endpoint address buffer of 56 bytes *should* be large enough to hold
  * all libfabric providers. In case the requirement changes, NCCL v2.12
  * provides enough room to increase this size but we would need to maintain
- * backwards compatiblity with all NCCL versions.
+ * backwards compatibility with all NCCL versions.
  *
  * We also store tags and communicator stage information in remaining
  * part of the handle.
