@@ -134,7 +134,7 @@ static inline void nccl_net_ofi_mem_create_mempool(void *handle, void *data, siz
 static inline void nccl_net_ofi_mem_destroy_mempool(void *handle);
 
 /**
- * Indicate that an allocation has occured from a memory allocator.
+ * Indicate that an allocation has occurred from a memory allocator.
  * The memory area returned with have undefined semantics after this
  * call.
  *
@@ -149,7 +149,7 @@ static inline void nccl_net_ofi_mem_destroy_mempool(void *handle);
 static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size_t size);
 
 /**
- * Indicate that a deallocate has occured to a memory allocator.  The
+ * Indicate that a deallocate has occurred to a memory allocator.  The
  * memory area will have noaccess semantics after this call.  If
  * book-keeping structures need to be stored in this area, the
  * specific area should be first marked as undefined via

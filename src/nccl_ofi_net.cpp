@@ -736,7 +736,7 @@ nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 
 	PlatformManager::get_global().get_platform().device_set_guid(info, this);
 
-	/* Intiaialize mutex for endpoint access */
+	/* Initialize mutex for endpoint access */
 	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to initialize device mutex");
@@ -1096,7 +1096,7 @@ nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain_arg)
 {
 	assert(domain_arg != nullptr);
 
-	/* Intiaialize mutex for endpoint access */
+	/* Initialize mutex for endpoint access */
 	int ret = nccl_net_ofi_mutex_init(&this->ep_lock, nullptr);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Unable to initialize endpoint mutex");
