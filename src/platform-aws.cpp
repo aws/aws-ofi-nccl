@@ -207,7 +207,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.default_dup_conns = 0,
 		.latency = 35.0,
 		.gdr_required = false,
-		.default_protocol = PROTOCOL::RDMA,
+		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
