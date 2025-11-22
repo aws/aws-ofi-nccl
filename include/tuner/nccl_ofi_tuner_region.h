@@ -5,7 +5,6 @@
 #ifndef NCCL_OFI_TUNER_REGION_H_
 #define NCCL_OFI_TUNER_REGION_H_
 
-#include <cmath>
 #include <stddef.h>
 #include "tuner/nccl_ofi_tuner_common.h"
 
@@ -58,28 +57,6 @@ typedef struct nccl_ofi_tuner_point
 {
 	double x;
 	double y;
-	enum COORD_SCALE {
-		UNSPECIFIED,
-		ORIGINAL,
-		X_LOG2
-
-	} coord_scale = UNSPECIFIED;
-
-	inline void transform_log2_x() {
-		if (coord_scale == X_LOG2) return;
-
-		if (x > 0) {
-			x = std::log2(x);
-			coord_scale = X_LOG2;
-		}
-	}
-
-	inline void transform_pow2_x() {
-		if (coord_scale != X_LOG2) return;
-
-		x = std::pow(2.0, x);
-		coord_scale = ORIGINAL;
-	}
 } nccl_ofi_tuner_point_t;
 
 typedef struct nccl_ofi_tuner_region {
@@ -93,8 +70,7 @@ nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a,
 									 nccl_ofi_tuner_point_t b,
 									 nccl_ofi_tuner_point_t z);
 
-int is_inside_region(
-	nccl_ofi_tuner_point_t point,
-	const nccl_ofi_tuner_region_t *region);
+int is_inside_region(nccl_ofi_tuner_point_t point,
+					 nccl_ofi_tuner_region_t *region);
 
 #endif /* NCCL_OFI_TUNER_REGION_H_ */
