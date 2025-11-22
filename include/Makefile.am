@@ -14,10 +14,12 @@ noinst_HEADERS = \
 	nccl_ofi_assert.h \
 	nccl_ofi_config_bottom.h \
 	nccl_ofi_cuda.h \
+	nccl_ofi_device_copy.h \
 	nccl_ofi_dmabuf.h \
 	nccl_ofi_environ.h \
 	nccl_ofi_ep_addr_list.h \
 	nccl_ofi_freelist.h \
+	nccl_ofi_gdrcopy.h \
 	nccl_ofi_idpool.h \
 	nccl_ofi_log.h \
 	nccl_ofi_math.h \
