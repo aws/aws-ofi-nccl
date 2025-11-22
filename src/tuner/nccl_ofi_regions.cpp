@@ -127,7 +127,7 @@ static inline double distance(nccl_ofi_tuner_point_t x,
 			      double eps)
 {
 	nccl_ofi_tuner_point_t dy = vsub(y1, y0);
-	nccl_ofi_tuner_point_t x1, s = {0, 0};
+	nccl_ofi_tuner_point_t x1, s;
 	int r;
 
 	x1.x = x.x + dy.y;
@@ -155,12 +155,12 @@ static inline double distance(nccl_ofi_tuner_point_t x,
  * 		-1 for outside
  * 		0 for on edge.
  */
-int is_inside_region(nccl_ofi_tuner_point_t point, const nccl_ofi_tuner_region_t *region)
+int is_inside_region(nccl_ofi_tuner_point_t point, nccl_ofi_tuner_region_t *region)
 {
 	assert(region->num_vertices > 1);
 
 	size_t i, k;
-	const nccl_ofi_tuner_point_t *pv;
+	nccl_ofi_tuner_point_t *pv;
 	double min_x, max_x, min_y, max_y;
 	const double eps = 1e-10;
 
@@ -233,14 +233,6 @@ static ncclResult_t set_regions(nccl_ofi_tuner_region_context_t *region_ctx,
 	}
 
 	memcpy(region_ctx->regions[collType], &regions[0], num_regions * sizeof(nccl_ofi_tuner_region_t));
-
-	for (size_t i = 0; i < num_regions; i++) {
-		nccl_ofi_tuner_region& region = region_ctx->regions[collType][i];
-		for (size_t j = 0; j < region.num_vertices; j++) {
-			region.vertices[j].transform_log2_x();
-		}
-	}
-
 	return ncclSuccess;
 }
 
@@ -253,22 +245,15 @@ nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_po
 {
 	nccl_ofi_tuner_point_t ret;
 
-	a.transform_log2_x();
-	b.transform_log2_x();
-	z.transform_log2_x();
-	ret.coord_scale = nccl_ofi_tuner_point_t::X_LOG2;
-
 	if (a.x == b.x) {
 		/* a and b are on the same vertical line */
-		ret.x = a.x, ret.y = z.y;
-		ret.transform_pow2_x();
+		ret = (nccl_ofi_tuner_point_t){.x = a.x, .y = z.y};
 		return ret;
 	}
 
 	if (a.y == b.y) {
 		/* a and b are on the same horizontal line */
-		ret.x = z.x, ret.y = a.y;
-		ret.transform_pow2_x();
+		ret = (nccl_ofi_tuner_point_t){.x = z.x, .y = a.y};
 		return ret;
 	}
 
@@ -277,12 +262,11 @@ nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a, nccl_ofi_tuner_po
 	double projected_zy = m * z.x + c;
 
 	if (projected_zy < z.y) {
-		ret.x = z.x, ret.y = projected_zy;
+		ret = (nccl_ofi_tuner_point_t){.x = z.x, .y = projected_zy};
 	} else {
-		ret.x = (z.y - c) / m, ret.y = z.y;
+		ret = (nccl_ofi_tuner_point_t){.x = (z.y - c) / m, .y = z.y};
 	}
 
-	ret.transform_pow2_x();
 	return ret;
 }
 
@@ -1449,7 +1433,6 @@ ncclResult_t region_get_coll_info_internal_v2(nccl_ofi_tuner_context_t *ctx,
 
 	p.x = (double)nBytes;
 	p.y = (double)region_ctx->dims.num_ranks;
-	p.transform_log2_x();
 
 	/* Check all regions */
 	for (size_t i = 0; i < region_ctx->num_regions[collType] && in_out < 0; i++) {
@@ -1517,7 +1500,6 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 
 	p.x = (double)nBytes;
 	p.y = (double)region_ctx->dims.num_ranks;
-	p.transform_log2_x();
 
 	/* Check all regions */
 	for (size_t i = 0; i < region_ctx->num_regions[collType] && in_out < 0; i++) {
