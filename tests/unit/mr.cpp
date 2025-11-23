@@ -10,15 +10,16 @@
 #include "test-logger.h"
 #include "nccl_ofi_mr.h"
 
+/* Mock endpoint objects for testing mr_endpoint feature */
+/* Use pointers since nccl_net_ofi_ep_t is an abstract class */
+static nccl_net_ofi_ep_t *mock_ep1 = (nccl_net_ofi_ep_t *)0x1000;
+static nccl_net_ofi_ep_t *mock_ep2 = (nccl_net_ofi_ep_t *)0x2000;
+
 static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
-		 void *expected_val)
+		 void *expected_val, nccl_net_ofi_ep_t *ep, bool is_endpoint_mr)
 {
-	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
-	 * the the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);;
-	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey, false);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, ep);
+	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey, is_endpoint_mr);
 	if (result != expected_val) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_lookup_entry returned unexpected result. Expected: %p. Actual: %p",
 			expected_val, result);
@@ -27,20 +28,21 @@ static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 	return true;
 }
 #define test_lookup(cache, addr, size, expected_val)              \
-	if (!test_lookup_impl(cache, addr, size, expected_val)) { \
+	if (!test_lookup_impl(cache, addr, size, expected_val, nullptr, false)) { \
 		NCCL_OFI_WARN("test_lookup fail");                \
+		exit(1);                                          \
+	}
+#define test_lookup_with_ep(cache, addr, size, expected_val, ep)              \
+	if (!test_lookup_impl(cache, addr, size, expected_val, ep, true)) { \
+		NCCL_OFI_WARN("test_lookup_with_ep fail");                \
 		exit(1);                                          \
 	}
 
 static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
-		 void *handle, int expected_ret)
+		 void *handle, int expected_ret, nccl_net_ofi_ep_t *ep, bool is_endpoint_mr)
 {
-	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
-	 * the the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);
-	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, false, handle);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, ep);
+	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, is_endpoint_mr, handle);
 	if (ret != expected_ret) {
 		NCCL_OFI_WARN("nccl_ofi_mr_cache_insert_entry returned unexpected result. Expected: %d. Actual: %d",
 			expected_ret, ret);
@@ -49,8 +51,13 @@ static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 	return true;
 }
 #define test_insert(cache, addr, size, handle, expected_ret)              \
-	if (!test_insert_impl(cache, addr, size, handle, expected_ret)) { \
+	if (!test_insert_impl(cache, addr, size, handle, expected_ret, nullptr, false)) { \
 		NCCL_OFI_WARN("test_insert fail");                        \
+		exit(1);                                                  \
+	}
+#define test_insert_with_ep(cache, addr, size, handle, expected_ret, ep)              \
+	if (!test_insert_impl(cache, addr, size, handle, expected_ret, ep, true)) { \
+		NCCL_OFI_WARN("test_insert_with_ep fail");                        \
 		exit(1);                                                  \
 	}
 
@@ -70,14 +77,10 @@ static inline bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, in
 		exit(1);                                      \
 	}
 
-static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintptr_t expected_base, size_t expected_size)
+static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintptr_t expected_base, size_t expected_size, nccl_net_ofi_ep_t *ep)
 {
-	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
-	 * the the mr key create below. For now, we are
-	 * passing nullptr
-	 */
 	/* iovec only */
-	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec((void*)addr, size, nullptr);
+	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec((void*)addr, size, ep);
 	uintptr_t page_base = nccl_ofi_mr_ckey_baseaddr(&ckey);
 	size_t aligned_size = nccl_ofi_mr_ckey_len(&ckey);
 	if (page_base != expected_base || aligned_size != expected_size) {
@@ -88,7 +91,7 @@ static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintp
 	return true;
 }
 #define test_make_aligned_key(addr, size, expected_base, expected_size)              \
-	if (!test_make_aligned_key_impl(addr, size, expected_base, expected_size)) { \
+	if (!test_make_aligned_key_impl(addr, size, expected_base, expected_size, nullptr)) { \
 		NCCL_OFI_WARN("test_make_aligned_key fail");            \
 		exit(1);                                      \
 	}
@@ -172,6 +175,36 @@ int main(int argc, char *argv[])
 	test_make_aligned_key(fake_page_size / 2, fake_page_size, 0, fake_page_size * 2);
 	test_make_aligned_key(fake_page_size - 16, 17, 0, fake_page_size * 2);
 #endif
+
+	/* Test mr_endpoint feature: same address but different endpoints should be treated as different cache entries */
+	printf("\nTesting mr_endpoint feature...\n");
+	nccl_ofi_mr_cache_t *ep_cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
+	if (!ep_cache) {
+		NCCL_OFI_WARN("nccl_ofi_mr_cache_init failed for endpoint test");
+		exit(1);
+	}
+
+	/* Use a different address range that doesn't overlap with previous tests */
+	/* Previous tests use addresses up to 4 * cache_init_size * fake_page_size = 64 * 1024 */
+	void *test_addr = (void *)(100 * fake_page_size);  /* 100 * 1024, well beyond previous tests */
+	
+	/* Insert same address with different endpoints (is_endpoint_mr=true) */
+	test_insert_with_ep(ep_cache, test_addr, 1, (void *)100, 0, mock_ep1);
+	test_insert_with_ep(ep_cache, test_addr, 1, (void *)200, 0, mock_ep2);
+
+	/* Lookup should return different handles for different endpoints */
+	test_lookup_with_ep(ep_cache, test_addr, 1, (void *)100, mock_ep1);
+	test_lookup_with_ep(ep_cache, test_addr, 1, (void *)200, mock_ep2);
+
+	/* Lookup with different endpoint should not find entries */
+	test_lookup_with_ep(ep_cache, test_addr, 1, NULL, (nccl_net_ofi_ep_t *)0x3000);
+
+	/* Insert with nullptr endpoint */
+	test_insert_with_ep(ep_cache, test_addr, 1, (void *)300, 0, nullptr);
+	test_lookup_with_ep(ep_cache, test_addr, 1, (void *)300, nullptr);
+
+	/* Cleanup */
+	nccl_ofi_mr_cache_finalize(ep_cache);
 
 	nccl_ofi_mr_cache_finalize(cache);
 
