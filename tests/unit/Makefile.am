@@ -33,10 +33,12 @@ noinst_PROGRAMS += aws_platform_mapper
 endif
 
 if !ENABLE_NEURON
-if WANT_PLATFORM_AWS
   AM_LDFLAGS = $(CUDA_LDFLAGS)
   AM_CPPFLAGS += $(CUDA_CPPFLAGS)
   LDADD += $(CUDA_LIBS)
+  noinst_PROGRAMS += gdrcopy
+  gdrcopy_SOURCES = gdrcopy.cpp
+if WANT_PLATFORM_AWS
   noinst_PROGRAMS += region_based_tuner
   region_based_tuner_SOURCES = region_based_tuner.cpp
 endif
