@@ -199,7 +199,7 @@ int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
 	CUdeviceptr d_ptr;
 	CUresult ret = pfn_cuMemAlloc(&d_ptr, size);
 	if (ret != CUDA_SUCCESS) {
-		return false;
+		return -EINVAL;
 	}
 
 	*ptr = (void *)d_ptr;
