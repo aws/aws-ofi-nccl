@@ -95,6 +95,11 @@ static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintp
 		NCCL_OFI_WARN("test_make_aligned_key fail");            \
 		exit(1);                                      \
 	}
+#define test_make_aligned_key_with_ep(addr, size, expected_base, expected_size, ep)              \
+	if (!test_make_aligned_key_impl(addr, size, expected_base, expected_size, ep)) { \
+		NCCL_OFI_WARN("test_make_aligned_key_with_ep fail");            \
+		exit(1);                                      \
+	}
 
 int main(int argc, char *argv[])
 {
@@ -176,6 +181,11 @@ int main(int argc, char *argv[])
 	test_make_aligned_key(fake_page_size - 16, 17, 0, fake_page_size * 2);
 #endif
 
+	/* Test alignment with endpoint parameter */
+	/* Alignment should be independent of endpoint, but we verify the key creation works */
+	test_make_aligned_key_with_ep(fake_page_size / 2, 16, 0, fake_page_size, mock_ep1);
+	test_make_aligned_key_with_ep(fake_page_size / 2, fake_page_size, 0, fake_page_size * 2, mock_ep2);
+
 	/* Test mr_endpoint feature: same address but different endpoints should be treated as different cache entries */
 	printf("\nTesting mr_endpoint feature...\n");
 	nccl_ofi_mr_cache_t *ep_cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
@@ -184,10 +194,12 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	/* Use a different address range that doesn't overlap with previous tests */
-	/* Previous tests use addresses up to 4 * cache_init_size * fake_page_size = 64 * 1024 */
-	void *test_addr = (void *)(100 * fake_page_size);  /* 100 * 1024, well beyond previous tests */
-	
+	/* Calculate address range that doesn't overlap with previous tests */
+	/* Previous tests use addresses up to (4 * cache_init_size) * fake_page_size */
+	/* Add some margin to ensure no overlap */
+	uintptr_t max_addr_used = (4 * cache_init_size) * fake_page_size;
+	uintptr_t test_addr_offset = max_addr_used + (10 * fake_page_size);
+	void *test_addr = (void *)test_addr_offset;
 	/* Insert same address with different endpoints (is_endpoint_mr=true) */
 	test_insert_with_ep(ep_cache, test_addr, 1, (void *)100, 0, mock_ep1);
 	test_insert_with_ep(ep_cache, test_addr, 1, (void *)200, 0, mock_ep2);
@@ -205,6 +217,41 @@ int main(int argc, char *argv[])
 
 	/* Cleanup */
 	nccl_ofi_mr_cache_finalize(ep_cache);
+
+	/* Test mixing endpoint and non-endpoint MR in the same cache */
+	printf("\nTesting mixed endpoint/non-endpoint MR in same cache...\n");
+	nccl_ofi_mr_cache_t *mixed_cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
+	if (!mixed_cache) {
+		NCCL_OFI_WARN("nccl_ofi_mr_cache_init failed for mixed test");
+		exit(1);
+	}
+
+	/* Use a different address for mixed tests */
+	void *mixed_test_addr = (void *)(test_addr_offset + (10 * fake_page_size));
+
+	/* Insert with is_endpoint_mr=false (traditional behavior) */
+	test_insert(mixed_cache, mixed_test_addr, 1, (void *)400, 0);
+
+	/* Insert same address with is_endpoint_mr=true and endpoint */
+	/* These should coexist as different entries */
+	test_insert_with_ep(mixed_cache, mixed_test_addr, 1, (void *)500, 0, mock_ep1);
+
+	/* Verify both entries can be looked up correctly */
+	/* Non-endpoint lookup should find the non-endpoint entry */
+	test_lookup(mixed_cache, mixed_test_addr, 1, (void *)400);
+	/* Endpoint lookup should find the endpoint entry */
+	test_lookup_with_ep(mixed_cache, mixed_test_addr, 1, (void *)500, mock_ep1);
+
+	/* Verify isolation: endpoint lookup with non-null endpoint doesn't find non-endpoint entry */
+	/* Note: lookup with nullptr endpoint may match non-endpoint entries since both have ep=nullptr */
+	test_lookup_with_ep(mixed_cache, mixed_test_addr, 1, NULL, mock_ep2);  /* Different endpoint should not find non-endpoint entry */
+
+	/* Insert another endpoint MR entry */
+	test_insert_with_ep(mixed_cache, mixed_test_addr, 1, (void *)600, 0, mock_ep2);
+	test_lookup_with_ep(mixed_cache, mixed_test_addr, 1, (void *)600, mock_ep2);
+
+	/* Cleanup */
+	nccl_ofi_mr_cache_finalize(mixed_cache);
 
 	nccl_ofi_mr_cache_finalize(cache);
 
