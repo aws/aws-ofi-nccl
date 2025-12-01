@@ -5,6 +5,8 @@
 #ifndef NCCL_OFI_TUNER_REGION_H_
 #define NCCL_OFI_TUNER_REGION_H_
 
+#include <cassert>
+#include <cmath>
 #include <stddef.h>
 #include "tuner/nccl_ofi_tuner_common.h"
 
@@ -57,6 +59,47 @@ typedef struct nccl_ofi_tuner_point
 {
 	double x;
 	double y;
+	enum COORD_SCALE {
+		UNSPECIFIED,
+		ORIGINAL,
+		LOG2
+
+	} coord_scale = UNSPECIFIED;
+
+	inline void transform_log2() {
+		if (coord_scale == LOG2) {
+			assert(false && "Coordinate already in LOG2 scale");
+			return;
+		}
+
+		if (x >= 0 && y >= 0) {
+			// for 0, set to a small positive number for log2().
+			const double eps = 1e-6;
+			if (x == 0) {
+				x = eps;
+			}
+			if (y == 0) {
+				y = eps;
+			}
+
+			x = std::log2(x);
+			y = std::log2(y);
+			coord_scale = LOG2;
+		} else {
+			assert(false && "Invalid coordinates for LOG2 transformation");
+		}
+	}
+
+	inline void transform_pow2() {
+		if (coord_scale != LOG2) {
+			assert(false && "Coordinate not in LOG2 scale for POW2 transformation");
+			return;
+		}
+
+		x = std::pow(2.0, x);
+		y = std::pow(2.0, y);
+		coord_scale = ORIGINAL;
+	}
 } nccl_ofi_tuner_point_t;
 
 typedef struct nccl_ofi_tuner_region {
@@ -70,7 +113,8 @@ nccl_ofi_tuner_point_t extend_region(nccl_ofi_tuner_point_t a,
 									 nccl_ofi_tuner_point_t b,
 									 nccl_ofi_tuner_point_t z);
 
-int is_inside_region(nccl_ofi_tuner_point_t point,
-					 nccl_ofi_tuner_region_t *region);
+int is_inside_region(
+	nccl_ofi_tuner_point_t point,
+	const nccl_ofi_tuner_region_t *region);
 
 #endif /* NCCL_OFI_TUNER_REGION_H_ */
