@@ -872,7 +872,10 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 	int ret = 0;
 	nccl_net_ofi_device_t *device_ptr = this->device;
 
-	nccl_net_ofi_mutex_lock(&this->domain_lock);
+	// The caller takes device_lock when force_cleanup.
+	if (!skip_device_lock) {
+		nccl_net_ofi_mutex_lock(&device_ptr->device_lock);
+	}
 
 	this->decrement_ref_cnt();
 
@@ -882,35 +885,22 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 		   endpoints */
 		assert(this->ref_cnt != 0 || this->endpoint == nullptr);
 
-		// The caller takes device_lock when force_cleanup.
-		if (!skip_device_lock) {
-			nccl_net_ofi_mutex_lock(&device_ptr->device_lock);
-		}
-
 		/* Remove this domain from the domain table */
 		device_ptr->remove_domain_from_map(this);
-
-		// domain->free below is going to free the domain lock
-		// and we've removed the domain from the hash table,
-		// so no one should have a reference to the domain at
-		// this point and we can release the mutex.
-		nccl_net_ofi_mutex_unlock(&this->domain_lock);
 
 		ret = this->cleanup_resources();
 		delete this;
 
-		if (!skip_device_lock) {
-			nccl_net_ofi_mutex_unlock(&device_ptr->device_lock);
-		}
 		if (ret != 0) {
 			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
-			return ret;
 		}
-	} else {
-		nccl_net_ofi_mutex_unlock(&this->domain_lock);
 	}
 
-	return 0;
+	if (!skip_device_lock) {
+		nccl_net_ofi_mutex_unlock(&device_ptr->device_lock);
+	}
+
+	return ret;
 }
 
 
