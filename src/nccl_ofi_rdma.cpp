@@ -4393,9 +4393,9 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			 * refcnt.
 			 */
 
-			nccl_net_ofi_mutex_lock(&domain->domain_lock);
+			nccl_net_ofi_mutex_lock(&device->device_lock);
 			domain->increment_ref_cnt();
-			nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+			nccl_net_ofi_mutex_unlock(&device->device_lock);
 
 			ep_for_addr = new_ep;
 
