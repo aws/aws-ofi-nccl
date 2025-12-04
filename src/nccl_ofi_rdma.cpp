@@ -7120,7 +7120,7 @@ nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 		s_comm_cleanup_list = nullptr;
 	}
 
-	delete(flush_sentinel);
+	delete[] flush_sentinel;
 }
 
 
