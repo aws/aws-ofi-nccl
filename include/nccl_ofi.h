@@ -460,6 +460,8 @@ public:
 
 	/**
 	 * @brief	Increments the base domain reference count.
+	 *		This needs to be protected with device_lock as
+	 *		domain life cycle is managed at device level
 	 */
 	inline void increment_ref_cnt() {
 		ref_cnt++;
@@ -467,6 +469,8 @@ public:
 
 	/**
 	 * @brief	Decrements the base domain reference count.
+	 *		This needs to be protected with device_lock as
+	 *		domain life cycle is managed at device level
 	 */
 	inline void decrement_ref_cnt() {
 		ref_cnt--;
@@ -677,6 +681,8 @@ public:
 
 	/**
 	 * @brief	Increments the base endpoint reference count.
+	 * 		This needs to be protected with domain_lock as
+	 * 		endpoint life cycle is managed at domain level
 	 */
 	inline void increment_ref_cnt() {
 		ref_cnt++;
@@ -684,6 +690,8 @@ public:
 
 	/**
 	 * @brief	Decrements the base endpoint reference count.
+	 *		This needs to be protected with domain_lock as
+	 *		endpoint life cycle is managed at domain level
 	 */
 	inline void decrement_ref_cnt() {
 		ref_cnt--;

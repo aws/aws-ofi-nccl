@@ -1041,9 +1041,8 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
 	if (r_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
-			      r_comm);
-
+		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating ep for recv comm",
+			       r_comm);
 		ep->sendrecv_endpoint_abort();
 	}
 
@@ -1513,7 +1512,9 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
+		nccl_net_ofi_mutex_lock(&domain->domain_lock);
 		ep->increment_ref_cnt();
+		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
 
 		comm_state->comm = &r_comm->base.base;
 
@@ -1832,8 +1833,8 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 	/* If there are still requests in-flight, we need to also close the
 	 * endpoint and invalidate the domain */
 	if (s_comm->num_inflight_reqs > 0) {
-		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating domain",
-			      s_comm);
+		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating ep for send comm",
+			       s_comm);
 
 		ep->sendrecv_endpoint_abort();
 	}
@@ -1881,6 +1882,9 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
+	assert(domain_ptr != NULL);
+
 	/* Allocate and initialize send_comm */
 	ret_s_comm = (nccl_net_ofi_sendrecv_send_comm_t *)
 		calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm_t));
@@ -1908,7 +1912,10 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
 	   API releases it.
 	   Caller assumed to hold the domain lock. */
+
+	nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
 	ep->increment_ref_cnt();
+	nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
 
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
@@ -1940,7 +1947,9 @@ out:
 	if (ret) {
 		/* Above code incremented the ep ref counter, so decrement it on
 		   failure */
+		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
 		ep->decrement_ref_cnt();
+		nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
 		free(ret_s_comm);
 	}
 
