@@ -277,12 +277,6 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 {
 	ssize_t rc = 0;
 	int ret = 0;
-	/*
-	 * On call to fi_cq_readerr, Libfabric requires some members of
-	 * err_entry to be zero-initialized or point to valid data.  For
-	 * simplicity, just zero out the whole struct.
-	 */
-	struct fi_cq_err_entry err_buffer = {};
 	struct fi_cq_tagged_entry cqe_tagged_buffers[cq_read_count];
 
 	while (true) {
@@ -296,7 +290,12 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 		}
 		else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
 			nccl_net_ofi_context_t *ctx;
-
+			/*
+			 * On call to fi_cq_readerr, Libfabric requires some members of
+			 * err_entry to be zero-initialized or point to valid data.  For
+			 * simplicity, just zero out the whole struct.
+			 */
+			struct fi_cq_err_entry err_buffer = {};
 			rc = fi_cq_readerr(cq, &err_buffer, 0);
 
 			if (OFI_UNLIKELY(rc == -FI_EAGAIN)) {
