@@ -49,5 +49,6 @@ noinst_HEADERS = \
 	tracing_impl/nvtx.h \
 	tuner/nccl_ofi_tuner.h \
 	tuner/nccl_ofi_tuner_common.h \
+	tuner/nccl_ofi_tuner_process_config.h \
 	tuner/nccl_ofi_tuner_region.h \
 	tuner/nccl_ofi_tuner_model.h

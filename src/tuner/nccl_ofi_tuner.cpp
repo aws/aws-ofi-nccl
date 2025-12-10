@@ -24,6 +24,7 @@
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "tuner/nccl_ofi_tuner_model.h"
 #include "tuner/nccl_ofi_tuner.h"
+#include "tuner/nccl_ofi_tuner_process_config.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -46,13 +47,7 @@ static ncclResult_t nccl_ofi_tuner_destroy(void *context)
 
 static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context)
 {
-	const char *platform_type = NULL;
-	ncclResult_t ret = ncclSuccess;
 	*context = NULL;
-	nccl_ofi_tuner_context_t *ctx = NULL;
-	bool region_support, model_support;
-	int is_force_type_model = 0;
-	enum nccl_ofi_tuner_platform tuner_platform;
 
 	if (ofi_log_function == NULL) {
 		ofi_log_function = logFunction;
@@ -60,117 +55,66 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 
-	/* Create topology for platform detection */
-	auto topo = nccl_ofi_topo_create();
-	PlatformManager::register_all_platforms(topo);
-	nccl_ofi_topo_free(topo);
+	// Static instance ensures one-time initialization per process
+	static TunerProcessConfig constants;
 
-	/*
-	 * Retrieve platform type and pass to Region and Model based tuner support check functions.
-	 * If both Region and Model based tuner are not supported, log a warning and exit.
-	 */
-	auto platform_name = PlatformManager::get_global().get_platform().get_name();
-	NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Tuner selected platform: %s", platform_name);
-	if (strcmp(platform_name, "AWS") == 0) {
-		platform_type = nccl_net_ofi_get_product_name();
+	/* Check if OFI tuner should be used based on platform and environment */
+	if (!constants.should_use_ofi_tuner()) {
+		constants.log_fallback_reason();
+		nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+		return ncclSuccess;
 	}
 
-	/* Default platform or other non-AWS platforms should use internal tuner */
-	if (platform_type == NULL) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
-			"NCCL_OFI_TUNER is not available because platform type is unavailable.");
-		goto exit;
-	}
+	/* Check if platform supports region or model tuner for this configuration */
+	bool region_support = is_region_supported(constants.get_tuner_platform(), nRanks, nNodes);
+	bool model_support = is_model_supported(constants.get_tuner_platform(), nRanks, nNodes);
 
-	if (ofi_nccl_tuner_force_type.get() == TUNER_TYPE::INTERNAL) {
-		/* fallback to NCCL internal tuner */
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
-			      "NCCL_OFI_TUNER_TYPE is Internal, Fall back to NCCL's tuner for platform : %s",
-			      platform_type);
-		goto exit;
-	} else if (ofi_nccl_tuner_force_type.get() == TUNER_TYPE::MODEL) {
-		is_force_type_model = 1;
-	}
-
-	if (ofi_nccl_force_num_rails.get_source() != ParamSource::DEFAULT) {
-		// Because the tuner init is a local call, there is not a great
-		// way to determine if the job is running on homogeneous
-		// hardware. At some point, we should track this in the net
-		// plugin and if we detect heterogeneity, start returning the
-		// internal tuner defaults instead of our overrides. But for
-		// now, we can take advantage of the fact that each AWS platform
-		// has a different number of NICs per GPU and that a
-		// heterogeneous job will have OFI_NCCL_FORCE_NUM_RAILS set by
-		// the user as a key that this is a heterogeneous job. In that
-		// case, abort out of the OFI tuner and use the internal tuner
-		// (which does run after graph minimization, so will always
-		// return the same answer on every process).
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
-			      "Falling back to NCCL's tuner due to OFI_NCCL_FORCE_NUM_RAILS being set.");
-		goto exit;
-	}
-
-	if (strcmp(platform_type, "p5.48xlarge") == 0 || strcmp(platform_type, "p5e.48xlarge") == 0) {
-		tuner_platform = NCCL_OFI_TUNER_P5_P5E;
-	} else if (strcmp(platform_type, "p5en.48xlarge") == 0) {
-		tuner_platform = NCCL_OFI_TUNER_P5EN;
-	} else if (strcmp(platform_type, "p6-b200.48xlarge") == 0) {
-		tuner_platform = NCCL_OFI_TUNER_P6;
-	} else {
-		tuner_platform = NCCL_OFI_TUNER_UNKNOWN;
-	}
-
-	region_support = is_region_supported(tuner_platform, nRanks, nNodes);
-	model_support = is_model_supported(tuner_platform, nRanks, nNodes);
 	if (!region_support && !model_support) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING,
-			      "NCCL_OFI_TUNER is not available for platform : %s, Fall back to NCCL's tuner",
-			      platform_type);
-		goto exit;
+			"NCCL_OFI_TUNER is not available for platform : %s, Fall back to NCCL's tuner",
+			constants.get_platform_type());
+		nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+		return ncclSuccess;
 	}
 
-	ctx = (nccl_ofi_tuner_context_t *)calloc(1, sizeof(nccl_ofi_tuner_context_t));
+	/* Allocate tuner context */
+	nccl_ofi_tuner_context_t *ctx = static_cast<nccl_ofi_tuner_context_t *>(calloc(1, sizeof(nccl_ofi_tuner_context_t)));
 	if (ctx == NULL) {
 		NCCL_OFI_WARN("Context allocation failed.");
-		ret = ncclInternalError;
-		goto exit;
+		nccl_net_ofi_mutex_unlock(&nccl_ofi_tuner_ctx_lock);
+		return ncclInternalError;
 	}
 
 	/*
-	 * We reach here. It means the folowing two conditions are met.
-	 *  - "Internal" force is not set by env variable
-	 *  - at least one of "Region" or "Model" tuner is supported for the given platform, nRanks and nNodes
-	 */
-
-	/*
-	 * We choose "Region" over "Model" when both are supported.
+	 * Choose "Region" over "Model" when both are supported.
 	 * TUNER_TYPE env variable is ignored if the forced tuner type is not
 	 * supported by the given platform, nRanks and nNodes.
 	 */
-
-	if (region_support && !(model_support && is_force_type_model)) {
+	if (region_support && !(model_support && constants.should_force_model_tuner())) {
 		ctx->type = TUNER_TYPE::REGION;
 		ctx->init_internal = region_init_internal;
 		ctx->get_coll_info_internal_v3 = region_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = region_get_coll_info_internal_v2;
 		ctx->destroy_internal = region_destroy_internal;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Region base Tuner is chosen for platform: %s", platform_type);
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Region base Tuner is chosen for platform: %s",
+			constants.get_platform_type());
 	} else {
 		assert(model_support);
-		ctx->type = TUNER_TYPE::MODEL;;
+		ctx->type = TUNER_TYPE::MODEL;
 		ctx->init_internal = model_init_internal;
 		ctx->get_coll_info_internal_v3 = model_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = model_get_coll_info_internal_v2;
 		ctx->destroy_internal = model_destroy_internal;
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Model base Tuner is chosen for platform: %s", platform_type);
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Model base Tuner is chosen for platform: %s",
+			constants.get_platform_type());
 	}
 
-	ret = ctx->init_internal(ctx, tuner_platform, nRanks, nNodes);
+	/* Initialize the selected tuner */
+	ncclResult_t ret = ctx->init_internal(ctx, constants.get_tuner_platform(), nRanks, nNodes);
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Tuner init: comm with %ld ranks and %ld nodes.", nRanks, nNodes);
 
-exit:
-	if (ret != ncclSuccess && ctx != NULL) {
+	if (ret != ncclSuccess) {
 		nccl_ofi_tuner_destroy((void *)ctx);
 		ctx = NULL;
 	}
