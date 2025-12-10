@@ -7,6 +7,10 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
+/* Maximum GIN request size -- set to 1 GiB, which is EFA's RDMA limit.
+   NCCL-GIN doesn't appear to actually check this limit. */
+#define GIN_MAX_PUT_SIZE (1024*1024*1024UL)
+
 static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
 {
 	return ncclInvalidUsage;
@@ -15,13 +19,43 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 
 static ncclResult_t nccl_ofi_gin_devices(int* ndev)
 {
-	return ncclInvalidUsage;
+	return nccl_net_ofi_devices_v2(ndev);
 }
 
 
 static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t* props)
 {
-	return ncclInvalidUsage;
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_CUDA;
+	}
+	if (ofi_properties.dmabuf_support) {
+		props->ptrSupport |= NCCL_PTR_DMABUF;
+	}
+
+	props->regIsGlobal = ofi_properties.regIsGlobal;
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->latency = ofi_properties.latency;
+	props->maxComms = ofi_properties.max_communicators;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
+	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+	props->vProps.ndevs = 1;
+	props->vProps.devs[0] = dev;
+	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
+	props->maxCollBytes = GIN_MAX_PUT_SIZE;
+
+	return ncclSuccess;
 }
 
 
