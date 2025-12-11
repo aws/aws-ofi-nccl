@@ -17,6 +17,8 @@ class nccl_ofi_gin_resources;
 /**
  * Constants
  */
+#define MAX_NUM_RAILS (4)
+
 #define GIN_IMM_COMM_BITS_SIZE 20
 #define GIN_MAX_COMMS (1 << GIN_IMM_COMM_BITS_SIZE)
 
