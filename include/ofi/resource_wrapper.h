@@ -117,4 +117,17 @@ public:
 
 FOR_EACH_OFI_TYPE(DECLARE_OFI_TYPE);
 
+/**
+ * fi_info is handled a bit differently, so do that separately here.
+ */
+struct ofi_info_deleter {
+	void operator()(struct fi_info *resource) const
+	{
+		if (resource) {
+			fi_freeinfo(resource);
+		}
+	}
+};
+using ofi_info_ptr = std::unique_ptr<struct fi_info, ofi_info_deleter>;
+
 #endif // OFI_RESOURCE_WRAPPER_H_
