@@ -53,7 +53,8 @@ if HAVE_CUDA
 sources += nccl_ofi_cuda.cpp nccl_ofi_interface_nvidia.cpp
 sources += \
 	gin/nccl_ofi_gin_api.cpp \
-	gin/nccl_ofi_gin_reqs.cpp
+	gin/nccl_ofi_gin_reqs.cpp \
+	gin/nccl_ofi_gin_resources.cpp
 endif
 
 # add the tuner sources into the library
