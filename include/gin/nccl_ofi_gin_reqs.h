@@ -168,6 +168,162 @@ private:
 	uint64_t key;
 };
 
+class nccl_net_ofi_gin_write_req_t;
+class nccl_net_ofi_gin_metadata_send_req_t;
+
+/**
+ * Represents an in-progress iputSignal operation on the initiator side
+ */
+class nccl_net_ofi_gin_iputsignal_req_t : public nccl_net_ofi_gin_base_req {
+public:
+	nccl_net_ofi_gin_iputsignal_req_t(nccl_ofi_gin_comm &gin_comm_arg, uint32_t peer_rank_arg,
+					  uint16_t msg_seq_num_arg,
+					  nccl_net_ofi_gin_write_req_t *write_req_arg,
+					  nccl_net_ofi_gin_metadata_send_req_t *send_req_arg)
+	    : gin_comm(gin_comm_arg), peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg),
+	      write_req(write_req_arg), send_req(send_req_arg)
+	{
+	}
+
+	int test(int *done);
+
+private:
+	/* Associated Comm object */
+	nccl_ofi_gin_comm &gin_comm;
+
+	uint32_t peer_rank;
+
+	/* Message sequence number */
+	uint16_t msg_seq_num;
+
+	/* Subrequests */
+	/* Write request */
+	nccl_net_ofi_gin_write_req_t *write_req;
+	/* Metadata send request */
+	nccl_net_ofi_gin_metadata_send_req_t *send_req;
+};
+
+/**
+ * Represents an in-progress iputSignal operation on the target side.
+ *
+ * Allocated upon receiving the first segment of the signal, or the metadata.
+ * Freed when the signal is delivered.
+ *
+ * All members are private, because this class is only used by
+ * nccl_ofi_gin_comm. That class is added as a friend.
+ */
+class nccl_net_ofi_gin_iputsignal_recv_req : public nccl_net_ofi_gin_base_req {
+private:
+	/**
+	 * Total number of segments in the signal.
+	 * +1 for the metadata sent for the signal operation
+	 * +1 for the payload data when the send size is non-zero
+	 */
+	uint32_t total_segments;
+
+	/**
+	 * Number of segments that have actually completed
+	 */
+	uint32_t num_seg_completions;
+
+	/**
+	 * True if metadata has been populated.
+	 */
+	bool metadata_received;
+
+	/**
+	 * Metadata received as part of this request
+	 */
+	nccl_net_ofi_gin_signal_metadata_msg_t metadata;
+
+	/* This request structure doesn't have any use outside of gin_comm.
+	   So, instead of adding a bunch of getters/setters, just add a
+	   friend class. */
+	friend class nccl_ofi_gin_comm;
+};
+
+/**
+ * Request for the writedata operation associated with a put-signal request
+ */
+class nccl_net_ofi_gin_write_req_t : public nccl_net_ofi_gin_op_req_t {
+public:
+	bool done = false;
+
+	nccl_net_ofi_gin_write_req_t(struct fid_ep *ep_arg, void *src_arg, size_t size_arg,
+				     void *desc_arg, uint64_t imm_data_arg,
+				     fi_addr_t remote_addr_arg, uint64_t dest_arg, uint64_t key_arg)
+	    : ep(ep_arg), src(src_arg), size(size_arg), desc(desc_arg), imm_data(imm_data_arg),
+	      remote_addr(remote_addr_arg), dest(dest_arg), key(key_arg)
+	{
+	}
+
+	int post() override;
+
+	int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
+			    uint16_t rail_id) override
+	{
+		done = true;
+		return 0;
+	}
+
+	int test(bool &done_arg)
+	{
+		done_arg = this->done;
+		return 0;
+	}
+
+private:
+	struct fid_ep *ep;
+	void *src;
+	size_t size;
+	void *desc;
+	uint64_t imm_data;
+	fi_addr_t remote_addr;
+	uint64_t dest;
+	uint64_t key;
+};
+
+/**
+ * Request for the metadata send operation associated with a put-signal request
+ */
+class nccl_net_ofi_gin_metadata_send_req_t : public nccl_net_ofi_gin_op_req_t {
+public:
+	bool done = false;
+
+	nccl_net_ofi_gin_metadata_send_req_t(struct fid_ep *ep_arg, uint16_t rail_id_arg,
+					     nccl_ofi_freelist_elem_t *metadata_elem_arg,
+					     fi_addr_t remote_addr_arg,
+					     nccl_ofi_freelist_t *metadata_fl_arg)
+	    : ep(ep_arg), rail_id(rail_id_arg), metadata_elem(metadata_elem_arg),
+	      remote_addr(remote_addr_arg), metadata_fl(metadata_fl_arg)
+	{
+	}
+
+	int post() override;
+
+	int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
+			    uint16_t rail_id_arg) override
+	{
+		done = true;
+		return 0;
+	}
+
+	int test(bool &done_arg)
+	{
+		done_arg = this->done;
+		return 0;
+	}
+
+	virtual ~nccl_net_ofi_gin_metadata_send_req_t() override;
+
+private:
+	struct fid_ep *ep;
+	uint16_t rail_id;
+	nccl_ofi_freelist_elem_t *metadata_elem;
+	fi_addr_t remote_addr;
+	nccl_ofi_freelist_t *metadata_fl;
+};
+
 /**
  * Union of all requests, used to calculate freelist size
  */
@@ -176,6 +332,10 @@ private:
 	nccl_net_ofi_gin_base_req base_req;
 	nccl_net_ofi_gin_recv_req_t recv_req;
 	nccl_net_ofi_gin_writeack_req_t writeack_req;
+	nccl_net_ofi_gin_iputsignal_req_t iputsignal_req;
+	nccl_net_ofi_gin_iputsignal_recv_req iputsignal_recv_req;
+	nccl_net_ofi_gin_write_req_t write_req;
+	nccl_net_ofi_gin_metadata_send_req_t metadata_send_req;
 };
 
 #endif
