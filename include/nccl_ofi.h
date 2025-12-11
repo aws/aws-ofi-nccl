@@ -15,6 +15,7 @@
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
 
+#include "gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
@@ -541,6 +542,16 @@ public:
 		--unreleased_inactive_ep_counter;
 	}
 
+	inline nccl_ofi_gin_resources *get_gin_resources()
+	{
+		return gin_resources;
+	}
+
+	inline void set_gin_resources(nccl_ofi_gin_resources *gin_resources_arg)
+	{
+		this->gin_resources = gin_resources_arg;
+	}
+
 protected:
 	/**
 	 * @brief	Destructor.
@@ -609,6 +620,11 @@ protected:
 	 * to true regardless of whether cleanup_resources finished successfully or not.
 	 */
 	bool called_cleanup_resources = false;
+
+	/**
+	 * Associated GIN resources object
+	 */
+	nccl_ofi_gin_resources *gin_resources = nullptr;
 };
 
 

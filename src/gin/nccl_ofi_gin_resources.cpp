@@ -7,6 +7,7 @@
 #include "gin/nccl_ofi_gin_resources.h"
 #include "gin/nccl_ofi_gin_reqs.h"
 
+#include "nccl_ofi_assert.h"
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_mr.h"
@@ -398,4 +399,64 @@ nccl_ofi_gin_ep_rail_t::nccl_ofi_gin_ep_rail_t(uint16_t rail_id_, nccl_net_ofi_d
 	}
 
 	ofi_ep = std::move(ep_result.resource);
+}
+
+nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_domain_t &domain_arg)
+	: domain_holder(domain_arg),
+	  gin_comms(),
+	  comm_id_pool(GIN_MAX_COMMS),
+	  gin_ep(domain_arg),
+	  req_fl(nullptr, &freelist_deleter)
+{
+	/* Freelist for requests */
+	nccl_ofi_freelist_t *req_fl_tmp = nullptr;
+	int ret = nccl_ofi_freelist_init
+	(
+		sizeof(nccl_net_ofi_gin_union_req),
+		1024, 1024, 0,
+		nullptr, nullptr, &req_fl_tmp
+	);
+	if (ret != 0) {
+		throw std::runtime_error("Failed to init req_fl");
+	}
+	this->req_fl.reset(req_fl_tmp);
+}
+
+nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
+{
+	/* For non-endpoint-MR providers, we first close the OFI endpoint, then
+	   let resources clean up in reverse-order. */
+	gin_ep.close_ofi_eps();
+
+	/* For endpoint-MR providers (which GIN plugin does not yet support),
+	   first we need to cancel the receives, then deregister memory, and
+	   then close the endpoints. */
+}
+
+int nccl_ofi_gin_resources::progress()
+{
+	int ret = gin_ep.process_cq();
+	if (OFI_UNLIKELY(ret != 0)) {
+		return ret;
+	}
+
+	return retry_pending_reqs();
+}
+
+
+int nccl_ofi_gin_resources::retry_pending_reqs()
+{
+	for (auto it = pending_requests.begin(); it != pending_requests.end(); ) {
+		auto req = *it;
+		int ret = req->post();
+		if (ret == 0) {
+			it = pending_requests.erase(it);
+		} else if (ret == -FI_EAGAIN) {
+			return 0;
+		} else {
+			return ret;
+		}
+	}
+
+	return 0;
 }

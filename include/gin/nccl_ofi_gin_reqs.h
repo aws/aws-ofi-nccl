@@ -118,4 +118,12 @@ public:
 				    uint16_t rail_id) = 0;
 };
 
+
+/**
+ * Union of all requests, used to calculate freelist size
+ */
+union nccl_net_ofi_gin_union_req {
+	nccl_net_ofi_gin_base_req base_req;
+};
+
 #endif
