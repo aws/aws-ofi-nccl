@@ -401,14 +401,48 @@ nccl_ofi_gin_mr_handle_t::~nccl_ofi_gin_mr_handle_t()
 	}
 }
 
+void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers)
+{
+	for (size_t i = 0; i < num_buffers; i++) {
+		recv_reqs.emplace_back(*this, rail);
+		int ret = recv_reqs.back().post_or_add_pending();
+		if (ret != 0) {
+			throw std::runtime_error("Failed to post recv req");
+		}
+	}
+}
+
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
     : ep_holder(ep_arg), gin_comms(), comm_id_pool(GIN_MAX_COMMS), gin_ep(ep_arg.get_domain()),
-      req_fl(nullptr, &freelist_deleter)
+      req_fl(nullptr, &freelist_deleter), rx_buff_fl(nullptr, &freelist_deleter)
 {
+	auto num_rails = gin_ep.get_num_rails();
+
+	/* Create freelist for RX buffers */
+	constexpr size_t num_buffers = 2048; /* TODO param*/
+	assert_always(num_rails > 0 && num_buffers % num_rails == 0);
+	const size_t num_buffers_per_rail = num_buffers / num_rails;
+
+	nccl_ofi_freelist_t *rx_buff_fl_tmp = nullptr;
+	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
+					    num_buffers, 0, num_buffers, nullptr, nullptr,
+					    gin_ep.freelist_regmr_fn, gin_ep.freelist_deregmr_fn,
+					    &gin_ep, 1, &rx_buff_fl_tmp);
+	if (ret != 0) {
+		throw std::runtime_error("Failed to init rx_buff_fl");
+	}
+	this->rx_buff_fl.reset(rx_buff_fl_tmp);
+
+	/* Create the receive pool for all rails */
+	recv_reqs.reserve(num_buffers);
+	for (uint16_t r = 0; r < num_rails; ++r) {
+		post_rx_buffs_on_rail(gin_ep.get_rail(r), num_buffers_per_rail);
+	}
+
 	/* Freelist for requests */
 	nccl_ofi_freelist_t *req_fl_tmp = nullptr;
-	int ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0, nullptr,
-					 nullptr, &req_fl_tmp);
+	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0, nullptr,
+				     nullptr, &req_fl_tmp);
 	if (ret != 0) {
 		throw std::runtime_error("Failed to init req_fl");
 	}
