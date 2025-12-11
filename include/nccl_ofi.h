@@ -223,6 +223,16 @@ typedef struct nccl_net_ofi_conn_handle {
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
 
+
+/**
+ * A pair of a Libfabric address (buffer of size MAX_EP_ADDR) and actual
+ * address size. This is used in various parts of the code.
+ */
+struct nccl_ofi_addr {
+	char addr[MAX_EP_ADDR];
+	size_t addr_len;
+};
+
 /**
  * Properties structure
  */
