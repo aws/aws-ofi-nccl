@@ -203,6 +203,13 @@ private:
 	 */
 	int retry_pending_reqs();
 
+	std::unique_ptr<nccl_ofi_freelist_t, decltype(&freelist_deleter)> rx_buff_fl;
+
+	/* Reqs for RX buffers */
+	std::vector<nccl_net_ofi_gin_recv_req_t> recv_reqs;
+
+	void post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers);
+
 public:
 
 	nccl_ofi_gin_resources(nccl_net_ofi_domain_t &domain_arg);
@@ -213,6 +220,8 @@ public:
 	nccl_ofi_gin_resources(const nccl_ofi_gin_resources &) = delete;
 
 	/** Methods **/
+
+	nccl_ofi_freelist_t *get_rx_buff_fl() { return rx_buff_fl.get(); }
 
 	/**
 	 * Get GIN communicator with given comm_id from map. Throw exception if
