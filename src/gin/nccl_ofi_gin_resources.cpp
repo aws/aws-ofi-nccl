@@ -401,6 +401,38 @@ nccl_ofi_gin_mr_handle_t::~nccl_ofi_gin_mr_handle_t()
 	}
 }
 
+nccl_ofi_gin_resources::write_ack_buffer_t::write_ack_buffer_t(nccl_ofi_gin_ep_t &ep)
+{
+	// Create write-ack buffer (target of write acks)
+	int ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &this->addr);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to allocate write ack buffer; RC: %d", ret);
+		throw std::runtime_error("Failed to allocate write ack buffer");
+	}
+
+	auto ckey = nccl_ofi_mr_ckey_mk_vec(this->addr, system_page_size, nullptr);
+
+	ret = ep.reg_mr(&ckey, NCCL_PTR_HOST, &mr_handle);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to register write ack buffer; RC: %d", ret);
+		nccl_net_ofi_dealloc_mr_buffer(this->addr, system_page_size);
+		throw std::runtime_error("Failed to register write ack buffer");
+	}
+}
+
+nccl_ofi_gin_resources::write_ack_buffer_t::~write_ack_buffer_t()
+{
+	int ret = 0;
+
+	delete this->mr_handle;
+
+	ret = nccl_net_ofi_dealloc_mr_buffer(this->addr, system_page_size);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed to deallocate write ack buffer; RC: %d", ret);
+		assert(ret == 0);
+	}
+}
+
 void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers)
 {
 	for (size_t i = 0; i < num_buffers; i++) {
@@ -414,7 +446,8 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
     : ep_holder(ep_arg), gin_comms(), comm_id_pool(GIN_MAX_COMMS), gin_ep(ep_arg.get_domain()),
-      req_fl(nullptr, &freelist_deleter), rx_buff_fl(nullptr, &freelist_deleter)
+      write_ack_buffer(gin_ep), req_fl(nullptr, &freelist_deleter),
+      rx_buff_fl(nullptr, &freelist_deleter)
 {
 	auto num_rails = gin_ep.get_num_rails();
 

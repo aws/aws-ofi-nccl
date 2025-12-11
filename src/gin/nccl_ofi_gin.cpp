@@ -4,6 +4,15 @@
 
 #include "gin/nccl_ofi_gin.h"
 
+#include "nccl_ofi_assert.h"
+
+/**
+ * The highest value of NSEG is used to flag an ack message
+ *
+ * TODO something better?
+ */
+#define WRITEDATA_ACK_NSEG ((1 << GIN_IMM_NUM_SEG_BITS_SIZE) - 1)
+
 struct gin_connect_handle {
 	/* Number of rails */
 	uint16_t num_rails;
@@ -16,6 +25,10 @@ struct gin_connect_handle {
 	 * structs. The member `num_rails` indicates
 	 * the number of entries that are in use. */
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
+
+	/* Write ack buffer addr and its mr_key */
+	uint64_t write_ack_buff_addr_offset;
+	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 };
 
 nccl_ofi_gin_ctx::nccl_ofi_gin_ctx() : copy_ctx(new nccl_ofi_gdrcopy_ctx())
@@ -29,6 +42,19 @@ nccl_ofi_gin_ctx::nccl_ofi_gin_ctx() : copy_ctx(new nccl_ofi_gdrcopy_ctx())
 nccl_ofi_gin_ctx::~nccl_ofi_gin_ctx()
 {
 	delete copy_ctx;
+}
+
+static inline void set_write_ack_buff_info(nccl_ofi_gin_resources &resources,
+					   gin_connect_handle &handle)
+{
+	handle.write_ack_buff_addr_offset = resources.get_write_ack_buffer_addr_offset();
+	auto *mr_handle = resources.get_write_ack_buffer_mr_handle();
+
+	for (size_t i = 0; i < resources.get_ep().get_num_rails(); ++i) {
+		uint64_t key = fi_mr_key(mr_handle->get_mr(i));
+		assert_always(key != FI_KEY_NOTAVAIL);
+		handle.write_ack_buff_mr_key[i] = key;
+	}
 }
 
 nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
@@ -142,6 +168,8 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 		set_rail_address(gin_ep.get_rail(i), my_gin_handle.ep_names[i]);
 	}
 
+	set_write_ack_buff_info(gin_comm->resources, my_gin_handle);
+
 	gin_comm->rank_comms.resize(nranks);
 
 	/**
@@ -162,6 +190,7 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 		const gin_connect_handle &gin_handle = all_handles[i];
 		nccl_ofi_gin_peer_rank_info &remote_rank_comm = gin_comm->rank_comms[i];
 		remote_rank_comm.comm_id = gin_handle.comm_id;
+		remote_rank_comm.write_ack_buff_addr_offset = gin_handle.write_ack_buff_addr_offset;
 
 		for (int r = 0; r < num_rails; ++r) {
 			ret = rail_addr_insert(gin_ep.get_rail(r), gin_handle.ep_names[r],
@@ -171,11 +200,43 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 				delete gin_comm;
 				return ret;
 			}
+			remote_rank_comm.write_ack_buff_mr_key[r] =
+				gin_handle.write_ack_buff_mr_key[r];
 		}
 	}
 
 	(*gin_comm_out) = gin_comm;
 	return 0;
+}
+
+int nccl_ofi_gin_comm::writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
+				     uint32_t msg_seq_num)
+{
+	/* For now, always send acks on rail 0.
+	   TODO round-robin this like the payload data itself. */
+	const int rail_id = 0;
+
+	auto &rank_comm = gin_comm.rank_comms[peer_rank];
+	uint32_t peer_comm_id = rank_comm.comm_id;
+	uint32_t imm_data = GIN_IMM_GET_IMM_DATA(peer_comm_id, msg_seq_num, WRITEDATA_ACK_NSEG);
+
+	auto &ep = gin_comm.resources.get_ep();
+
+	auto *ofi_ep = ep.get_rail(rail_id).ofi_ep.get();
+
+	auto *req = gin_comm.resources.get_req_from_pool<nccl_net_ofi_gin_writeack_req_t>(
+		gin_comm, ofi_ep, rail_id, imm_data, rank_comm.address[rail_id],
+		rank_comm.write_ack_buff_addr_offset, rank_comm.write_ack_buff_mr_key[rail_id]);
+
+	int ret = req->post();
+	if (ret == -FI_EAGAIN) {
+		gin_comm.resources.add_pending_req(req);
+		ret = 0;
+	} else if (ret != 0) {
+		gin_comm.resources.return_req_to_pool(req);
+	}
+
+	return ret;
 }
 
 int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
@@ -285,4 +346,20 @@ int nccl_ofi_gin_comm::deregMrSym(gin_sym_mr_handle *mr_handle)
 
 	delete mr_handle;
 	return 0;
+}
+
+int nccl_ofi_gin_comm::await_pending_requests()
+{
+	int ret = 0;
+
+	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
+
+	while (outstanding_ack_counter > 0) {
+		ret = resources.progress();
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	}
+
+	return ret;
 }
