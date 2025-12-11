@@ -104,4 +104,12 @@ protected:
 	} ctx;
 };
 
+/**
+ * Union of all requests, used to calculate freelist size
+ */
+union nccl_net_ofi_gin_union_req {
+private:
+	nccl_net_ofi_gin_base_req base_req;
+};
+
 #endif
