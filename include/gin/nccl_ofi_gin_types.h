@@ -13,6 +13,33 @@
 class nccl_ofi_gin_mr_handle_t;
 class nccl_ofi_gin_comm;
 class nccl_ofi_gin_resources;
+class nccl_ofi_gin_ep_rail_t;
+
+/**
+ * Represents metadata associated with a put-signal request. This is sent from
+ * the put-signal initiator to the target.
+ */
+struct nccl_net_ofi_gin_signal_metadata_msg_t {
+	/* Signal information (if applicable) */
+	uint64_t signal_base_address;
+	uint64_t signal_offset;
+	uint64_t signal_value;
+
+	/* Message sequence number */
+	uint32_t msg_seq_num;
+
+	/* A comm identitifer that uniquely identifies the comm
+	 * on the receiver side */
+	uint32_t remote_comm_id;
+
+	/* Number of completions the target will receive
+	 *
+	 * This will be either 1 or 2
+	 * 1: if this is a signal without any associated data (zero-sized
+	 *    put-signal) or data without any signal (put)
+	 * 2: For put-signal (data + signal) */
+	uint32_t num_segments;
+};
 
 /**
  * Constants

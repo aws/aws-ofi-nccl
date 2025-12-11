@@ -105,11 +105,40 @@ protected:
 };
 
 /**
+ * Request type for posted receive buffers
+ */
+class nccl_net_ofi_gin_recv_req_t : public nccl_net_ofi_gin_op_req_t {
+public:
+	nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources &resources_arg,
+				    nccl_ofi_gin_ep_rail_t &rail_arg);
+
+	~nccl_net_ofi_gin_recv_req_t();
+
+	int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
+			    uint16_t rail_id) override;
+
+	int post() override;
+
+	/**
+	 * Calls post(); if post() returns -FI_EAGAIN, adds the request to the
+	 * pending list and returns 0
+	 */
+	int post_or_add_pending();
+
+private:
+	nccl_ofi_gin_resources &resources;
+	nccl_ofi_gin_ep_rail_t &rail;
+
+	nccl_ofi_freelist_elem_t *rx_buff_elem;
+};
+
+/**
  * Union of all requests, used to calculate freelist size
  */
 union nccl_net_ofi_gin_union_req {
 private:
 	nccl_net_ofi_gin_base_req base_req;
+	nccl_net_ofi_gin_recv_req_t recv_req;
 };
 
 #endif
