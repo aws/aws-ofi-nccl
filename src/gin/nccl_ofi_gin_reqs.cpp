@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include "gin/nccl_ofi_gin.h"
 #include "gin/nccl_ofi_gin_reqs.h"
 #include "gin/nccl_ofi_gin_resources.h"
 
@@ -103,4 +104,33 @@ int nccl_net_ofi_gin_recv_req_t::post_or_add_pending()
 	}
 
 	return ret;
+}
+
+int nccl_net_ofi_gin_writeack_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
+						     fi_addr_t src_addr, uint16_t rail_id_arg)
+{
+	gin_comm.decrement_outstanding_ack_counter();
+
+	gin_comm.get_resources().return_req_to_pool(this);
+
+	return 0;
+}
+
+int nccl_net_ofi_gin_writeack_req_t::post()
+{
+	auto *write_ack_buff = gin_comm.get_resources().get_write_ack_buffer_addr();
+
+	auto *desc = fi_mr_desc(
+		gin_comm.get_resources().get_write_ack_buffer_mr_handle()->get_mr(rail_id));
+
+	ssize_t rc = fi_writedata(ep, write_ack_buff, 0, desc, imm_data, remote_addr, dest, key,
+				  &ctx.ofi_ctx);
+
+	if (rc != 0 && rc != -FI_EAGAIN) {
+		NCCL_OFI_WARN("Failed to post write ack. RC: %zd", rc);
+	} else if (rc == 0) {
+		gin_comm.increment_outstanding_ack_counter();
+	}
+
+	return rc;
 }

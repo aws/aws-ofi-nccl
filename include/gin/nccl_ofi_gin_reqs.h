@@ -133,12 +133,49 @@ private:
 };
 
 /**
+ * A request for sending the writedata ack after signal delivery. Automatically
+ * returns itself to the request pool upon completion.
+ *
+ * Note: This request must be allocated from gin_comm->resources request pool.
+ * It remains allocated until the callback (handle_cq_entry) is invoked, at
+ * which point it
+ * 1) updates gin_comm->outstanding_ack_counter
+ * 2) deletes itself (returns to request pool)
+ */
+class nccl_net_ofi_gin_writeack_req_t : public nccl_net_ofi_gin_op_req_t {
+public:
+	int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
+			    uint16_t rail_id) override;
+
+	nccl_net_ofi_gin_writeack_req_t(nccl_ofi_gin_comm &gin_comm_arg, fid_ep *ep_arg,
+					int rail_id_arg, uint64_t imm_data_arg,
+					fi_addr_t remote_addr_arg, uint64_t dest_arg,
+					uint64_t key_arg)
+	    : nccl_net_ofi_gin_op_req_t(), gin_comm(gin_comm_arg), ep(ep_arg), rail_id(rail_id_arg),
+	      imm_data(imm_data_arg), remote_addr(remote_addr_arg), dest(dest_arg), key(key_arg)
+	{
+	}
+
+	int post() override;
+
+private:
+	nccl_ofi_gin_comm &gin_comm;
+	struct fid_ep *ep;
+	int rail_id;
+	uint64_t imm_data;
+	fi_addr_t remote_addr;
+	uint64_t dest;
+	uint64_t key;
+};
+
+/**
  * Union of all requests, used to calculate freelist size
  */
 union nccl_net_ofi_gin_union_req {
 private:
 	nccl_net_ofi_gin_base_req base_req;
 	nccl_net_ofi_gin_recv_req_t recv_req;
+	nccl_net_ofi_gin_writeack_req_t writeack_req;
 };
 
 #endif
