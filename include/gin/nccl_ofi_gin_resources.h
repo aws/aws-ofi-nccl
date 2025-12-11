@@ -240,6 +240,25 @@ public:
 
 	size_t alloc_comm_id() { return comm_id_pool.allocate_id(); }
 
+	void *get_write_ack_buffer_addr() { return write_ack_buffer.addr; }
+
+	/**
+	 * Get write ack buffer offset for RMA operations.
+	 *
+	 * For non-virt_addr_mr providers, this returns zero.
+	 */
+	uint64_t get_write_ack_buffer_addr_offset()
+	{
+		if (virt_addr_mr) {
+			void *addr = get_write_ack_buffer_addr();
+			return reinterpret_cast<uint64_t>(addr);
+		} else {
+			return 0;
+		}
+	}
+
+	nccl_ofi_gin_mr_handle_t *get_write_ack_buffer_mr_handle() { return write_ack_buffer.mr_handle; }
+
 	/**
 	 * Get a request from the freelist
 	 *
@@ -328,6 +347,20 @@ private:
 	nccl_ofi_idpool_t comm_id_pool;
 
 	nccl_ofi_gin_ep_t gin_ep;
+
+	/**
+	 * Represents a write ack buffer, a zero-sized buffer used to send/recv acks
+	 */
+	struct write_ack_buffer
+	{
+		void *addr;
+		nccl_ofi_gin_mr_handle_t *mr_handle;
+
+		write_ack_buffer(nccl_ofi_gin_ep_t &ep);
+		~write_ack_buffer();
+	};
+
+	write_ack_buffer write_ack_buffer;
 
 	/**
 	 * Queue of pending Libfabric requests to be retried

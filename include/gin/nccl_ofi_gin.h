@@ -89,6 +89,13 @@ struct nccl_ofi_gin_peer_rank_info
 
 	/* Rail addresses */
 	fi_addr_t address[MAX_NUM_RAILS];
+
+	/* Signal acks are zero-byte RDMA writes (with imm data)
+	   sent from receiver to sender. These writes are required to
+	   target a valid buffer on both sender and receiver, so this
+	   address tracks the empty buffer for each rank */
+	uint64_t write_ack_buff_addr_offset;
+	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 };
 
 
@@ -148,6 +155,8 @@ public:
 			  nccl_net_ofi_recv_comm_t *r_comm_,
 			  nccl_ofi_device_copy &copy_ctx_);
 
+	nccl_ofi_gin_resources &get_resources() { return resources; }
+
 	/**
 	 * Symmetric memory registration API. All ranks in the communicator must call this
 	 * function.
@@ -166,6 +175,13 @@ public:
 			   gin_sym_mr_handle** mr_handle_out);
 
 	int deregMrSym(gin_sym_mr_handle* mr_handle);
+
+	void increment_outstanding_ack_counter() { outstanding_ack_counter++; }
+	void decrement_outstanding_ack_counter() { outstanding_ack_counter--; }
+
+	/* Wait for any outstanding requests as necessary. Should be called before
+	   the GIN comm is destructed. */
+	int await_pending_requests();
 
 private:
 	nccl_ofi_gin_resources &resources;
@@ -194,6 +210,19 @@ private:
 
 	/* Reference to the context's copy context (created during initialization) */
 	nccl_ofi_device_copy &copy_ctx;
+
+	/* Number of outstanding RDMA writes for signal delivery acknowledgement
+	   Used to wait for remaining acknowledgements on communicator close. */
+	size_t outstanding_ack_counter = 0;
+
+	/**
+	 * Send a writedata acknowledgement
+	 *
+	 * @param peer_rank rank to send the acknowledgement to
+	 * @param msg_seq_num sequence number of the message being acknowledged
+	 */
+	int writedata_ack(nccl_ofi_gin_comm &gin_comm, unsigned int peer_rank,
+			  unsigned int msg_seq_num);
 
 	friend class nccl_ofi_gin_listen_comm;
 };
