@@ -73,8 +73,39 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 {
 	assert(this->rail.rail_id == rail_id_arg);
 
-	/* TODO: CQE handling logic is implemented as a subsequent commit. */
-	assert(false);
+	auto *cq_entry = reinterpret_cast<struct fi_cq_data_entry *>(cq_entry_base);
+
+	int ret = 0;
+
+	if (cq_entry->flags & FI_REMOTE_WRITE) {
+		/* RDMA write-immediate completion */
+		uint32_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
+
+		auto &gin_comm = resources.get_comm(comm_id);
+
+		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
+		uint64_t total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
+		size_t len = cq_entry->len;
+
+		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg, msg_seq_num,
+							      total_segms, len);
+		if (ret != 0) {
+			NCCL_OFI_WARN("gin_handle_signal_write_completion failure");
+			return ret;
+		}
+	} else {
+		auto *msg =
+			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(rx_buff_elem->ptr);
+
+		/* Get the gin comm */
+		auto &gin_comm = resources.get_comm(msg->remote_comm_id);
+
+		ret = gin_comm.handle_signal_metadata_completion(src_addr, rail_id_arg, msg);
+		if (ret != 0) {
+			NCCL_OFI_WARN("gin_handle_signal_metadata_completion failure");
+			return ret;
+		}
+	}
 
 	/* Repost this req */
 	return post_or_add_pending();
@@ -134,4 +165,85 @@ int nccl_net_ofi_gin_writeack_req_t::post()
 	}
 
 	return rc;
+}
+
+int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
+{
+	*done = 0;
+
+	if (write_req) {
+		bool write_done = false;
+		int ret = write_req->test(write_done);
+		if (ret != 0)
+			return ret;
+		if (write_done) {
+			gin_comm.get_resources().return_req_to_pool(write_req);
+			write_req = nullptr;
+		}
+	}
+
+	if (send_req) {
+		bool send_done = false;
+		int ret = send_req->test(send_done);
+		if (ret != 0)
+			return ret;
+		if (send_done) {
+			gin_comm.get_resources().return_req_to_pool(send_req);
+			send_req = nullptr;
+		}
+	}
+
+	bool reqs_done = !(write_req || send_req);
+	if (reqs_done) {
+		bool ack_outstanding = gin_comm.query_ack_outstanding(peer_rank, msg_seq_num);
+
+		*done = !ack_outstanding;
+	}
+
+	if (*done) {
+		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
+			       this->msg_seq_num);
+		gin_comm.get_resources().return_req_to_pool(this);
+	}
+
+	/* If not done, the GIN plugin will do nothing.
+
+	   The analogous test() call in net plugin code will progress the CQ
+	   here. However, for GIN, given NCCL's current usage, this isn't
+	   necessary. The GIN API has a separate ginProgress call, and NCCL's
+	   progress thread will continually call `ginProgress` anyway. */
+
+	return 0;
+}
+
+int nccl_net_ofi_gin_write_req_t::post()
+{
+	ssize_t rc =
+		fi_writedata(ep, src, size, desc, imm_data, remote_addr, dest, key, &ctx.ofi_ctx);
+
+	if (rc != 0 && rc != -FI_EAGAIN) {
+		NCCL_OFI_WARN("Failed call to fi_writedata; RC: %zd", rc);
+	}
+
+	return rc;
+}
+
+int nccl_net_ofi_gin_metadata_send_req_t::post()
+{
+	nccl_ofi_gin_mr_handle_t *metadata_handle =
+		static_cast<nccl_ofi_gin_mr_handle_t *>(metadata_elem->mr_handle);
+
+	ssize_t rc =
+		fi_send(ep, metadata_elem->ptr, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
+			fi_mr_desc(metadata_handle->get_mr(rail_id)), remote_addr, &ctx.ofi_ctx);
+	if (rc != 0 && rc != -FI_EAGAIN) {
+		NCCL_OFI_WARN("fi_send failed with RC %zd", rc);
+	}
+
+	return rc;
+}
+
+nccl_net_ofi_gin_metadata_send_req_t::~nccl_net_ofi_gin_metadata_send_req_t()
+{
+	nccl_ofi_freelist_entry_free(metadata_fl, metadata_elem);
 }
