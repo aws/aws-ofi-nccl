@@ -5,6 +5,7 @@
 #include "config.h"
 
 #include "gin/nccl_ofi_gin_reqs.h"
+#include "gin/nccl_ofi_gin_resources.h"
 
 int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_cq_entry
 	(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr, uint16_t rail_id)
@@ -47,5 +48,69 @@ int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_error_entry
 	 * However, any special-handling for prov_errno should be handled here.
 	 */
 	ret = -(err_entry->err);
+	return ret;
+}
+
+/* Receive requests */
+nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources &resources_arg,
+							 nccl_ofi_gin_ep_rail_t &rail_arg)
+	: nccl_net_ofi_gin_op_req_t(),
+	  resources(resources_arg),
+	  rail(rail_arg)
+{
+	rx_buff_elem = nccl_ofi_freelist_entry_alloc(resources.get_rx_buff_fl());
+	if (!rx_buff_elem) {
+		NCCL_OFI_WARN("Failed to allocate rx buffer freelist entry");
+		throw std::runtime_error("Failed to allocate rx buffer freelist entry");
+	}
+}
+
+
+nccl_net_ofi_gin_recv_req_t::~nccl_net_ofi_gin_recv_req_t()
+{
+	nccl_ofi_freelist_entry_free(resources.get_rx_buff_fl(), rx_buff_elem);
+}
+
+
+int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
+						 fi_addr_t src_addr,
+						 uint16_t rail_id_arg)
+{
+	assert(this->rail.rail_id == rail_id_arg);
+
+	/* TODO: CQE handling logic is implemented an a subsequent commit. */
+	assert(false);
+
+	/* Repost this req */
+	return post_or_add_pending();
+}
+
+
+int nccl_net_ofi_gin_recv_req_t::post()
+{
+	auto *mr_handle = static_cast<nccl_ofi_gin_mr_handle_t *>
+		(rx_buff_elem->mr_handle);
+	struct fid_ep *ofi_ep = rail.ofi_ep.get();
+	size_t size = sizeof(nccl_net_ofi_gin_signal_metadata_msg_t);
+	void *desc = fi_mr_desc(mr_handle->get_mr(rail.rail_id));
+
+	ssize_t rc = fi_recv(ofi_ep, rx_buff_elem->ptr,
+			     size, desc, FI_ADDR_UNSPEC, &ctx.ofi_ctx);
+	if (rc != 0 && rc != -FI_EAGAIN) {
+		NCCL_OFI_WARN("Failed to post recv. RC: %zd", rc);
+	}
+
+	return rc;
+}
+
+
+int nccl_net_ofi_gin_recv_req_t::post_or_add_pending()
+{
+	int ret = post();
+	if (ret == -FI_EAGAIN) {
+		resources.add_pending_req(this);
+		ret = 0;
+	}
+
 	return ret;
 }
