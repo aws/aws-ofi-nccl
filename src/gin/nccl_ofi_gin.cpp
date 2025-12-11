@@ -177,3 +177,112 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 	(*gin_comm_out) = gin_comm;
 	return 0;
 }
+
+int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
+				      int type, uint64_t mrFlags, gin_sym_mr_handle **mr_handle_out)
+{
+	auto &gin_ep = resources.get_ep();
+
+	auto *mr_handle = new gin_sym_mr_handle {};
+
+	NCCL_OFI_TRACE(NCCL_NET, "regMrSymDmaBuf ptr %p size %zu type %d flags %lu handle %p",
+		       data_ptr, size, type, mrFlags, mr_handle);
+
+	/**
+	 * Local registration with the endpoint
+	 */
+	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
+		return ret;
+	}
+
+	mr_handle->input_address = data_ptr;
+	mr_handle->size = size;
+	mr_handle->remote_mr.resize(nranks, {});
+	mr_handle->type = type;
+	gin_remote_mr &my_remote_mr = mr_handle->remote_mr[rank];
+
+	/**
+	 * Populate this rank's metadata lookup table entry
+	 */
+	my_remote_mr.address = reinterpret_cast<uintptr_t>(mr_handle->input_address);
+
+	if (virt_addr_mr) {
+		my_remote_mr.address_offset = my_remote_mr.address;
+	} else {
+		my_remote_mr.address_offset = 0;
+	}
+
+	my_remote_mr.num_rails = gin_ep.get_num_rails();
+
+	if (type == NCCL_PTR_CUDA) {
+		/* For CUDA registrations, we also register the memory with
+		   GDRCopy, in case we are asked to do a signal update to this
+		   region. */
+		ret = copy_ctx.register_region(mr_handle->input_address, mr_handle->size,
+					       mr_handle->gdr_handle);
+		if (ret != 0) {
+			NCCL_OFI_WARN("GDRCopy registration failed: %d", ret);
+			delete mr_handle;
+			return ret;
+		}
+	}
+
+	auto *local_handle = mr_handle->local_handle;
+	for (unsigned i = 0; i < gin_ep.get_num_rails(); ++i) {
+		my_remote_mr.mr_key[i] = fi_mr_key(local_handle->get_mr(i));
+		if (my_remote_mr.mr_key[i] == FI_KEY_NOTAVAIL) {
+			NCCL_OFI_WARN("Memory registration key is not available");
+			delete mr_handle;
+			return -EIO;
+		}
+	}
+
+	/* Insert the symmetric MR handle into a lookup table for the signal
+	   path */
+	auto insert_res = mr_handle_map.insert(std::make_pair(mr_handle->input_address, mr_handle));
+	if (!insert_res.second) {
+		/* TODO: this is a duplicate registration of the same address. We should
+		   be able to support this, but it doesn't work today. */
+		NCCL_OFI_WARN("Error inserting MR handle to map for ptr %p: entry exists",
+			      mr_handle->input_address);
+		delete mr_handle;
+		return -EEXIST;
+	}
+
+	/* Exchange MR metadata with all ranks using AG ring */
+	ret = ag_comm.all_gather(mr_handle->remote_mr.data(), sizeof(gin_remote_mr));
+	if (ret != 0) {
+		mr_handle_map.erase(mr_handle->input_address);
+		delete mr_handle;
+		return ret;
+	}
+
+	*mr_handle_out = mr_handle;
+	return 0;
+}
+
+int nccl_ofi_gin_comm::deregMrSym(gin_sym_mr_handle *mr_handle)
+{
+	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
+	if (mr_handle->type == NCCL_PTR_CUDA) {
+		int ret = copy_ctx.deregister_region(mr_handle->gdr_handle);
+		if (ret != 0) {
+			NCCL_OFI_WARN("GDRCopy deregister failed: %d", ret);
+			return ret;
+		}
+		mr_handle->gdr_handle = nullptr;
+	}
+
+	size_t n = mr_handle_map.erase(mr_handle->input_address);
+	if (n != 1) {
+		return -ENOENT;
+	}
+
+	delete mr_handle->local_handle;
+	mr_handle->local_handle = nullptr;
+
+	delete mr_handle;
+	return 0;
+}
