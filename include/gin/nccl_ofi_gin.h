@@ -91,12 +91,33 @@ struct nccl_ofi_gin_peer_rank_info {
 	/* Rail addresses */
 	fi_addr_t address[MAX_NUM_RAILS];
 
+	/* A sequence number, stored at initiator, exclusively for this (target) peer rank.
+	   This allows the remote rank to enforce ordering of signal delivery
+
+	   A 16-bit integer is large enough to store all outstanding requests, because the
+	   plugin and NCCL limit max inflight requests. (See NCCL_OFI_MAX_REQUESTS.) */
+	uint16_t next_target_seq_num = 0;
+
+	/**
+	 * Next-to-be-delivered sequence number, stored at target, from
+	 * (initiator) peer rank
+	 */
+	uint16_t next_delivered_signal_seq_num = 0;
+
 	/* Signal acks are zero-byte RDMA writes (with imm data)
 	   sent from receiver to sender. These writes are required to
 	   target a valid buffer on both sender and receiver, so this
 	   address tracks the empty buffer for each rank */
 	uint64_t write_ack_buff_addr_offset;
 	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
+
+	/* Flag, stored at initiator, indicating the given sequence number (mod
+	   max_requests) is in use at initiator side. This allows initiator to
+	   track in-use sequence numbers to avoid overflow and only mark
+	   iputSignal complete when it has received the ack from the target,
+	   which has delivered the signal atomic.
+	   */
+	bool active_put_signal[NCCL_OFI_MAX_REQUESTS];
 };
 
 /**
@@ -181,9 +202,66 @@ public:
 		outstanding_ack_counter--;
 	}
 
+	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
+	{
+		return rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS];
+	}
+
 	/* Wait for any outstanding requests as necessary. Should be called before
 	   the GIN comm is destructed. */
 	int await_pending_requests();
+
+	/**
+	 * iputSignal API. Transfers some user data (determined by memory registrations
+	 * and offsets) via RDMA write. When the data transfer is complete, a signal
+	 * operation is performed at the destination, at location given by
+	 * signalMhandle/signalOff. The signal value and operation are given by
+	 * signalValue/signalOp.
+	 *
+	 * @param srcOff: offset in source memory registration
+	 * @param srcMhandle: source memory registration handle
+	 * @param size: size of data to be transferred
+	 * @param dstOff: offset in destination memory registration
+	 * @param dstMhandle: destination memory registration handle
+	 * @param rank: rank of destination
+	 * @param signalOff: offset in signal memory registration
+	 * @param signalMhandle: signal memory registration handle
+	 * @param signalValue: value of signal to be performed
+	 * @param signalOp: operation of signal to be performed
+	 * @param request: request to be returned to caller
+	 *
+	 * @return: 0 on success, non-zero on failure
+	 */
+	int iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle, size_t size, uint64_t dstOff,
+		       gin_sym_mr_handle *dstMhandle, uint32_t rank, uint64_t signalOff,
+		       gin_sym_mr_handle *signalMhandle, uint64_t signalValue, uint32_t signalOp,
+		       nccl_net_ofi_gin_iputsignal_req_t **request);
+
+	/**
+	 * Callback for metadata completion.
+	 *
+	 * @param src_addr: source address of the signal
+	 * @param rail_id: rail ID of the signal
+	 * @param metadata_msg: metadata message
+	 *
+	 * @return: 0 on success, non-zero on failure
+	 */
+	int handle_signal_metadata_completion(
+		fi_addr_t src_addr, uint16_t rail_id,
+		const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg);
+
+	/**
+	 * Callback for write completion.
+	 *
+	 * @param gin_comm: communicator to be used for signal
+	 * @param src_addr: source address of the signal
+	 * @param rail_id: rail ID of the signal
+	 * @param msg_seq_num: sequence number of the signal
+	 * @param total_segms: total number of segments in the signal
+	 * @param len: length of the signal
+	 */
+	int handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
+					   uint16_t msg_seq_num, uint64_t total_segms, size_t len);
 
 private:
 	nccl_ofi_gin_resources &resources;
@@ -202,6 +280,14 @@ private:
 
 	/* For each rail, map of fi_addr => peer comm rank */
 	std::unordered_map<fi_addr_t, uint32_t> rank_map[MAX_NUM_RAILS];
+
+	/* Map of <rank, msg_seq_num> => recv_req
+	 *
+	 * This key is guaranteed to be unique because each initiating rank
+	 * maintains a monotonically increasing sequence counter for each target
+	 * rank. */
+	std::unordered_map<uint64_t, nccl_net_ofi_gin_iputsignal_recv_req *>
+		outstanding_iput_signal_recv_reqs;
 
 	/* Map from pointers to memory registration handle. Used to look up
 	   GDRCopy handle for signal delivery.
@@ -224,6 +310,20 @@ private:
 	 * @param msg_seq_num sequence number of the message being acknowledged
 	 */
 	int writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank, uint32_t msg_seq_num);
+
+	/**
+	 * Freelist of buffers storing signal information (type
+	 * nccl_net_ofi_gin_signal_metadata_msg_t). An entry is allocated from
+	 * this freelist for each putSignal operation.
+	 */
+	std::unique_ptr<nccl_ofi_freelist_t, decltype(&freelist_deleter)> metadata_fl;
+
+	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
+
+	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
+					    nccl_net_ofi_gin_iputsignal_recv_req *req);
+
+	int iput_signal_deliver_all(uint32_t peer_rank);
 
 	friend class nccl_ofi_gin_listen_comm;
 };

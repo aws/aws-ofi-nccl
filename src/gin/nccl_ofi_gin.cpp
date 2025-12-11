@@ -62,8 +62,21 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 				     nccl_net_ofi_recv_comm_t *r_comm_,
 				     nccl_ofi_device_copy &copy_ctx_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
-      ag_comm(s_comm_, r_comm_, rank_, nranks_), copy_ctx(copy_ctx_)
+      ag_comm(s_comm_, r_comm_, rank_, nranks_), copy_ctx(copy_ctx_),
+      metadata_fl(nullptr, &freelist_deleter)
 {
+	auto &ep = resources.get_ep();
+
+	nccl_ofi_freelist_t *metadata_fl_ptr = nullptr;
+	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), 16, 16,
+					    0, nullptr, nullptr, ep.freelist_regmr_fn,
+					    ep.freelist_deregmr_fn, &ep, 1, &metadata_fl_ptr);
+	if (ret != 0) {
+		throw std::runtime_error("Failed to initialize freelist for GIN metadata");
+	}
+
+	metadata_fl.reset(metadata_fl_ptr);
+
 	this->local_comm_id = resources.alloc_comm_id(); /* TODO free */
 	if (OFI_UNLIKELY(this->local_comm_id == FI_KEY_NOTAVAIL)) {
 		NCCL_OFI_WARN("No comm id available");
@@ -359,6 +372,360 @@ int nccl_ofi_gin_comm::await_pending_requests()
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
+	}
+
+	return ret;
+}
+
+int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle, size_t size,
+				  uint64_t dstOff, gin_sym_mr_handle *dstMhandle, uint32_t dst_rank,
+				  uint64_t signalOff, gin_sym_mr_handle *signalMhandle,
+				  uint64_t signalValue, uint32_t signalOp,
+				  nccl_net_ofi_gin_iputsignal_req_t **request)
+{
+	if (signalOp != 0 && signalOp != NCCL_NET_SIGNAL_OP_INC &&
+	    signalOp != NCCL_NET_SIGNAL_OP_ADD) {
+		NCCL_OFI_WARN("Only support signal add/increment");
+		return -EINVAL;
+	}
+
+	auto &gin_ep = resources.get_ep();
+	auto &rank_comm = rank_comms[dst_rank];
+	uint16_t msg_seq_num = rank_comm.next_target_seq_num;
+	uint32_t remote_comm_id = rank_comm.comm_id;
+	uint16_t rail_id = resources.get_next_rail();
+
+	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS])) {
+		NCCL_OFI_WARN("Next sequence number is in use");
+		assert(false);
+		return -EBUSY;
+	}
+
+	/* Determine how many segments to send */
+	uint16_t nseg = 0;
+	if (size > 0) {
+		/* For put or putSignal with size > 0, send data as
+		   write-immediate */
+		nseg += 1;
+	}
+	if (signalOp != 0) {
+		/* For signal operations (putSignal or signal only), send
+		   metadata message */
+		nseg += 1;
+	}
+
+	assert_always(nseg > 0);
+
+	NCCL_OFI_TRACE(NCCL_NET,
+		       "iputSignal srcOff %lu srcMhandle %p size %zu dstOff %lu"
+		       " dstMhandle %p dst_rank %u signalOff %lu signalMhandle %p"
+		       " signalValue %lu signalOp %u seq_num %hu",
+		       srcOff, srcMhandle, size, dstOff, dstMhandle, dst_rank, signalOff,
+		       signalMhandle, signalValue, signalOp, msg_seq_num);
+
+	int ret = 0;
+	nccl_net_ofi_gin_write_req_t *write_req = nullptr;
+
+	if (size > 0) {
+		/* Post write-immediate request with user data */
+		void *src = static_cast<uint8_t *>(srcMhandle->input_address) + srcOff;
+		auto *src_mhandle = srcMhandle->local_handle;
+		void *desc = fi_mr_desc(src_mhandle->get_mr(rail_id));
+
+		uint64_t data = GIN_IMM_GET_IMM_DATA(remote_comm_id, msg_seq_num, nseg);
+
+		auto &dest_remote_mr = dstMhandle->remote_mr[dst_rank];
+		uint64_t dest = dest_remote_mr.address_offset + dstOff;
+
+		write_req = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
+			gin_ep.get_rail(rail_id).ofi_ep.get(), src, size, desc, data,
+			rank_comm.address[rail_id], dest, dest_remote_mr.mr_key[rail_id]);
+
+		ret = write_req->post();
+		if (ret == -FI_EAGAIN) {
+			resources.add_pending_req(write_req);
+			ret = 0;
+		} else if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
+			resources.return_req_to_pool(write_req);
+			return ret;
+		}
+	}
+
+	nccl_ofi_freelist_elem_t *metadata_elem = nullptr;
+	nccl_net_ofi_gin_metadata_send_req_t *send_req = nullptr;
+
+	if (signalOp != 0) {
+		/* Post metadata send with signal information */
+
+		metadata_elem = nccl_ofi_freelist_entry_alloc(metadata_fl.get());
+		if (!metadata_elem) {
+			NCCL_OFI_WARN("Failed to allocate metadata freelist entry");
+			return -ENOMEM;
+		}
+
+		auto *metadata_send =
+			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(metadata_elem->ptr);
+
+		metadata_send->msg_seq_num = msg_seq_num;
+		metadata_send->num_segments = nseg;
+		metadata_send->remote_comm_id = remote_comm_id;
+		metadata_send->signal_base_address =
+			(signalMhandle ? signalMhandle->remote_mr[dst_rank].address : 0);
+		metadata_send->signal_offset = signalOff;
+		if (signalOp == NCCL_NET_SIGNAL_OP_INC) {
+			metadata_send->signal_value = 1;
+		} else if (signalOp == NCCL_NET_SIGNAL_OP_ADD) {
+			metadata_send->signal_value = signalValue;
+		} else {
+			metadata_send->signal_value = 0;
+		}
+
+		send_req = resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
+			gin_ep.get_rail(rail_id).ofi_ep.get(), rail_id, metadata_elem,
+			rank_comm.address[rail_id], metadata_fl.get());
+
+		ret = send_req->post();
+		if (ret == -FI_EAGAIN) {
+			resources.add_pending_req(send_req);
+			ret = 0;
+		} else if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Metadata send failed for seq_num %hu", msg_seq_num);
+			resources.return_req_to_pool(send_req);
+			return ret;
+		}
+	}
+
+	auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_req_t>(
+		*this, dst_rank, msg_seq_num, write_req, send_req);
+
+	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = true;
+	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
+
+	*request = req;
+	return 0;
+}
+
+static inline uint32_t get_peer_rank(fi_addr_t src_addr,
+				     std::unordered_map<fi_addr_t, uint32_t> &rank_map)
+{
+	auto it = rank_map.find(src_addr);
+	if (it == rank_map.end()) {
+		NCCL_OFI_WARN("Failed to find rank for src addr %lu", src_addr);
+		throw std::runtime_error("Failed to find rank");
+	}
+	return it->second;
+}
+
+static inline uint64_t get_req_map_key(uint32_t peer_rank, uint16_t msg_seq_num)
+{
+	return (static_cast<uint64_t>(peer_rank) << 16) | static_cast<uint64_t>(msg_seq_num);
+}
+
+int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata)
+{
+	void *signal_base = reinterpret_cast<void *>(metadata.signal_base_address);
+
+	/* Value to increment the signal. For increment ops, this will be 1 */
+	uint64_t add_value = metadata.signal_value;
+
+	/* Look up the MR handle associated with this signal */
+	auto it = this->mr_handle_map.find(signal_base);
+	if (OFI_UNLIKELY(it == this->mr_handle_map.end())) {
+		NCCL_OFI_WARN("Signal base address %p not found in MR handle map", signal_base);
+		return -EINVAL;
+	}
+	gin_sym_mr_handle *mr_handle = it->second;
+
+	if (mr_handle->type == NCCL_PTR_CUDA) {
+		uint64_t old_value;
+
+		int ret = this->copy_ctx.copy_from_device(*mr_handle->gdr_handle,
+							  metadata.signal_offset, &old_value,
+							  sizeof(old_value));
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to read current signal value");
+			return -ret;
+		}
+
+		/* We only support addition */
+		uint64_t new_value = old_value + add_value;
+
+		/* Write using GDRcopy. */
+		ret = this->copy_ctx.copy_to_device(&new_value, *mr_handle->gdr_handle,
+						    metadata.signal_offset, sizeof(new_value));
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to update signal value");
+			return -ret;
+		}
+
+	} else {
+		/**
+		 * Notes:
+		 * 1. This code (host memory signal update) will never be used
+		 *    in practice, because NCCL's GIN proxy thread always
+		 *    allocates signals in GPU memory
+		 *
+		 * 2. Using relaxed ordering here is OK because signals
+		 *    themselves need not be ordered, as long as all previous
+		 *    puts() have arrived.
+		 */
+		assert(mr_handle->type == NCCL_PTR_HOST);
+		auto *dest = reinterpret_cast<volatile uint64_t *>(metadata.signal_base_address +
+								   metadata.signal_offset);
+		__atomic_fetch_add(dest, add_value, __ATOMIC_RELAXED);
+	}
+
+	return 0;
+}
+
+int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
+						       nccl_net_ofi_gin_iputsignal_recv_req *req)
+{
+	int ret = 0;
+
+	NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on target",
+		       req->metadata.msg_seq_num);
+
+	if (req->metadata_received) {
+		ret = do_gin_signal(req->metadata);
+		if (ret != 0) {
+			return ret;
+		}
+	} else {
+		/* No signal associated with this op (true for iput) */
+	}
+
+	/* Write ack */
+	ret = writedata_ack(*this, peer_rank, req->metadata.msg_seq_num);
+	if (ret != 0) {
+		return ret;
+	}
+
+	/* Remove this request entry from the map */
+	size_t n_removed = this->outstanding_iput_signal_recv_reqs.erase(map_key);
+	assert_always(n_removed == 1);
+
+	return ret;
+}
+
+int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
+{
+	int ret = 0;
+
+	/* Process undelivered signals in order */
+	while (true) {
+		auto &rank_comm = this->rank_comms[peer_rank];
+		uint16_t next_seq_num = rank_comm.next_delivered_signal_seq_num;
+		uint64_t map_key = get_req_map_key(peer_rank, next_seq_num);
+		auto it = this->outstanding_iput_signal_recv_reqs.find(map_key);
+		if (it != this->outstanding_iput_signal_recv_reqs.end()) {
+			auto *req = it->second;
+
+			if (req->num_seg_completions == req->total_segments) {
+				rank_comm.next_delivered_signal_seq_num =
+					(rank_comm.next_delivered_signal_seq_num + 1) &
+					GIN_IMM_SEQ_MASK;
+				ret = iput_signal_recv_req_completion(peer_rank, map_key, req);
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Failed to complete signal seq_num %hu",
+						      next_seq_num);
+					return ret;
+				}
+
+				this->resources.return_req_to_pool(req);
+			} else {
+				/* No more signals to deliver */
+				break;
+			}
+		} else {
+			/* No more signals to deliver */
+			break;
+		}
+	}
+
+	return ret;
+}
+
+int nccl_ofi_gin_comm::handle_signal_metadata_completion(
+	fi_addr_t src_addr, uint16_t rail_id,
+	const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg)
+{
+	int ret = 0;
+
+	uint16_t msg_seq_num = metadata_msg->msg_seq_num;
+
+	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
+	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
+
+	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
+	if (it == outstanding_iput_signal_recv_reqs.end()) {
+		auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
+
+		req->num_seg_completions = 1;
+		req->total_segments = metadata_msg->num_segments;
+		req->metadata = *metadata_msg;
+		req->metadata_received = true;
+		outstanding_iput_signal_recv_reqs[map_key] = req;
+
+		ret = iput_signal_deliver_all(peer_rank);
+
+	} else {
+		auto *req = it->second;
+
+		req->metadata = *metadata_msg;
+
+		req->metadata_received = true;
+		req->num_seg_completions += 1;
+		ret = iput_signal_deliver_all(peer_rank);
+	}
+
+	return ret;
+}
+
+int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
+						      uint16_t msg_seq_num, uint64_t total_segms,
+						      size_t len)
+{
+	int ret = 0;
+
+	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
+	if (total_segms == WRITEDATA_ACK_NSEG) {
+		assert(len == 0);
+
+		auto &rank_comm = rank_comms[peer_rank];
+		assert_always(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] ==
+			      true);
+		rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = false;
+		return 0;
+	}
+
+	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
+
+	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
+	if (it == outstanding_iput_signal_recv_reqs.end()) {
+		auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
+
+		req->num_seg_completions = 1;
+		req->total_segments = total_segms;
+		outstanding_iput_signal_recv_reqs[map_key] = req;
+
+		if (req->num_seg_completions == req->total_segments) {
+			/* In this case, there is no metadata associated with
+			   this request, so fill in necessary fields */
+			req->metadata.msg_seq_num = msg_seq_num;
+			req->metadata.num_segments = req->total_segments;
+		}
+
+		ret = iput_signal_deliver_all(peer_rank);
+
+	} else {
+		auto *req = it->second;
+
+		assert(req->total_segments == total_segms);
+
+		req->num_seg_completions += 1;
+		ret = iput_signal_deliver_all(peer_rank);
 	}
 
 	return ret;
