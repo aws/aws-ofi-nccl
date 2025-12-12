@@ -50,6 +50,7 @@ class TunerPlatform(str, Enum):
     P5en = "p5en.48xlarge"
     P5 = "p5.48xlarge"
     P6 = "p6-b200.48xlarge"
+    P6_B300 = "p6-b300.48xlarge"
 
 
 class Tuner:
