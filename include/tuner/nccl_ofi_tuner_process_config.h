@@ -43,6 +43,8 @@ public:
 				tuner_platform = NCCL_OFI_TUNER_P5EN;
 			} else if (strcmp(platform_type, "p6-b200.48xlarge") == 0) {
 				tuner_platform = NCCL_OFI_TUNER_P6;
+			} else if (strcmp(platform_type, "p6-b300.48xlarge") == 0) {
+				tuner_platform = NCCL_OFI_TUNER_P6_B300;
 			} else {
 				tuner_platform = NCCL_OFI_TUNER_UNKNOWN;
 			}
