@@ -2,6 +2,7 @@
 
 import ctypes
 import logging
+import math
 import pandas as pd
 import numpy as np
 import os
@@ -185,7 +186,7 @@ class Tuner:
         def bisect(min_size, max_size):
             min_decision = self.get_coll_info(coll_type, min_size)
             max_decision = self.get_coll_info(coll_type, max_size)
-            if min_decision == max_decision or max_size - min_size <= 1:
+            if (min_decision == max_decision and math.log2(max_size) - math.log2(min_size) <= 1) or max_size - min_size <= 1:
                 return [(min_size, min_decision), (max_size, max_decision)]
 
             mid_size = (min_size + max_size) // 2
