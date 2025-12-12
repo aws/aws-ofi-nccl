@@ -15,6 +15,7 @@
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
 
+#include "gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
@@ -222,6 +223,16 @@ typedef struct nccl_net_ofi_conn_handle {
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
 
+
+/**
+ * A pair of a Libfabric address (buffer of size MAX_EP_ADDR) and actual
+ * address size. This is used in various parts of the code.
+ */
+struct nccl_ofi_addr {
+	char addr[MAX_EP_ADDR];
+	size_t addr_len;
+};
+
 /**
  * Properties structure
  */
@@ -291,6 +302,17 @@ public:
 	 * "leader NIC"
 	 */
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+
+	/**
+	 * Retrieve all fi_info objects associated with this device. There may
+	 * be more than one info per device, depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin. While we should
+	 * be able to just pass the fabric/domain objects and call fi_getinfo()
+	 * instead, currently this doesn't work with EFA provider. Once that
+	 * works, that is the preferred approach.
+	 */
+	virtual std::vector<struct fi_info *> get_ofi_infos() = 0;
 
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
@@ -423,6 +445,14 @@ public:
 	 */
 	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
 
+	/**
+	 * Retrieve the fid_domain objects associated with this plugin domain.
+	 *
+	 * There may be more than one fid_domain per domain, depending on the
+	 * transport.
+	 */
+	virtual std::vector<ofi_domain_ptr *> get_ofi_domains() = 0;
+
 	/* Create a new endpoint
 	 *
 	 * Pure virtual function to allocate a new endpoint structure
@@ -522,6 +552,16 @@ public:
 		--unreleased_inactive_ep_counter;
 	}
 
+	inline nccl_ofi_gin_resources *get_gin_resources()
+	{
+		return gin_resources;
+	}
+
+	inline void set_gin_resources(nccl_ofi_gin_resources *gin_resources_arg)
+	{
+		this->gin_resources = gin_resources_arg;
+	}
+
 protected:
 	/**
 	 * @brief	Destructor.
@@ -590,6 +630,11 @@ protected:
 	 * to true regardless of whether cleanup_resources finished successfully or not.
 	 */
 	bool called_cleanup_resources = false;
+
+	/**
+	 * Associated GIN resources object
+	 */
+	nccl_ofi_gin_resources *gin_resources = nullptr;
 };
 
 
