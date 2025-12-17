@@ -83,11 +83,12 @@
 #define PROC_NAME_IDX(i) ((i) * MPI_MAX_PROCESSOR_NAME)
 
 // Can be changed when porting new versions to the plugin
-#define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v9
+#define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v11
 
-typedef ncclNet_v9_t test_nccl_net_t;
-typedef ncclNetProperties_v9_t test_nccl_properties_t;
-typedef ncclNetDeviceHandle_v9_t test_nccl_net_device_handle_t;
+typedef ncclNet_v11_t test_nccl_net_t;
+typedef ncclNetProperties_v11_t test_nccl_properties_t;
+typedef ncclNetDeviceHandle_v11_t test_nccl_net_device_handle_t;
+typedef ncclNetCommConfig_v11_t test_nccl_net_config_t;
 
 static void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 		   int line, const char *fmt, ...)
@@ -302,7 +303,7 @@ static inline void post_send(test_nccl_net_t* ext_net,
 		send_buf, size, tag, mhandle);
 	// Retry until we get a valid request
 	while (*request == nullptr) {
-		OFINCCLTHROW(ext_net->isend(scomm, send_buf, size, tag, mhandle, request));
+		OFINCCLTHROW(ext_net->isend(scomm, send_buf, size, tag, mhandle, nullptr, request));
 	}
 	NCCL_OFI_TRACE(NCCL_NET, "Send posted successfully: request=%p", *request);
 }
@@ -336,43 +337,10 @@ inline void post_recv(test_nccl_net_t* ext_net,
 	// Retry until we get a valid request
 	NCCL_OFI_TRACE(NCCL_NET, "Posting receive: n_recv=%d", n_recv);
 	while (*requests == nullptr) {
-		OFINCCLTHROW(ext_net->irecv(rcomm, n_recv, recv_bufs, sizes, tags, mhandles, requests));
+		OFINCCLTHROW(ext_net->irecv(rcomm, n_recv, recv_bufs, sizes, tags, mhandles, nullptr, requests));
 	}
 	NCCL_OFI_TRACE(NCCL_NET, "Receive posted successfully");
 }
-
-/**
- * Test request completion
- *
- * Tests whether an asynchronous operation has completed without blocking.
- * Calls the plugin's test function to check request status.
- *
- * @param ext_net Pointer to external plugin
- * @param request Request handle to test
- * @param done Output pointer to completion flag (1 if done, 0 if not)
- * @param size Output pointer to actual size transferred (may be NULL)
- * @return ncclSuccess on success, error code otherwise
- */
-/**
- * Setup connection between two ranks
- *
- * This helper establishes a bidirectional connection between the current rank
- * and a peer rank. It creates a listen communicator, exchanges connection handles
- * via MPI, and creates send and receive communicators.
- *
- * @param ext_net Pointer to external plugin
- * @param dev Device index to use for connection
- * @param rank Current MPI rank
- * @param size Total number of MPI ranks
- * @param peer_rank MPI rank of the peer to connect to
- * @param ndev Number of devices
- * @param lcomm Output: listen communicator (may be NULL after return)
- * @param scomm Output: send communicator
- * @param rcomm Output: receive communicator
- * @param sHandle Output: send device handle
- * @param rHandle Output: receive device handle
- * @return ncclSuccess on success, error code otherwise
- */
 /**
  * Initialize MPI and get rank information
  *
@@ -496,6 +464,8 @@ class TestScenario;
 struct ThreadContext {
 	size_t thread_id;
 	test_nccl_net_t* ext_net;
+	/* ctx object returned from ext_net->init() */
+	void* net_ctx;
 	std::vector<nccl_net_ofi_listen_comm_t*> lcomms;
 	std::vector<nccl_net_ofi_send_comm_t*> scomms;
 	std::vector<nccl_net_ofi_recv_comm_t*> rcomms;
@@ -516,8 +486,17 @@ private:
 	static constexpr int NRECV = NCCL_OFI_MAX_RECVS;
 
 public:
-	ThreadContext(size_t tid, test_nccl_net_t* net, TestScenario* scen, MPI_Comm comm)
-		: thread_id(tid), ext_net(net), result(ncclSuccess), scenario(scen),
+	/**
+	 * Create a new ThreadContext
+	 *
+	 * @param tid: thread id
+	 * @param net: external net object
+	 * @param ctx: net context returned from net->init()
+	 * @param scen: test scenario
+	 * @param comm: MPI communicator for this thread
+	 */
+	ThreadContext(size_t tid, test_nccl_net_t* net, void* ctx, TestScenario* scen, MPI_Comm comm)
+		: thread_id(tid), ext_net(net), net_ctx(ctx), result(ncclSuccess), scenario(scen),
 		  thread_comm(comm), rank(-1), peer_rank(-1), ndev(0) {}
 
 	/**
@@ -553,7 +532,7 @@ public:
 		// Create listen communicator
 		NCCL_OFI_TRACE(NCCL_INIT, "Rank %d thread %zu: BEFORE listen on physical_dev=%d dev_idx=%d",
 			rank, thread_id, physical_dev, dev_idx);
-		OFINCCLTHROW(ext_net->listen(physical_dev, static_cast<void*>(&local_handle),
+		OFINCCLTHROW(ext_net->listen(net_ctx, physical_dev, static_cast<void*>(&local_handle),
 				      reinterpret_cast<void**>(&lcomm)));
 		NCCL_OFI_TRACE(NCCL_INIT, "Rank %d thread %zu: AFTER listen on physical_dev=%d dev_idx=%d",
 			rank, thread_id, physical_dev, dev_idx);
@@ -574,7 +553,7 @@ public:
 		// Establish send and receive communicators
 		while (scomm == nullptr || rcomm == nullptr) {
 			if (scomm == nullptr) {
-				OFINCCLTHROW(ext_net->connect(physical_dev, static_cast<void*>(peer_handle),
+				OFINCCLTHROW(ext_net->connect(net_ctx, physical_dev, static_cast<void*>(peer_handle),
 					 reinterpret_cast<void**>(&scomm), &shandle));
 			}
 
@@ -739,7 +718,13 @@ public:
 
 	virtual ~TestScenario() = default;
 
-	void set_ext_net(test_nccl_net_t* net) { ext_net = net; }
+	/**
+	 * Pass exernal network object to this TestScenario
+	 *
+	 * @param net: the external net object returned from `dlsym`
+	 * @param ctx: the net context returned from call to net->init()
+	 */
+	void set_ext_net(test_nccl_net_t* net, void* ctx) { ext_net = net; net_ctx = ctx; }
 
 	virtual void setup(ThreadContext& ctx) {
 		// Get rank from thread communicator
@@ -788,7 +773,7 @@ public:
 
 		// Single-threaded: create context and execute on main thread
 		if (threads.size() == 0) {
-			thread_contexts.emplace_back(0, ext_net, this, MPI_COMM_WORLD);
+			thread_contexts.emplace_back(0, ext_net, net_ctx, this, MPI_COMM_WORLD);
 			thread_function(&thread_contexts[0]);
 			return thread_contexts[0].result;
 		}
@@ -800,7 +785,7 @@ public:
 		for (size_t i = 0; i < threads.size(); i++) {
 			MPI_Comm comm;
 			MPI_Comm_split(MPI_COMM_WORLD, i, rank, &comm);
-			thread_contexts.emplace_back(i, ext_net, this, comm);
+			thread_contexts.emplace_back(i, ext_net, net_ctx, this, comm);
 		}
 
 		// Create threads
@@ -882,6 +867,8 @@ protected:
 	}
 
 	test_nccl_net_t* ext_net = nullptr;
+	/* ctx object returned from ext_net->init() */
+	void* net_ctx = nullptr;
 	std::string name;
 	std::vector<ThreadContext> thread_contexts;
 	std::vector<pthread_t> threads;
@@ -944,17 +931,21 @@ public:
 
 	ncclResult_t run_all() {
 		OFINCCLCHECK(setup());
-		OFINCCLCHECK(ext_net->init(&logger));
+		void* net_ctx = nullptr;
+		test_nccl_net_config_t config = {.trafficClass = -1};
+		OFINCCLCHECK(ext_net->init(&net_ctx, 0, &config, logger, nullptr));
 
 		int passed = 0;
 		for (const auto& test : tests) {
-			test->set_ext_net(ext_net);
+			test->set_ext_net(ext_net, net_ctx);
 			if (test->execute() == ncclSuccess) {
 				passed++;
 			}
 			// Ensure all ranks complete test before starting next one
 			MPI_Barrier(MPI_COMM_WORLD);
 		}
+
+		OFINCCLCHECK(ext_net->finalize(net_ctx));
 
 		OFINCCLCHECK(teardown());
 
