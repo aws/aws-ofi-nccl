@@ -23,6 +23,8 @@ int main(int argc, char *argv[])
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {};
 	test_nccl_net_device_handle_t *s_ignore, *r_ignore;
 	test_nccl_net_t *extNet = NULL;
+	void *net_ctx = NULL;
+	test_nccl_net_config_t config = {.trafficClass = -1};
 
 	ofi_log_function = logger;
 
@@ -129,7 +131,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Init API */
-	OFINCCLCHECKGOTO(extNet->init(&logger), res, exit);
+	OFINCCLCHECKGOTO(extNet->init(&net_ctx, 0, &config, logger, nullptr), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
 		      rank, &all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
 
@@ -170,7 +172,7 @@ int main(int argc, char *argv[])
 
 		/* Listen API */
 		NCCL_OFI_INFO(NCCL_NET, "Server: Listening on device %d", dev);
-		OFINCCLCHECKGOTO(extNet->listen(dev, (void *)&handle, (void **)&lComm), res, exit);
+		OFINCCLCHECKGOTO(extNet->listen(net_ctx, dev, (void *)&handle, (void **)&lComm), res, exit);
 
 		/* MPI send: Distribute handle to prev and next ranks */
 		MPI_Send(&handle, NCCL_NET_HANDLE_MAXSIZE,
@@ -190,7 +192,7 @@ int main(int argc, char *argv[])
 		while (sComm_next == NULL || rComm == NULL) {
 			/* Connect to next rank */
 			if (sComm_next == NULL) {
-				OFINCCLCHECKGOTO(extNet->connect(dev, (void *)src_handle_next,
+				OFINCCLCHECKGOTO(extNet->connect(net_ctx, dev, (void *)src_handle_next,
 					(void **)&sComm_next, &s_ignore), res, exit);
 			}
 
@@ -218,7 +220,7 @@ int main(int argc, char *argv[])
 
 			while (send_req[idx] == NULL) {
 				OFINCCLCHECKGOTO(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
-						send_mhandle[idx], (void **)&send_req[idx]), res, exit);
+						send_mhandle[idx], nullptr, (void **)&send_req[idx]), res, exit);
 			}
 		}
 
@@ -232,7 +234,7 @@ int main(int argc, char *argv[])
 
 			while (recv_req[idx] == NULL) {
 				OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
-						sizes, tags, &recv_mhandle[idx], (void **)&recv_req[idx]), res, exit);
+						sizes, tags, &recv_mhandle[idx], nullptr, (void **)&recv_req[idx]), res, exit);
 			}
 		}
 
@@ -336,6 +338,8 @@ int main(int argc, char *argv[])
 
 		MPI_Barrier(MPI_COMM_WORLD);
 	}
+
+	OFINCCLCHECKGOTO(extNet->finalize(net_ctx), res, exit);
 
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();

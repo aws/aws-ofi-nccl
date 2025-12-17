@@ -46,7 +46,7 @@ public:
 				char local_handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 
 				// Create listen comm
-				OFINCCLTHROW(ext_net->listen(physical_dev, &local_handle,
+				OFINCCLTHROW(ext_net->listen(net_ctx, physical_dev, &local_handle,
 											reinterpret_cast<void**>(&ctx.lcomms[dev_idx])));
 
 				// Exchange and store peer handles
@@ -69,7 +69,7 @@ public:
 			// Poll until both send and recv comms are created
 			while (ctx.scomms[dev_idx] == nullptr || ctx.rcomms[dev_idx] == nullptr) {
 				if (ctx.scomms[dev_idx] == nullptr) {
-					OFINCCLTHROW(ext_net->connect(physical_dev, peer_handle_copy,
+					OFINCCLTHROW(ext_net->connect(net_ctx, physical_dev, peer_handle_copy,
 												 reinterpret_cast<void**>(&ctx.scomms[dev_idx]),
 												 &ctx.shandles[dev_idx]));
 				}
