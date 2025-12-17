@@ -456,31 +456,47 @@ static inline std::shared_ptr<int[]> get_support_gdr(test_nccl_net_t* ext_net) {
 	return gdr_support;
 }
 
-inline test_nccl_net_t *get_extNet(void)
-{
-	void *netPluginLib = NULL;
-	test_nccl_net_t *extNet = NULL;
 
+static inline void set_system_page_size()
+{
 	// Get system page size for memory allocation calculations
 	auto system_page_size_sysconf = sysconf(_SC_PAGESIZE);
 	if (OFI_UNLIKELY(system_page_size_sysconf <= 0)) {
 		throw std::runtime_error("Failed to get system page size");
 	}
 	system_page_size = static_cast<size_t>(system_page_size_sysconf);
+}
 
-	netPluginLib = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
+
+static inline void *load_netPlugin(void)
+{
+	void *netPluginLib = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
 	if (netPluginLib == NULL) {
 		NCCL_OFI_WARN("Unable to load libnccl-net.so: %s", dlerror());
-		return NULL;
 	}
+	return netPluginLib;
+}
 
-	extNet = (test_nccl_net_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
+static inline test_nccl_net_t *get_netPlugin_symbol(void *netPluginLib)
+{
+	test_nccl_net_t *extNet = (test_nccl_net_t *)dlsym(netPluginLib, STR(NCCL_PLUGIN_SYMBOL));
 	if (extNet == NULL) {
 		NCCL_OFI_WARN("NetPlugin, could not find %s symbol",
 			      STR(NCCL_PLUGIN_SYMBOL));
 	}
-
 	return extNet;
+}
+
+static inline test_nccl_net_t *get_extNet(void)
+{
+	set_system_page_size();
+
+	void *netPluginLib = load_netPlugin();
+	if (netPluginLib == NULL) {
+		return NULL;
+	}
+
+	return get_netPlugin_symbol(netPluginLib);
 }
 
 /**
@@ -895,20 +911,14 @@ protected:
 class TestSuite {
 public:
 	TestSuite() {
-		// Get system page size for memory allocation calculations
-		auto system_page_size_sysconf = sysconf(_SC_PAGESIZE);
-		if (OFI_UNLIKELY(system_page_size_sysconf <= 0)) {
-			throw std::runtime_error("Failed to get system page size");
-		}
-		system_page_size = static_cast<size_t>(system_page_size_sysconf);
+		set_system_page_size();
 
-		net_plugin_handle = dlopen("libnccl-net.so", RTLD_NOW | RTLD_LOCAL);
+		net_plugin_handle = load_netPlugin();
 		if (net_plugin_handle == nullptr) {
 			throw std::runtime_error(std::string("Unable to load libnccl-net.so: ") + dlerror());
 		}
 
-		ext_net = static_cast<test_nccl_net_t*>(
-			dlsym(net_plugin_handle, STR(NCCL_PLUGIN_SYMBOL)));
+		ext_net = get_netPlugin_symbol(net_plugin_handle);
 		if (ext_net == nullptr) {
 			throw std::runtime_error("Could not find symbol");
 		}
