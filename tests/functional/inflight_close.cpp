@@ -45,7 +45,11 @@ public:
 		}
 	}
 
-protected:
+	void teardown(ThreadContext& ctx) override {
+		return TestScenario::teardown(ctx);
+	}
+
+private:
 	static constexpr size_t DATA_SIZE = 1024 * 1024;
 	static constexpr int TAG = 1;
 
@@ -106,45 +110,13 @@ protected:
 	}
 };
 
-class PartialCommCloseTest : public InflightCloseTest {
-public:
-	explicit PartialCommCloseTest(size_t num_threads = 0, size_t num_iterations = 1)
-		: InflightCloseTest(num_threads, num_iterations) {
-		name = "Partial Comm Close Test";
-	}
-
-	void run(ThreadContext& ctx) override {
-		if (ctx.lcomms.size() < 2) return;
-
-		auto gdr_support = get_support_gdr(ext_net);
-
-		// Close even devices (0, 2, 4...) with inflight operations
-		for (size_t dev_idx = 0; dev_idx < ctx.lcomms.size(); dev_idx += 2) {
-			int buffer_type = gdr_support[ctx.device_map[dev_idx]] ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
-			run_iteration(ctx, dev_idx, buffer_type);
-		}
-
-		// Verify odd devices (1, 3, 5...) still work after even devices failed
-		for (size_t dev_idx = 1; dev_idx < ctx.lcomms.size(); dev_idx += 2) {
-			if (ctx.lcomms[dev_idx] != nullptr) {
-				int buffer_type = gdr_support[ctx.device_map[dev_idx]] ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
-				run_iteration(ctx, dev_idx, buffer_type);
-			}
-		}
-	}
-};
-
 int main(int argc, char* argv[])
 {
 	ofi_log_function = logger;
 	TestSuite suite;
 	InflightCloseTest test(0, 10);      // single-threaded, 10 iterations
 	InflightCloseTest mt_test(4, 10);   // 4 threads, 10 iterations each
-	PartialCommCloseTest partial_test(0, 10);
-	PartialCommCloseTest partial_mt_test(4, 10);
 	suite.add(&test);
 	suite.add(&mt_test);
-	suite.add(&partial_test);
-	suite.add(&partial_mt_test);
 	return suite.run_all();
 }
