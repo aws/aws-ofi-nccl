@@ -126,6 +126,11 @@ public:
 	{
 		return domain;
 	}
+
+	inline std::vector<ofi_domain_ptr *> get_ofi_domains() override
+	{
+		return {&domain};
+	}
 	
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
 	{
@@ -315,6 +320,11 @@ public:
 	inline struct fi_info *get_ofi_info_for_cm() override
 	{
 		return info;
+	}
+
+	inline std::vector<struct fi_info *>get_ofi_infos() override
+	{
+		return {info};
 	}
 
 	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
