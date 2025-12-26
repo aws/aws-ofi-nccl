@@ -24,8 +24,7 @@ const static int CM_CONN_INCOMPLETE = 0;
  * An object returned from listener::accept() which represents a connection in
  * progress.
  */
-class nccl_ofi_cm_receiver
-{
+class nccl_ofi_cm_receiver{
 public:
 	/**
 	 * Return transport-specific connect message data from sender, after
