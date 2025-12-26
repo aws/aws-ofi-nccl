@@ -25,25 +25,50 @@ permissions:
 jobs:
   format-check:
     runs-on: ubuntu-latest
-    
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
+    name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Check clang-format version
-      run: |
-        clang-format --version
-        VERSION=$(clang-format --version | grep -oP '\d+\.\d+' | head -1)
-        if [ "$(echo "$VERSION < 18.1" | bc -l)" -eq 1 ]; then
-          echo "Error: clang-format version $VERSION is too old. Version 18.1+ required for .clang-format-ignore support."
-          exit 1
-        fi
-        echo "clang-format version $VERSION is compatible"
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Call `autoreconf -ivf`
+        run: |
+          ./autogen.sh
+
+      - name: Run Configure
+        run: |
+          if [ "${{ matrix.sdk }}" = "neuron" ]; then
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --${{ matrix.platform-aws }}-platform-aws \
+                        --enable-neuron
+          else
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --${{ matrix.platform-aws }}-platform-aws \
+                        --with-cuda=/usr/local/cuda/
+          fi
         
-    - name: Check code formatting
-      run: |
-        echo "Checking code formatting..."
-        make check-format
+      - name: Check clang-format version
+        run: |
+          clang-format --version
+          VERSION=$(clang-format --version | grep -oP '\d+\.\d+' | head -1)
+          if [ "$(echo "$VERSION < 18.1" | bc -l)" -eq 1 ]; then
+            echo "Error: clang-format version $VERSION is too old. Version 18.1+ required for .clang-format-ignore support."
+            exit 1
+          fi
+          echo "clang-format version $VERSION is compatible"
+          
+      - name: Check code formatting
+        run: |
+          echo "Checking code formatting..."
+          make check-format
 
   amazonlinux:
     needs: [format-check]
