@@ -23,6 +23,41 @@ permissions:
   packages: read
 
 jobs:
+  format-check:
+    runs-on: ubuntu-24.04
+    name: format-check        
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:cuda-clang-latest-none-efalattest
+    
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Plugin
+        run: |
+          set -x
+          export CC="cc"
+          export CXX="c++"
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      --with-cuda=/usr/local/cuda/
+          
+        
+      - name: Install clang-format
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
+          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" >> /etc/apt/sources.list
+          apt-get update && apt-get install -y clang-format-19 bc
+          
+      - name: Check code formatting
+        run: |
+          echo "Checking code formatting..."
+          ln -sf /usr/bin/clang-format-19 /usr/local/bin/clang-format
+          make check-format
+
   amazonlinux:
     strategy:
       matrix:
