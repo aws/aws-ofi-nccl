@@ -24,26 +24,48 @@ permissions:
 
 jobs:
   format-check:
-    runs-on: ubuntu-latest
-    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
-    name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        cc-variant:
+          - latest
+          - legacy
+        cc:
+          - gcc
+          - clang
+        tracing:
+          - lttng
+          - none
+        sdk:
+          - cuda
+          - neuron
+        include:
+          - cc-variant: latest
+            cc: clang
+            cc-version: 18
+          - cc-variant: latest
+            cc: gcc
+            cc-version: 13
+
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Call `autoreconf -ivf`
+      - name: Build Plugin
         run: |
+          set -x
+          export CC="cc"
+          export CXX="c++"
           ./autogen.sh
-
-      - name: Run Configure
-        run: |
-          if [ "${{ matrix.sdk }}" = "neuron" ]; then
+          if [ "${{ matrix.sdk }}" = "neuron" ]
+          then
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
-                        --${{ matrix.platform-aws }}-platform-aws \
+                        --enable-platform-aws \
                         --enable-neuron
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
@@ -51,7 +73,7 @@ jobs:
                         --enable-tests=yes \
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
-                        --${{ matrix.platform-aws }}-platform-aws \
+                        --enable-platform-aws \
                         --with-cuda=/usr/local/cuda/
           fi
         
