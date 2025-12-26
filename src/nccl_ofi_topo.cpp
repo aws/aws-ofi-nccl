@@ -721,7 +721,7 @@ static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
  * @param 	gpu_node
  * 		Topology node on which this operation is started
  */
-static int propoagate_accel_count(hwloc_obj_t gpu_node)
+static int propagate_accel_count(hwloc_obj_t gpu_node)
 {
 	hwloc_obj_t node = gpu_node;
 	nccl_ofi_topo_data_t *userdata = (nccl_ofi_topo_data_t *)node->userdata;
@@ -757,7 +757,7 @@ static int propoagate_accel_count(hwloc_obj_t gpu_node)
 /*
  * @brief	Propagate counts from accelerator topology nodes to marked topology nodes.
  */
-static int propoagate_accel_group_counts(hwloc_topology_t topo)
+static int propagate_accel_group_counts(hwloc_topology_t topo)
 {
 	int ret = 0;
 	hwloc_obj_t obj = NULL;
@@ -776,7 +776,7 @@ static int propoagate_accel_group_counts(hwloc_topology_t topo)
 		}
 
 		if (is_accel) {
-			propoagate_accel_count(obj);
+			propagate_accel_count(obj);
 		}
 	}
 
@@ -1058,7 +1058,7 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 		return ret;
 	}
 
-	ret = propoagate_accel_group_counts(topo->topo);
+	ret = propagate_accel_group_counts(topo->topo);
 	if (ret != 0) {
 		return ret;
 	}
