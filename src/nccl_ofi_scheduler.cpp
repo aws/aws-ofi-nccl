@@ -45,7 +45,7 @@ static inline size_t sizeof_schedule(int num_rails)
  */
 static int get_num_stripes(nccl_net_ofi_threshold_scheduler_t *scheduler_p, size_t size, int num_rails)
 {
-	/* Number of stripes is atleast 1 for zero-sized messages and at most equal to num of rails */
+	/* Number of stripes is at least 1 for zero-sized messages and at most equal to num of rails */
 	int num_stripes = (int)std::max(1UL, std::min(NCCL_OFI_DIV_CEIL(size,
 									scheduler_p->min_stripe_size),
 						      static_cast<long unsigned>(num_rails)));
@@ -250,7 +250,7 @@ static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
 }
 
 /*
- * @brief	Intialize a provided base scheduler struct
+ * @brief	Initialize a provided base scheduler struct
  *
  * This function should be called by the init function of a derived scheduler.
  *

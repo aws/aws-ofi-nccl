@@ -299,7 +299,7 @@ static int write_topo_file(nccl_ofi_topo_t *topo)
 
 	char filename[32];
 	if (snprintf(filename, sizeof(filename), "/proc/self/fd/%d", topo_fd) < 0) {
-		NCCL_OFI_WARN("Errror preparing topo file name");
+		NCCL_OFI_WARN("Error preparing topology file name");
 		ret = -EIO;
 		goto error;
 	}
@@ -437,7 +437,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	props->max_write_inline_size = max_write_inline_size;
 
 	/* 
-	 * Actual max tansfer size is the min size between the interface and
+	 * Actual max transfer size is the min size between the interface and
 	 * libfabric's data transfer layer
 	 * 
 	 * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in
@@ -566,7 +566,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req_t *req,
 	ncompls = ++(req->ncompls);
 
 	/* Set state to completed if all completions arrived but avoid
-	 * overriding the state in case of previs errors */
+	 * overriding the state in case of previous errors */
 	if (ncompls == total_ncompls &&
 	    OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
