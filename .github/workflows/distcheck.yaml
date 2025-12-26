@@ -23,7 +23,77 @@ permissions:
   packages: read
 
 jobs:
+  format-check:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        cc-variant:
+          - latest
+          - legacy
+        cc:
+          - gcc
+          - clang
+        tracing:
+          - lttng
+          - none
+        sdk:
+          - cuda
+          - neuron
+        include:
+          - cc-variant: latest
+            cc: clang
+            cc-version: 18
+          - cc-variant: latest
+            cc: gcc
+            cc-version: 13
+
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Plugin
+        run: |
+          set -x
+          export CC="cc"
+          export CXX="c++"
+          ./autogen.sh
+          if [ "${{ matrix.sdk }}" = "neuron" ]
+          then
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --enable-neuron
+          else
+            ./configure --with-mpi=/opt/amazon/openmpi \
+                        --with-libfabric=/opt/amazon/efa \
+                        --enable-tests=yes \
+                        --enable-werror=yes \
+                        --enable-picky-compiler=yes \
+                        --enable-platform-aws \
+                        --with-cuda=/usr/local/cuda/
+          fi
+        
+      - name: Check clang-format version
+        run: |
+          clang-format --version
+          VERSION=$(clang-format --version | grep -oP '\d+\.\d+' | head -1)
+          if [ "$(echo "$VERSION < 18.1" | bc -l)" -eq 1 ]; then
+            echo "Error: clang-format version $VERSION is too old. Version 18.1+ required for .clang-format-ignore support."
+            exit 1
+          fi
+          echo "clang-format version $VERSION is compatible"
+          
+      - name: Check code formatting
+        run: |
+          echo "Checking code formatting..."
+          make check-format
+
   amazonlinux:
+    needs: [format-check]
     strategy:
       matrix:
         sdk:
@@ -92,6 +162,7 @@ jobs:
         run: make distcheck V=1
 
   distcheck:
+    needs: [format-check]
     runs-on: ubuntu-22.04
     strategy:
       matrix:
@@ -167,7 +238,7 @@ jobs:
 
   codechecker:
     runs-on: ubuntu-22.04
-    needs: [distcheck]
+    needs: [format-check, distcheck]
     strategy:
       matrix:
         sdk:
