@@ -106,7 +106,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 	props->regIsGlobal = 0;
 
 	/* 
-	 * Actual max tansfer size is the min size between the interface and
+	 * Actual max transfer size is the min size between the interface and
 	 * libfabric's data transfer layer
 	 * 
 	 * ext-net v9 API interfaces updated the sizes to size_t type. But sizes in
