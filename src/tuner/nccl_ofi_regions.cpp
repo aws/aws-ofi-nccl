@@ -1660,13 +1660,13 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 		{
 			collType = ncclFuncAllGather;
 				nccl_ofi_tuner_point_t extended_pat_simple =
-			extend_region((nccl_ofi_tuner_point_t){369098752, 128},
-						  (nccl_ofi_tuner_point_t){738197504, 256},
-						  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
-	nccl_ofi_tuner_point_t extended_ring_ll128 =
-			extend_region((nccl_ofi_tuner_point_t){603979776, 128},
-						  (nccl_ofi_tuner_point_t){1207959552, 256},
-						  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+					extend_region((nccl_ofi_tuner_point_t){369098752, 128},
+							(nccl_ofi_tuner_point_t){738197504, 256},
+							(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+			nccl_ofi_tuner_point_t extended_ring_ll128 =
+					extend_region((nccl_ofi_tuner_point_t){603979776, 128},
+							(nccl_ofi_tuner_point_t){1207959552, 256},
+							(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
 					{.algorithm = NCCL_ALGO_RING,
@@ -1701,7 +1701,7 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 							{294912, 4},
 							{4718592, 8},
 							{9437184, 16},
-							{18874368, 32},
+							{75497472, 32},
 							{218103808, 64},
 							{369098752, 128},
 							{738197504, 256},
@@ -1715,7 +1715,7 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 							{738197504, 256},
 							{369098752, 128},
 							{218103808, 64},
-							{18874368, 32},
+							{75497472, 32},
 							{9437184, 16},
 							{4718592, 8},
 							{294912, 4},
@@ -1754,13 +1754,13 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 		{
 			collType = ncclFuncReduceScatter;
 			nccl_ofi_tuner_point_t extended_pat_simple =
-				extend_region((nccl_ofi_tuner_point_t){503316480, 128},
-						  (nccl_ofi_tuner_point_t){1006632960, 256},
-						  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+					extend_region((nccl_ofi_tuner_point_t){503316480, 128},
+							(nccl_ofi_tuner_point_t){1006632960, 256},
+							(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 			nccl_ofi_tuner_point_t extended_ring_ll128 =
-				extend_region((nccl_ofi_tuner_point_t){603979776, 128},
-						  (nccl_ofi_tuner_point_t){1207959552, 256},
-						  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+					extend_region((nccl_ofi_tuner_point_t){603979776, 128},
+							(nccl_ofi_tuner_point_t){1207959552, 256},
+							(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
 					{.algorithm = NCCL_ALGO_RING,
@@ -1790,7 +1790,7 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 							{45056, 2},
 							{2359296, 4},
 							{4718592, 8},
-							{9437184, 16},
+							{67108864, 16},
 							{92274688, 32},
 							{218103808, 64},
 							{503316480, 128},
@@ -1806,7 +1806,7 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 							{503316480, 128},
 							{218103808, 64},
 							{92274688, 32},
-							{9437184, 16},
+							{67108864, 16},
 							{4718592, 8},
 							{2359296, 4},
 							{45056, 2},
