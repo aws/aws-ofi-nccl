@@ -60,18 +60,11 @@ jobs:
                       --with-cuda=/usr/local/cuda/
           
         
-      - name: Install and check clang-format
+      - name: Install clang-format
         run: |
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | apt-key add -
           echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main" >> /etc/apt/sources.list
           apt-get update && apt-get install -y clang-format-19 bc
-          clang-format-19 --version
-          VERSION=$(clang-format-19 --version | grep -oP '\d+\.\d+' | head -1)
-          if (( $(echo "$VERSION < 18.1" | bc -l) )); then
-            echo "Error: clang-format version $VERSION is too old. Version 18.1+ required for .clang-format-ignore support."
-            exit 1
-          fi
-          echo "clang-format version $VERSION is compatible"
           
       - name: Check code formatting
         run: |
