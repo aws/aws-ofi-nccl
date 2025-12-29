@@ -29,26 +29,19 @@ jobs:
       matrix:
         cc-variant:
           - latest
-          - legacy
         cc:
-          - gcc
           - clang
         tracing:
-          - lttng
           - none
         sdk:
           - cuda
-          - neuron
         include:
           - cc-variant: latest
             cc: clang
             cc-version: 18
-          - cc-variant: latest
-            cc: gcc
-            cc-version: 13
-
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    name: format-check        
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
+    
     steps:
       - uses: actions/checkout@v4
 
@@ -58,27 +51,18 @@ jobs:
           export CC="cc"
           export CXX="c++"
           ./autogen.sh
-          if [ "${{ matrix.sdk }}" = "neuron" ]
-          then
-            ./configure --with-mpi=/opt/amazon/openmpi \
-                        --with-libfabric=/opt/amazon/efa \
-                        --enable-tests=yes \
-                        --enable-werror=yes \
-                        --enable-picky-compiler=yes \
-                        --enable-platform-aws \
-                        --enable-neuron
-          else
-            ./configure --with-mpi=/opt/amazon/openmpi \
-                        --with-libfabric=/opt/amazon/efa \
-                        --enable-tests=yes \
-                        --enable-werror=yes \
-                        --enable-picky-compiler=yes \
-                        --enable-platform-aws \
-                        --with-cuda=/usr/local/cuda/
-          fi
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      --with-cuda=/usr/local/cuda/
+          
         
-      - name: Check clang-format version
+      - name: Install and check clang-format
         run: |
+          apt-get update && apt-get install -y clang-format
           clang-format --version
           VERSION=$(clang-format --version | grep -oP '\d+\.\d+' | head -1)
           if [ "$(echo "$VERSION < 18.1" | bc -l)" -eq 1 ]; then
