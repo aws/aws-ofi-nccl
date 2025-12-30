@@ -84,8 +84,10 @@
 
 // Can be changed when porting new versions to the plugin
 #define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v11
+#define NCCL_GIN_PLUGIN_SYMBOL ncclGinPlugin_v11
 
 typedef ncclNet_v11_t test_nccl_net_t;
+typedef ncclGin_v11_t test_nccl_gin_t;
 typedef ncclNetProperties_v11_t test_nccl_properties_t;
 typedef ncclNetDeviceHandle_v11_t test_nccl_net_device_handle_t;
 typedef ncclNetCommConfig_v11_t test_nccl_net_config_t;
@@ -181,16 +183,18 @@ static inline ncclResult_t allocate_buff(void **buf, size_t size, int buffer_typ
  * @param buf Buffer to initialize
  * @param size Size of buffer in bytes
  * @param buffer_type NCCL_PTR_HOST for host memory, NCCL_PTR_CUDA for device memory
+ * @param value value for each element, default '1'
  * @return ncclSuccess on success, error code otherwise
  */
-static inline ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type)
+static inline ncclResult_t initialize_buff(void *buf, size_t size, int buffer_type, int value='1')
 {
 	switch (buffer_type) {
 	case NCCL_PTR_CUDA:
-		CUDACHECK(cudaMemset(buf, '1', size));
+		CUDACHECK(cudaMemset(buf, value, size));
+		CUDACHECK(cudaStreamSynchronize(cudaStreamDefault));
 		break;
 	case NCCL_PTR_HOST:
-		memset(buf, '1', size);
+		memset(buf, value, size);
 		break;
 	default:
 		NCCL_OFI_WARN("Unidentified buffer type: %d", buffer_type);
@@ -453,6 +457,16 @@ static inline test_nccl_net_t *get_netPlugin_symbol(void *netPluginLib)
 			      STR(NCCL_PLUGIN_SYMBOL));
 	}
 	return extNet;
+}
+
+static inline test_nccl_gin_t *get_ginPlugin_symbol(void *netPluginLib)
+{
+	test_nccl_gin_t *extGin = (test_nccl_gin_t *)dlsym(netPluginLib, STR(NCCL_GIN_PLUGIN_SYMBOL));
+	if (extGin == NULL) {
+		NCCL_OFI_WARN("GinPlugin, could not find %s symbol",
+			      STR(NCCL_GIN_PLUGIN_SYMBOL));
+	}
+	return extGin;
 }
 
 static inline test_nccl_net_t *get_extNet(void)
