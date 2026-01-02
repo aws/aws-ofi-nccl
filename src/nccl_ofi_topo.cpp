@@ -1630,9 +1630,12 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 				return ret;
 			}
 			indent += indent_offset;
-	} else if (node->type == HWLOC_OBJ_NUMANODE) {
+	} else if (node->type == HWLOC_OBJ_NUMANODE && node->attr->numanode.local_memory > 0) {
 		/* Before HWLOC 2.0, NUMA topology nodes are stored in
-		 * the normal topology tree */
+		 * the normal topology tree.
+		 *
+		 * Only those NUMA nodes with non-zero memory should be added, if not already filtered by HWLOC.
+		 * */
 		if ((ret = write_cpu_opening_tag(node, file, indent))) {
 			return ret;
 		}
@@ -1648,8 +1651,11 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 		 * them. However, in case a NUMA node is found in the memory
 		 * children list and the NUMA node stores user data,
 		 * the NUMA node is on the path to a PCI device and
-		 * will be printed in the next recursion. */
-		if (!numa_mem_child->userdata) {
+		 * will be printed in the next recursion. 
+		 *
+		 * Only those NUMA nodes with non-zero memory should be added, if not already filtered by HWLOC.
+		 * */
+		if (!numa_mem_child->userdata && numa_mem_child->attr->numanode.local_memory > 0){
 			if ((ret = write_cpu_opening_tag(numa_mem_child, file, indent))) {
 				return ret;
 			}
