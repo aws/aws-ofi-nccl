@@ -5400,7 +5400,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req_t *req)
 	return rc;
 }
 
-#ifdef HAVE_NEURON
+#if HAVE_NEURON
 static int post_flush_req(nccl_net_ofi_rdma_req_t *req)
 {
  	nccl_net_ofi_rdma_recv_comm_t *r_comm = (nccl_net_ofi_rdma_recv_comm_t *)req->comm;
