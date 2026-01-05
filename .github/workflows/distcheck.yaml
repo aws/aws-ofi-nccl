@@ -55,6 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
       - name: Call `autoreconf -ivf`
         run: |
           ./autogen.sh
@@ -119,6 +124,11 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
 
       - name: Build Plugin
         run: |
@@ -206,7 +216,7 @@ jobs:
         run: |
           # Ensure exit on real errors, but continue on exit code 2
           set +e
-          
+
           # Create directories first
           mkdir -p /workspace/codechecker_Results
           mkdir -p /workspace/codechecker_Results_HTML
