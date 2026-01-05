@@ -307,6 +307,7 @@ AC_CONFIG_FILES([Makefile
                  tests/Makefile
                  tests/functional/Makefile
                  tests/unit/Makefile
+                 tests/integration/Makefile
                  topology/Makefile])
 AC_OUTPUT
 echo "*"

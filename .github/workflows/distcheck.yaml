@@ -88,7 +88,7 @@ jobs:
         run: make V=1
 
       - name: Call `make check`
-        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+        run: make check V=1 || (cat tests/unit/test-suite.log tests/integration/test-suite.log && exit 1)
 
       - name: Call `make install`
         run: make install V=1
@@ -159,7 +159,7 @@ jobs:
         run: make V=1
 
       - name: Call `make check`
-        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+        run: make check V=1 || (cat tests/unit/test-suite.log tests/integration/test-suite.log && exit 1)
 
       - name: Call `make install`
         run: sudo make install V=1

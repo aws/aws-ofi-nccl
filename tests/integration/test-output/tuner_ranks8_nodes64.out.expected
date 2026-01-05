@@ -1,0 +1,36 @@
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+64    512   32            AllGather  Ring      Ll        0.0     P5en
+64    512   32            AllGather  Ring      Ll        0.0       P5
+64    512   32            AllGather  Ring      Ll        0.0       P6
+64    512   19922945      AllGather  Ring   Ll128        0.0     P5en
+64    512   19922945      AllGather  Ring   Ll128        0.0       P5
+64    512   19922945      AllGather  Ring   Ll128        0.0       P6
+64    512   9730781953    AllGather  Ring  Simple        0.0     P5en
+64    512   9730781953    AllGather  Ring  Simple        0.0       P5
+64    512   9730781953    AllGather  Ring  Simple        0.0       P6
+                             collective  algo   proto  nchannels platform
+nodes ranks message_size                                                 
+64    512   32            ReduceScatter  Ring      Ll        0.0     P5en
+64    512   32            ReduceScatter  Ring      Ll        0.0       P5
+64    512   32            ReduceScatter  Ring      Ll        0.0       P6
+64    512   18874362      ReduceScatter  Ring   Ll128        0.0     P5en
+64    512   18874362      ReduceScatter  Ring   Ll128        0.0       P5
+64    512   18874362      ReduceScatter  Ring   Ll128        0.0       P6
+64    512   13869165227   ReduceScatter  Ring  Simple        0.0     P5en
+64    512   13869165227   ReduceScatter  Ring  Simple        0.0       P5
+64    512   13869165227   ReduceScatter  Ring  Simple        0.0       P6
+                         collective       algo   proto  nchannels platform
+nodes ranks message_size                                                  
+64    512   32            AllReduce       Tree      Ll        0.0     P5en
+64    512   32            AllReduce       Tree      Ll        0.0       P5
+64    512   32            AllReduce       Tree      Ll        0.0       P6
+64    512   196609        AllReduce       Tree   Ll128        0.0     P5en
+64    512   196609        AllReduce       Tree   Ll128        0.0       P5
+64    512   196609        AllReduce       Tree   Ll128        0.0       P6
+64    512   167529012     AllReduce  Nvls_Tree  Simple        0.0     P5en
+64    512   167529012     AllReduce  Nvls_Tree  Simple        0.0       P5
+64    512   167529012     AllReduce  Nvls_Tree  Simple        0.0       P6
+64    512   20401094657   AllReduce       Ring  Simple        0.0     P5en
+64    512   20401094657   AllReduce       Ring  Simple        0.0       P5
+64    512   20401094657   AllReduce       Ring  Simple        0.0       P6
