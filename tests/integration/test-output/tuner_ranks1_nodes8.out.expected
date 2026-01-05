@@ -1,0 +1,48 @@
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+8     8     32            AllGather   Pat  Simple        0.0     P5en
+8     8     32            AllGather   Pat  Simple        1.0       P6
+8     8     32            AllGather   Pat  Simple        0.0  P6_B300
+8     8     106496        AllGather  Ring      Ll        0.0  P6_B300
+8     8     137626        AllGather   Pat  Simple        0.0  P6_B300
+8     8     524289        AllGather   Pat  Simple        2.0       P6
+8     8     1048577       AllGather   Pat  Simple        0.0       P6
+8     8     2097153       AllGather  Ring   Ll128        0.0       P6
+8     8     4194305       AllGather  Ring   Ll128        0.0     P5en
+8     8     4718593       AllGather  Ring   Ll128        0.0  P6_B300
+8     8     16777217      AllGather  Ring  Simple        0.0       P6
+8     8     23967452      AllGather  Ring  Simple        0.0     P5en
+8     8     29372429      AllGather  Ring  Simple        0.0       P5
+8     8     37748737      AllGather  Ring  Simple        0.0  P6_B300
+                             collective  algo   proto  nchannels platform
+nodes ranks message_size                                                 
+8     8     32            ReduceScatter   Pat  Simple        0.0     P5en
+8     8     32            ReduceScatter   Pat  Simple        1.0       P6
+8     8     32            ReduceScatter   Pat  Simple        0.0  P6_B300
+8     8     524289        ReduceScatter   Pat  Simple        2.0       P6
+8     8     1048577       ReduceScatter   Pat  Simple        0.0       P6
+8     8     4194305       ReduceScatter  Ring   Ll128        0.0     P5en
+8     8     4718593       ReduceScatter  Ring   Ll128        0.0  P6_B300
+8     8     7054057       ReduceScatter  Ring   Ll128        0.0       P6
+8     8     16777217      ReduceScatter  Ring  Simple        0.0       P6
+8     8     23967452      ReduceScatter  Ring  Simple        0.0     P5en
+8     8     31457281      ReduceScatter  Ring  Simple        0.0  P6_B300
+8     8     33554432      ReduceScatter  Ring  Simple        0.0       P5
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+8     8     32            AllReduce  Tree      Ll        0.0     P5en
+8     8     32            AllReduce  Ring   Ll128        0.0       P5
+8     8     32            AllReduce  Tree      Ll        0.0       P6
+8     8     32            AllReduce  Tree      Ll        0.0  P6_B300
+8     8     32769         AllReduce  Tree   Ll128        0.0       P6
+8     8     65537         AllReduce  Tree   Ll128        0.0     P5en
+8     8     65537         AllReduce  Tree   Ll128        0.0  P6_B300
+8     8     524289        AllReduce  Tree  Simple        0.0     P5en
+8     8     524289        AllReduce  Ring   Ll128        0.0       P6
+8     8     1179649       AllReduce  Tree  Simple        0.0  P6_B300
+8     8     1887437       AllReduce  Ring   Ll128        0.0     P5en
+8     8     2359297       AllReduce  Ring   Ll128        0.0  P6_B300
+8     8     17176674      AllReduce  Ring  Simple        0.0       P6
+8     8     17343050      AllReduce  Ring  Simple        0.0       P5
+8     8     25165825      AllReduce  Ring  Simple        0.0     P5en
+8     8     31457281      AllReduce  Ring  Simple        0.0  P6_B300

@@ -29,7 +29,7 @@ public:
 		 */
 		auto platform_name = PlatformManager::get_global().get_platform().get_name();
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Tuner selected platform: %s", platform_name);
-		if (strcmp(platform_name, "AWS") == 0) {
+		if (strcmp(platform_name, "AWS") == 0 || strcmp(platform_name, "Default") == 0) {
 			platform_type = nccl_net_ofi_get_product_name();
 		} else {
 			platform_type = nullptr;

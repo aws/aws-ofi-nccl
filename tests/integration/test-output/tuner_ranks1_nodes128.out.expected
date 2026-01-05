@@ -1,0 +1,48 @@
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+128   128   32            AllGather   Pat  Simple        0.0     P5en
+128   128   32            AllGather   Pat  Simple        1.0       P6
+128   128   32            AllGather   Pat  Simple        0.0  P6_B300
+128   128   8388609       AllGather   Pat  Simple        2.0       P6
+128   128   16777217      AllGather   Pat  Simple        0.0       P6
+128   128   117440522     AllGather  Ring   Ll128        0.0     P5en
+128   128   248512516     AllGather  Ring   Ll128        0.0       P6
+128   128   291504132     AllGather  Ring  Simple        0.0       P6
+128   128   301989899     AllGather  Ring  Simple        0.0     P5en
+128   128   369098753     AllGather  Ring   Ll128        0.0  P6_B300
+128   128   532934909     AllGather  Ring  Simple        0.0       P5
+128   128   603979777     AllGather  Ring  Simple        0.0  P6_B300
+                             collective  algo   proto  nchannels platform
+nodes ranks message_size                                                 
+128   128   32            ReduceScatter   Pat  Simple        0.0     P5en
+128   128   32            ReduceScatter   Pat  Simple        1.0       P6
+128   128   32            ReduceScatter   Pat  Simple        0.0  P6_B300
+128   128   8388609       ReduceScatter   Pat  Simple        2.0       P6
+128   128   16777217      ReduceScatter   Pat  Simple        0.0       P6
+128   128   117440522     ReduceScatter  Ring   Ll128        0.0     P5en
+128   128   287309825     ReduceScatter  Ring  Simple        0.0       P6
+128   128   301989899     ReduceScatter  Ring  Simple        0.0     P5en
+128   128   503316481     ReduceScatter  Ring   Ll128        0.0  P6_B300
+128   128   536870912     ReduceScatter  Ring  Simple        0.0       P5
+128   128   603979777     ReduceScatter  Ring  Simple        0.0  P6_B300
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+128   128   32            AllReduce  Tree      Ll        0.0     P5en
+128   128   32            AllReduce  Tree      Ll        0.0       P6
+128   128   32            AllReduce  Tree      Ll        0.0  P6_B300
+128   128   32768         AllReduce  Tree      Ll        0.0       P6
+128   128   32769         AllReduce  Tree   Ll128        0.0       P6
+128   128   65537         AllReduce  Tree   Ll128        0.0     P5en
+128   128   65537         AllReduce  Tree   Ll128        0.0  P6_B300
+128   128   1239227       AllReduce  Tree  Simple        0.0     P5en
+128   128   1441793       AllReduce  Tree  Simple        0.0  P6_B300
+128   128   8388609       AllReduce  Tree  Simple        0.0       P6
+128   128   33554439      AllReduce  Ring   Ll128        0.0     P5en
+128   128   119477259     AllReduce  Tree   Ll128        0.0       P5
+128   128   164626443     AllReduce  Ring   Ll128        0.0       P6
+128   128   191457728     AllReduce  Ring   Ll128        0.0       P5
+128   128   269484043     AllReduce  Ring  Simple        0.0       P5
+128   128   297795595     AllReduce  Ring  Simple        0.0       P6
+128   128   301989899     AllReduce  Ring  Simple        0.0     P5en
+128   128   503316481     AllReduce  Ring   Ll128        0.0  P6_B300
+128   128   603979777     AllReduce  Ring  Simple        0.0  P6_B300
