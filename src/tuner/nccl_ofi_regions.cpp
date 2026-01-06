@@ -2080,12 +2080,12 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 		goto exit;
 	}
 
-	/* On P6 platform and only for TreeLL128 AR 0x0, we pick best nChannels that
+	/* On P6-B200 platform and only for TreeLL128 AR 0x0, we pick best nChannels that
 	 * results in largest chunkSize at 4-32MB. When same chunkSize is achieved with
 	 * different nChannels, we pick the largest nChannels. This is a general pattern
 	 * we validated with data that seen performance improvements, but with a few
 	 * message sizes being the outliers. */
-	if ((region_ctx->platform == NCCL_OFI_TUNER_P6 || region_ctx->platform == NCCL_OFI_TUNER_P6_B300) &&
+	if ((region_ctx->platform == NCCL_OFI_TUNER_P6) &&
 	    (nBytes >= 4 * 1024 * 1024) && (nBytes <= 32 * 1024 * 1024) &&
 	    (algorithm == NCCL_ALGO_TREE) && (protocol == NCCL_PROTO_LL128) &&
 	    (region_ctx->dims.num_nodes * 8 == region_ctx->dims.num_ranks)) {
