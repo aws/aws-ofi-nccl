@@ -79,6 +79,14 @@ for ranks in ${RANKS_PER_NODE}; do
         # Expected output file
         EXPECTED_FILE="${OUTPUT_DIR}/tuner_ranks${ranks}_nodes${nodes}.out.expected"
 
+        # Debug: Check if expected file exists before running test
+        echo "  DEBUG: Current working directory: $(pwd)"
+        echo "  DEBUG: Looking for expected file: ${EXPECTED_FILE}"
+        echo "  DEBUG: Expected file exists: $(test -f "${EXPECTED_FILE}" && echo "YES" || echo "NO")"
+        if [ -f "${EXPECTED_FILE}" ]; then
+            echo "  DEBUG: Expected file size: $(wc -l < "${EXPECTED_FILE}") lines"
+        fi
+
         # Run the command with current parameters
         if ${COMMAND} ${LIBRARY} \
             --min-ranks-per-node ${ranks} \
@@ -87,6 +95,29 @@ for ranks in ${RANKS_PER_NODE}; do
             --max-nnodes ${nodes} \
             1>"${OUT_FILE}" \
             2>"${ERR_FILE}"; then
+
+            # Debug: Check actual output file after command execution
+            echo "  DEBUG: Command completed successfully"
+            echo "  DEBUG: Actual output file: ${OUT_FILE}"
+            echo "  DEBUG: Actual output file exists: $(test -f "${OUT_FILE}" && echo "YES" || echo "NO")"
+            if [ -f "${OUT_FILE}" ]; then
+                echo "  DEBUG: Actual output file size: $(wc -l < "${OUT_FILE}") lines"
+                if [ -s "${OUT_FILE}" ]; then
+                    echo "  DEBUG: First 10 lines of actual output:"
+                    head -10 "${OUT_FILE}" | sed 's/^/    /'
+                else
+                    echo "  DEBUG: Actual output file is empty"
+                fi
+            fi
+            echo "  DEBUG: Error file: ${ERR_FILE}"
+            echo "  DEBUG: Error file exists: $(test -f "${ERR_FILE}" && echo "YES" || echo "NO")"
+            if [ -f "${ERR_FILE}" ] && [ -s "${ERR_FILE}" ]; then
+                echo "  DEBUG: Error file size: $(wc -l < "${ERR_FILE}") lines"
+                echo "  DEBUG: Error file contents:"
+                head -25 "${ERR_FILE}" | sed 's/^/    /'
+            else
+                echo "  DEBUG: Error file is empty or doesn't exist"
+            fi
 
             # Compare output with expected file
             if [ -f "${EXPECTED_FILE}" ]; then
