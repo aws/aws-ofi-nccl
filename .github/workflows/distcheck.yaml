@@ -55,6 +55,11 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
       - name: Call `autoreconf -ivf`
         run: |
           ./autogen.sh
@@ -83,7 +88,7 @@ jobs:
         run: make V=1
 
       - name: Call `make check`
-        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+        run: make check V=1 || (cat tests/unit/test-suite.log tests/integration/test-suite.log && exit 1)
 
       - name: Call `make install`
         run: make install V=1
@@ -120,6 +125,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
       - name: Build Plugin
         run: |
           set -x
@@ -149,7 +159,7 @@ jobs:
         run: make V=1
 
       - name: Call `make check`
-        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+        run: make check V=1 || (cat tests/unit/test-suite.log tests/integration/test-suite.log && exit 1)
 
       - name: Call `make install`
         run: sudo make install V=1
@@ -206,7 +216,7 @@ jobs:
         run: |
           # Ensure exit on real errors, but continue on exit code 2
           set +e
-          
+
           # Create directories first
           mkdir -p /workspace/codechecker_Results
           mkdir -p /workspace/codechecker_Results_HTML
