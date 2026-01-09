@@ -11,6 +11,11 @@
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "nccl_ofi_param.h"
 
+using std::abs;
+using std::log2;
+using std::pow;
+const double eps = 1e-4;
+
 static int test_extend_region(void)
 {
     nccl_ofi_tuner_point_t extended_point;
@@ -21,8 +26,9 @@ static int test_extend_region(void)
     extended_point = extend_region((nccl_ofi_tuner_point_t){2, 8},
                                    (nccl_ofi_tuner_point_t){4, 8},
                                    (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
-    if (extended_point.x != TUNER_MAX_SIZE || extended_point.y != 8) {
-        printf("X-Axis Extend Test Failed : Extended Points : x = %f y = %f\n", extended_point.x, extended_point.y);
+    if (abs(extended_point.x - TUNER_MAX_SIZE) > eps || extended_point.y != 8) {
+        printf("X-Axis Extend Test Failed : Extended Points : x = %f (diff = %f) y = %f\n", extended_point.x,
+            extended_point.x - TUNER_MAX_SIZE, extended_point.y);
         return -1;
     }
 
@@ -39,11 +45,13 @@ static int test_extend_region(void)
     extended_point = extend_region((nccl_ofi_tuner_point_t){8, 64},
                                    (nccl_ofi_tuner_point_t){8290304, 72},
                                    (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
-    slope = (72.0 - 64.0) / (8290304.0 - 8.0); // slope = (y2 - y1)/(x2 - x1)
+    slope = (log2(72.0) - log2(64.0)) / (log2(8290304.0) - log2(8.0)); // slope = (y2 - y1)/(x2 - x1)
     // y3 = mx3 + c and substitute for m=(y2-y1)/(x2-x1) and c = y2 - mx2
-    projected_y = 72.0 + slope * (TUNER_MAX_SIZE - 8290304.0); // y3 = y2 + mx3 - mx2
-    if (extended_point.x != TUNER_MAX_SIZE || extended_point.y != projected_y) {
-        printf("X-Axis Upper Bound Test Failed : Extended Points : x = %f y = %f\n", extended_point.x, extended_point.y);
+    projected_y = pow(2.0, log2(72.0) + slope * (log2(TUNER_MAX_SIZE) - log2(8290304.0))); // y3 = y2 + mx3 - mx2
+    if (abs(extended_point.x - TUNER_MAX_SIZE) > eps || extended_point.y != projected_y) {
+        printf("X-Axis Upper Bound Test Failed : Extended Points : x = %f (diff = %f) y = %f (diff = %f) \n",
+            extended_point.x, extended_point.x - TUNER_MAX_SIZE,
+            extended_point.y, extended_point.y - projected_y);
         return -1;
     }
 
@@ -51,10 +59,12 @@ static int test_extend_region(void)
     extended_point = extend_region((nccl_ofi_tuner_point_t){8, 64},
                                    (nccl_ofi_tuner_point_t){16, 1024},
                                    (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
-    slope = (1024.0 - 64.0) / (16.0 - 8.0);
-    projected_x = ((TUNER_MAX_RANKS - 1024.0) / slope) + 16;
-    if (extended_point.x != projected_x || extended_point.y != TUNER_MAX_RANKS) {
-        printf("X-Axis Upper Bound Test Failed : Extended Points : x = %f y = %f\n", extended_point.x, extended_point.y);
+    slope = (log2(1024.0) - log2(64.0)) / (log2(16) - log2(8.0));
+    projected_x = pow(2, ((log2(TUNER_MAX_RANKS) - log2(1024.0)) / slope) + log2(16));
+    if (abs(extended_point.x - projected_x) > eps || extended_point.y != TUNER_MAX_RANKS) {
+        printf("X-Axis Upper Bound Test 2 Failed : Extended Points : x = %f (diff = %f) y = %f (diff = %f) \n",
+            extended_point.x, extended_point.x - projected_x,
+            extended_point.y, extended_point.y - TUNER_MAX_RANKS);
         return -1;
     }
 
@@ -75,7 +85,7 @@ static int test_extend_region(void)
 |                 .                                      |
 |            .                                           |
 |--------*------*----------*----------*---------*--------*---
-|    p3(4M, 2)                                           |p4(TUNER_MAX_SIZE, 2))
+|    p3(4M, 2)                                           |p5(TUNER_MAX_SIZE, 2))
 |                                                        |
 */
 static int test_is_inside_region(void) {
@@ -87,6 +97,14 @@ static int test_is_inside_region(void) {
         (nccl_ofi_tuner_point_t){(double)48.0 * 1024 * 1024, 16},
         (nccl_ofi_tuner_point_t){(double)288.0 * 1024 * 1024, 128},
         (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+    printf("INFO extended point: %f %f \n", e_48M_16_288M_128.x, e_48M_16_288M_128.y );
+
+    p1_288M_128.transform_log2();
+    p2_38M_16.transform_log2();
+    p3_4M_2.transform_log2();
+    p5_maxM_2.transform_log2();
+    e_48M_16_288M_128.transform_log2();
+    printf("INFO extended point after transform_log2: %f %f \n", e_48M_16_288M_128.x, e_48M_16_288M_128.y );
 
     nccl_ofi_tuner_region_t region = {
         .algorithm = NCCL_ALGO_RING,
@@ -116,7 +134,7 @@ static int test_is_inside_region(void) {
     To find the points on the edge of the polygons:
     1. Consider two vertices of the polygon
     2. Calculate the slope and y-intercept of the line.
-    3. Using the equation y = mx + c, get multiple points on the line in powers of 2.
+    3. Using the equation y = m * x + c, get multiple points on the line in powers of 2.
     */
     for (size_t i = 0; i < region.num_vertices; i++) {
         size_t k = (i + 1) % region.num_vertices;
@@ -124,7 +142,9 @@ static int test_is_inside_region(void) {
         double c = region.vertices[k].y - (slope * (region.vertices[i].x));
         for (double x = region.vertices[i].x; x < region.vertices[k].x; x = x * 2) {
             double y = (slope * x) + c;
-            if (is_inside_region((nccl_ofi_tuner_point_t){x, y}, &region) != 0)
+            nccl_ofi_tuner_point_t test_point {x, y, nccl_ofi_tuner_point_t::LOG2};
+
+            if (is_inside_region(test_point, &region) != 0)
                 return -1;
             // printf(" Is (%.10f, %.10f) inside the region : %d\n", x, y, is_inside_region(
             //     (nccl_ofi_tuner_point_t){x, y}, &region));
@@ -133,8 +153,8 @@ static int test_is_inside_region(void) {
 
     printf("All points on the edges of the polygon are detected correcltly\n");
 
-    size_t num_points = 20;
-    const nccl_ofi_tuner_point_t inside_vertices[] = {{16.0 * 1024 * 1024, 4},
+    const size_t num_points = 20;
+    nccl_ofi_tuner_point_t inside_vertices[] = {{16.0 * 1024 * 1024, 4},
                                                       {128.0 * 1024 * 1024, 4},
                                                       {1.0 * 1024 * 1024 * 1024, 4},
                                                       {4.0 * 1024 * 1024 * 1024, 4},
@@ -152,19 +172,24 @@ static int test_is_inside_region(void) {
                                                       {32.0 * 1024 * 1024 * 1024, 128},
                                                       {64.0 * 1024 * 1024 * 1024, 128},
                                                       {64.0 * 1024 * 1024 * 1024, 256},
-                                                      {TUNER_MAX_SIZE - 1.0, 128},
-                                                      {e_48M_16_288M_128.x - 1.0, e_48M_16_288M_128.y - 1.0}};
+                                                      // Note, set a big enough diff (10.0) below, otherwise
+                                                      // the delta after log2 is within floating error (eps).
+                                                      {TUNER_MAX_SIZE - 10.0, 128},
+                                                      {e_48M_16_288M_128.x - 1.0, e_48M_16_288M_128.y - 10.0, nccl_ofi_tuner_point_t::LOG2}};
 
     /* These points should be inside the polygon */
     for (size_t i = 0; i < num_points; i++) {
-        if (is_inside_region(inside_vertices[i], &region) != 1) {
-            printf("%.10f, %.10f\n", inside_vertices[i].x, inside_vertices[i].y);
+        inside_vertices[i].transform_log2();
+        int d = is_inside_region(inside_vertices[i], &region);
+        if (d != 1) {
+            printf("%ld: %.10f, %.10f is_inside_region: %d\n", i, inside_vertices[i].x, inside_vertices[i].y, d);
             return -1;
         };
     }
 
     printf("All points inside the polygon are detected correcltly\n");
 
+    const size_t outside_num_points = 24;
     const nccl_ofi_tuner_point_t outside_vertices[] = {{8.0 * 1024 * 1024, 4},
                                                        {8.0 * 1024 * 1024, 32},
                                                        {8.0 * 1024 * 1024, 128},
@@ -191,9 +216,10 @@ static int test_is_inside_region(void) {
                                                        {e_48M_16_288M_128.x + 1.0, e_48M_16_288M_128.y + 1.0}};
 
     /* These points should be outside the polygons */
-    for (size_t i = 0; i < num_points; i++) {
-        if (is_inside_region(outside_vertices[i], &region) != -1) {
-            printf("%.10f, %.10f\n", outside_vertices[i].x, outside_vertices[i].y);
+    for (size_t i = 0; i < outside_num_points; i++) {
+        int d = is_inside_region(outside_vertices[i], &region);
+        if ( d != -1) {
+            printf("%ld: %.10f, %.10f is_inside_region: %d\n", i, outside_vertices[i].x, outside_vertices[i].y, d);
             return -1;
         };
     }
@@ -214,13 +240,17 @@ static int test_is_inside_region(void) {
 }
 
 int main(int argc, const char **argv) {
-    if (test_extend_region() < 0) {
+    int ret = 0;
+    if ((ret |= test_extend_region()) < 0) {
         printf("Extend Region test failed\n");
     };
 
-    if (test_is_inside_region() < 0) {
+    if ((ret |= test_is_inside_region()) < 0) {
         printf("Is inside region function failed\n");
     }
 
-    return 0;
+    if (ret == 0) {
+        printf("All tests passed.\n");
+    }
+    return ret;
 }
