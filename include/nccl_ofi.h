@@ -15,6 +15,7 @@
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
 
+#include "gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
@@ -222,6 +223,16 @@ typedef struct nccl_net_ofi_conn_handle {
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
 
+
+/**
+ * A pair of a Libfabric address (buffer of size MAX_EP_ADDR) and actual
+ * address size. This is used in various parts of the code.
+ */
+struct nccl_ofi_addr {
+	char addr[MAX_EP_ADDR];
+	size_t addr_len;
+};
+
 /**
  * Properties structure
  */
@@ -291,6 +302,17 @@ public:
 	 * "leader NIC"
 	 */
 	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+
+	/**
+	 * Retrieve fi_info object associated with this device with rail index.
+	 * There may be more than one info per device, depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin. While we should
+	 * be able to just pass the fabric/domain objects and call fi_getinfo()
+	 * instead, currently this doesn't work with EFA provider. Once that
+	 * works, that is the preferred approach.
+	 */
+	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) = 0;
 
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
@@ -422,6 +444,22 @@ public:
 	 * associated with the "leader NIC".
 	 */
 	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
+
+	/**
+	 * Retrieve the fid_domain object associated with this plugin domain
+	 * with rail index. There may be more than one fid_domain per domain,
+	 * depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin currently. We will
+	 * have the transport implement the GIN API which will be addressed in
+	 * follow-up PRs.
+	 */
+	virtual ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) = 0;
+
+	/**
+	 * @brief       Returns number of rails.
+	 */
+	virtual uint16_t get_ofi_num_rails() = 0;
 
 	/* Create a new endpoint
 	 *
@@ -719,6 +757,29 @@ public:
 	 */
 	virtual void invalidate();
 
+	/**
+	 * Get reference to the back-pointed net domain object associated with
+	 * this endpoint
+	 */
+	inline nccl_net_ofi_domain_t &get_domain()
+	{
+		return *domain;
+	}
+
+	/**
+	 * Get pointer to the gin resources associated with this endpoint, or
+	 * nullptr if there are no associated GIN resources.
+	 */
+	inline nccl_ofi_gin_resources *get_gin_resources()
+	{
+		return gin_resources;
+	}
+
+	inline void set_gin_resources(nccl_ofi_gin_resources *gin_resources_arg)
+	{
+		this->gin_resources = gin_resources_arg;
+	}
+
 protected:
 	/**
 	 * @brief	Virtual destructor.
@@ -759,6 +820,11 @@ protected:
 	 * zero. sendrecv_release_ep() releases the resources if the
 	 * reference counter is decreased down to zero. */
 	int ref_cnt;
+
+	/**
+	 * Associated GIN resources object
+	 */
+	nccl_ofi_gin_resources *gin_resources = nullptr;
 };
 
 enum nccl_net_ofi_comm_type_t {

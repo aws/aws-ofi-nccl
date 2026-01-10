@@ -729,6 +729,18 @@ public:
 		return domain_rails[0].domain;
 	}
 
+	inline ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) override
+	{
+		assert(!domain_rails.empty());
+		assert(rail_id < num_rails);
+		return domain_rails[rail_id].domain;
+	}
+
+	inline uint16_t get_ofi_num_rails() override
+	{
+		return num_rails;
+	}
+
 	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device()
 	{
 		return reinterpret_cast<nccl_net_ofi_rdma_device_t *>(device);
@@ -1385,6 +1397,13 @@ public:
 	{
 		assert(!device_rails.empty());
 		return device_rails[0].info;
+	}
+
+	inline struct fi_info *get_ofi_info(uint16_t rail_id) override
+	{
+		assert(!this->device_rails.empty());
+		assert(rail_id < num_rails);
+		return device_rails[rail_id].info;
 	}
 
 	/**
