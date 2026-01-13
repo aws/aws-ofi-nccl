@@ -5290,9 +5290,10 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
 	uint16_t rail_id;
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size();
+	nccl_net_ofi_schedule_t *schedule = NULL;
 
 	if (ep->num_control_rails > 1) {
-		nccl_net_ofi_schedule_t *schedule = scheduler->get_schedule(scheduler, ctrl_msg_len, ep->num_control_rails);
+		schedule = scheduler->get_schedule(scheduler, ctrl_msg_len, ep->num_control_rails);
 
 		if (OFI_UNLIKELY(!(schedule))) {
 			return -EINVAL;
@@ -5300,6 +5301,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 			NCCL_OFI_WARN(
 				"Invalid schedule for outgoing control message. Expected one rail, but got "
 				"%zu", schedule->num_xfer_infos);
+			nccl_net_ofi_release_schedule(scheduler, schedule);
 			return -EINVAL;
 		}
 
@@ -5323,6 +5325,10 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req_t *req)
 		NCCL_OFI_TRACE_WRITE_CTRL_START(req->dev_id,
 			rail_id,
 			req->comm, req, req->msg_seq_num);
+	}
+
+	if (schedule) {
+		nccl_net_ofi_release_schedule(scheduler, schedule);
 	}
 
 	return rc;
