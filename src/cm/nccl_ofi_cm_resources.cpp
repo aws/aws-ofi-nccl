@@ -66,7 +66,7 @@ conn_msg_buffer_manager::conn_msg_buffer_manager(endpoint &_ep, size_t buffer_si
 	ep(_ep)
 {
 	int ret = nccl_ofi_freelist_init_mr(buffer_size, 16, 16, 0, nullptr, nullptr, endpoint::reg_mr, endpoint::dereg_mr,
-					    &ep, 1, &buff_fl);
+					    &ep, 1, "Connection Message Buffer", true, &buff_fl);
 	if (ret != 0) {
 		throw std::runtime_error("Failed to init freelist");
 	}

@@ -266,6 +266,7 @@ static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *schedu
 	int ret = 0;
 
 	ret = nccl_ofi_freelist_init(sizeof_schedule(num_rails), 16, 16, 0, NULL, NULL,
+				     "Scheduler", true,
 				     &scheduler->schedule_fl);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not allocate freelist of schedules");
