@@ -9,6 +9,7 @@
 #include <rdma/fabric.h>
 
 #include <deque>
+#include <variant>
 
 #include "nccl_ofi.h"
 #include "cm/nccl_ofi_cm.h"
@@ -103,6 +104,13 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	/* Invalid type */
 	NCCL_OFI_RDMA_INVALID_TYPE,
 } nccl_net_ofi_rdma_req_type_t;
+
+/* Distinguish data rails used for payload transfer from control rails
+ * used for protocol bookkeeping (mailboxes, control messages). */
+enum nccl_ofi_rdma_rail_type_t {
+       NCCL_OFI_RDMA_DATA_RAIL,
+       NCCL_OFI_RDMA_CONTROL_RAIL,
+};
 
 enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CTRL,
@@ -251,6 +259,42 @@ class nccl_net_ofi_rdma_ep_t;
 class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
+
+/**
+ * @brief Context structure for freelist memory registration callbacks.
+ *
+ * This struct holds the necessary information (domain, endpoint, rail type)
+ * that is passed to the freelist's memory registration and deregistration
+ * callback functions (freelist_regmr_host_fn and freelist_deregmr_host_fn).
+ * It provides the context needed to register memory regions for RDMA operations.
+ */
+template <nccl_ofi_rdma_rail_type_t Type>
+struct flush_freelist_regmr_ctx {
+       static constexpr nccl_ofi_rdma_rail_type_t rail_type{Type};
+       nccl_net_ofi_rdma_domain_t *domain;
+       nccl_net_ofi_rdma_ep_t *ep;
+
+       explicit flush_freelist_regmr_ctx() : domain(nullptr), ep(nullptr) {}
+       flush_freelist_regmr_ctx(nccl_net_ofi_rdma_domain_t *d, nccl_net_ofi_rdma_ep_t *e)
+           : domain(d), ep(e) {}
+};
+
+using control_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_CONTROL_RAIL>;
+using data_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_DATA_RAIL>;
+using freelist_ctx = std::variant<std::monostate, control_freelist_ctx, data_freelist_ctx>;
+
+/**
+ * @brief Structure grouping a freelist with its memory registration context.
+ *
+ * This struct bundles a freelist pointer with its associated registration context
+ * to keep related data together and improve code organization. The context is
+ * used during freelist initialization for memory registration callbacks.
+ */
+struct freelist_with_ctx {
+    nccl_ofi_freelist_t *fl;
+    freelist_ctx ctx;
+};
+typedef struct freelist_with_ctx freelist_with_ctx_t;
 
 struct nccl_net_ofi_rdma_req;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
@@ -636,10 +680,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_msgbuff_t *msgbuff;
 
 	/* Free list to track control buffers, for sending RDMA control messages */
-	nccl_ofi_freelist_t *ctrl_buff_fl;
+	freelist_with_ctx_t ctrl_buff;
 
 	/* Free list to track host flush buffers, for sending flush messages */
-	nccl_ofi_freelist_t *flush_buff_fl;
+	freelist_with_ctx_t flush_buff;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -761,6 +805,7 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		   int type,
 		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
@@ -816,14 +861,33 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_internal_mr(void *data,
 			    size_t size, int type,
-			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
+			    nccl_net_ofi_rdma_mr_handle_t **mhandle,
+			    nccl_net_ofi_ep_t *ep)
+	{
+		assert(system_page_size > 0);
+		assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
+		assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+		const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
+		return this->reg_mr<rail_type>(&ckey, type, mhandle);
+	}
 
 #if HAVE_DECL_FI_MR_DMABUF
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_internal_mr_dma_buf(void *data,
 				int fd, uint64_t offset, size_t size, int type,
-				nccl_net_ofi_rdma_mr_handle_t **mhandle);
+				nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				nccl_net_ofi_ep_t *ep)
+	{
+		assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
+		assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
+
+		const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, ep);
+		return this->reg_mr<rail_type>(&ckey, type, mhandle);
+	}
 #endif
 	/**
 	 * @brief	Deregister memory region
@@ -835,6 +899,14 @@ public:
 	 *		non-zero on error
 	 */
 	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
+
+	/**
+	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int dealloc_and_dereg_flush_buff();
 
 	uint16_t num_rails;
 	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
@@ -871,17 +943,10 @@ protected:
 	 * @return	0, on success
 	 * 		error, on others
 	 */
-	int alloc_and_reg_flush_buff(int dev_id);
-
-	/**
-	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
-	 *
-	 * @return	0, on success
-	 * 		error, on others
-	 */			    
-	int dealloc_and_dereg_flush_buff();
+	int alloc_and_reg_flush_buff(int dev_id, nccl_net_ofi_rdma_ep_t *ep);
 
 private:
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			     int type,
 			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
@@ -1225,9 +1290,9 @@ public:
 	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist_t *ctrl_rx_buff_fl = nullptr;
+	freelist_with_ctx_t ctrl_rx_buff;
 	/* Free list of eager rx buffers */
-	nccl_ofi_freelist_t *eager_rx_buff_fl = nullptr;
+	freelist_with_ctx_t eager_rx_buff;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl = nullptr;
 	/* Size of ctrl rx buffers */
