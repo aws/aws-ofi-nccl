@@ -5,6 +5,16 @@
 - Amazon Linux 2 and Amazon Linux 2023
 - Ubuntu 22.04 LTS and 24.04 LTS
 
+# v1.17.3 (2026-01)
+
+The 1.17.3 release series supports [NCCL v2.28.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.28.7-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+With this release, building with platform-aws requires [Libfabric v1.22.0amzn4.0](https://github.com/aws/libfabric/commits/v1.22.0amzn4.0) or greater. And it is currently tested with versions up to [Libfabric v2.3.1amzn1.0](https://github.com/aws/libfabric/commits/2.3.1amzn1.0).
+
+### Bug Fixes and Improvements:
+
+- Fixed a memory leak that can result in running out of host memory for long-running jobs.
+
 # v1.17.2 (2025-11)
 
 The 1.17.2 release series supports [NCCL v2.28.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.28.7-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
