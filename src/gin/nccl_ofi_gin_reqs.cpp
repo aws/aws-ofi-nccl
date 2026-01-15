@@ -7,6 +7,7 @@
 #include "gin/nccl_ofi_gin.h"
 #include "gin/nccl_ofi_gin_reqs.h"
 #include "gin/nccl_ofi_gin_resources.h"
+#include "nccl_ofi_tracepoint.h"
 
 int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
 							   fi_addr_t src_addr, uint16_t rail_id)
@@ -209,6 +210,8 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 	if (*done) {
 		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
 			       this->msg_seq_num);
+		NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_END(gin_comm.get_dev(), &gin_comm, peer_rank,
+						   msg_seq_num, this);
 		gin_comm.get_resources().return_req_to_pool(this);
 	}
 
