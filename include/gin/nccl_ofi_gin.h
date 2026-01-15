@@ -11,6 +11,7 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_gdrcopy.h"
+#include "nccl_ofi_tracepoint.h"
 
 /**
  * Context that is shared across all GIN communicators and created during GIN
@@ -170,9 +171,21 @@ public:
 			  nccl_net_ofi_send_comm_t *s_comm_, nccl_net_ofi_recv_comm_t *r_comm_,
 			  nccl_ofi_device_copy &copy_ctx_);
 
+	~nccl_ofi_gin_comm();
+
 	nccl_ofi_gin_resources &get_resources()
 	{
 		return resources;
+	}
+
+	int get_rank() const
+	{
+		return rank;
+	}
+
+	int get_dev() const
+	{
+		return dev;
 	}
 
 	/**
@@ -271,6 +284,7 @@ private:
 
 	int rank;
 	int nranks;
+	int dev;
 
 	/* AllGather ring for metadata exchange */
 	nccl_ofi_gin_allgather_comm ag_comm;
@@ -326,6 +340,12 @@ private:
 	int iput_signal_deliver_all(uint32_t peer_rank);
 
 	friend class nccl_ofi_gin_listen_comm;
+
+public:
+	/* NVTX tracing support - public for macro access (parallel to RDMA struct pattern) */
+#if HAVE_NVTX_TRACING
+	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
+#endif
 };
 
 #endif
