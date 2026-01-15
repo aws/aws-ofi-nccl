@@ -7031,10 +7031,10 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
                         length = target_length;
 			info_list = new_list;
 		}
-		NCCL_OFI_INFO(NCCL_NET, "Created device with %zu rails (originally found %zu rails)",
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Created device with %zu rails (originally found %zu rails)",
 			      length, original_length);
 	} else {
-		NCCL_OFI_INFO(NCCL_NET, "Created device with %zu rails", length);
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Created device with %zu rails", length);
 	}
 
 	/* Set NIC information */
