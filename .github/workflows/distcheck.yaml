@@ -120,6 +120,14 @@ jobs:
       - name: Call `make check`
         run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
 
+      - name: Install uv for tuner test
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Call `make check-tuner-regions-ci`
+        run: make -C tests/integration check-tuner-regions-ci V=1 || (cat tests/integration/test-suite.log && exit 1)
+
       - name: Call `make install`
         run: make install V=1
 
@@ -186,6 +194,14 @@ jobs:
       - name: Call `make check`
         run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
 
+      - name: Install uv for tuner test
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Call `make check-tuner-regions-ci`
+        run: make -C tests/integration check-tuner-regions-ci V=1 || (cat tests/integration/test-suite.log && exit 1)
+
       - name: Call `make install`
         run: sudo make install V=1
 
@@ -241,7 +257,6 @@ jobs:
         run: |
           # Ensure exit on real errors, but continue on exit code 2
           set +e
-          
           # Create directories first
           mkdir -p /workspace/codechecker_Results
           mkdir -p /workspace/codechecker_Results_HTML

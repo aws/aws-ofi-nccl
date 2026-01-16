@@ -1,0 +1,35 @@
+                         collective  algo   proto  nchannels platform
+nodes ranks message_size                                             
+256   2048  32            AllGather  Ring      Ll        0.0     P5en
+256   2048  32            AllGather  Ring      Ll        0.0       P6
+256   2048  32            AllGather  Ring      Ll        0.0  P6_B300
+256   2048  54550529      AllGather  Ring   Ll128        0.0     P5en
+256   2048  213385219     AllGather  Ring   Ll128        0.0       P6
+256   2048  218103809     AllGather  Ring   Ll128        0.0  P6_B300
+256   2048  32212254728   AllGather  Ring  Simple        0.0       P6
+                             collective  algo   proto  nchannels platform
+nodes ranks message_size                                                 
+256   2048  32            ReduceScatter  Ring      Ll        0.0     P5en
+256   2048  32            ReduceScatter  Ring      Ll        0.0       P6
+256   2048  32            ReduceScatter  Ring      Ll        0.0  P6_B300
+256   2048  88080385      ReduceScatter  Ring   Ll128        0.0     P5en
+256   2048  209190915     ReduceScatter  Ring   Ll128        0.0       P6
+256   2048  218103809     ReduceScatter  Ring   Ll128        0.0  P6_B300
+256   2048  34359738368   ReduceScatter  Ring  Simple        0.0       P6
+                         collective       algo   proto  nchannels platform
+nodes ranks message_size                                                  
+256   2048  32            AllReduce       Tree      Ll        0.0     P5en
+256   2048  32            AllReduce       Tree   Ll128        0.0       P5
+256   2048  32            AllReduce       Tree      Ll        0.0       P6
+256   2048  32            AllReduce       Tree      Ll        0.0  P6_B300
+256   2048  196609        AllReduce       Tree   Ll128        0.0     P5en
+256   2048  360448        AllReduce       Tree      Ll        0.0  P6_B300
+256   2048  360449        AllReduce       Tree   Ll128        0.0  P6_B300
+256   2048  393217        AllReduce       Tree   Ll128        0.0       P6
+256   2048  4194304       AllReduce       Tree   Ll128       32.0       P6
+256   2048  11520000      AllReduce       Tree   Ll128       16.0       P6
+256   2048  33554433      AllReduce       Tree   Ll128        0.0       P6
+256   2048  106430455     AllReduce  Nvls_Tree  Simple        0.0       P6
+256   2048  251658233     AllReduce  Nvls_Tree  Simple        0.0  P6_B300
+256   2048  319253401     AllReduce  Nvls_Tree  Simple        0.0     P5en
+256   2048  402653185     AllReduce  Nvls_Tree  Simple        0.0       P5
