@@ -83,6 +83,8 @@ int main(int argc, char *argv[])
 				     0,
 				     8,
 				     NULL, NULL,
+				     "Test",
+				     true,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -109,6 +111,8 @@ int main(int argc, char *argv[])
 				     16,
 				     entry_init_fn_simple,
 				     entry_fini_fn_simple,
+				     "Test",
+				     true,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -150,6 +154,8 @@ int main(int argc, char *argv[])
 				     8,
 				     0,
 				     NULL, NULL,
+				     "Test",
+				     true,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -171,6 +177,8 @@ int main(int argc, char *argv[])
 				     8,
 				     16,
 				     NULL, NULL,
+				     "Test",
+				     true,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -199,6 +207,8 @@ int main(int argc, char *argv[])
 				     0,
 				     16,
 				     NULL, NULL,
+				     "Test",
+				     true,
 				     &freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);
@@ -240,6 +250,8 @@ int main(int argc, char *argv[])
 					deregmr_simple,
 					(void *)0xdeadbeaf,
 					1,
+					"Test MR",
+					true,
 					&freelist);
 	if (ret != ncclSuccess) {
 		NCCL_OFI_WARN("freelist_init failed: %d", ret);

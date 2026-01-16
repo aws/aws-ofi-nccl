@@ -89,6 +89,7 @@ struct nccl_ofi_freelist_t {
 	size_t entry_size;
 
 	size_t num_allocated_entries;
+	size_t num_in_use_entries;
 	size_t max_entry_count;
 	size_t increase_entry_count;
 
@@ -104,6 +105,10 @@ struct nccl_ofi_freelist_t {
 
 	nccl_ofi_freelist_entry_init_fn entry_init_fn;
 	nccl_ofi_freelist_entry_fini_fn entry_fini_fn;
+
+	/* Name provided by user, for debugging prints only */
+	const char *name;
+	bool enable_leak_detection;
 
 	pthread_mutex_t lock;
 };
@@ -132,6 +137,13 @@ typedef struct nccl_ofi_freelist_t nccl_ofi_freelist_t;
  * any cleanup associated with the init callback, and will be called before
  * the backing memory is deallocated by the freelist. Either of these
  * callbacks can be set to NULL if not required.
+ *
+ * The required name parameter identifies this freelist in debugging prints. It
+ * must remain valid for the lifetime of this freelist.
+ *
+ * The user can optionally enable leak detection.  If enabled, the freelist will
+ * check for memory leaks when the freelist is finalized, and print a warning if
+ * memory has leaked.
  */
 int nccl_ofi_freelist_init(size_t entry_size,
 			   size_t initial_entry_count,
@@ -139,6 +151,8 @@ int nccl_ofi_freelist_init(size_t entry_size,
 			   size_t max_entry_count,
 			   nccl_ofi_freelist_entry_init_fn entry_init_fn,
 			   nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
+			   const char *name,
+			   bool enable_leak_detection,
 			   nccl_ofi_freelist_t **freelist_p);
 
 /* Initialize "complex" freelist structure
@@ -161,6 +175,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
 			      size_t entry_alignment,
+			      const char *name,
+			      bool enable_leak_detection,
 			      nccl_ofi_freelist_t **freelist_p);
 
 /*
@@ -231,6 +247,8 @@ static inline nccl_ofi_freelist_elem_t *nccl_ofi_freelist_entry_alloc
 	freelist->entries = entry->next;
 	nccl_ofi_freelist_entry_set_undefined(freelist, entry->ptr);
 
+	freelist->num_in_use_entries++;
+
 cleanup:
 	nccl_net_ofi_mutex_unlock(&freelist->lock);
 
@@ -258,6 +276,8 @@ static inline void nccl_ofi_freelist_entry_free(nccl_ofi_freelist_t *freelist,
 	freelist->entries = entry;
 
 	nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
+
+	freelist->num_in_use_entries--;
 
 	nccl_net_ofi_mutex_unlock(&freelist->lock);
 }

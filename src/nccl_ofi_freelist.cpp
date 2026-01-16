@@ -56,6 +56,8 @@ static int freelist_init_internal(size_t entry_size,
 				  nccl_ofi_freelist_deregmr_fn deregmr_fn,
 				  void *regmr_opaque,
 				  size_t entry_alignment,
+				  const char *name,
+				  bool enable_leak_detection,
 				  nccl_ofi_freelist_t **freelist_p)
 {
 	int ret;
@@ -95,6 +97,7 @@ static int freelist_init_internal(size_t entry_size,
 								increase_entry_count);
 
 	freelist->num_allocated_entries = 0;
+	freelist->num_in_use_entries = 0;
 	freelist->max_entry_count = max_entry_count;
 	freelist->increase_entry_count = increase_entry_count;
 	freelist->entries = NULL;
@@ -107,6 +110,10 @@ static int freelist_init_internal(size_t entry_size,
 
 	freelist->entry_init_fn = entry_init_fn;
 	freelist->entry_fini_fn = entry_fini_fn;
+
+	assert(name != nullptr);
+	freelist->name = name;
+	freelist->enable_leak_detection = enable_leak_detection;
 
 	ret = pthread_mutex_init(&freelist->lock, NULL);
 	if (ret != 0) {
@@ -134,6 +141,8 @@ int nccl_ofi_freelist_init(size_t entry_size,
 			   size_t max_entry_count,
 			   nccl_ofi_freelist_entry_init_fn entry_init_fn,
 			   nccl_ofi_freelist_entry_fini_fn entry_fini_fn,
+			   const char *name,
+			   bool enable_leak_detection,
 			   nccl_ofi_freelist_t **freelist_p)
 {
 	return freelist_init_internal(entry_size,
@@ -147,6 +156,8 @@ int nccl_ofi_freelist_init(size_t entry_size,
 				      NULL,
 				      NULL,
 				      1,
+				      name,
+				      enable_leak_detection,
 				      freelist_p);
 }
 
@@ -160,6 +171,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 			      nccl_ofi_freelist_deregmr_fn deregmr_fn,
 			      void *regmr_opaque,
 			      size_t entry_alignment,
+			      const char *name,
+			      bool enable_leak_detection,
 			      nccl_ofi_freelist_t **freelist_p)
 {
 	return freelist_init_internal(entry_size,
@@ -173,6 +186,8 @@ int nccl_ofi_freelist_init_mr(size_t entry_size,
 				      deregmr_fn,
 				      regmr_opaque,
 				      entry_alignment,
+				      name,
+				      enable_leak_detection,
 				      freelist_p);
 }
 
@@ -225,6 +240,11 @@ int nccl_ofi_freelist_fini(nccl_ofi_freelist_t *freelist)
 
 	freelist->entry_size = 0;
 	freelist->entries = NULL;
+
+	if (freelist->enable_leak_detection && freelist->num_in_use_entries > 0) {
+		NCCL_OFI_WARN("%s freelist: there are %lu in-use entries that are not released",
+			      freelist->name, freelist->num_in_use_entries);
+	}
 
 	pthread_mutex_destroy(&freelist->lock);
 

@@ -70,7 +70,8 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 	nccl_ofi_freelist_t *metadata_fl_ptr = nullptr;
 	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), 16, 16,
 					    0, nullptr, nullptr, ep.freelist_regmr_fn,
-					    ep.freelist_deregmr_fn, &ep, 1, &metadata_fl_ptr);
+					    ep.freelist_deregmr_fn, &ep, 1, "GIN Metadata", true,
+					    &metadata_fl_ptr);
 	if (ret != 0) {
 		throw std::runtime_error("Failed to initialize freelist for GIN metadata");
 	}
