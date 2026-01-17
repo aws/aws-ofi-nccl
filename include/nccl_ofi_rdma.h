@@ -9,6 +9,7 @@
 #include <rdma/fabric.h>
 
 #include <deque>
+#include <variant>
 
 #include "nccl_ofi.h"
 #include "cm/nccl_ofi_cm.h"
@@ -103,6 +104,14 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	/* Invalid type */
 	NCCL_OFI_RDMA_INVALID_TYPE,
 } nccl_net_ofi_rdma_req_type_t;
+
+
+/* Distinguish data rails used for payload transfer from control rails
+ * used for protocol bookkeeping (mailboxes, control messages). */
+enum nccl_ofi_rdma_rail_type_t {
+	NCCL_OFI_RDMA_DATA_RAIL,
+	NCCL_OFI_RDMA_CONTROL_RAIL,
+};
 
 enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CTRL,
@@ -251,6 +260,41 @@ class nccl_net_ofi_rdma_ep_t;
 class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
+
+/**
+ * @brief Context structure for freelist memory registration callbacks.
+ *
+ * This struct holds the necessary information (domain, endpoint, rail type)
+ * that is passed to the freelist's memory registration and deregistration
+ * callback functions (freelist_regmr_host_fn and freelist_deregmr_host_fn).
+ * It provides the context needed to register memory regions for RDMA operations.
+ */
+template <nccl_ofi_rdma_rail_type_t Type>
+struct flush_freelist_regmr_ctx {
+	static constexpr nccl_ofi_rdma_rail_type_t rail_type{Type};
+	nccl_net_ofi_rdma_domain_t *domain;
+	nccl_net_ofi_rdma_ep_t *ep;
+
+	explicit flush_freelist_regmr_ctx() : domain(nullptr), ep(nullptr) {}
+	flush_freelist_regmr_ctx(nccl_net_ofi_rdma_domain_t *d, nccl_net_ofi_rdma_ep_t *e)
+	    : domain(d), ep(e) {}
+};
+
+using control_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_CONTROL_RAIL>;
+using data_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_DATA_RAIL>;
+using freelist_ctx = std::variant<std::monostate, control_freelist_ctx, data_freelist_ctx>;
+
+/**
+ * @brief Structure grouping a freelist with its memory registration context.
+ *
+ * This struct bundles a freelist pointer with its associated registration context
+ * to keep related data together and improve code organization. The context is
+ * used during freelist initialization for memory registration callbacks.
+ */
+struct freelist_with_ctx {
+    nccl_ofi_freelist_t *fl;
+    freelist_ctx ctx;
+};
 
 struct nccl_net_ofi_rdma_req;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
