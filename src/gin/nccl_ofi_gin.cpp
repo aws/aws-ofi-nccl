@@ -395,6 +395,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	uint16_t msg_seq_num = rank_comm.next_target_seq_num;
 	uint32_t remote_comm_id = rank_comm.comm_id;
 	uint16_t rail_id = resources.get_next_rail();
+	auto scheduler = gin_ep.get_scheduler();
 
 	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS])) {
 		NCCL_OFI_WARN("Next sequence number is in use");
@@ -404,18 +405,11 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 
 	/* Determine how many segments to send */
 	uint16_t nseg = 0;
-	if (size > 0) {
-		/* For put or putSignal with size > 0, send data as
-		   write-immediate */
-		nseg += 1;
-	}
 	if (signalOp != 0) {
 		/* For signal operations (putSignal or signal only), send
 		   metadata message */
 		nseg += 1;
 	}
-
-	assert_always(nseg > 0);
 
 	NCCL_OFI_TRACE(NCCL_NET,
 		       "iputSignal srcOff %lu srcMhandle %p size %zu dstOff %lu"
@@ -425,32 +419,49 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		       signalMhandle, signalValue, signalOp, msg_seq_num);
 
 	int ret = 0;
-	nccl_net_ofi_gin_write_req_t *write_req = nullptr;
+	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs {};
 
 	if (size > 0) {
 		/* Post write-immediate request with user data */
 		void *src = static_cast<uint8_t *>(srcMhandle->input_address) + srcOff;
 		auto *src_mhandle = srcMhandle->local_handle;
-		void *desc = fi_mr_desc(src_mhandle->get_mr(rail_id));
+
+		const auto schedule =
+			scheduler->get_schedule(scheduler, size, gin_ep.get_num_rails());
+		auto &xfers = schedule->rail_xfer_infos;
+
+		nseg += schedule->num_xfer_infos;
+		assert_always(nseg > 0);
 
 		uint64_t data = GIN_IMM_GET_IMM_DATA(remote_comm_id, msg_seq_num, nseg);
 
 		auto &dest_remote_mr = dstMhandle->remote_mr[dst_rank];
 		uint64_t dest = dest_remote_mr.address_offset + dstOff;
+		int wr_it = 0;
 
-		write_req = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
-			gin_ep.get_rail(rail_id).ofi_ep.get(), src, size, desc, data,
-			rank_comm.address[rail_id], dest, dest_remote_mr.mr_key[rail_id]);
+		for (uint16_t rail_it = 0; rail_it < schedule->num_xfer_infos; rail_it++) {
+			nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
+			void *desc = fi_mr_desc(src_mhandle->get_mr(xfer_info->rail_id));
+			auto write_req = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
+				gin_ep.get_rail(xfer_info->rail_id).ofi_ep.get(),
+				(void *)((uintptr_t)src + xfer_info->offset), xfer_info->msg_size,
+				desc, data, rank_comm.address[xfer_info->rail_id],
+				dest + xfer_info->offset,
+				dest_remote_mr.mr_key[xfer_info->rail_id]);
 
-		ret = write_req->post();
-		if (ret == -FI_EAGAIN) {
-			resources.add_pending_req(write_req);
-			ret = 0;
-		} else if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
-			resources.return_req_to_pool(write_req);
-			return ret;
+			write_reqs[wr_it++] = write_req;
+			ret = write_req->post();
+			if (ret == -FI_EAGAIN) {
+				resources.add_pending_req(write_req);
+				ret = 0;
+			} else if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
+				resources.return_req_to_pool(write_req);
+				nccl_net_ofi_release_schedule(scheduler, schedule);
+				return ret;
+			}
 		}
+		nccl_net_ofi_release_schedule(scheduler, schedule);
 	}
 
 	nccl_ofi_freelist_elem_t *metadata_elem = nullptr;
@@ -498,7 +509,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	}
 
 	auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_req_t>(
-		*this, dst_rank, msg_seq_num, write_req, send_req);
+		*this, dst_rank, msg_seq_num, write_reqs, send_req);
 
 	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = true;
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
@@ -704,30 +715,27 @@ int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
 
 	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
+	nccl_net_ofi_gin_iputsignal_recv_req *req;
 	if (it == outstanding_iput_signal_recv_reqs.end()) {
-		auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
+		req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
 
 		req->num_seg_completions = 1;
 		req->total_segments = total_segms;
 		outstanding_iput_signal_recv_reqs[map_key] = req;
 
-		if (req->num_seg_completions == req->total_segments) {
-			/* In this case, there is no metadata associated with
-			   this request, so fill in necessary fields */
-			req->metadata.msg_seq_num = msg_seq_num;
-			req->metadata.num_segments = req->total_segments;
-		}
-
-		ret = iput_signal_deliver_all(peer_rank);
-
 	} else {
-		auto *req = it->second;
-
+		req = it->second;
 		assert(req->total_segments == total_segms);
-
 		req->num_seg_completions += 1;
-		ret = iput_signal_deliver_all(peer_rank);
 	}
+
+	if (req->num_seg_completions == req->total_segments) {
+		/* Fill in the fields related to metadata */
+		req->metadata.msg_seq_num = msg_seq_num;
+		req->metadata.num_segments = req->total_segments;
+	}
+
+	ret = iput_signal_deliver_all(peer_rank);
 
 	return ret;
 }

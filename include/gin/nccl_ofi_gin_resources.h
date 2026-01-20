@@ -15,6 +15,7 @@
 #include "gin/nccl_ofi_gin_reqs.h"
 #include "gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_scheduler.h"
 
 static inline void freelist_deleter(nccl_ofi_freelist_t *fl)
 {
@@ -60,6 +61,8 @@ public:
 
 	nccl_ofi_gin_ep_t(const nccl_ofi_gin_ep_t &) = delete;
 
+	~nccl_ofi_gin_ep_t();
+
 	uint16_t get_num_rails() const
 	{
 		return num_rails;
@@ -70,6 +73,10 @@ public:
 		return rails[rail_id];
 	}
 
+	nccl_net_ofi_scheduler_t *get_scheduler()
+	{
+		return scheduler;
+	}
 	/**
 	 * Register memory region with this endpoint
 	 *
@@ -105,6 +112,7 @@ private:
 
 	std::vector<nccl_ofi_gin_ep_rail_t> rails;
 
+	nccl_net_ofi_scheduler_t *scheduler;
 	/**
 	 * Handler for list of CQ entries
 	 */
