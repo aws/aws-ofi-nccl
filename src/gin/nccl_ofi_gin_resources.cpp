@@ -24,6 +24,21 @@ nccl_ofi_gin_ep_t::nccl_ofi_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain
 	for (uint16_t r = 0; r < this->num_rails; r++) {
 		rails.emplace_back(r, domain);
 	}
+	int ret = nccl_net_ofi_threshold_scheduler_init(this->num_rails, &scheduler);
+	if (ret != 0) {
+		throw std::runtime_error("GIN endpoint constructor: scheduler init failed");
+	}
+}
+
+nccl_ofi_gin_ep_t::~nccl_ofi_gin_ep_t()
+{
+	if (scheduler) {
+		int ret = scheduler->fini(this->scheduler);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Cleanup of GIN endpoint failed, scheduler_fini returned %s",
+				      strerror(-ret));
+		}
+	}
 }
 
 int nccl_ofi_gin_ep_t::gin_process_completions(struct fi_cq_data_entry *cq_entry,

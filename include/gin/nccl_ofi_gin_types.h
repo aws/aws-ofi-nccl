@@ -49,13 +49,13 @@ struct nccl_net_ofi_gin_signal_metadata_msg_t {
 /**
  * Format of immediate data:
  *
- * | 2-bit segment count | 20-bit comm ID | 10-bit msg_seq_num |
+ * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
  */
 #define GIN_IMM_NUM_SEQ_BITS_SIZE 10
-#define GIN_IMM_COMM_BITS_SIZE 20
+#define GIN_IMM_COMM_BITS_SIZE 18
 #define GIN_MAX_COMMS (1 << GIN_IMM_COMM_BITS_SIZE)
 #define GIN_IMM_SEG_SHIFT (GIN_IMM_NUM_SEQ_BITS_SIZE + GIN_IMM_COMM_BITS_SIZE)
-#define GIN_IMM_NUM_SEG_BITS_SIZE 2
+#define GIN_IMM_NUM_SEG_BITS_SIZE 4
 #define GIN_IMM_SEQ_MASK ((1 << GIN_IMM_NUM_SEQ_BITS_SIZE) - 1)
 #define GIN_IMM_GET_SEQ_NUM(data) ((data) & GIN_IMM_SEQ_MASK)
 #define GIN_IMM_GET_COMM_ID(data)                                                                  \

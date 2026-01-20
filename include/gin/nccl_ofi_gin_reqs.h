@@ -7,6 +7,7 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
+#include <array>
 
 /**
  * The context parameter we pass to every Libfabric operation. Contains callback
@@ -178,11 +179,11 @@ class nccl_net_ofi_gin_metadata_send_req_t;
  */
 class nccl_net_ofi_gin_iputsignal_req_t : public nccl_net_ofi_gin_base_req {
 public:
-	nccl_net_ofi_gin_iputsignal_req_t(nccl_ofi_gin_comm &gin_comm_arg, uint32_t peer_rank_arg,
-					  uint16_t msg_seq_num_arg,
-					  nccl_net_ofi_gin_write_req_t *write_req_arg,
-					  nccl_net_ofi_gin_metadata_send_req_t *send_req_arg)
-	    : gin_comm(gin_comm_arg), write_req(write_req_arg), send_req(send_req_arg),
+	nccl_net_ofi_gin_iputsignal_req_t(
+		nccl_ofi_gin_comm &gin_comm_arg, uint32_t peer_rank_arg, uint16_t msg_seq_num_arg,
+		std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs_arg,
+		nccl_net_ofi_gin_metadata_send_req_t *send_req_arg)
+	    : gin_comm(gin_comm_arg), write_reqs(write_reqs_arg), send_req(send_req_arg),
 	      peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg)
 	{
 	}
@@ -194,7 +195,7 @@ private:
 	nccl_ofi_gin_comm &gin_comm;
 	/* Subrequests */
 	/* Write request */
-	nccl_net_ofi_gin_write_req_t *write_req;
+	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs;
 	/* Metadata send request */
 	nccl_net_ofi_gin_metadata_send_req_t *send_req;
 

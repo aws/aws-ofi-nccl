@@ -171,14 +171,20 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 {
 	*done = 0;
 
-	if (write_req) {
-		bool write_done = false;
-		int ret = write_req->test(write_done);
-		if (ret != 0)
-			return ret;
-		if (write_done) {
-			gin_comm.get_resources().return_req_to_pool(write_req);
-			write_req = nullptr;
+	bool all_writes_done = true;
+	for (auto &write_req : write_reqs) {
+		if (write_req) {
+			bool write_done = false;
+			int ret = write_req->test(write_done);
+			if (ret != 0)
+				return ret;
+			if (write_done) {
+				gin_comm.get_resources().return_req_to_pool(write_req);
+				write_req = nullptr;
+			} else {
+				all_writes_done = false;
+				break;
+			}
 		}
 	}
 
@@ -193,7 +199,7 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 		}
 	}
 
-	bool reqs_done = !(write_req || send_req);
+	bool reqs_done = all_writes_done && !send_req;
 	if (reqs_done) {
 		bool ack_outstanding = gin_comm.query_ack_outstanding(peer_rank, msg_seq_num);
 
