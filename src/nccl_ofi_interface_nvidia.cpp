@@ -2,9 +2,11 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include "config.h"
+
 #include <condition_variable>
 #include <mutex>
-#include "config.h"
+#include <cstdlib>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
@@ -18,8 +20,46 @@ static unsigned int netRefCount = 0;
 static std::mutex netMutex;
 
 
-static ncclResult_t nccl_net_ofi_init_v11(void** ctx, uint64_t commId, ncclNetCommConfig_v11_t* config,
-					   ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
+static void atexit_handler()
+{
+	nccl_net_ofi_fini();
+}
+
+
+static ncclResult_t init_v2(ncclDebugLogger_t logFunction)
+{
+	int rc;
+	ncclResult_t ret;
+
+	ret = nccl_net_ofi_init(logFunction);
+	if (OFI_UNLIKELY(ret != ncclSuccess)) {
+		return ret;
+	}
+
+	// Most versions of NCCL did not have a cleanup hook, so we use an
+	// atexit() handler to create one.  Later versions of NCCL (and Neuron
+	// CCL) did add a finialize hook, which is why this is only in a
+	// versioned nvidia interface function.
+	rc = std::atexit(atexit_handler);
+	if (rc != 0) {
+		NCCL_OFI_WARN("Adding cleanup function failed");
+		return nccl_net_ofi_retval_translate(rc);
+	}
+
+	return ret;
+}
+
+
+
+static ncclResult_t init_v10(ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
+{
+	// TODO: Implement ncclProfilerCallback_t functionality.
+	return init_v2(logFunction);
+}
+
+
+static ncclResult_t init_v11(void** ctx, uint64_t commId, ncclNetCommConfig_v11_t* config,
+			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
 	std::lock_guard<std::mutex> lock(netMutex);
 	// In ncclNet_v11, the ncclNetCommConfig_t has been moved from connect() to init() to make the config
@@ -32,7 +72,13 @@ static ncclResult_t nccl_net_ofi_init_v11(void** ctx, uint64_t commId, ncclNetCo
 	*ctx = net_config;
 
 	if (netRefCount++ > 0) return ncclSuccess;
-	return nccl_net_ofi_init_v6(logFunction);
+	return nccl_net_ofi_init(logFunction);
+}
+
+
+static ncclResult_t devices_v2(int *num_devices)
+{
+	return nccl_net_ofi_devices(num_devices);
 }
 
 
@@ -90,13 +136,6 @@ static ncclResult_t getProperties_v11(int dev_id, ncclNetProperties_v11_t* props
 	props->maxMultiRequestSize = 1;
 
 	return ncclSuccess;
-}
-
-
-static ncclResult_t nccl_net_ofi_init_v10(ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
-{
-	// TODO: Implement ncclProfilerCallback_t functionality.
-	return nccl_net_ofi_init_v2(logFunction);
 }
 
 
@@ -320,9 +359,17 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v6_t *props)
 }
 
 
-static ncclResult_t nccl_net_ofi_listen_v11(void *ctx, int dev, void *handle, void **listenComm)
+static ncclResult_t listen_v5(int dev_id, void *handle, void **lComm)
 {
-	return nccl_net_ofi_listen_v5(dev, handle, listenComm);
+	/* use the default access and resource domains */
+	return nccl_net_ofi_listen(dev_id, handle, lComm, 0, 0);
+}
+
+
+static ncclResult_t listen_v11(void *ctx, int dev, void *handle, void **listenComm)
+{
+	/* use the default access and resource domains */
+	return nccl_net_ofi_listen(dev, handle, listenComm, 0, 0);
 }
 
 
@@ -331,64 +378,204 @@ static ncclResult_t nccl_net_ofi_listen_v11(void *ctx, int dev, void *handle, vo
 // through the accept/connect APIs.  We don't support that interface, so we
 // never need to look at the third argument.  Rather than pollute the api
 // interface, just declare these wrappers in the nvidia interface.
-static ncclResult_t nccl_net_ofi_connect_v7(int dev, void* handle, void** sendComm,
-					    ncclNetDeviceHandle_v7_t** sendDevComm)
+static ncclResult_t connect_v5(int dev_id, void *handle, void **sComm)
 {
-       return nccl_net_ofi_connect_v5(dev, handle, sendComm);
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect(dev_id, handle, sComm, -1, 0, 0);
 }
 
 
-static ncclResult_t nccl_net_ofi_connect_v8(int dev, void* handle, void** sendComm,
-					    ncclNetDeviceHandle_v8_t** sendDevComm)
+static ncclResult_t connect_v7(int dev, void* handle, void** sendComm,
+			       ncclNetDeviceHandle_v7_t** sendDevComm)
 {
-	return nccl_net_ofi_connect_v5(dev, handle, sendComm);
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect(dev, handle, sendComm, -1, 0, 0);
 }
 
 
-static ncclResult_t nccl_net_ofi_connect_v9(int dev, void* handle, void** sendComm,
-					    ncclNetDeviceHandle_v9_t** sendDevComm)
+static ncclResult_t connect_v8(int dev, void* handle, void** sendComm,
+			       ncclNetDeviceHandle_v8_t** sendDevComm)
 {
-	return nccl_net_ofi_connect_v5(dev, handle, sendComm);
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect(dev, handle, sendComm, -1, 0, 0);
 }
 
 
-static ncclResult_t nccl_net_ofi_connect_v10(int dev, ncclNetCommConfig_v10_t* config,
-					     void* handle, void** sendComm, ncclNetDeviceHandle_v10_t** sendDevComm)
+static ncclResult_t connect_v9(int dev, void* handle, void** sendComm,
+			       ncclNetDeviceHandle_v9_t** sendDevComm)
 {
-	return nccl_net_ofi_connect_v10(dev, handle, sendComm, config->trafficClass);
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect(dev, handle, sendComm, -1, 0, 0);
 }
 
 
-static ncclResult_t nccl_net_ofi_connect_v11(void* ctx, int dev, void* handle,
-					      void** sendComm, ncclNetDeviceHandle_v11_t** sendDevComm)
+static ncclResult_t connect_v10(int dev, ncclNetCommConfig_v10_t* config,
+				void* handle, void** sendComm,
+				ncclNetDeviceHandle_v10_t** sendDevComm)
+{
+	/* use the default access and resource domains */
+	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+}
+
+
+static ncclResult_t connect_v11(void* ctx, int dev, void* handle,
+				void** sendComm, ncclNetDeviceHandle_v11_t** sendDevComm)
 {
 	ncclNetCommConfig_v11_t* config = (ncclNetCommConfig_v11_t*)ctx;
-	return nccl_net_ofi_connect_v10(dev, handle, sendComm, config->trafficClass);
+	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
 }
 
 
-static ncclResult_t nccl_net_ofi_accept_v7(void* listenComm, void** recvComm,
-					   ncclNetDeviceHandle_v7_t** recvDevComm)
+static ncclResult_t accept_v5(void *lComm, void **rComm)
+
 {
-	return nccl_net_ofi_accept_v5(listenComm,  recvComm);
+	return nccl_net_ofi_accept(lComm,  rComm);
 }
 
 
-static ncclResult_t nccl_net_ofi_accept_v8(void* listenComm, void** recvComm,
-					   ncclNetDeviceHandle_v8_t** recvDevComm)
+static ncclResult_t accept_v7(void* listenComm, void** recvComm,
+			      ncclNetDeviceHandle_v7_t** recvDevComm)
 {
-	return nccl_net_ofi_accept_v5(listenComm,  recvComm);
+	return nccl_net_ofi_accept(listenComm,  recvComm);
 }
 
 
-static ncclResult_t nccl_net_ofi_accept_v9(void* listenComm, void** recvComm,
-					   ncclNetDeviceHandle_v9_t** recvDevComm)
+static ncclResult_t accept_v8(void* listenComm, void** recvComm,
+			      ncclNetDeviceHandle_v8_t** recvDevComm)
 {
-	return nccl_net_ofi_accept_v5(listenComm,  recvComm);
+	return nccl_net_ofi_accept(listenComm,  recvComm);
 }
 
 
-static ncclResult_t nccl_net_ofi_finalize_v11(void *ctx)
+static ncclResult_t accept_v9(void* listenComm, void** recvComm,
+			      ncclNetDeviceHandle_v9_t** recvDevComm)
+{
+	return nccl_net_ofi_accept(listenComm,  recvComm);
+}
+
+
+static ncclResult_t regMr_v2(void *comm, void *data, int size, int type,
+			     void **mhandle)
+{
+	return nccl_net_ofi_regMrDmaBuf(comm,
+					data,
+					static_cast<size_t>(size),
+					type,
+					0,  /* default value, no offset. */
+					-1, /* default value, invalid file descriptor. */
+					mhandle);
+}
+
+
+static ncclResult_t regMr_v8(void *comm, void *data, size_t size, int type,
+			     void **mhandle)
+{
+	return nccl_net_ofi_regMrDmaBuf(comm,
+					data,
+					size,
+					type,
+					0,  /* default value, no offset. */
+					-1, /* default value, invalid file descriptor. */
+					mhandle);
+}
+
+
+static ncclResult_t regMrDmaBuf_v6(void* comm, void* data, size_t size,
+				   int type, uint64_t offset,
+				   int fd, void** mhandle)
+{
+	return nccl_net_ofi_regMrDmaBuf(comm, data, size, type,
+					offset, fd, mhandle);
+}
+
+
+static ncclResult_t deregMr_v2(void *comm, void *mhandle)
+{
+	return nccl_net_ofi_deregMr(comm, mhandle);
+}
+
+
+static ncclResult_t isend_v5(void *sendComm, void* data, int size,
+			     int tag, void *mhandle, void** request)
+{
+	return nccl_net_ofi_isend(sendComm, data, static_cast<size_t>(size),
+				  tag, mhandle, request);
+}
+
+static ncclResult_t isend_v9(void* sendComm, void* data, size_t size,
+			     int tag, void* mhandle, void** request)
+{
+	return nccl_net_ofi_isend(sendComm, data, size, tag, mhandle, request);
+}
+
+
+static ncclResult_t isend_v10(void* sendComm, void* data, size_t size,
+			      int tag, void* mhandle, void* phandle, void** request)
+{
+	// TODO: Add support for network profiling events via pHandles.
+	return nccl_net_ofi_isend(sendComm, data, size, tag, mhandle, request);
+}
+
+
+static ncclResult_t irecv_v5(void* recvComm, int n, void** data, int* sizes,
+			     int *tags, void** mhandles, void** request)
+{
+	size_t castedSizes[NCCL_OFI_MAX_RECVS] = {0};
+	for (int i = 0; i < n; i++) {
+		castedSizes[i] = static_cast<size_t>(sizes[i]);
+	}
+
+	return nccl_net_ofi_irecv(recvComm, n, data, castedSizes, tags, mhandles, request);
+}
+
+
+static ncclResult_t irecv_v9(void* recvComm, int n, void** data,
+			     size_t* sizes, int* tags, void** mhandles, void** request)
+{
+	return nccl_net_ofi_irecv(recvComm, n, data, sizes, tags, mhandles, request);
+}
+
+
+static ncclResult_t irecv_v10(void* recvComm, int n, void** data, size_t* sizes, int* tags,
+			      void** mhandles, void** phandles, void** request)
+{
+	// TODO: Add support for network profiling events via pHandles.
+	return nccl_net_ofi_irecv(recvComm, n, data, sizes, tags, mhandles, request);
+}
+
+
+static ncclResult_t iflush_v5(void* rComm, int n, void** buffers, int* sizes,
+			      void** mhandles, void** req)
+{
+	return nccl_net_ofi_iflush(rComm, n, buffers, sizes, mhandles, req);
+}
+
+
+static ncclResult_t test_v2(void* req, int* done, int* size)
+{
+	return nccl_net_ofi_test(req, done, size);
+}
+
+
+static ncclResult_t closeSend_v2(void *sComm)
+{
+	return nccl_net_ofi_closeSend(sComm);
+}
+
+
+static ncclResult_t closeRecv_v2(void *rComm)
+{
+	return nccl_net_ofi_closeRecv(rComm);
+}
+
+
+static ncclResult_t closeListen_v2(void *lComm)
+{
+	return nccl_net_ofi_closeListen(lComm);
+}
+
+
+static ncclResult_t finalize_v11(void *ctx)
 {
 	std::lock_guard<std::mutex> lock(netMutex);
 	if (ctx != NULL) {
@@ -398,7 +585,7 @@ static ncclResult_t nccl_net_ofi_finalize_v11(void *ctx)
 	if (netRefCount == 0 || netRefCount-- > 1) {
 		return ncclSuccess;
 	} else {
-		return nccl_net_ofi_fini_v6();
+		return nccl_net_ofi_fini();
 	}
 }
 
@@ -407,86 +594,86 @@ extern "C" {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v2,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v2,
+        .devices = devices_v2,
         .getProperties = getProperties_v5,
-        .listen = nccl_net_ofi_listen_v5,
-        .connect = nccl_net_ofi_connect_v5,
-        .accept = nccl_net_ofi_accept_v5,
-        .regMr = nccl_net_ofi_regMr_v2,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v5,
-        .irecv = nccl_net_ofi_irecv_v5,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v5,
+        .connect = connect_v5,
+        .accept = accept_v5,
+        .regMr = regMr_v2,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v5,
+        .irecv = irecv_v5,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
 };
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v2,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v2,
+        .devices = devices_v2,
         .getProperties = getProperties_v7,
-        .listen = nccl_net_ofi_listen_v5,
-        .connect = nccl_net_ofi_connect_v7,
-        .accept = nccl_net_ofi_accept_v7,
-        .regMr = nccl_net_ofi_regMr_v2,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v5,
-        .irecv = nccl_net_ofi_irecv_v5,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v5,
+        .connect = connect_v7,
+        .accept = accept_v7,
+        .regMr = regMr_v2,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v5,
+        .irecv = irecv_v5,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
 	.getDeviceMr = NULL,
 	.irecvConsumed = NULL,
 };
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v2,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v2,
+        .devices = devices_v2,
         .getProperties = getProperties_v8,
-        .listen = nccl_net_ofi_listen_v5,
-        .connect = nccl_net_ofi_connect_v8,
-        .accept = nccl_net_ofi_accept_v8,
-        .regMr = nccl_net_ofi_regMr_v8,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v5,
-        .irecv = nccl_net_ofi_irecv_v5,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v5,
+        .connect = connect_v8,
+        .accept = accept_v8,
+        .regMr = regMr_v8,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v5,
+        .irecv = irecv_v5,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
 };
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v2,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v2,
+        .devices = devices_v2,
         .getProperties = getProperties_v9,
-        .listen = nccl_net_ofi_listen_v5,
-        .connect = nccl_net_ofi_connect_v9,
-        .accept = nccl_net_ofi_accept_v9,
-        .regMr = nccl_net_ofi_regMr_v8,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v9,
-        .irecv = nccl_net_ofi_irecv_v9,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v5,
+        .connect = connect_v9,
+        .accept = accept_v9,
+        .regMr = regMr_v8,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v9,
+        .irecv = irecv_v9,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
         .makeVDevice = NULL,
@@ -494,22 +681,22 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v10,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v10,
+        .devices = devices_v2,
         .getProperties = getProperties_v10,
-        .listen = nccl_net_ofi_listen_v5,
-        .connect = nccl_net_ofi_connect_v10,
-        .accept = nccl_net_ofi_accept_v9,
-        .regMr = nccl_net_ofi_regMr_v8,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v10,
-        .irecv = nccl_net_ofi_irecv_v10,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v5,
+        .connect = connect_v10,
+        .accept = accept_v9,
+        .regMr = regMr_v8,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v10,
+        .irecv = irecv_v10,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
         .makeVDevice = NULL,
@@ -517,26 +704,26 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v11_t ncclNetPlugin_v11 = {
         .name = "Libfabric",
-        .init = nccl_net_ofi_init_v11,
-        .devices = nccl_net_ofi_devices_v2,
+        .init = init_v11,
+        .devices = devices_v2,
         .getProperties = getProperties_v11,
-        .listen = nccl_net_ofi_listen_v11,
-        .connect = nccl_net_ofi_connect_v11,
-        .accept = nccl_net_ofi_accept_v9,
-        .regMr = nccl_net_ofi_regMr_v8,
-        .regMrDmaBuf = nccl_net_ofi_regMrDmaBuf_v6,
-        .deregMr = nccl_net_ofi_deregMr_v2,
-        .isend = nccl_net_ofi_isend_v10,
-        .irecv = nccl_net_ofi_irecv_v10,
-        .iflush = nccl_net_ofi_iflush_v5,
-        .test = nccl_net_ofi_test_v2,
-        .closeSend = nccl_net_ofi_closeSend_v2,
-        .closeRecv = nccl_net_ofi_closeRecv_v2,
-        .closeListen = nccl_net_ofi_closeListen_v2,
+        .listen = listen_v11,
+        .connect = connect_v11,
+        .accept = accept_v9,
+        .regMr = regMr_v8,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v10,
+        .irecv = irecv_v10,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
         .getDeviceMr = NULL,
         .irecvConsumed = NULL,
         .makeVDevice = NULL,
-        .finalize = nccl_net_ofi_finalize_v11,
+        .finalize = finalize_v11,
         .setNetAttr = NULL,
 };
 

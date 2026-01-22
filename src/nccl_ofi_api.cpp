@@ -78,26 +78,7 @@ static inline ncclResult_t msg_length_verify_max_size(const size_t *sizes, const
 }
 
 
-ncclResult_t nccl_net_ofi_fini_v6()
-{
-	ncclResult_t ret = ncclSuccess;
-	if (plugin == NULL) {
-		ret = check_return(ncclSystemError);
-	} else {
-		delete plugin;
-		plugin = NULL;
-	}
-	return ret;
-}
-
-
-static void nccl_net_ofi_fini_v2(void)
-{
-	nccl_net_ofi_fini_v6();
-}
-
-
-ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
+ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	int ret = 0;
 
@@ -123,32 +104,27 @@ ncclResult_t nccl_net_ofi_init_v6(ncclDebugLogger_t logFunction)
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
+
+ncclResult_t nccl_net_ofi_fini()
+{
+	ncclResult_t ret = ncclSuccess;
+	if (plugin == NULL) {
+		ret = check_return(ncclSystemError);
+	} else {
+		delete plugin;
+		plugin = NULL;
+	}
+	return ret;
+}
+
+
 nccl_net_ofi_plugin_t *nccl_net_ofi_get_plugin()
 {
 	return plugin;
 }
 
-ncclResult_t nccl_net_ofi_init_v2(ncclDebugLogger_t logFunction)
-{
-	int rc;
-	ncclResult_t ret;
 
-	ret = nccl_net_ofi_init_v6(logFunction);
-	if (OFI_UNLIKELY(ret != ncclSuccess)) {
-		return ret;
-	}
-
-	rc = atexit(nccl_net_ofi_fini_v2);
-	if (rc != 0) {
-		NCCL_OFI_WARN("Adding cleanup function failed");
-		return nccl_net_ofi_retval_translate_impl(rc);
-	}
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_devices_v2(int *num_devices)
+ncclResult_t nccl_net_ofi_devices(int *num_devices)
 {
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
@@ -187,33 +163,8 @@ ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_
 }
 
 
-ncclResult_t nccl_net_ofi_listen_v2(int dev, void* handle, void** listenComm)
-{
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
-	ncclResult_t ret;
-
-	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
-		NCCL_OFI_WARN("RDMA protocol does not support blocking listen interface");
-		return check_return(ncclInternalError);
-	}
-
-	ret = nccl_net_ofi_listen_v5(dev, &nccl_net_ofi_handle, listenComm);
-	if (ret == ncclSuccess) {
-		memcpy(handle, &nccl_net_ofi_handle, NCCL_NET_HANDLE_MAXSIZE_V4);
-	}
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_listen_v5(int dev_id, void *handle, void **lComm)
-{
-	/* use the default access and resource domains */
-	return nccl_net_ofi_listen_v11_neuron(dev_id, handle, lComm, 0, 0);
-}
-
-ncclResult_t nccl_net_ofi_listen_v11_neuron(int dev_id, void *handle, void **lComm,
-					    unsigned int domain_key, unsigned int resource_key)
+ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
+				 unsigned int domain_key, unsigned int resource_key)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device = nullptr;
@@ -259,34 +210,6 @@ ncclResult_t nccl_net_ofi_listen_v11_neuron(int dev_id, void *handle, void **lCo
 }
 
 
-ncclResult_t nccl_net_ofi_connect_v2(int dev, void* handle, void** sendComm)
-{
-	ncclResult_t ret = ncclSuccess;
-        nccl_net_ofi_conn_handle_t nccl_net_ofi_handle = {};
-
-	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
-		NCCL_OFI_WARN("RDMA protocol does not support blocking connect interface");
-		return check_return(ncclInternalError);
-	}
-
-        memcpy(&nccl_net_ofi_handle, handle, NCCL_NET_HANDLE_MAXSIZE_V4);
-
-	while (*sendComm == NULL) {
-		ret = nccl_net_ofi_connect_v5(dev, &nccl_net_ofi_handle, sendComm);
-		if (ret != ncclSuccess)
-			return ret;
-	}
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
-{
-    return nccl_net_ofi_connect_v10(dev_id, handle, sComm, -1);
-}
-
-
 /*
  * @brief	Non-blocking connect which returns sComm as nullptr
  *		with an expectation that it will be called again until 
@@ -311,14 +234,8 @@ ncclResult_t nccl_net_ofi_connect_v5(int dev_id, void *handle, void **sComm)
  * @return	0, on success
  * 		error, on others
  */
-ncclResult_t nccl_net_ofi_connect_v10(int dev_id, void *handle, void **sComm, int trafficClass)
-{
-	/* use the default access and resource domains */
-	return nccl_net_ofi_connect_v11_neuron(dev_id, handle, sComm, trafficClass, 0, 0);
-}
-
-ncclResult_t nccl_net_ofi_connect_v11_neuron(int dev_id, void *handle, void **sComm, int trafficClass,
-					     unsigned int domain_key, unsigned int resource_key)
+ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int trafficClass,
+				  unsigned int domain_key, unsigned int resource_key)
 {
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == nullptr)) {
@@ -384,27 +301,6 @@ ncclResult_t nccl_net_ofi_connect_v11_neuron(int dev_id, void *handle, void **sC
 }
 
 
-ncclResult_t nccl_net_ofi_accept_v2(void* listenComm, void** recvComm)
-{
-	ncclResult_t ret = ncclInvalidArgument;
-
-	if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
-		NCCL_OFI_WARN("RDMA protocol does not support blocking accept interface.");
-		return check_return(ncclInternalError);
-	}
-
-	while (*recvComm == NULL) {
-		ret = nccl_net_ofi_accept_v5(listenComm, recvComm);
-		if (ret != ncclSuccess) {
-			goto error;
-		}
-	}
-
-error:
-	return nccl_net_ofi_retval_translate_impl(ret);
-}
-
-
 /*
  * @brief	Non-blocking accept which returns rComm as nullptr
  * 		with an expectation that it will be called again until
@@ -420,7 +316,7 @@ error:
  * @return	0, on success
  * 		error, on others
  */
-ncclResult_t nccl_net_ofi_accept_v5(void *lComm, void **rComm)
+ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 {
 	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
@@ -464,28 +360,9 @@ error:
 }
 
 
-ncclResult_t nccl_net_ofi_regMr_v2(void *comm, void *data, int size, int type,
-				   void **mhandle)
-{
-	return nccl_net_ofi_regMr_v8(comm, data, (size_t)size, type, mhandle);
-}
-
-
-ncclResult_t nccl_net_ofi_regMr_v8(void *comm, void *data, size_t size, int type,
-				   void **mhandle)
-{
-	return nccl_net_ofi_regMrDmaBuf_v6(comm,
-					   data,
-					   size,
-					   type,
-					   0,  /* default value, no offset. */
-					   -1, /* default value, invalid file descriptor. */
-					   mhandle);
-}
-
-ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
-					 int type, uint64_t offset,
-					 int fd, void** mhandle)
+ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
+				      int type, uint64_t offset,
+				      int fd, void** mhandle)
 {
 	int ret;
 	/* Retrieve and validate comm */
@@ -553,7 +430,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf_v6(void* comm, void* data, size_t size,
 }
 
 
-ncclResult_t nccl_net_ofi_deregMr_v2(void *comm, void *mhandle)
+ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm_t *base_comm =
@@ -595,21 +472,8 @@ ncclResult_t nccl_net_ofi_deregMr_v2(void *comm, void *mhandle)
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v2(void* sendComm, void* data, int size,
-				   void* mhandle, void** request)
-{
-	return nccl_net_ofi_isend_v5(sendComm, data, size, 0, mhandle, request);
-}
-
-
-ncclResult_t nccl_net_ofi_isend_v5(void *sendComm, void* data, int size,
-				   int tag, void *mhandle, void** request)
-{
-	return nccl_net_ofi_isend_v9(sendComm, data, static_cast<size_t>(size), tag, mhandle, request);
-}
-
-ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
-				   int tag, void* mhandle, void** request)
+ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, size_t size,
+				int tag, void* mhandle, void** request)
 {
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sendComm;
@@ -638,37 +502,9 @@ ncclResult_t nccl_net_ofi_isend_v9(void* sendComm, void* data, size_t size,
 }
 
 
-ncclResult_t nccl_net_ofi_isend_v10(void* sendComm, void* data, size_t size,
-					int tag, void* mhandle, void* phandle, void** request)
-{
-	// TODO: Add support for network profiling events via pHandles.
-	return nccl_net_ofi_isend_v9(sendComm, data, size, tag, mhandle, request);
-}
-
-
-ncclResult_t nccl_net_ofi_irecv_v2(void* recvComm, void* data, int size,
-				   void* mhandle, void** request)
-{
-	int tag = 0;
-
-	return nccl_net_ofi_irecv_v5(recvComm, 1, &data, &size, &tag, &mhandle, request);
-}
-
-
-ncclResult_t nccl_net_ofi_irecv_v5(void* recvComm, int n, void** data, int* sizes,
-				   int *tags, void** mhandles, void** request)
-{
-	size_t castedSizes[NCCL_OFI_MAX_RECVS] = {0};
-	for (int i = 0; i < n; i++) {
-		castedSizes[i] = static_cast<size_t>(sizes[i]);
-	}
-
-	return nccl_net_ofi_irecv_v9(recvComm, n, data, castedSizes, tags, mhandles, request);
-}
-
-
-ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
-				   size_t* sizes, int* tags, void** mhandles, void** request)
+ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n, void** data,
+				size_t* sizes, int* tags, void** mhandles,
+				void** request)
 {
 	if (OFI_UNLIKELY(recvComm == NULL || data == NULL ||
 				  sizes == NULL || tags == NULL ||
@@ -719,15 +555,7 @@ ncclResult_t nccl_net_ofi_irecv_v9(void* recvComm, int n, void** data,
 }
 
 
-ncclResult_t nccl_net_ofi_irecv_v10(void* recvComm, int n, void** data, size_t* sizes, int* tags,
-				   void** mhandles, void** phandles, void** request)
-{
-	// TODO: Add support for network profiling events via pHandles.
-	return nccl_net_ofi_irecv_v9(recvComm, n, data, sizes, tags, mhandles, request);
-}
-
-
-ncclResult_t nccl_net_ofi_test_v2(void* req, int* done, int* size)
+ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 {
 	/* Validate request */
 	if (OFI_UNLIKELY(req == NULL)) {
@@ -740,37 +568,8 @@ ncclResult_t nccl_net_ofi_test_v2(void* req, int* done, int* size)
 }
 
 
-ncclResult_t nccl_net_ofi_flush_v2(void* recvComm, void* data, int size, void* mhandle)
-{
-	void *req = NULL;
-	ncclResult_t ret = ncclSuccess;
-	int done = 0;
-
-	ret = nccl_net_ofi_iflush_v4(recvComm, data, size, mhandle, &req);
-	if ((ret != ncclSuccess) || (req == NULL)) {
-		return ret;
-	}
-
-	while (done == 0) {
-		ret = nccl_net_ofi_test_v2(req, &done, &size);
-		if (ret != ncclSuccess) {
-			return ret;
-		}
-	}
-
-	return ret;
-}
-
-
-ncclResult_t nccl_net_ofi_iflush_v4(void* recvComm, void* data, int size,
-			   void* mhandle, void** request)
-{
-	return nccl_net_ofi_iflush_v5(recvComm, 1, &data, &size, &mhandle, request);
-}
-
-
-ncclResult_t nccl_net_ofi_iflush_v5(void* rComm, int n, void** buffers, int* sizes,
-				    void** mhandles, void** req)
+ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
+				 void** mhandles, void** req)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
@@ -812,7 +611,7 @@ ncclResult_t nccl_net_ofi_iflush_v5(void* rComm, int n, void** buffers, int* siz
 /*
  * @brief	Destroy send communicator
  */
-ncclResult_t nccl_net_ofi_closeSend_v2(void *sComm)
+ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
 	nccl_net_ofi_send_comm_t *send_comm = (nccl_net_ofi_send_comm_t *)sComm;
 
@@ -839,7 +638,7 @@ ncclResult_t nccl_net_ofi_closeSend_v2(void *sComm)
 /*
  * @brief	Destroy receive communicator
  */
-ncclResult_t nccl_net_ofi_closeRecv_v2(void *rComm)
+ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm = (nccl_net_ofi_recv_comm_t *)rComm;
 
@@ -863,7 +662,7 @@ ncclResult_t nccl_net_ofi_closeRecv_v2(void *rComm)
 }
 
 
-ncclResult_t nccl_net_ofi_closeListen_v2(void *lComm)
+ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
 	nccl_net_ofi_listen_comm_t *listen_comm =
 		(nccl_net_ofi_listen_comm_t *)lComm;
@@ -887,7 +686,7 @@ ncclResult_t nccl_net_ofi_closeListen_v2(void *lComm)
 }
 
 
-ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
+ncclResult_t nccl_net_ofi_get_mr_key(void* mhandle, uint64_t* mr_key)
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
@@ -914,8 +713,8 @@ ncclResult_t nccl_net_ofi_get_mr_key_v5(void* mhandle, uint64_t* mr_key)
 }
 
 
-ncclResult_t nccl_net_ofi_iwrite_v5(void* sComm, void* src, size_t size, void* mhandle,
-				    uint64_t dest, uint64_t mr_key, void** req)
+ncclResult_t nccl_net_ofi_iwrite(void* sComm, void* src, size_t size, void* mhandle,
+				 uint64_t dest, uint64_t mr_key, void** req)
 {
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sComm;
@@ -942,8 +741,8 @@ ncclResult_t nccl_net_ofi_iwrite_v5(void* sComm, void* src, size_t size, void* m
 }
 
 
-ncclResult_t nccl_net_ofi_iwrite_inline_v5(void* sComm, void* src, size_t size,
-					   uint64_t dest, uint64_t mr_key, void** req)
+ncclResult_t nccl_net_ofi_iwrite_inline(void* sComm, void* src, size_t size,
+					uint64_t dest, uint64_t mr_key, void** req)
 {
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sComm;
@@ -970,8 +769,8 @@ ncclResult_t nccl_net_ofi_iwrite_inline_v5(void* sComm, void* src, size_t size,
 }
 
 
-ncclResult_t nccl_net_ofi_iread_v5(void* rComm, void* dest, size_t size, void* mhandle,
-				   uint64_t src, uint64_t mr_key, void** req)
+ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhandle,
+				uint64_t src, uint64_t mr_key, void** req)
 {
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
