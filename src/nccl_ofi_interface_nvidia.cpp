@@ -320,54 +320,6 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v6_t *props)
 }
 
 
-static ncclResult_t getProperties_v3(int dev_id, ncclNetProperties_v4_t* props)
-{
-	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
-	if (ret != ncclSuccess) {
-		return ret;
-	}
-
-	props->name = props_v6.name;
-	props->pciPath = props_v6.pciPath;
-	props->guid = props_v6.guid;
-	props->ptrSupport = props_v6.ptrSupport;
-	props->speed = props_v6.speed;
-	props->port = props_v6.port;
-	props->maxComms = props_v6.maxComms;
-
-	return ncclSuccess;
-}
-
-
-static ncclResult_t pciPath_v2(int dev_id, char** path)
-{
-	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
-	if (ret != ncclSuccess) {
-		return ret;
-	}
-
-	*path = props_v6.name;
-
-	return ncclSuccess;
-}
-
-
-static ncclResult_t ptrSupport_v2(int dev_id, int *supportedTypes)
-{
-	ncclNetProperties_v6_t props_v6;
-	ncclResult_t ret = getProperties_v5(dev_id, &props_v6);
-	if (ret != ncclSuccess) {
-		return ret;
-	}
-
-	*supportedTypes = props_v6.ptrSupport;
-
-	return ncclSuccess;
-}
-
-
 static ncclResult_t nccl_net_ofi_listen_v11(void *ctx, int dev, void *handle, void **listenComm)
 {
 	return nccl_net_ofi_listen_v5(dev, handle, listenComm);
@@ -452,83 +404,6 @@ static ncclResult_t nccl_net_ofi_finalize_v11(void *ctx)
 
 
 extern "C" {
-
-NCCL_OFI_EXPORT_SYMBOL ncclNet_v2_t ncclNetPlugin_v2 = {
-	.name = "Libfabric",
-	.init = nccl_net_ofi_init_v2,
-	.devices = nccl_net_ofi_devices_v2,
-	.pciPath = pciPath_v2,
-	.ptrSupport = ptrSupport_v2,
-	.listen = nccl_net_ofi_listen_v2,
-	.connect = nccl_net_ofi_connect_v2,
-	.accept = nccl_net_ofi_accept_v2,
-	.regMr = nccl_net_ofi_regMr_v2,
-	.deregMr = nccl_net_ofi_deregMr_v2,
-	.isend = nccl_net_ofi_isend_v2,
-	.irecv = nccl_net_ofi_irecv_v2,
-	.flush = nccl_net_ofi_flush_v2,
-	.test = nccl_net_ofi_test_v2,
-	.closeSend = nccl_net_ofi_closeSend_v2,
-	.closeRecv = nccl_net_ofi_closeRecv_v2,
-	.closeListen = nccl_net_ofi_closeListen_v2,
-};
-
-NCCL_OFI_EXPORT_SYMBOL ncclNet_v3_t ncclNetPlugin_v3 = {
-	.name = "Libfabric",
-	.init = nccl_net_ofi_init_v2,
-	.devices = nccl_net_ofi_devices_v2,
-	.getProperties = getProperties_v3,
-	.listen = nccl_net_ofi_listen_v2,
-	.connect = nccl_net_ofi_connect_v2,
-	.accept = nccl_net_ofi_accept_v2,
-	.regMr = nccl_net_ofi_regMr_v2,
-	.deregMr = nccl_net_ofi_deregMr_v2,
-	.isend = nccl_net_ofi_isend_v2,
-	.irecv = nccl_net_ofi_irecv_v2,
-	.flush = nccl_net_ofi_flush_v2,
-	.test = nccl_net_ofi_test_v2,
-	.closeSend = nccl_net_ofi_closeSend_v2,
-	.closeRecv = nccl_net_ofi_closeRecv_v2,
-	.closeListen = nccl_net_ofi_closeListen_v2,
-};
-
-NCCL_OFI_EXPORT_SYMBOL ncclNet_v4_t ncclNetPlugin_v4 = {
-	.name = "Libfabric",
-	.init = nccl_net_ofi_init_v2,
-	.devices = nccl_net_ofi_devices_v2,
-	.getProperties = getProperties_v3,
-	.listen = nccl_net_ofi_listen_v2,
-	.connect = nccl_net_ofi_connect_v2,
-	.accept = nccl_net_ofi_accept_v2,
-	.regMr = nccl_net_ofi_regMr_v2,
-	.deregMr = nccl_net_ofi_deregMr_v2,
-	.isend = nccl_net_ofi_isend_v2,
-	.irecv = nccl_net_ofi_irecv_v2,
-	.iflush = nccl_net_ofi_iflush_v4,
-	.test = nccl_net_ofi_test_v2,
-	.closeSend = nccl_net_ofi_closeSend_v2,
-	.closeRecv = nccl_net_ofi_closeRecv_v2,
-	.closeListen = nccl_net_ofi_closeListen_v2,
-};
-
-NCCL_OFI_EXPORT_SYMBOL ncclNet_v5_t ncclNetPlugin_v5 = {
-	.name = "Libfabric",
-	.init = nccl_net_ofi_init_v2,
-	.devices = nccl_net_ofi_devices_v2,
-	.getProperties = getProperties_v5,
-	.listen = nccl_net_ofi_listen_v5,
-	.connect = nccl_net_ofi_connect_v5,
-	.accept = nccl_net_ofi_accept_v5,
-	.regMr = nccl_net_ofi_regMr_v2,
-	.deregMr = nccl_net_ofi_deregMr_v2,
-	.isend = nccl_net_ofi_isend_v5,
-	.irecv = nccl_net_ofi_irecv_v5,
-	.iflush = nccl_net_ofi_iflush_v5,
-	.test = nccl_net_ofi_test_v2,
-	.closeSend = nccl_net_ofi_closeSend_v2,
-	.closeRecv = nccl_net_ofi_closeRecv_v2,
-	.closeListen = nccl_net_ofi_closeListen_v2,
-};
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "Libfabric",
@@ -680,10 +555,6 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 {
 	char *net_env = getenv("NCCL_NET");
 	if (net_env != NULL && 0 == strcasecmp(net_env, "AWS Libfabric")) {
-		ncclNetPlugin_v2.name = "AWS Libfabric";
-		ncclNetPlugin_v3.name = "AWS Libfabric";
-		ncclNetPlugin_v4.name = "AWS Libfabric";
-		ncclNetPlugin_v5.name = "AWS Libfabric";
 		ncclNetPlugin_v6.name = "AWS Libfabric";
 		ncclNetPlugin_v7.name = "AWS Libfabric";
 		ncclNetPlugin_v8.name = "AWS Libfabric";
@@ -691,10 +562,6 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 		ncclNetPlugin_v10.name = "AWS Libfabric";
 		ncclNetPlugin_v11.name = "AWS Libfabric";
 	} else if (net_env != NULL && 0 == strcasecmp(net_env, "OFI")) {
-		ncclNetPlugin_v2.name = "OFI";
-		ncclNetPlugin_v3.name = "OFI";
-		ncclNetPlugin_v4.name = "OFI";
-		ncclNetPlugin_v5.name = "OFI";
 		ncclNetPlugin_v6.name = "OFI";
 		ncclNetPlugin_v7.name = "OFI";
 		ncclNetPlugin_v8.name = "OFI";
