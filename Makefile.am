@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2026, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -14,7 +14,9 @@ EXTRA_DIST = \
 	LICENSE \
 	NOTICE \
 	README.md \
-	RELEASENOTES.md
+	RELEASENOTES.md \
+	m4/get_version.sh
+
 
 AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
 
