@@ -1,12 +1,17 @@
 # -*- Autoconf -*-
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2026, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
 
+define([fatal_esyscmd], [esyscmd( $1 )dnl
+ifelse(sysval,[0],[],[m4_fatal(error: $1 failed (sysval))])])dnl
+
 # Initialization
-AC_INIT([aws-ofi-nccl], [GitHub-dev], [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
+AC_INIT([aws-ofi-nccl],
+	[m4_normalize(fatal_esyscmd([m4/get_version.sh]))],
+        [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
 AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.cpp])
 AC_CONFIG_AUX_DIR([build-aux])
