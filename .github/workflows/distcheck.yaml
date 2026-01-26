@@ -31,6 +31,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Build Plugin
         run: |
           set -x
@@ -89,6 +92,9 @@ jobs:
     name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
     steps:
       - uses: actions/checkout@v3
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Call `autoreconf -ivf`
         run: |
@@ -155,6 +161,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Build Plugin
         run: |
           set -x
@@ -212,6 +221,9 @@ jobs:
     name: CodeChecker - ${{ matrix.sdk }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       - name: Run Configure
         run: |
