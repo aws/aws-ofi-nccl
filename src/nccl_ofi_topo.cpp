@@ -503,6 +503,10 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
  * the root has already set the user data of the remaining nodes
  * towards the root. The user data is provided by `data_iter`.
  *
+ * All nodes visited by this function have their is_along_nic_or_gpu_to_root
+ * flag set to true, indicating they are on the path from a NIC or GPU
+ * to the root.
+ *
  * @param	node
  * 		Input topology node
  * @param	data_iter
@@ -528,12 +532,101 @@ static int set_userdata_to_root(hwloc_obj_t node,
 			}
 			node->userdata = user_data;
 			user_data->node = node;
+			user_data->is_along_nic_or_gpu_to_root = true;
+			user_data->closest_numa_node = NULL;
 			nccl_ofi_inc_user_data_iter(data_iter);
 		}
 		node = node->parent;
 	}
 
 	return 0;
+}
+
+/*
+ * @brief 	Recursive function that walks top down (parent to child) from the HWLOC tree's root 
+ 		  in DFS fashion. It performs the following operations;
+
+		  1) Identify NUMA nodes that are actually connected to a Package node, meaning the NUMA node
+		  	 has a physical chip / socket presence. This is identified via DFS search observing both
+			 NUMA and Package node presence through its DFS path. This means, a NUMA <--> Package
+			 connection has been established via parent child relationship.
+			 This is the "Base case 1", marked by the comment below.
+
+		  2) From hitting this base case, the recursion bubbles-up the call stack, where we remove 
+		  	 one node at a time from this DFS path. As we remove one node at a time, we eventually 
+			 reach the parent node between the NUMA <--> Package DFS path. We mark the metadata of 
+			 this parent node using the NUMA Node's pointer value, which is later referred by 
+			 cpu xml tagging `write_nccl_topo_rec()`.
+			 a) For HWLOC 2.x, the parent node is a Package node, as it resides on the higher level 
+			 	of HWLOC hierchy relative to a NUMA node.
+		  	 b) For HWLOC 1.x, the parent node is a NUMA node, as it resides on the higher level 
+			 	of HWLOC hierchy relative to a Package node.
+		  	 Since it resides higher on the hierchy, when the node is later referred by 
+			 `write_nccl_topo_rec()` to write cpu opening xml tag, the xml tagging algorithm is not 
+			 expected to traverse further down. All the necessary information resides at the 
+			 highest level.
+
+ * @param    topo
+ *        HWLOC topology.
+ * @param    node
+ *        Current node being visited in the DFS traversal.
+ * @param    closest_numa_node
+ *        The most recent NUMA node encountered in the path from root to current node.
+ * @param    found_numa
+ *        Boolean flag indicating whether a NUMA node has been found in the path from root.
+ * @param    found_package
+ *        Boolean flag indicating whether a Package node has been found in the path from root.
+ *
+ * @return    Pointer to the most recently observed NUMA node, once both Package and NUMA nodes have 
+ * 		  been found throughout the DFS path. This value bubbles-up the call stack after hitting 
+ *		  Base case 1, eventually reaching the parent node as described above.
+ */
+static hwloc_obj_t mark_nccl_cpuid(hwloc_topology_t topo, 
+						hwloc_obj_t node, hwloc_obj_t closest_numa_node, 
+						bool found_numa, bool found_package)
+{
+	hwloc_obj_t child = NULL;
+	hwloc_obj_t latest_numa_node = closest_numa_node;
+	if (node->type == HWLOC_OBJ_NUMANODE) {
+		latest_numa_node = node;
+	}
+
+	found_numa = found_numa || node->type == HWLOC_OBJ_NUMANODE;
+	found_package = found_package || node->type == HWLOC_OBJ_PACKAGE;
+
+	/* Base case 1. Found both NUMA node and Package. We can return at this point. */
+	if (found_package && found_numa) {
+		return latest_numa_node;
+	}
+
+	while ((child = hwloc_get_next_child(topo, node, child))) {
+		hwloc_obj_t ret = mark_nccl_cpuid(topo, child, latest_numa_node, found_numa, found_package);
+		/* The return pointer, if not NULL, indicates that both NUMA and Package nodes 
+		 * were found along the DFS path including the current node.
+		 * And the return pointer is set to the NUMA node's address. */
+#if HWLOC_API_VERSION >= 0x00020000
+		/* For HWLOC 2.x, we expect the top most node to be a Package node. */
+		if (ret && node->type == HWLOC_OBJ_PACKAGE) {
+#else
+		/* For HWLOC 1.x, we expect the top most node to be a NUMA node. */
+		if (ret && node->type == HWLOC_OBJ_NUMANODE) {
+#endif
+			if (!(node->userdata)) {
+				nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)malloc(sizeof(nccl_ofi_topo_data_t));
+				topo_data->is_along_nic_or_gpu_to_root = false;
+				node->userdata = topo_data;
+			}
+			((nccl_ofi_topo_data_t *)(node->userdata))->closest_numa_node = ret;
+		}
+
+		bool should_ret = (found_package || found_numa) && (ret);
+		if (should_ret) {
+			return ret;
+		}
+	}
+
+	/* Base case 2. Couldn't find NUMA and Package. */
+	return NULL;
 }
 
 /*
@@ -613,6 +706,10 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 		}
 
 	}
+
+	/* Set closest_numa_node for the upcoming cpu xml tagging. */
+	obj = hwloc_get_root_obj(ofi_topo->topo);
+	mark_nccl_cpuid(ofi_topo->topo, obj, NULL, false, false);
 
 	return 0;
 }
@@ -1074,39 +1171,6 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
 
 	print_nic_groups(topo);
 	return ret;
-}
-
-/*
- * @brief	Return NUMA node child from memory children list of `node`
- *
- *  Since HWLOC 2.0, NUMA topology nodes are stored in a specific
- *  memory children list. Scan this list and return the first NUMA
- *  child node that is found that does not store user data.
- *
- * @param	node
- *		Topology node whose memory children list is to be scanned
- * @return	NUMA node topology node, if found
- *		NULL, otherwise
- */
-static hwloc_obj_t get_numa_mem_child(hwloc_obj_t node)
-{
-	hwloc_obj_t child = NULL;
-
-#if (HWLOC_API_VERSION >= 0x00020000)
-	/* Recurse on memory children */
-	if (node->memory_arity > 0) {
-		child = node->memory_first_child;
-		while (child != NULL) {
-			nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)child->userdata;
-			if (child->type == HWLOC_OBJ_NUMANODE && topo_data == NULL) {
-				break;
-			}
-			child = child->next_sibling;
-		}
-	}
-#endif
-
-	return child;
 }
 
 /* 
@@ -1594,14 +1658,13 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	int indent_offset = 2;
 	bool close_numanode = false;
 	bool close_bridge = false;
-	hwloc_obj_t numa_mem_child = NULL;
 	hwloc_obj_t child = NULL;
 	nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)node->userdata;
 
 	/* Only nodes with NICs or Nvidia GPUs in its subtree store
 	 * store userdata. Use this information to avoid printing
 	 * parts of the topology without NICs and Nvidia GPUs. */
-	if (!topo_data) return ret;
+	if (!topo_data || !topo_data->is_along_nic_or_gpu_to_root) return ret;
 
 	if (node->type == HWLOC_OBJ_BRIDGE) {
 		if (!node->attr) {
@@ -1630,32 +1693,25 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 				return ret;
 			}
 			indent += indent_offset;
-	} else if (node->type == HWLOC_OBJ_NUMANODE) {
-		/* Before HWLOC 2.0, NUMA topology nodes are stored in
-		 * the normal topology tree */
-		if ((ret = write_cpu_opening_tag(node, file, indent))) {
+#if HWLOC_API_VERSION >= 0x00020000
+	/* HWLOC 2.x: For Package node, only call `cpu_opening_tag()` if its closest_numa_node is set.
+	 * This means, the Package node object is connected with a NUMA node, marked via `mark_nccl_cpuid()`. */
+	} else if (node->type == HWLOC_OBJ_PACKAGE && topo_data->closest_numa_node) {
+		if ((ret = write_cpu_opening_tag(topo_data->closest_numa_node, file, indent))) {
 			return ret;
 		}
 		close_numanode = true;
 		indent += indent_offset;
-	} else if ((numa_mem_child = get_numa_mem_child(node))) {
-		/* HWLOC 2.0 moved NUMA nodes from the normal topology
-		 * tree to list of memory children. The consequence is
-		 * that NUMA nodes may "float" in a package, and thus,
-		 * no NUMA node will be found on the path from the
-		 * root to a PCI device that needs to be
-		 * written. Collect those NUMA nodes and write
-		 * them. However, in case a NUMA node is found in the memory
-		 * children list and the NUMA node stores user data,
-		 * the NUMA node is on the path to a PCI device and
-		 * will be printed in the next recursion. */
-		if (!numa_mem_child->userdata) {
-			if ((ret = write_cpu_opening_tag(numa_mem_child, file, indent))) {
-				return ret;
-			}
-			close_numanode = true;
-			indent += indent_offset;
+#else
+	} else if (node->type == HWLOC_OBJ_NUMANODE && topo_data->closest_numa_node) {
+	/* HWLOC 1.x: For NUMA node, only call `cpu_opening_tag()` if its closest_numa_node is set.
+	 * This means, the NUMA node object is connected with a Package node, marked via `mark_nccl_cpuid()`. */
+		if ((ret = write_cpu_opening_tag(topo_data->closest_numa_node, file, indent))) {
+			return ret;
 		}
+		close_numanode = true;
+		indent += indent_offset;
+#endif
 	}
 
 	/* Recurse */
