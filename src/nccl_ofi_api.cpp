@@ -109,6 +109,7 @@ ncclResult_t nccl_net_ofi_fini()
 {
 	ncclResult_t ret = ncclSuccess;
 	if (plugin == NULL) {
+		NCCL_OFI_WARN("Finalizing already finalized plugin");
 		ret = check_return(ncclSystemError);
 	} else {
 		delete plugin;
