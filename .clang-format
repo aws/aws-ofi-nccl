@@ -8,8 +8,8 @@ BreakBeforeBraces: Custom
 BraceWrapping:
   AfterFunction: true
 # Control structures
-AllowShortIfStatementsOnASingleLine: Never
-AllowShortLoopsOnASingleLine: false
+AllowShortIfStatementsOnASingleLine: WithoutElse
+AllowShortLoopsOnASingleLine: true
 AllowShortBlocksOnASingleLine: Never
 AllowShortFunctionsOnASingleLine: None
 AllowShortCaseLabelsOnASingleLine: false
@@ -29,9 +29,10 @@ SpacesInSquareBrackets: false
 PointerAlignment: Right
 ReferenceAlignment: Right
 # Function parameters
-BinPackParameters: true
-BinPackArguments: true
+BinPackParameters: false
+BinPackArguments: false
 AllowAllParametersOfDeclarationOnNextLine: true
+AlignAfterOpenBracket: Align
 # Indentation
 IndentCaseLabels: false
 IndentPPDirectives: None
@@ -49,5 +50,6 @@ ReflowComments: true
 SpacesBeforeTrailingComments: 1
 # Other
 KeepEmptyLinesAtTheStartOfBlocks: false
-MaxEmptyLinesToKeep: 1
+MaxEmptyLinesToKeep: 2
 SortIncludes: false
+AlignEscapedNewlines: Right
