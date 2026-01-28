@@ -1,0 +1,56 @@
+#!/bin/bash
+#
+# Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+if [ $# -ne 2 ]; then
+    echo "Usage: $0 <target reference> <tag name>" 1>&2
+    exit 1
+fi
+
+reference=${1}
+tagname=${2}
+
+echo "reference: ${reference}"
+echo "tag: ${tagname}"
+
+# verify that tag looks sanely formatted
+if ! echo ${tagname} | sed -E '/v[0-9]+\.[0-9]+\.[0-9]+.*/!{q1}' > /dev/null; then
+    echo "Tag ${tagname} does not look like a release tag."
+    exit 1
+fi
+
+# verify that the ref we're tagging is in a branch that looks like a reasonable
+# release branch for the tag we're creating
+expected_release_branch=`echo ${tagname} | sed -E 's/(v[0-9]+\.[0-9]+)\..*/\1.x/'`
+branches=`git branch --contains ${reference} --format="    %(refname:short)"`
+if ! echo "${branches}"  | grep -q ${expected_release_branch} ; then
+    echo "None of the branches containing ${reference} look like a release branch for ${tagname}.
+Found branches include:
+$branches" 1>&2
+    exit 1
+fi
+
+# Verify RELEASENOTES.md is sane
+case `git show ${reference}:RELEASENOTES.md | sed 15q` in
+    *"${tagname}"*) : ;;
+    *)
+	echo "RELEASENOTES.md not updated; not tagging." 1>&2
+	exit 1
+	;;
+esac
+
+# Make the tag
+git tag -a -m "Create ${tagname} release tag" "${tagname}" "${reference}"
+if test $? -ne 0 ; then
+    echo "Creating tag ${tagname} on reference ${reference} failed".
+    exit 1
+fi
+
+echo "${tagname} tag created at reference ${reference}.  You must manually push upstream with
+a command such as:
+
+    git push origin ${tagname}"
+exit 0
