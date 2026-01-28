@@ -36,6 +36,10 @@ jobs:
       - run: |
           yum -y update && yum -y install git tar util-linux findutils yum-utils
       - uses: actions/checkout@v4
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       - name: Fetch and Install EFA Installer Dependencies
         run: |
           curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${{ matrix.efainstaller }}.tar.gz

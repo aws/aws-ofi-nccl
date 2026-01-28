@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2026, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -14,7 +14,9 @@ EXTRA_DIST = \
 	LICENSE \
 	NOTICE \
 	README.md \
-	RELEASENOTES.md
+	RELEASENOTES.md \
+	m4/get_version.sh
+
 
 AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
 
@@ -22,6 +24,19 @@ AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
 # Ref: https://www.gnu.org/software/automake/manual/html_node/Basics-of-Distribution.html
 TAR_OPTIONS = --owner=0 --group=0
 export TAR_OPTIONS
+
+# create a hook so that autogen.sh works in release tarballs
+# Implement the equivalent of check-news, but for RELEASENOTES.md
+dist-hook:
+	echo "Creating .release_version file"
+	@echo "@PACKAGE_VERSION@" > $(distdir)/.release_version
+	@echo $(VERSION) | grep -q '^git-' || \
+	case `sed 15q $(srcdir)/RELEASENOTES.md` in \
+	*"$(VERSION)"*) : ;; \
+	*) \
+	  echo "RELEASENOTES.md not updated; not releasing" 1>&2; \
+	  exit 1;; \
+	esac
 
 # Format targets
 format:
