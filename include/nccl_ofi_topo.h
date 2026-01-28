@@ -53,6 +53,17 @@ typedef struct nccl_ofi_topo_data {
 
 	/* Backward pointer to corresponding topology node */
 	hwloc_obj_t node;
+
+	/* Indicates whether the HWLOC node is along the NIC or GPU path, 
+	 * marked by `set_userdata_to_root()`. */
+	bool is_along_nic_or_gpu_path;
+
+	/* Backward pointer to the closest NUMA node from the current node 
+	 * that sits along the path between a NUMA node and a Package. 
+	 *
+	 * If the current node does not sit along the path between a 
+	 * NUMA node and a Package, this value is set to NULL. */
+	hwloc_obj_t closest_numa_node;
 } nccl_ofi_topo_data_t;
 
 /*
