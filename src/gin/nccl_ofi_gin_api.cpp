@@ -44,7 +44,7 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 
 static ncclResult_t nccl_ofi_gin_devices(int *ndev)
 {
-	return nccl_net_ofi_devices_v2(ndev);
+	return nccl_net_ofi_devices(ndev);
 }
 
 static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t *props)
