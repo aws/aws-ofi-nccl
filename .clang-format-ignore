@@ -4,6 +4,10 @@ include/cm/nccl_ofi_cm.h
 include/cm/nccl_ofi_cm_reqs.h
 include/cm/nccl_ofi_cm_resources.h
 include/cm/nccl_ofi_cm_types.h
+include/gin/nccl_ofi_gin.h
+include/gin/nccl_ofi_gin_allgather.h
+include/gin/nccl_ofi_gin_allgather.h
+include/gin/nccl_ofi_gin_resources.h
 include/internal/tuner/nccl_defaults.h
 include/nccl_ofi.h
 include/nccl_ofi_api.h
@@ -51,6 +55,11 @@ include/tuner/nccl_ofi_tuner_region.h
 src/cm/nccl_ofi_cm.cpp
 src/cm/nccl_ofi_cm_reqs.cpp
 src/cm/nccl_ofi_cm_resources.cpp
+src/gin/nccl_ofi_gin.cpp
+src/gin/nccl_ofi_gin_allgather.cpp
+src/gin/nccl_ofi_gin_api.cpp
+src/gin/nccl_ofi_gin_reqs.cpp
+src/gin/nccl_ofi_gin_resources.cpp
 src/nccl_ofi_api.cpp
 src/nccl_ofi_assert.cpp
 src/nccl_ofi_compat.cpp
