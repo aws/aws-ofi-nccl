@@ -51,7 +51,7 @@ nccl_ofi_idpool_t::nccl_ofi_idpool_t(size_t size_arg) :
 
 size_t nccl_ofi_idpool_t::allocate_id()
 {
-	std::lock_guard<std::mutex> l(lock);
+	std::lock_guard l(lock);
 
 	if (0 == size) {
 		NCCL_OFI_WARN("Cannot allocate an ID from a 0-sized pool");
@@ -89,7 +89,7 @@ size_t nccl_ofi_idpool_t::allocate_id()
 
 void nccl_ofi_idpool_t::free_id(size_t id)
 {
-	std::lock_guard<std::mutex> l(lock);
+	std::lock_guard l(lock);
 
 	if (0 == size) {
 		NCCL_OFI_WARN("Cannot free an ID from a 0-sized pool");
@@ -117,6 +117,6 @@ void nccl_ofi_idpool_t::free_id(size_t id)
 
 size_t nccl_ofi_idpool_t::get_size()
 {
-	std::lock_guard<std::mutex> l(lock);
+	std::lock_guard l(lock);
 	return size;
 }

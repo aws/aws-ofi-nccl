@@ -195,7 +195,7 @@ public:
 
 	T get()
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 		retrieved = true;
 		return val;
 	}
@@ -203,7 +203,7 @@ public:
 
 	const char *get_string()
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 		retrieved = true;
 		if (!string_val) {
 			string_val = ofi_nccl_param_value_to_string<T>(val);
@@ -222,7 +222,7 @@ public:
 
 	int set(const T& new_val)
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 
 		if (retrieved) {
 			NCCL_OFI_WARN("Attempt to set %s after get() called.", envname);
@@ -235,7 +235,7 @@ public:
 
 	ParamSource get_source()
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 		return source;
 	}
 

@@ -114,7 +114,7 @@ int nccl_ofi_cm_send_conn_req::progress()
 
 int nccl_ofi_cm_send_conn_req::handle_completion()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	done_callback();
 	/* Free this request resources */
 	delete this;
@@ -192,7 +192,7 @@ int nccl_ofi_cm_send_conn_resp_req::progress()
 
 int nccl_ofi_cm_send_conn_resp_req::handle_completion()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	/* If needed, report completion to the caller */
 	if (!complete_immediately) {
 		assert(done_callback);
@@ -206,7 +206,7 @@ int nccl_ofi_cm_send_conn_resp_req::handle_completion()
 
 int nccl_ofi_cm_rx_req::handle_completion()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	nccl_ofi_cm_conn_msg *conn_msg = static_cast<nccl_ofi_cm_conn_msg *>(rx_elem.ptr);
 	auto result = resources.callback_map.find(conn_msg->remote_id);
 	if (result == resources.callback_map.end()) {

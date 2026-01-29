@@ -28,7 +28,7 @@ public:
 
 	void insert_envvar(std::string name, std::string val, bool overwrite)
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 
 		if (environ_frozen) {
 			throw std::runtime_error("insert_envvar(" + name + ") called after environ frozen");
@@ -39,7 +39,7 @@ public:
 
 	void insert_envvars(std::map<std::string, std::string> added_env)
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 
 		if (environ_frozen) {
 			throw std::runtime_error("insert_envvars() called after environ frozen");
@@ -52,7 +52,7 @@ public:
 
 	void update_environment(char ***environ_p)
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 		std::unordered_set<std::string_view> found_keys;
 		bool modified_environ = false;
 

@@ -330,7 +330,7 @@ done:
  */
 const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 {
-	std::lock_guard<std::mutex> lock(mutex_);
+	std::lock_guard lock(mutex_);
 
 	if (platform_data_init_) {
 		return cached_platform_data_;
@@ -770,7 +770,7 @@ int PlatformAWS::config_endpoint(struct fi_info *info, struct fid_ep* endpoint)
 	}
 
 #if HAVE_CUDA
-	std::lock_guard<std::mutex> lock(mutex_);
+	std::lock_guard lock(mutex_);
 
 	/* During initialization, try to set
 	 * FI_OPT_EFA_{SENDRECV,WRITE}_IN_ORDER_ALIGNED_128_BYTES to
@@ -889,7 +889,7 @@ const PlatformAWS::platform_aws_node_guid* PlatformAWS::get_node_guid_fields(str
 
 	/* Check to see if we've already parsed the fields for this RDMA device */
 	{
-		std::lock_guard<std::mutex> lock(mutex_);
+		std::lock_guard lock(mutex_);
 		auto it = guid_cache_.find(device_name);
 		if (it != guid_cache_.end()) {
 			return &(it->second);
@@ -940,7 +940,7 @@ const PlatformAWS::platform_aws_node_guid* PlatformAWS::get_node_guid_fields(str
 
 	/* Stash in the guid fields cache */
 	{
-		std::lock_guard<std::mutex> lock(mutex_);
+		std::lock_guard lock(mutex_);
 		guid_cache_[device_name] = node_guid_fields;
 		return &(guid_cache_[device_name]);
 	}

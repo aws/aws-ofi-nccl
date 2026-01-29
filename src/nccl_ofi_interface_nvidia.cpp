@@ -60,7 +60,7 @@ static ncclResult_t init_v10(ncclDebugLogger_t logFunction, ncclProfilerCallback
 static ncclResult_t init_v11(void** ctx, uint64_t commId, ncclNetCommConfig_v11_t* config,
 			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
-	std::lock_guard<std::mutex> lock(netMutex);
+	std::lock_guard lock(netMutex);
 	// In ncclNet_v11, the ncclNetCommConfig_t has been moved from connect() to init() to make the config
 	// being passed only once when each communicator is initialized. Before we support per communicator
 	// context, to be compatiable with ncclNet_v10 behavior, we store the config in the context pointer
@@ -576,7 +576,7 @@ static ncclResult_t closeListen_v2(void *lComm)
 
 static ncclResult_t finalize_v11(void *ctx)
 {
-	std::lock_guard<std::mutex> lock(netMutex);
+	std::lock_guard lock(netMutex);
 	if (ctx != NULL) {
 		free(ctx);
 	}
