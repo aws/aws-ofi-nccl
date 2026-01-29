@@ -23,7 +23,7 @@ nccl_ofi_cm_send_connector* nccl_ofi_connection_manager::connect
 	 const void *transport_connect_msg,
 	 size_t conn_msg_size)
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	return new nccl_ofi_cm_send_connector(resources, handle,
 					      transport_connect_msg, conn_msg_size);
 }
@@ -55,7 +55,7 @@ nccl_ofi_cm_listener::nccl_ofi_cm_listener(nccl_ofi_cm::cm_resources &_resources
 
 nccl_ofi_cm_listener::~nccl_ofi_cm_listener()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 
 	[[maybe_unused]] size_t n_removed =
 		resources.callback_map.erase(listener_id);
@@ -65,7 +65,7 @@ nccl_ofi_cm_listener::~nccl_ofi_cm_listener()
 
 nccl_ofi_cm_receiver *nccl_ofi_cm_listener::accept()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	int ret = resources.pending_reqs_queue.process_pending_reqs();
 	if (ret != 0) {
 		throw new std::runtime_error("Failed to process pending reqs");
@@ -100,7 +100,7 @@ nccl_ofi_cm_receiver::nccl_ofi_cm_receiver(nccl_ofi_cm::cm_resources &_resources
 
 void nccl_ofi_cm_receiver::set_conn_resp_msg_data(const void *data, size_t size)
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	/* Create the conn response message */
 	conn_resp_req = new nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req(resources, dest_addr,
 		[&] {
@@ -128,7 +128,7 @@ void nccl_ofi_cm_receiver::set_conn_resp_msg_data(const void *data, size_t size)
 
 int nccl_ofi_cm_receiver::test_ready()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	int ret = 0;
 
 	if (!conn_resp_msg_sent) {
@@ -219,7 +219,7 @@ nccl_ofi_cm_send_connector::nccl_ofi_cm_send_connector(nccl_ofi_cm::cm_resources
 
 nccl_ofi_cm_send_connector::~nccl_ofi_cm_send_connector()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 
 	[[maybe_unused]] size_t n_removed =
 		resources.callback_map.erase(send_connector_id);
@@ -229,7 +229,7 @@ nccl_ofi_cm_send_connector::~nccl_ofi_cm_send_connector()
 
 int nccl_ofi_cm_send_connector::test_ready()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	int ret = 0;
 
 	if (!conn_msg_sent) {
@@ -258,7 +258,7 @@ int nccl_ofi_cm_send_connector::test_ready()
 
 const std::pair<void *, size_t> nccl_ofi_cm_send_connector::get_conn_resp_msg_data()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	if (!conn_resp_msg_received) {
 		NCCL_OFI_WARN("Called get_conn_resp_msg on send_connector before connection complete");
 		return {nullptr, 0};
@@ -270,6 +270,6 @@ const std::pair<void *, size_t> nccl_ofi_cm_send_connector::get_conn_resp_msg_da
 
 nccl_ofi_cm_listener* nccl_ofi_connection_manager::listen()
 {
-	std::lock_guard<std::mutex> lock(resources.cm_mutex);
+	std::lock_guard lock(resources.cm_mutex);
 	return new nccl_ofi_cm_listener(resources);
 }

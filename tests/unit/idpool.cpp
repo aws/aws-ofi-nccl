@@ -21,7 +21,7 @@ public:
 	/* Return the idpool element value of a valid vector index */
 	uint64_t get_element(size_t index)
 	{
-		std::lock_guard<std::mutex> l(lock);
+		std::lock_guard l(lock);
 		/* Use built-in bounds-checking of the std::vector::at member function */
 		return idpool.at(index);
 	}
