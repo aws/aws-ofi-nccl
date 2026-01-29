@@ -105,11 +105,16 @@
  * Get the endpoint lock
  * If parent endpoint exists, return its lock instead because the
  * lock is mainly to protect the CQ which is owned by the parent endpoint
+ *
+ * coerce the type so that the compiler can derive the template parameter for
+ * std::lock_guard
  */
-#define ENDPOINT_LOCK(endpoint) \
-	endpoint->parent_endpoint ? \
-		&endpoint->parent_endpoint->ep_lock : \
-		&endpoint->ep_lock \
+static inline decltype(nccl_net_ofi_rdma_ep_t::ep_lock)& ENDPOINT_LOCK(nccl_net_ofi_rdma_ep_t *endpoint)
+{
+	return (endpoint->parent_endpoint ?
+		endpoint->parent_endpoint->ep_lock :
+		endpoint->ep_lock);
+}
 
 
 /**
@@ -2400,7 +2405,7 @@ static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
 	assert(ep != NULL);
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 
 	CHECK_ENDPOINT_ACTIVE(ep, "test");
 
@@ -2730,7 +2735,7 @@ static int reg_mr_send_comm(nccl_net_ofi_send_comm_t *send_comm,
         nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper domain_lock(&domain->domain_lock);
+	std::lock_guard domain_lock(domain->domain_lock);
 
 	return domain->reg_mr(ckey,
 			      type,
@@ -2745,7 +2750,7 @@ static int reg_mr_recv_comm(nccl_net_ofi_recv_comm_t *recv_comm,
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper domain_lock(&domain->domain_lock);
+	std::lock_guard domain_lock(domain->domain_lock);
 
 	return domain->reg_mr(ckey,
 			      type,
@@ -3074,7 +3079,7 @@ static int recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 	device = ep->rdma_endpoint_get_device();
 	assert(device != NULL);
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 
 	CHECK_ENDPOINT_ACTIVE(ep, "recv");
 
@@ -3541,7 +3546,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm_t *r_co
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		r_comm->base.base.ep;
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 	if ((ep->parent_endpoint && !ep->parent_endpoint->ep_active) ||
 	    (!ep->ep_active)) {
 		/**
@@ -3736,7 +3741,7 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm_t *s_co
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		s_comm->base.base.ep;
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 	if (!ep->ep_active) {
 		/**
 		 * If the endpoint is not active, no need to wait for the
@@ -3850,7 +3855,7 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 	int dev_id = domain_ptr->get_device()->dev_id;
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(this));
+	std::lock_guard eplock(ENDPOINT_LOCK(this));
 
 	this->release_rdma_ep_resources(dev_id);
 	if (this->parent_endpoint)
@@ -3959,7 +3964,7 @@ static int flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **buffers,
 		(nccl_net_ofi_rdma_recv_comm_t *)recv_comm;
 	nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 
 	CHECK_ENDPOINT_ACTIVE(ep, "flush");
 
@@ -4393,9 +4398,9 @@ static nccl_net_ofi_rdma_recv_comm_t *prepare_recv_comm(nccl_net_ofi_rdma_domain
 			 * refcnt.
 			 */
 
-			nccl_net_ofi_mutex_lock(&device->device_lock);
+			device->device_lock.lock();
 			domain->increment_ref_cnt();
-			nccl_net_ofi_mutex_unlock(&device->device_lock);
+			device->device_lock.unlock();
 
 			ep_for_addr = new_ep;
 
@@ -4696,9 +4701,9 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	 * called.
 	 */
 
-	nccl_net_ofi_mutex_lock(&domain->domain_lock);
+	domain->domain_lock.lock();
 	ep->increment_ref_cnt();
-	nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+	domain->domain_lock.unlock();
 
 	/* Initialize connect response message */
 	nccl_ofi_rdma_connection_info_t conn_resp_msg;
@@ -4743,7 +4748,7 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_net_ofi_rdma_domain_t *domain = l_comm_ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 
 	CHECK_ENDPOINT_ACTIVE(ep, "accept");
 
@@ -4844,7 +4849,6 @@ static int accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	 * close_listen_recv_comm will take the ep lock in case of an error,
 	 * so unlock it here .
 	 */
-	eplock.unlock();
 	int close_ret = close_listen_recv_comm(l_comm);
 	if (close_ret) {
 		NCCL_OFI_WARN("Failed to close listen communicator");
@@ -4895,7 +4899,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	int dev_id = device->dev_id;
 
-	pthread_wrapper lock(&this->ep_lock);
+	std::lock_guard lock(this->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
@@ -5597,7 +5601,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 	domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
 
 	CHECK_ENDPOINT_ACTIVE(ep, "send");
 
@@ -6156,9 +6160,9 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
 	   API releases it.*/
 
-	nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+	domain_ptr->domain_lock.lock();
 	this->increment_ref_cnt();
-	nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+	domain_ptr->domain_lock.unlock();
 
 	/* Allocate send communicator ID */
 	comm_id = device->comm_idpool.allocate_id();
@@ -6219,9 +6223,9 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_c
 			device->comm_idpool.free_id(ret_s_comm->local_comm_id);
 		}
 
-		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.lock();
 		this->decrement_ref_cnt();
-		nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.unlock();
 		free_rdma_send_comm(ret_s_comm);
 	}
 
@@ -6242,7 +6246,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_rdma_send_comm_t *s_comm =
 		reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>(comm_state->comm);
 
-	pthread_wrapper lock(&this->ep_lock);
+	std::lock_guard lock(this->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(this, "connect");
 
@@ -6318,7 +6322,6 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	return ret;
 
 error:
-	lock.unlock();
 	if (s_comm) {
 		send_comm_destroy(s_comm);
 		s_comm = nullptr;
@@ -6553,7 +6556,7 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 		}
 
 		if (!skip_lock) {
-			nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+			domain_ptr->domain_lock.lock();
 		}
 
 		this->decrement_ref_cnt();
@@ -6574,7 +6577,7 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 			ret = this->cleanup_resources();
 
 			if (!skip_lock) {
-				nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+				domain_ptr->domain_lock.unlock();
 			}
 
 			this->parent_endpoint->release_ep(skip_lock, force_cleanup);
@@ -6591,7 +6594,7 @@ int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 
  unlock:
 		if (!skip_lock) {
-			nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+			domain_ptr->domain_lock.lock();
 		}
 		if (!force_cleanup && ret == 0 && local_ref_cnt == 0) {
 			/* Release the domain as well */
