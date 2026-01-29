@@ -20,6 +20,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
+#include "nccl_ofi_spinlock.h"
 #include "ofi/resource_wrapper.h"
 
 /*
@@ -740,7 +741,7 @@ public:
 		ref_cnt--;
 	}
 
-	std::mutex ep_lock;
+	nccl_ofi_spinlock ep_lock;
 
 	/*
 	 * Boolean flag indicating whether the endpoint is still valid and usable
