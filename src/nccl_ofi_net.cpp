@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <limits.h>
+#include <mutex>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -690,7 +691,7 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain(unsigned int domain_key
 {
 	nccl_net_ofi_domain_t *domain = nullptr;
 
-	pthread_wrapper scoped_device_lock(&this->device_lock);
+	std::lock_guard scoped_device_lock(this->device_lock);
 	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
 
 	return domain;
@@ -702,7 +703,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key)
 	nccl_net_ofi_domain_t *domain = nullptr;
 	nccl_net_ofi_ep_t *ep = nullptr;
 
-	pthread_wrapper scoped_device_lock(&this->device_lock);
+	std::lock_guard scoped_device_lock(this->device_lock);
 
 	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
 	if (domain == nullptr) {
@@ -736,13 +737,6 @@ nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 
 	PlatformManager::get_global().get_platform().device_set_guid(info, this);
 
-	/* Initialize mutex for endpoint access */
-	ret = nccl_net_ofi_mutex_init(&this->device_lock, nullptr);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to initialize device mutex");
-		throw std::runtime_error("Base device constructor: device mutex init failed");
-	}
-
 	/* Initialize mr rkey handling */
 	this->need_mr_rkey_pool = true;
 	ret = nccl_ofi_mr_keys_need_own_key(info, &this->need_mr_rkey_pool);
@@ -768,14 +762,14 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 
 	nccl_net_ofi_ep_t *ep;
 
-	pthread_wrapper scoped_device_lock(&this->device_lock);
+	std::lock_guard scoped_device_lock(this->device_lock);
 
 	assert(!this->domain_table.empty());
 	for (auto domain_iter = this->domain_table.begin() ;
 	     domain_iter != this->domain_table.end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
-		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+		domain->domain_lock.lock();
 		if (domain->get_endpoint_ptr()) {
 			ep = domain->get_endpoint_ptr();
 			domain->clear_endpoint();
@@ -789,7 +783,7 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 			}
 			ep = nullptr;
 		}
-		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+		domain->domain_lock.unlock();
 
 		/* The call to domain->release() below will remove this domain
 		   from the table, invalidating domain_iter. So increment it
@@ -839,7 +833,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 {
 	nccl_net_ofi_ep_t *ep = nullptr;
 
-	pthread_wrapper scoped_domain_lock(&this->domain_lock);
+	std::lock_guard scoped_domain_lock(this->domain_lock);
 
 	long lookup_key = nccl_net_ofi_gettid();
 
@@ -874,7 +868,7 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 
 	// The caller takes device_lock when force_cleanup.
 	if (!skip_device_lock) {
-		nccl_net_ofi_mutex_lock(&device_ptr->device_lock);
+		device_ptr->device_lock.lock();
 	}
 
 	this->decrement_ref_cnt();
@@ -897,7 +891,7 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 	}
 
 	if (!skip_device_lock) {
-		nccl_net_ofi_mutex_unlock(&device_ptr->device_lock);
+		device_ptr->device_lock.unlock();
 	}
 
 	return ret;
@@ -908,15 +902,7 @@ nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg)
 	: device(device_arg),
 	ref_cnt(0)
 {
-	int ret;
-
 	assert(this->device != nullptr);
-
-	ret = nccl_net_ofi_mutex_init(&this->domain_lock, nullptr);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to initialize domain mutex");
-		throw std::runtime_error("base domain constructor: mutex init failed");
-	}
 
 	if (!ofi_nccl_mr_cache_disable()) {
 		this->mr_cache =
@@ -953,7 +939,7 @@ int nccl_net_ofi_domain_t::release_all_ep()
 {
 	int ret, first_error = 0;
 
-	pthread_wrapper scoped_domain_lock(&this->domain_lock);
+	std::lock_guard scoped_domain_lock(this->domain_lock);
 
 	assert(!this->ep_table.empty());
 	for (auto ep_iter = this->ep_table.begin() ;
@@ -1013,7 +999,7 @@ void nccl_net_ofi_ep_t::invalidate()
 	if (this->ep_active == true) {
 		this->ep_active = false;
 
-		pthread_wrapper lock(&this->domain->domain_lock);
+		std::lock_guard lock(this->domain->domain_lock);
 
 		/* Remove this endpoint from the thread->domain table so that it
 		   is not used for future communicators */
@@ -1030,7 +1016,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	nccl_net_ofi_domain_t *domain_ptr = this->domain;
 
 	if (!skip_lock) {
-		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.lock();
 	}
 
 	this->decrement_ref_cnt();
@@ -1063,7 +1049,7 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	}
 
 	if (!skip_lock) {
-		nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.unlock();
 	}
 
 	/* If we freed the endpoint (local_ref_cnt == 0), also release the domain
@@ -1085,13 +1071,6 @@ nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain_arg)
 	  ref_cnt(0)
 {
 	assert(domain_arg != nullptr);
-
-	/* Initialize mutex for endpoint access */
-	int ret = nccl_net_ofi_mutex_init(&this->ep_lock, nullptr);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to initialize endpoint mutex");
-		throw std::runtime_error("Base endpoint constructor: endpoint mutex init failed");
-	}
 }
 
 

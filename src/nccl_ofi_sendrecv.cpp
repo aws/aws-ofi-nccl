@@ -10,6 +10,7 @@
 #include <assert.h>
 #include <inttypes.h>
 #include <limits.h>
+#include <mutex>
 #include <stdexcept>
 #include <stdint.h>
 #include <stdio.h>
@@ -476,7 +477,7 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 		return -EINVAL;
 	}
 
-	pthread_wrapper eplock(&ep->ep_lock);
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
 
@@ -788,7 +789,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
 	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper domain_lock(&domain->domain_lock);
+	std::lock_guard domain_lock(domain->domain_lock);
 
 	int dev_id = device->dev_id;
 
@@ -925,7 +926,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 		return -EINVAL;
 	}
 
-	pthread_wrapper eplock(&ep->ep_lock);
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "recv");
 
@@ -1013,7 +1014,7 @@ static int sendrecv_recv_comm_recv(nccl_net_ofi_recv_comm_t *recv_comm, int n, v
 
 void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 {
-	pthread_wrapper lock(&this->ep_lock);
+	std::lock_guard lock(this->ep_lock);
 
 	int dev_id = this->domain->get_device()->dev_id;
 
@@ -1095,7 +1096,7 @@ static int sendrecv_recv_comm_flush(nccl_net_ofi_recv_comm_t *recv_comm, int n, 
 
 	auto *ep = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(r_comm->base.base.ep);
 
-	pthread_wrapper eplock(&ep->ep_lock);
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "flush");
 
@@ -1445,7 +1446,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	nccl_net_ofi_sendrecv_domain_t *domain = ep->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
-	pthread_wrapper eplock(&ep->ep_lock);
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "accept");
 
@@ -1514,9 +1515,9 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		nccl_net_ofi_mutex_lock(&domain->domain_lock);
+		domain->domain_lock.lock();
 		ep->increment_ref_cnt();
-		nccl_net_ofi_mutex_unlock(&domain->domain_lock);
+		domain->domain_lock.unlock();
 
 		comm_state->comm = &r_comm->base.base;
 
@@ -1643,7 +1644,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
-	pthread_wrapper eplock(&this->ep_lock);
+	std::lock_guard eplock(this->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
@@ -1746,7 +1747,7 @@ static int sendrecv_send_comm_send(nccl_net_ofi_send_comm_t *send_comm, void *da
 		return -EINVAL;
 	}
 
-	pthread_wrapper eplock(&ep->ep_lock);
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "send");
 
@@ -1915,9 +1916,9 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	   API releases it.
 	   Caller assumed to hold the domain lock. */
 
-	nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+	domain_ptr->domain_lock.lock();
 	ep->increment_ref_cnt();
-	nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+	domain_ptr->domain_lock.unlock();
 
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
@@ -1951,9 +1952,9 @@ out:
 	if (ret) {
 		/* Above code incremented the ep ref counter, so decrement it on
 		   failure */
-		nccl_net_ofi_mutex_lock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.lock();
 		ep->decrement_ref_cnt();
-		nccl_net_ofi_mutex_unlock(&domain_ptr->domain_lock);
+		domain_ptr->domain_lock.unlock();
 		free(ret_s_comm);
 	}
 
@@ -2027,7 +2028,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
-	pthread_wrapper eplock(&this->ep_lock);
+	std::lock_guard eplock(this->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(this, "connect");
 
