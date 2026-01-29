@@ -14,3 +14,4 @@ dlopen_c_test
 param
 platform_manager
 gdrcopy
+spinlock

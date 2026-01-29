@@ -26,7 +26,8 @@ noinst_PROGRAMS = \
 	histogram \
 	dlopen_c_test \
 	param \
-	platform_manager
+	platform_manager \
+	spinlock
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -58,6 +59,7 @@ histogram_SOURCES = histogram.cpp
 dlopen_c_test_SOURCES = dlopen_c_test.c
 param_SOURCES = param.cpp
 platform_manager_SOURCES = platform_manager.cpp
+spinlock_SOURCES = spinlock.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif
