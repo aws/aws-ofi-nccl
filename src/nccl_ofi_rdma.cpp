@@ -2384,7 +2384,6 @@ static inline int update_send_request(nccl_net_ofi_rdma_send_comm_t* s_comm, ncc
 	return ret;
 }
 
-#define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
 
 static int test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
@@ -5650,7 +5649,7 @@ static int send(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, in
 	} else {
 		/* Memory synchronization point to ensure that the data in the control msg is not
 		 * read before the sequence number is checked */
-		__sync_synchronize();
+		std::atomic_thread_fence(std::memory_order_acquire);
 		s_comm->n_ctrl_received += 1;
 	}
 
