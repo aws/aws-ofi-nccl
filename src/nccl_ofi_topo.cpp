@@ -741,8 +741,11 @@ static int propagate_accel_count(hwloc_obj_t gpu_node)
 			return -EINVAL;
 		}
 
-		/* Node found. Increase group count. */
-		if (userdata->is_nic_subtree) {
+		/* Node found. Increase group count.
+		 * Skip nodes that have their own info_list, as these are
+		 * individual NIC nodes that should be grouped together, not
+		 * used as grouping targets themselves. */
+		if (userdata->is_nic_subtree && !userdata->info_list) {
 			userdata->num_groups++;
 			userdata->gpu_group_node = gpu_node;
 			break;
