@@ -172,6 +172,9 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 {
 	*done = 0;
 
+	auto &gin_ep = gin_comm.get_resources().get_ep();
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+
 	bool all_writes_done = true;
 	for (auto &write_req : write_reqs) {
 		if (write_req) {

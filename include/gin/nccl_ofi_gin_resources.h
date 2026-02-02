@@ -105,6 +105,8 @@ public:
 	 */
 	void close_ofi_eps();
 
+	std::mutex ep_lock;
+
 private:
 	nccl_net_ofi_domain_t &domain;
 
