@@ -68,6 +68,8 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 {
 	auto &ep = resources.get_ep();
 
+	std::lock_guard scoped_ep_lock(ep.ep_lock);
+
 	nccl_ofi_freelist_t *metadata_fl_ptr = nullptr;
 	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), 16, 16,
 					    0, nullptr, nullptr, ep.freelist_regmr_fn,
@@ -196,6 +198,7 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 
 	auto &gin_ep = gin_comm->resources.get_ep();
 
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	const int num_rails = static_cast<int>(gin_ep.get_num_rails());
 
 	my_gin_handle.comm_id = gin_comm->local_comm_id;
@@ -287,6 +290,7 @@ int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr,
 	NCCL_OFI_TRACE(NCCL_NET, "regMrSymDmaBuf ptr %p size %zu type %d flags %lu handle %p",
 		       data_ptr, size, type, mrFlags, mr_handle);
 
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	/**
 	 * Local registration with the endpoint
 	 */
@@ -427,6 +431,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		return -EBUSY;
 	}
 
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	/* Determine how many segments to send */
 	uint16_t nseg = 0;
 	if (signalOp != 0) {
