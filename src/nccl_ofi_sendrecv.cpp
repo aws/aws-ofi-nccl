@@ -130,9 +130,6 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 static inline void sendrecv_req_update(nccl_net_ofi_sendrecv_req_t *req, nccl_net_ofi_sendrecv_req_state_t state, size_t size)
 {
 	req->size = size;
-	/* As nccl_net_ofi_test() can be called on other thread, state should
-	 * be updated last and there should be a barrier before state update */
-	__sync_synchronize();
 	req->state = state;
 }
 
@@ -455,8 +452,6 @@ static inline int sendrecv_comm_free_req(nccl_net_ofi_comm_t *base_comm,
 	}
 }
 
-#define __compiler_barrier() do { asm volatile ("" : : : "memory"); } while(0)
-
 static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 {
 	int ret = 0;
@@ -491,7 +486,6 @@ static int sendrecv_req_test(nccl_net_ofi_req_t *base_req, int *done, int *size)
 	/* Determine whether the request has finished and free if done */
 	if (OFI_LIKELY(req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED ||
 		       req->state == NCCL_OFI_SENDRECV_REQ_ERROR)) {
-		__compiler_barrier();
 		if (size)
 			*size = req->size;
 		/* Mark as done */
