@@ -118,7 +118,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}/build+test
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}/build+test
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v4
