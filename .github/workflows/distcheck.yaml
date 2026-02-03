@@ -129,8 +129,18 @@ jobs:
       - name: Build Plugin
         run: |
           set -x
-          export CC="cc"
-          export CXX="c++"
+          if [ "${{ matrix.cc }}" = "gcc" ]
+          then
+              export CC="gcc"
+              export CXX="g++"
+          elif [ "${{ matrix.cc }}" = "clang" ]
+          then
+              export CC="clang"
+              export CXX="clang++"
+          else
+              "unknown compiler variant ${{ matrix.cc }}"
+              exit 1
+          fi
           ./autogen.sh
           if [ "${{ matrix.sdk }}" = "neuron" ]
           then
