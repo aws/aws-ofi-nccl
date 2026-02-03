@@ -30,14 +30,20 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 		return ncclInternalError;
 	}
 
+	/* GDR copy context is now a singleton, lazily initialized on first use.
+	 * GIN requires GDRCopy 2.5+ for forced PCIe copy support. */
 	try {
-		*ctx = new nccl_ofi_gin_ctx();
-	} catch (std::runtime_error &e) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-			      "Failed to allocate GIN ctx; GDRCopy is likely not available");
-		*ctx = nullptr;
-		return ncclSystemError;
+		nccl_ofi_device_copy &gdr = get_device_copy();
+		if (!gdr.forced_pcie_copy()) {
+			NCCL_OFI_WARN("GIN requires GDRCopy 2.5+ for forced PCIe copy support");
+			return ncclInternalError;
+		}
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("Failed to initialize GDRCopy: %s", e.what());
+		return ncclInternalError;
 	}
+
+	*ctx = nullptr;
 
 	return ncclSuccess;
 }
@@ -121,8 +127,6 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
 					 void *listenComm, void **collComm)
 {
-	auto *gin_ctx = static_cast<nccl_ofi_gin_ctx *>(ctx);
-
 	auto *gin_handles = reinterpret_cast<nccl_net_ofi_conn_handle_t **>(handles);
 
 	auto *gin_l_comm = static_cast<nccl_ofi_gin_listen_comm *>(listenComm);
@@ -130,7 +134,7 @@ static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks,
 	int ret = 0;
 
 	try {
-		ret = gin_l_comm->connect(gin_ctx, gin_handles, nranks, rank,
+		ret = gin_l_comm->connect(gin_handles, nranks, rank,
 					  reinterpret_cast<nccl_ofi_gin_comm **>(collComm));
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in GIN connect: %s", e.what());
@@ -255,7 +259,6 @@ static ncclResult_t nccl_ofi_gin_iput(void *collComm, uint64_t srcOff, void *src
 static ncclResult_t nccl_ofi_gin_finalize(void *ctx)
 {
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Finalizing");
-	delete static_cast<nccl_ofi_gin_ctx *>(ctx);
 	return ncclSuccess;
 }
 
