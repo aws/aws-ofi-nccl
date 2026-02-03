@@ -5,6 +5,7 @@
 #include "gin/nccl_ofi_gin.h"
 
 #include "nccl_ofi_assert.h"
+#include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_tracepoint.h"
 
 /**
@@ -32,19 +33,6 @@ struct gin_connect_handle {
 	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 };
 
-nccl_ofi_gin_ctx::nccl_ofi_gin_ctx() : copy_ctx(new nccl_ofi_gdrcopy_ctx())
-{
-	if (copy_ctx->forced_pcie_copy() == false) {
-		throw std::runtime_error(
-			"GDRCopy does not support forced PCIe copy (GDRCopy 2.5+ required)");
-	}
-}
-
-nccl_ofi_gin_ctx::~nccl_ofi_gin_ctx()
-{
-	delete copy_ctx;
-}
-
 static inline void set_write_ack_buff_info(nccl_ofi_gin_resources &resources,
 					   gin_connect_handle &handle)
 {
@@ -60,10 +48,9 @@ static inline void set_write_ack_buff_info(nccl_ofi_gin_resources &resources,
 
 nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm_t *s_comm_,
-				     nccl_net_ofi_recv_comm_t *r_comm_,
-				     nccl_ofi_device_copy &copy_ctx_)
+				     nccl_net_ofi_recv_comm_t *r_comm_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
-      dev(s_comm_->base.dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_), copy_ctx(copy_ctx_),
+      dev(s_comm_->base.dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
       metadata_fl(nullptr, &freelist_deleter)
 {
 	auto &ep = resources.get_ep();
@@ -144,8 +131,7 @@ static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_
 	return 0;
 }
 
-int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
-				      nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
+int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
 				      nccl_ofi_gin_comm **gin_comm_out)
 {
 	int ret = 0;
@@ -190,8 +176,8 @@ int nccl_ofi_gin_listen_comm::connect(nccl_ofi_gin_ctx *gin_ctx,
 		ep->set_gin_resources(resources);
 	}
 
-	nccl_ofi_gin_comm *gin_comm = new nccl_ofi_gin_comm(*resources, rank, nranks, s_comm,
-							    r_comm, gin_ctx->get_device_copy_ctx());
+	nccl_ofi_gin_comm *gin_comm =
+		new nccl_ofi_gin_comm(*resources, rank, nranks, s_comm, r_comm);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];
@@ -323,8 +309,8 @@ int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr,
 		/* For CUDA registrations, we also register the memory with
 		   GDRCopy, in case we are asked to do a signal update to this
 		   region. */
-		ret = copy_ctx.register_region(mr_handle->input_address, mr_handle->size,
-					       mr_handle->gdr_handle);
+		ret = get_device_copy().register_region(mr_handle->input_address, mr_handle->size,
+							mr_handle->gdr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("GDRCopy registration failed: %d", ret);
 			delete mr_handle;
@@ -370,7 +356,7 @@ int nccl_ofi_gin_comm::deregMrSym(gin_sym_mr_handle *mr_handle)
 {
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
 	if (mr_handle->type == NCCL_PTR_CUDA) {
-		int ret = copy_ctx.deregister_region(mr_handle->gdr_handle);
+		int ret = get_device_copy().deregister_region(mr_handle->gdr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("GDRCopy deregister failed: %d", ret);
 			return ret;
@@ -598,9 +584,9 @@ int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		uint64_t old_value;
 
-		int ret = this->copy_ctx.copy_from_device(*mr_handle->gdr_handle,
-							  metadata.signal_offset, &old_value,
-							  sizeof(old_value));
+		int ret = get_device_copy().copy_from_device(*mr_handle->gdr_handle,
+							     metadata.signal_offset, &old_value,
+							     sizeof(old_value));
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to read current signal value");
 			return -ret;
@@ -610,8 +596,8 @@ int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_
 		uint64_t new_value = old_value + add_value;
 
 		/* Write using GDRcopy. */
-		ret = this->copy_ctx.copy_to_device(&new_value, *mr_handle->gdr_handle,
-						    metadata.signal_offset, sizeof(new_value));
+		ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
+						       metadata.signal_offset, sizeof(new_value));
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to update signal value");
 			return -ret;
