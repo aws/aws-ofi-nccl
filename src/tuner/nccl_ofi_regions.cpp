@@ -879,8 +879,8 @@ static ncclResult_t region_init_internal_p5_p5e(nccl_ofi_tuner_region_context_t 
 			const nccl_ofi_tuner_region_t regions[] = {
 				{.algorithm = NCCL_ALGO_TREE,
 				 .protocol = NCCL_PROTO_LL128,
-				 .num_vertices = 5,
-				 .vertices = {{0, 16}, {2367488, 16}, {9999360, 64}, {119477248, 128}, extended_tree_ll128}},
+				 .num_vertices = 6,
+				 .vertices = {{0, 16}, {2367488, 16}, {9999360, 64}, {119477248, 128}, extended_tree_ll128, {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
 				 .num_vertices = 9,
@@ -1154,9 +1154,10 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						extended_ring_ll128}},
 				{.algorithm = NCCL_ALGO_RING,
 					.protocol = NCCL_PROTO_SIMPLE,
-					.num_vertices = 6,
+					.num_vertices = 7,
 					.vertices = {
 						extended_ring_ll128,
+						{8589934592, 512},
 						{4294967296, 256},
 						{592445440, 64},
 						{508559360, 32},
