@@ -9,6 +9,7 @@
 #include <rdma/fabric.h>
 
 #include <deque>
+#include <variant>
 
 #include "nccl_ofi.h"
 #include "cm/nccl_ofi_cm.h"
@@ -103,6 +104,14 @@ typedef enum nccl_net_ofi_rdma_req_type {
 	/* Invalid type */
 	NCCL_OFI_RDMA_INVALID_TYPE,
 } nccl_net_ofi_rdma_req_type_t;
+
+
+/* Distinguish data rails used for payload transfer from control rails
+ * used for protocol bookkeeping (mailboxes, control messages). */
+enum nccl_ofi_rdma_rail_type_t {
+	NCCL_OFI_RDMA_DATA_RAIL,
+	NCCL_OFI_RDMA_CONTROL_RAIL,
+};
 
 enum nccl_ofi_rdma_msg_type {
 	NCCL_OFI_RDMA_MSG_CTRL,
@@ -251,6 +260,41 @@ class nccl_net_ofi_rdma_ep_t;
 class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
+
+/**
+ * @brief Context structure for freelist memory registration callbacks.
+ *
+ * This struct holds the necessary information (domain, endpoint, rail type)
+ * that is passed to the freelist's memory registration and deregistration
+ * callback functions (freelist_regmr_host_fn and freelist_deregmr_host_fn).
+ * It provides the context needed to register memory regions for RDMA operations.
+ */
+template <nccl_ofi_rdma_rail_type_t Type>
+struct flush_freelist_regmr_ctx {
+	static constexpr nccl_ofi_rdma_rail_type_t rail_type{Type};
+	nccl_net_ofi_rdma_domain_t *domain;
+	nccl_net_ofi_rdma_ep_t *ep;
+
+	explicit flush_freelist_regmr_ctx() : domain(nullptr), ep(nullptr) {}
+	flush_freelist_regmr_ctx(nccl_net_ofi_rdma_domain_t *d, nccl_net_ofi_rdma_ep_t *e)
+		: domain(d), ep(e) {}
+};
+
+using control_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_CONTROL_RAIL>;
+using data_freelist_ctx = flush_freelist_regmr_ctx<NCCL_OFI_RDMA_DATA_RAIL>;
+using freelist_ctx = std::variant<std::monostate, control_freelist_ctx, data_freelist_ctx>;
+
+/**
+ * @brief Structure grouping a freelist with its memory registration context.
+ *
+ * This struct bundles a freelist pointer with its associated registration context
+ * to keep related data together and improve code organization. The context is
+ * used during freelist initialization for memory registration callbacks.
+ */
+struct freelist_with_ctx {
+	nccl_ofi_freelist_t *fl;
+	freelist_ctx ctx;
+};
 
 struct nccl_net_ofi_rdma_req;
 typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
@@ -589,16 +633,14 @@ typedef struct nccl_net_ofi_rdma_recv_comm_rail {
 	fi_addr_t local_addr;
 } nccl_net_ofi_rdma_recv_comm_rail_t;
 
-/* Metadata about dummy flush buffer */
-typedef struct nccl_net_ofi_rdma_flush_buffer {
-	/* Base buffer ptr allocated by cuda */
+/* Flush buffer memory allocation (domain-level, shared across endpoints) */
+typedef struct nccl_net_ofi_rdma_flush_buffer_mem {
+	/* Base buffer ptr allocated by cuda/host */
 	void *buffer_base;
 	/* Buffer ptr aligned to page size, derived by rounding up base buffer */
 	void *buffer;
 	size_t size;
-	/* Memory registration handle of the local buffer */
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-} nccl_net_ofi_rdma_flush_buffer_t;
+} nccl_net_ofi_rdma_flush_buffer_mem_t;
 
 /*
  * @brief	RDMA receive communicator
@@ -636,10 +678,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_msgbuff_t *msgbuff;
 
 	/* Free list to track control buffers, for sending RDMA control messages */
-	nccl_ofi_freelist_t *ctrl_buff_fl;
+	freelist_with_ctx ctrl_buff;
 
 	/* Free list to track host flush buffers, for sending flush messages */
-	nccl_ofi_freelist_t *flush_buff_fl;
+	freelist_with_ctx flush_buff;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -773,6 +815,7 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		   int type,
 		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
@@ -828,14 +871,18 @@ public:
 	 *
 	 * @return	Memory registration handle
 	 */
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_internal_mr(void *data,
 			    size_t size, int type,
-			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
+			    nccl_net_ofi_rdma_mr_handle_t **mhandle,
+			    nccl_net_ofi_ep_t *ep);
 
 #if HAVE_DECL_FI_MR_DMABUF
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_internal_mr_dma_buf(void *data,
 				int fd, uint64_t offset, size_t size, int type,
-				nccl_net_ofi_rdma_mr_handle_t **mhandle);
+				nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				nccl_net_ofi_ep_t *ep);
 #endif
 	/**
 	 * @brief	Deregister memory region
@@ -848,11 +895,22 @@ public:
 	 */
 	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
 
+	/**
+	 * @brief	Deallocate flush buffer memory.
+	 *
+	 * Only deallocates memory. MR deregistration is done separately per-endpoint
+	 * via nccl_net_ofi_rdma_ep_t::dereg_flush_buff_mr().
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int dealloc_flush_buff();
+
 	uint16_t num_rails;
 	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
 
-	/* The flush buffer */
-	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
+	/* The flush buffer memory (MR registration done per-endpoint) */
+	nccl_net_ofi_rdma_flush_buffer_mem_t flush_buff_mem;
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t ep_addr_list;
@@ -873,9 +931,10 @@ protected:
 	int cleanup_resources() override;
 
 	/**
-	 * @brief	Allocated and registers buffer to flush RDMA operations. On
-	 * 		Success, receive communicator holds reference to flush buffer
-	 * 		and associated memory handle.
+	 * @brief	Allocate buffer for flush RDMA operations.
+	 *
+	 * Only allocates flush buffer memory in the domain. MR registration
+	 * is done separately per-endpoint via nccl_net_ofi_rdma_ep_t::reg_flush_buff_mr().
 	 *
 	 * @param	dev_id
 	 *		Device ID
@@ -883,20 +942,18 @@ protected:
 	 * @return	0, on success
 	 * 		error, on others
 	 */
-	int alloc_and_reg_flush_buff(int dev_id);
-
-	/**
-	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
-	 *
-	 * @return	0, on success
-	 * 		error, on others
-	 */			    
-	int dealloc_and_dereg_flush_buff();
+	int alloc_flush_buff(int dev_id);
 
 private:
+	template <nccl_ofi_rdma_rail_type_t rail_type>
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			     int type,
 			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
+
+	template <nccl_ofi_rdma_rail_type_t rail_type>
+	int bind_mr_to_endpoint(nccl_net_ofi_rdma_mr_handle_t *mr_handle,
+				nccl_net_ofi_rdma_ep_t *ep,
+				uint16_t nrails);
 
 	/**
 	 * @brief	Deregister memory region without acquiring memory region cache lock
@@ -1158,6 +1215,28 @@ public:
 	int process_cq_if_pending();
 
 	/**
+	 * @brief	Register flush buffer MR for this endpoint
+	 *
+	 * When FI_MR_ENDPOINT is supported, each endpoint needs its own MR
+	 * registration bound to it. The buffer memory itself is owned by the domain.
+	 *
+	 * @param	dev_id
+	 *		Device ID
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int reg_flush_buff_mr(int dev_id);
+
+	/**
+	 * @brief	Deregister flush buffer MR for this endpoint
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int dereg_flush_buff_mr();
+
+	/**
 	 * @brief	Populate connect response message with endpoint names
 	 *
 	 * @param	dev_id
@@ -1237,9 +1316,9 @@ public:
 	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist_t *ctrl_rx_buff_fl = nullptr;
+	freelist_with_ctx ctrl_rx_buff;
 	/* Free list of eager rx buffers */
-	nccl_ofi_freelist_t *eager_rx_buff_fl = nullptr;
+	freelist_with_ctx eager_rx_buff;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist_t *rx_buff_reqs_fl = nullptr;
 	/* Size of ctrl rx buffers */
@@ -1257,6 +1336,9 @@ public:
 	 * disabled.
 	 */
 	ssize_t eager_send_size;
+
+	/* Per-endpoint MR handle for flush buffer (used when endpoint_mr is true) */
+	nccl_net_ofi_rdma_mr_handle_t *flush_buff_mr_handle = nullptr;
 
 	/* true if the current endpoint is a endpoint_per_communicator
 	   receive communicator */
