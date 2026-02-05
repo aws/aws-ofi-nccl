@@ -56,7 +56,7 @@ class nccl_net_ofi_gin_base_req {
 private:
 	/* Source freelist element. This allows the request to be returned to a
 	   request freelist when complete */
-	nccl_ofi_freelist_elem_t *fl_elem = nullptr;
+	nccl_ofi_freelist::fl_entry *fl_elem = nullptr;
 
 	/* Friend the resources class to allow access for freelist usage */
 	friend class nccl_ofi_gin_resources;
@@ -131,7 +131,7 @@ private:
 	nccl_ofi_gin_resources &resources;
 	nccl_ofi_gin_ep_rail_t &rail;
 
-	nccl_ofi_freelist_elem_t *rx_buff_elem;
+	nccl_ofi_freelist::fl_entry *rx_buff_elem;
 };
 
 /**
@@ -322,9 +322,9 @@ public:
 	uint16_t msg_seq_num;
 
 	nccl_net_ofi_gin_metadata_send_req_t(struct fid_ep *ep_arg, uint16_t rail_id_arg,
-					     nccl_ofi_freelist_elem_t *metadata_elem_arg,
+					     nccl_ofi_freelist::fl_entry *metadata_elem_arg,
 					     fi_addr_t remote_addr_arg,
-					     nccl_ofi_freelist_t *metadata_fl_arg, void *comm_arg,
+					     nccl_ofi_freelist *metadata_fl_arg, void *comm_arg,
 					     int dev_arg, uint32_t rank_arg,
 					     uint16_t msg_seq_num_arg)
 	    : comm(comm_arg), dev(dev_arg), rank(rank_arg), msg_seq_num(msg_seq_num_arg),
@@ -360,9 +360,9 @@ public:
 private:
 	struct fid_ep *ep;
 	uint16_t rail_id;
-	nccl_ofi_freelist_elem_t *metadata_elem;
+	nccl_ofi_freelist::fl_entry *metadata_elem;
 	fi_addr_t remote_addr;
-	nccl_ofi_freelist_t *metadata_fl;
+	nccl_ofi_freelist *metadata_fl;
 };
 
 /**

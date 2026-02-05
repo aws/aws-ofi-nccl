@@ -65,34 +65,27 @@ fi_addr_t endpoint::av_insert_address(const void *address)
 conn_msg_buffer_manager::conn_msg_buffer_manager(endpoint &_ep, size_t buffer_size) :
 	ep(_ep)
 {
-	int ret = nccl_ofi_freelist_init_mr(buffer_size, 16, 16, 0, nullptr, nullptr, endpoint::reg_mr, endpoint::dereg_mr,
-					    &ep, 1, "Connection Message Buffer", true, &buff_fl);
-	if (ret != 0) {
-		throw std::runtime_error("Failed to init freelist");
-	}
+	buff_fl = new nccl_ofi_freelist(buffer_size, 16, 16, 0, nullptr, nullptr, endpoint::reg_mr,
+					endpoint::dereg_mr, &ep, 1, "Connection Message Buffer",
+					true);
 }
 
 
 conn_msg_buffer_manager::~conn_msg_buffer_manager()
 {
-	int ret = nccl_ofi_freelist_fini(buff_fl);
-	/* Shouldn't throw from destructors, so an warning will do. */
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to finalize freelist");
-		assert(ret == 0);
-	}
+	delete buff_fl;
 }
 
 
-nccl_ofi_freelist_elem_t &conn_msg_buffer_manager::allocate_conn_msg()
+nccl_ofi_freelist::fl_entry &conn_msg_buffer_manager::allocate_conn_msg()
 {
-	return *(nccl_ofi_freelist_entry_alloc(buff_fl));
+	return *(buff_fl->entry_alloc());
 }
 
 
-void conn_msg_buffer_manager::free_conn_msg(nccl_ofi_freelist_elem_t &conn_msg)
+void conn_msg_buffer_manager::free_conn_msg(nccl_ofi_freelist::fl_entry &conn_msg)
 {
-	nccl_ofi_freelist_entry_free(buff_fl, &conn_msg);
+	buff_fl->entry_free(&conn_msg);
 }
 
 

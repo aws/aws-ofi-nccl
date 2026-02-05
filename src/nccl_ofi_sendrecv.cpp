@@ -359,13 +359,13 @@ static inline void sendrecv_req_zero(nccl_net_ofi_sendrecv_req_t *req)
  * @brief	Prepares sendrecv request for reuse
  */
 static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
-				    nccl_ofi_freelist_t *nccl_ofi_reqs_fl,
+				    nccl_ofi_freelist *nccl_ofi_reqs_fl,
 				    int dev_id,
 				    nccl_net_ofi_sendrecv_req_t *req,
 				    bool dec_inflight_reqs)
 {
 	int ret = 0;
-	nccl_ofi_freelist_elem_t *elem = NULL;
+	nccl_ofi_freelist::fl_entry *elem = NULL;
 
 	if (OFI_UNLIKELY(req == NULL)) {
 		ret = -EINVAL;
@@ -387,8 +387,7 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 	sendrecv_req_zero(req);
 
 	assert(elem);
-	nccl_ofi_freelist_entry_free(nccl_ofi_reqs_fl, elem);
-
+	nccl_ofi_reqs_fl->entry_free(elem);
 	/* Reduce inflight commands */
 	if (OFI_LIKELY(dec_inflight_reqs == true))
 		(*num_inflight_reqs)--;
@@ -406,7 +405,7 @@ static inline int sendrecv_send_comm_free_req(nccl_net_ofi_sendrecv_send_comm_t 
 					      bool dec_inflight_reqs)
 {
 	uint64_t *num_inflight_reqs = &s_comm->num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
 	return sendrecv_req_free(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -420,7 +419,7 @@ static inline int sendrecv_recv_comm_free_req(nccl_net_ofi_sendrecv_recv_comm_t 
 					      bool dec_inflight_reqs)
 {
 	uint64_t *num_inflight_reqs = &r_comm->num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
 	return sendrecv_req_free(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
 				 req, dec_inflight_reqs);
 }
@@ -876,17 +875,17 @@ static int sendrecv_recv_comm_dereg_mr(nccl_net_ofi_recv_comm_t *recv_comm,
 /*
  * @brief	Assign an allocated sendrecv request buffer
  */
-static inline nccl_net_ofi_sendrecv_req_t *sendrecv_allocate_req(nccl_ofi_freelist_t *fl)
+static inline nccl_net_ofi_sendrecv_req_t *sendrecv_allocate_req(nccl_ofi_freelist *fl)
 {
 	nccl_net_ofi_sendrecv_req_t *req = NULL;
-	nccl_ofi_freelist_elem_t *elem = NULL;
+	nccl_ofi_freelist::fl_entry *elem = NULL;
 
 	if (OFI_UNLIKELY(fl == NULL)) {
 		NCCL_OFI_WARN("Freelist not allocated");
 		goto exit;
 	}
 
-	elem = nccl_ofi_freelist_entry_alloc(fl);
+	elem = fl->entry_alloc();
 	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("No freelist items available");
 		goto exit;
@@ -1057,7 +1056,7 @@ static int sendrecv_recv_comm_close(nccl_net_ofi_recv_comm_t *recv_comm)
 		r_comm->flush_buff.host_buffer = MAP_FAILED;
 	}
 
-	nccl_ofi_freelist_fini(r_comm->nccl_ofi_reqs_fl);
+	delete r_comm->nccl_ofi_reqs_fl;
 
 	if (r_comm->receiver) {
 		delete r_comm->receiver;
@@ -1355,18 +1354,10 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	r_comm->remote_ep = remote_ep;
 
 	/* Pre-allocated buffers for data path */
-
-	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_REQUESTS,
-				     sendrecv_fl_req_entry_init, NULL,
-				     "Sendrecv Recv Communicator Requests",
-				     true,
-				     &r_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			      dev_id);
-		free(r_comm);
-		return NULL;
-	}
+	r_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(req_size, 16, 16, NCCL_OFI_MAX_REQUESTS,
+							 sendrecv_fl_req_entry_init, NULL,
+							 "Sendrecv Recv Communicator Requests",
+							 true);
 
 	/*
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
@@ -1836,7 +1827,7 @@ static int sendrecv_send_comm_close(nccl_net_ofi_send_comm_t *send_comm)
 		ep->sendrecv_endpoint_abort();
 	}
 
-	nccl_ofi_freelist_fini(s_comm->nccl_ofi_reqs_fl);
+	delete s_comm->nccl_ofi_reqs_fl;
 
 	if (s_comm->connector) {
 		delete s_comm->connector;
@@ -1930,16 +1921,10 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Pre-allocated buffers for data path */
-	ret = nccl_ofi_freelist_init(req_size, 16, 16, NCCL_OFI_MAX_SEND_REQUESTS,
-				     sendrecv_fl_req_entry_init, NULL,
-				     "Sendrecv Send Communicator Requests",
-				     true,
-				     &ret_s_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Could not allocate NCCL OFI requests free list for dev %d",
-			      device->dev_id);
-		goto out;
-	}
+	ret_s_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(req_size, 16, 16, NCCL_OFI_MAX_SEND_REQUESTS,
+							     sendrecv_fl_req_entry_init, NULL,
+							     "Sendrecv Send Communicator Requests",
+							     true);
 
 	*s_comm = ret_s_comm;
 out:

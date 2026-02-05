@@ -68,7 +68,7 @@ public:
 
 private:
 	cm_resources &resources;
-	nccl_ofi_freelist_elem_t &rx_elem;
+	nccl_ofi_freelist::fl_entry &rx_elem;
 };
 
 /**
@@ -113,7 +113,7 @@ public:
 	virtual int progress();
 private:
 	cm_resources &resources;
-	nccl_ofi_freelist_elem_t &send_elem;
+	nccl_ofi_freelist::fl_entry &send_elem;
 	fi_addr_t dest_addr;
 	std::function<void()> done_callback;
 };
@@ -165,7 +165,7 @@ private:
 	   immediately. See more detailed comment in the constructor */
 	bool complete_immediately;
 
-	nccl_ofi_freelist_elem_t &send_elem;
+	nccl_ofi_freelist::fl_entry &send_elem;
 	fi_addr_t dest_addr;
 	std::function<void()> done_callback;
 };
