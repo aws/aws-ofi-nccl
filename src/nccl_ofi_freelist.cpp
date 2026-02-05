@@ -77,16 +77,9 @@ void nccl_ofi_freelist::init_internal(size_t entry_size_arg,
 	this->name = name_arg;
 	this->enable_leak_detection = enable_leak_detection_arg;
 
-	ret = pthread_mutex_init(&this->lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
-		throw std::runtime_error("freelist mutex initialization failed");
-	}
-
 	ret = add(initial_entry_count_arg);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Allocating initial freelist entries failed: %d", ret);
-		pthread_mutex_destroy(&this->lock);
 		throw std::runtime_error("freelist initial allocation failed");
 	}
 }
@@ -198,8 +191,6 @@ nccl_ofi_freelist::~nccl_ofi_freelist()
 		NCCL_OFI_WARN("%s freelist: there are %lu in-use entries that are not released",
 			      this->name, this->num_in_use_entries);
 	}
-
-	pthread_mutex_destroy(&this->lock);
 }
 
 

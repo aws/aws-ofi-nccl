@@ -166,13 +166,13 @@ public:
 		int ret;
 		fl_entry *entry = NULL;
 
-		nccl_net_ofi_mutex_lock(&this->lock);
+		std::lock_guard guard(this->lock);
 
 		if (!this->entries) {
 			ret = add(increase_entry_count);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Could not extend freelist: %d", ret);
-				goto cleanup;
+				return NULL;
 			}
 		}
 
@@ -183,9 +183,6 @@ public:
 		entry_set_undefined(entry->ptr);
 
 		this->num_in_use_entries++;
-
-	cleanup:
-		nccl_net_ofi_mutex_unlock(&this->lock);
 
 		return entry;
 	}
@@ -203,7 +200,7 @@ public:
 
 		assert(entry);
 
-		nccl_net_ofi_mutex_lock(&this->lock);
+		std::lock_guard guard(this->lock);
 
 		entry->next = this->entries;
 		this->entries = entry;
@@ -211,8 +208,6 @@ public:
 		nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
 
 		this->num_in_use_entries--;
-
-		nccl_net_ofi_mutex_unlock(&this->lock);
 	}
 
 	/*
@@ -307,7 +302,7 @@ protected:
 	const char *name;
 	bool enable_leak_detection;
 
-	pthread_mutex_t lock;
+	std::mutex lock;
 };
 
 
