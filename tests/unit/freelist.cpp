@@ -69,68 +69,58 @@ struct random_freelisted_item {
 
 int main(int argc, char *argv[])
 {
-	struct nccl_ofi_freelist_t *freelist;
-	nccl_ofi_freelist_elem_t *entry;
-	int ret;
+	nccl_ofi_freelist *freelist;
+	nccl_ofi_freelist::fl_entry *entry;
 	size_t i;
 
 	system_page_size = 4096;
 	ofi_log_function = logger;
 
 	/* initial size larger than max size */
-	ret = nccl_ofi_freelist_init(1,
-				     16,
-				     0,
-				     8,
-				     NULL, NULL,
-				     "Test",
-				     true,
-				     &freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	freelist = new nccl_ofi_freelist(1,
+					 16,
+					 0,
+					 8,
+					 NULL, NULL,
+					 "Test",
+					 true);
 	for (i = 0 ; i < 8 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = freelist->entry_alloc();
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
 	}
-	entry = nccl_ofi_freelist_entry_alloc(freelist);
+	entry = freelist->entry_alloc();
 	if (entry) {
 		NCCL_OFI_WARN("allocation unexpectedly worked");
 		exit(1);
 	}
-	nccl_ofi_freelist_fini(freelist);
+	delete freelist;
 
 	/* require addition to reach full size (with entry init/fini test) */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     16,
-				     entry_init_fn_simple,
-				     entry_fini_fn_simple,
-				     "Test",
-				     true,
-				     &freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	entry_init_fn_count = 0;
+	freelist = new nccl_ofi_freelist(1,
+					 8,
+					 8,
+					 16,
+					 entry_init_fn_simple,
+					 entry_fini_fn_simple,
+					 "Test",
+					 true);
 	/* Expect max_entry_count calls here, because of the round up to page size  */
 	if (entry_init_fn_count != 16) {
 		NCCL_OFI_WARN("Wrong number of entry_init_fn calls: %zu", entry_init_fn_count);
 		exit(1);
 	}
 	for (i = 0 ; i < 16 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = freelist->entry_alloc();
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
 	}
-	entry = nccl_ofi_freelist_entry_alloc(freelist);
+	entry = freelist->entry_alloc();
 	if (entry) {
 		NCCL_OFI_WARN("allocation unexpectedly worked");
 		exit(1);
@@ -141,7 +131,7 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
-	nccl_ofi_freelist_fini(freelist);
+	delete freelist;
 
 	if (entry_fini_fn_count != 16) {
 		NCCL_OFI_WARN("Wrong number of entry_fini_fn_count calls: %zu", entry_fini_fn_count);
@@ -149,51 +139,41 @@ int main(int argc, char *argv[])
 	}
 
 	/* no max size */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     0,
-				     NULL, NULL,
-				     "Test",
-				     true,
-				     &freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	freelist = new nccl_ofi_freelist(1,
+					 8,
+					 8,
+					 0,
+					 NULL, NULL,
+					 "Test",
+					 true);
 	for (i = 0 ; i < 32 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = freelist->entry_alloc();
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
 	}
 	/* after 32, figure good enough */
-	nccl_ofi_freelist_fini(freelist);
+	delete freelist;
 
 	/* check return of entries */
-	ret = nccl_ofi_freelist_init(1,
-				     8,
-				     8,
-				     16,
-				     NULL, NULL,
-				     "Test",
-				     true,
-				     &freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	freelist = new nccl_ofi_freelist(1,
+					 8,
+					 8,
+					 16,
+					 NULL, NULL,
+					 "Test",
+					 true);
 	for (i = 0 ; i < 32 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = freelist->entry_alloc();
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
-		nccl_ofi_freelist_entry_free(freelist, entry);
+		freelist->entry_free(entry);
 	}
 
-	nccl_ofi_freelist_fini(freelist);
+	delete freelist;
 
 	if (entry_init_fn_count != entry_fini_fn_count) {
 		NCCL_OFI_WARN("entry_init_fn_count (%zu) and entry_fini_fn_count (%zu) mismatch",
@@ -202,21 +182,16 @@ int main(int argc, char *argv[])
 	}
 
 	/* make sure entries look rationally spaced */
-	ret = nccl_ofi_freelist_init(1024,
-				     16,
-				     0,
-				     16,
-				     NULL, NULL,
-				     "Test",
-				     true,
-				     &freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	freelist = new nccl_ofi_freelist(1024,
+					 16,
+					 0,
+					 16,
+					 NULL, NULL,
+					 "Test",
+					 true);
 	char *last_buff = NULL;
 	for (i = 0 ; i < 8 ; i++) {
-		entry = nccl_ofi_freelist_entry_alloc(freelist);
+		entry = freelist->entry_alloc();
 		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
@@ -230,33 +205,24 @@ int main(int argc, char *argv[])
 		}
 		last_buff = (char *)entry->ptr;
 	}
-	ret = nccl_ofi_freelist_fini(freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_fini failed: %d", ret);
-		exit(1);
-	}
+	delete freelist;
 
 	/* and now with registrations... */
 	simple_base = NULL;
 	entry_init_fn_count = 0;
 	entry_fini_fn_count = 0;
-	ret = nccl_ofi_freelist_init_mr(1024,
-					32,
-					0,
-					32,
-					entry_init_fn_simple,
-					entry_fini_fn_simple,
-					regmr_simple,
-					deregmr_simple,
-					(void *)0xdeadbeaf,
-					1,
-					"Test MR",
-					true,
-					&freelist);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("freelist_init failed: %d", ret);
-		exit(1);
-	}
+	freelist = new nccl_ofi_freelist(1024,
+					 32,
+					 0,
+					 32,
+					 entry_init_fn_simple,
+					 entry_fini_fn_simple,
+					 regmr_simple,
+					 deregmr_simple,
+					 (void *)0xdeadbeaf,
+					 1,
+					 "Test MR",
+					 true);
 	if (!simple_base) {
 		NCCL_OFI_WARN("looks like registration not called");
 		exit(1);
@@ -266,18 +232,18 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 	for (i = 0 ; i < 8 ; i++) {
-		nccl_ofi_freelist_elem_t *item = nccl_ofi_freelist_entry_alloc(freelist);
-		if (!item) {
+		entry = freelist->entry_alloc();
+		if (!entry) {
 			NCCL_OFI_WARN("allocation unexpectedly failed");
 			exit(1);
 		}
 
-		if (item->mr_handle != simple_handle) {
-			NCCL_OFI_WARN("allocation handle mismatch %p %p", item->mr_handle, simple_handle);
+		if (entry->mr_handle != simple_handle) {
+			NCCL_OFI_WARN("allocation handle mismatch %p %p", entry->mr_handle, simple_handle);
 			exit(1);
 		}
 	}
-	nccl_ofi_freelist_fini(freelist);
+	delete freelist;
 	if (simple_base) {
 		NCCL_OFI_WARN("looks like deregistration not called");
 		exit(1);

@@ -139,7 +139,7 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
 	assert(scheduler_p != NULL);
 	assert(scheduler_p->schedule_fl != NULL);
 
-	nccl_ofi_freelist_entry_free(scheduler_p->schedule_fl, schedule->elem);
+	scheduler_p->schedule_fl->entry_free(schedule->elem);
 }
 
 /*
@@ -173,7 +173,7 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
 
 	assert(scheduler != NULL);
 
-	nccl_ofi_freelist_elem_t *elem = nccl_ofi_freelist_entry_alloc(scheduler_p->schedule_fl);
+	nccl_ofi_freelist::fl_entry *elem = scheduler_p->schedule_fl->entry_alloc();
 	if (OFI_UNLIKELY(!elem)) {
 		NCCL_OFI_WARN("Failed to allocate schedule");
 		return NULL;
@@ -205,16 +205,12 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
  */
 static int scheduler_fini(nccl_net_ofi_scheduler_t *scheduler)
 {
-	int ret;
-
 	assert(scheduler);
 	assert(scheduler->schedule_fl);
 
-	ret = nccl_ofi_freelist_fini(scheduler->schedule_fl);
-	if (ret) {
-		NCCL_OFI_WARN("Could not free freelist of schedules");
-	}
-	return ret;
+	delete scheduler->schedule_fl;
+
+	return 0;
 }
 
 /*
@@ -265,13 +261,8 @@ static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *schedu
 {
 	int ret = 0;
 
-	ret = nccl_ofi_freelist_init(sizeof_schedule(num_rails), 16, 16, 0, NULL, NULL,
-				     "Scheduler", true,
-				     &scheduler->schedule_fl);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Could not allocate freelist of schedules");
-		return ret;
-	}
+	scheduler->schedule_fl = new nccl_ofi_freelist(sizeof_schedule(num_rails), 16, 16, 0, NULL, NULL,
+						       "Scheduler", true);
 
 	return ret;
 }

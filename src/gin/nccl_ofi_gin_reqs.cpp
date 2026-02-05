@@ -57,7 +57,7 @@ nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources 
 							 nccl_ofi_gin_ep_rail_t &rail_arg)
     : nccl_net_ofi_gin_op_req_t(), resources(resources_arg), rail(rail_arg)
 {
-	rx_buff_elem = nccl_ofi_freelist_entry_alloc(resources.get_rx_buff_fl());
+	rx_buff_elem = resources.get_rx_buff_fl()->entry_alloc();
 	if (!rx_buff_elem) {
 		NCCL_OFI_WARN("Failed to allocate rx buffer freelist entry");
 		throw std::runtime_error("Failed to allocate rx buffer freelist entry");
@@ -66,7 +66,7 @@ nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources 
 
 nccl_net_ofi_gin_recv_req_t::~nccl_net_ofi_gin_recv_req_t()
 {
-	nccl_ofi_freelist_entry_free(resources.get_rx_buff_fl(), rx_buff_elem);
+	resources.get_rx_buff_fl()->entry_free(rx_buff_elem);
 }
 
 int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
@@ -257,5 +257,5 @@ int nccl_net_ofi_gin_metadata_send_req_t::post()
 
 nccl_net_ofi_gin_metadata_send_req_t::~nccl_net_ofi_gin_metadata_send_req_t()
 {
-	nccl_ofi_freelist_entry_free(metadata_fl, metadata_elem);
+	metadata_fl->entry_free(metadata_elem);
 }

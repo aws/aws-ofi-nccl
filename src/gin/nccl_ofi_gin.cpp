@@ -57,14 +57,10 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 
 	std::lock_guard scoped_ep_lock(ep.ep_lock);
 
-	nccl_ofi_freelist_t *metadata_fl_ptr = nullptr;
-	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), 16, 16,
-					    0, nullptr, nullptr, ep.freelist_regmr_fn,
-					    ep.freelist_deregmr_fn, &ep, 1, "GIN Metadata", true,
-					    &metadata_fl_ptr);
-	if (ret != 0) {
-		throw std::runtime_error("Failed to initialize freelist for GIN metadata");
-	}
+	nccl_ofi_freelist *metadata_fl_ptr = nullptr;
+	metadata_fl_ptr = new nccl_ofi_freelist(
+		sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), 16, 16, 0, nullptr, nullptr,
+		ep.freelist_regmr_fn, ep.freelist_deregmr_fn, &ep, 1, "GIN Metadata", true);
 
 	metadata_fl.reset(metadata_fl_ptr);
 
@@ -492,12 +488,12 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	/* Update umbrella request with write_reqs */
 	req->write_reqs = write_reqs;
 
-	nccl_ofi_freelist_elem_t *metadata_elem = nullptr;
+	nccl_ofi_freelist::fl_entry *metadata_elem = nullptr;
 
 	if (signalOp != 0) {
 		/* Post metadata send with signal information */
 
-		metadata_elem = nccl_ofi_freelist_entry_alloc(metadata_fl.get());
+		metadata_elem = metadata_fl.get()->entry_alloc();
 		if (!metadata_elem) {
 			NCCL_OFI_WARN("Failed to allocate metadata freelist entry");
 			resources.return_req_to_pool(req);

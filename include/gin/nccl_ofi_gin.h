@@ -310,7 +310,7 @@ private:
 	 * nccl_net_ofi_gin_signal_metadata_msg_t). An entry is allocated from
 	 * this freelist for each putSignal operation.
 	 */
-	std::unique_ptr<nccl_ofi_freelist_t, decltype(&freelist_deleter)> metadata_fl;
+	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
 
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 

@@ -37,7 +37,7 @@ typedef struct nccl_net_ofi_schedule {
 	size_t num_xfer_infos;
 
 	/* Backpointer to freelist element (for cleanup) */
-	nccl_ofi_freelist_elem_t *elem;
+	nccl_ofi_freelist::fl_entry *elem;
 
 	/* Array of transfer information structs. The array has at
 	 * least 'num_xfer_infos' entries. */
@@ -52,7 +52,7 @@ typedef struct nccl_net_ofi_scheduler nccl_net_ofi_scheduler_t;
  */
 typedef struct nccl_net_ofi_scheduler {
 	/* Freelist of schedules */
-	nccl_ofi_freelist_t *schedule_fl;
+	nccl_ofi_freelist *schedule_fl;
 
 	/*
 	 * @brief	Scheduler specific function pointer stored in base scheduler to create schedule for a message

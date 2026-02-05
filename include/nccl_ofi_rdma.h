@@ -257,7 +257,7 @@ typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
 
 typedef struct {
 	/* Rx buffer freelist item */
-	nccl_ofi_freelist_elem_t *rx_buff_fl_elem;
+	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem;
 	/* Length of rx buffer */
 	size_t buff_len;
 	/* Length of received data */
@@ -339,7 +339,7 @@ typedef struct {
  */
 typedef struct {
 	/* Pointer to the allocated control buffer from freelist */
-	nccl_ofi_freelist_elem_t *ctrl_fl_elem;
+	nccl_ofi_freelist::fl_entry *ctrl_fl_elem;
 	/* Schedule used to transfer the close buffer. We save the
 	 * pointer to reference it when transferring the buffer over
 	 * network. */
@@ -397,7 +397,7 @@ typedef struct {
 	/* MR handles for the data buffer */
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 	/* Pointer to allocated buffer from freelist */
-	nccl_ofi_freelist_elem_t *flush_fl_elem;
+	nccl_ofi_freelist::fl_entry *flush_fl_elem;
 	/* Total number of completions. Expect completions from all NIC rail */
 	int total_num_compls;
 } rdma_req_flush_data_t;
@@ -449,7 +449,7 @@ typedef struct nccl_net_ofi_rdma_req {
 	nccl_net_ofi_rdma_req_type_t type;
 
 	/* Backpointer to freelist element */
-	nccl_ofi_freelist_elem_t *elem;
+	nccl_ofi_freelist::fl_entry *elem;
 
 	/* Deinitialzie and free request. This function returns error
 	 * in cases where cleanup fails. This function may also return
@@ -530,7 +530,7 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
 	uint32_t local_comm_id;
@@ -623,7 +623,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	 */
 	uint64_t num_pending_flush_comps;
 
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl;
 
 	/* Comm ID provided by the local endpoint */
 	uint32_t local_comm_id;
@@ -636,10 +636,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	nccl_ofi_msgbuff_t *msgbuff;
 
 	/* Free list to track control buffers, for sending RDMA control messages */
-	nccl_ofi_freelist_t *ctrl_buff_fl;
+	nccl_ofi_freelist *ctrl_buff_fl;
 
 	/* Free list to track host flush buffers, for sending flush messages */
-	nccl_ofi_freelist_t *flush_buff_fl;
+	nccl_ofi_freelist *flush_buff_fl;
 
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
@@ -1237,11 +1237,11 @@ public:
 	pthread_mutex_t pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist_t *ctrl_rx_buff_fl = nullptr;
+	nccl_ofi_freelist *ctrl_rx_buff_fl = nullptr;
 	/* Free list of eager rx buffers */
-	nccl_ofi_freelist_t *eager_rx_buff_fl = nullptr;
+	nccl_ofi_freelist *eager_rx_buff_fl = nullptr;
 	/* Free list of rx buffer requests */
-	nccl_ofi_freelist_t *rx_buff_reqs_fl = nullptr;
+	nccl_ofi_freelist *rx_buff_reqs_fl = nullptr;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely

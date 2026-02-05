@@ -471,14 +471,11 @@ nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
 	assert_always(num_rails > 0 && num_buffers % num_rails == 0);
 	const size_t num_buffers_per_rail = num_buffers / num_rails;
 
-	nccl_ofi_freelist_t *rx_buff_fl_tmp = nullptr;
-	int ret = nccl_ofi_freelist_init_mr(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
-					    num_buffers, 0, num_buffers, nullptr, nullptr,
-					    gin_ep.freelist_regmr_fn, gin_ep.freelist_deregmr_fn,
-					    &gin_ep, 1, "GIN Rx Buffers", true, &rx_buff_fl_tmp);
-	if (ret != 0) {
-		throw std::runtime_error("Failed to init rx_buff_fl");
-	}
+	nccl_ofi_freelist *rx_buff_fl_tmp = nullptr;
+	rx_buff_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
+					       num_buffers, 0, num_buffers, nullptr, nullptr,
+					       gin_ep.freelist_regmr_fn, gin_ep.freelist_deregmr_fn,
+					       &gin_ep, 1, "GIN Rx Buffers", true);
 	this->rx_buff_fl.reset(rx_buff_fl_tmp);
 
 	/* Create the receive pool for all rails */
@@ -488,13 +485,9 @@ nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
 	}
 
 	/* Freelist for requests */
-	nccl_ofi_freelist_t *req_fl_tmp = nullptr;
-	ret = nccl_ofi_freelist_init(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0, nullptr,
-				     nullptr, "GIN Requests", true, &req_fl_tmp);
-	if (ret != 0) {
-		throw std::runtime_error("Failed to init req_fl");
-	}
-
+	nccl_ofi_freelist *req_fl_tmp = nullptr;
+	req_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0,
+					   nullptr, nullptr, "GIN Requests", true);
 	this->req_fl.reset(req_fl_tmp);
 }
 

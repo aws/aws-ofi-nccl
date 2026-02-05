@@ -141,17 +141,17 @@ public:
 	/**
 	 * Allocate a registered connect message from the freelist
 	 */
-	nccl_ofi_freelist_elem_t &allocate_conn_msg();
+	nccl_ofi_freelist::fl_entry &allocate_conn_msg();
 
 	/**
 	 * Free a buffer allocated using allocate_conn_msg, returning it to the
 	 * freelist
 	 */
-	void free_conn_msg(nccl_ofi_freelist_elem_t &conn_msg);
+	void free_conn_msg(nccl_ofi_freelist::fl_entry &conn_msg);
 
 private:
 	endpoint &ep;
-	nccl_ofi_freelist_t *buff_fl;
+	nccl_ofi_freelist *buff_fl;
 };
 
 
