@@ -153,6 +153,13 @@ static int test_is_inside_region(void) {
 
     printf("All points on the edges of the polygon are detected correcltly\n");
 
+    nccl_ofi_tuner_point_t e_48M_16_288M_128_OFF_ORIGINAL = extend_region(
+        (nccl_ofi_tuner_point_t){(double)48.0 * 1024 * 1024, 16},
+        (nccl_ofi_tuner_point_t){(double)288.0 * 1024 * 1024, 128},
+        (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
+    e_48M_16_288M_128_OFF_ORIGINAL.x -= 10.0;
+    e_48M_16_288M_128_OFF_ORIGINAL.y -= 10.0;
+
     const size_t num_points = 20;
     nccl_ofi_tuner_point_t inside_vertices[] = {{16.0 * 1024 * 1024, 4},
                                                       {128.0 * 1024 * 1024, 4},
@@ -175,7 +182,7 @@ static int test_is_inside_region(void) {
                                                       // Note, set a big enough diff (10.0) below, otherwise
                                                       // the delta after log2 is within floating error (eps).
                                                       {TUNER_MAX_SIZE - 10.0, 128},
-                                                      {e_48M_16_288M_128.x - 1.0, e_48M_16_288M_128.y - 10.0, nccl_ofi_tuner_point_t::LOG2}};
+                                                      e_48M_16_288M_128_OFF_ORIGINAL};
 
     /* These points should be inside the polygon */
     for (size_t i = 0; i < num_points; i++) {
