@@ -75,7 +75,9 @@ private:
 
 	/* GDRCopy library handles */
 	struct impl;
+#if HAVE_GDRCOPY
 	impl *pimpl;
+#endif
 
 	/**
 	 * Get minimum of driver and runtime versions
