@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -1461,7 +1461,8 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 	case COMM_CREATE_START:
 
 		comm_state->stage = COMM_CONN_REQ_PENDING;
-		fallthrough;
+		[[fallthrough]];
+
 	case COMM_CONN_REQ_PENDING:
 
 		/* Progress NCCL OFI engine so that connection is accepted */
@@ -1516,7 +1517,7 @@ static int sendrecv_listen_comm_accept(nccl_net_ofi_listen_comm_t *listen_comm,
 
 		comm_state->stage = COMM_CONN_RESP_REQ_PENDING;
 
-		fallthrough;
+		[[fallthrough]];
 	case COMM_CONN_RESP_REQ_PENDING:
 		/* COMM_CONN_RESP_REQ_PENDING: Wait until connect
 		 * response message has been delivered. Afterwards,
