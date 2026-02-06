@@ -71,7 +71,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --${{ matrix.platform-aws }}-platform-aws \
-                        --enable-neuron
+                        --enable-neuron \
+                        --enable-debug
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -79,6 +80,7 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --${{ matrix.platform-aws }}-platform-aws \
+                        --enable-debug \
                         --with-cuda=/usr/local/cuda/
           fi
 
@@ -150,7 +152,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
-                        --enable-neuron
+                        --enable-neuron \
+                        --enable-debug
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -158,6 +161,7 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
+                        --enable-debug \
                         --with-cuda=/usr/local/cuda/
           fi
 
