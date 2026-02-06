@@ -171,15 +171,6 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req_t *rx_buff_req);
 
 
 /*
- * Get connection message from rx buffer
- */
-static inline nccl_ofi_rdma_connection_info_t *get_rx_connection_msg(
-	rdma_req_rx_buff_data_t *rx_buff_data)
-{
-	return (nccl_ofi_rdma_connection_info_t *)rx_buff_data->rx_buff_fl_elem->ptr;
-}
-
-/*
  * Get close message from rx buffer
  */
 static inline nccl_net_ofi_rdma_close_msg_t *rx_get_close_msg
@@ -200,16 +191,6 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 	return (nccl_net_ofi_rdma_close_msg_t *)send_close_data->ctrl_fl_elem->ptr;
 }
 
-/*
- * @brief Return send communicator control rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_control_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
-								uint16_t rail_id)
-{
-	assert(s_comm->control_rails);
-	assert(rail_id < s_comm->num_control_rails);
-	return &s_comm->control_rails[rail_id];
-}
 
 static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm_t *s_comm)
 {
@@ -1961,17 +1942,6 @@ static inline int free_flush_req(nccl_net_ofi_rdma_req_t *req,
 			req, dec_inflight_reqs);
 }
 
-/*
- * @brief	Dummy free function that shall not be called.
- *
- * @return	non-zero
- */
-static inline int free_invalid(nccl_net_ofi_rdma_req_t *req,
-					bool dec_inflight_reqs)
-{
-	NCCL_OFI_WARN("Failed to free request. Type :%d", req->type);
-	return -EINVAL;
-}
 
 static inline int eager_rx_buff_req_free(nccl_net_ofi_rdma_req_t *req,
 					   bool dec_inflight_reqs)
