@@ -61,6 +61,11 @@ static inline ncclResult_t verify_buff(int rank, void *buff, int send_val)
 	return ncclSuccess;
 }
 
+
+struct proc_handle {
+	char handle[NCCL_NET_HANDLE_MAXSIZE];
+};
+
 int main(int argc, char *argv[])
 {
 	ncclResult_t res = ncclSuccess;
@@ -77,7 +82,7 @@ int main(int argc, char *argv[])
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &nranks);
 
-	std::vector<char[NCCL_NET_HANDLE_MAXSIZE]> handles(nranks);
+	std::vector<proc_handle> handles(nranks);
 	std::vector<void *> handles_ptrs(nranks);
 
 	ofi_log_function = logger;
@@ -170,7 +175,7 @@ int main(int argc, char *argv[])
 	}
 
 	void *listenComm = nullptr;
-	OFINCCLCHECK(extGin->listen(ginCtx, dev, handles[rank], &listenComm));
+	OFINCCLCHECK(extGin->listen(ginCtx, dev, handles[rank].handle, &listenComm));
 	assert(listenComm);
 
 	/* Gather handles from all ranks */
