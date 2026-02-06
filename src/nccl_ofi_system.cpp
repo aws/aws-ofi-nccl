@@ -71,7 +71,7 @@ uint32_t nccl_ofi_get_unique_node_id(void)
 		}
 
 		if (ifa->ifa_addr->sa_family == AF_INET) {
-			struct sockaddr_in *sin = (struct sockaddr_in *)ifa->ifa_addr;
+			struct sockaddr_in *sin = reinterpret_cast<struct sockaddr_in *>(ifa->ifa_addr);
 			ip_addr = ntohl(sin->sin_addr.s_addr);
 			freeifaddrs(ifaddr);
 			return ip_addr;
@@ -85,7 +85,7 @@ uint32_t nccl_ofi_get_unique_node_id(void)
 		}
 
 		if (ifa->ifa_addr->sa_family == AF_INET6) {
-			struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ifa->ifa_addr;
+			struct sockaddr_in6 *sin6 = reinterpret_cast<struct sockaddr_in6 *>(ifa->ifa_addr);
 			ipv6_addr = sin6->sin6_addr;
 			found_ipv6 = true;
 			break;
