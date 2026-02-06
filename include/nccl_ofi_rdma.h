@@ -723,10 +723,10 @@ public:
 	nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *domain_args,
 				   unsigned int domain_key = 0);
 	
-	inline ofi_domain_ptr &get_ofi_domain_for_cm() override
+	inline ofi_domain_ptr *get_ofi_domain_for_cm() override
 	{
 		assert(!domain_rails.empty());
-		return domain_rails[0].domain;
+		return &domain_rails[0].domain;
 	}
 
 	inline ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) override

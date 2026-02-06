@@ -8,12 +8,12 @@ using namespace nccl_ofi_cm;
 
 endpoint::endpoint(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep) :
 	ofi_domain(domain.get_ofi_domain_for_cm()),
-	mr_key_pool(*(domain.mr_rkey_pool))
+	mr_key_pool(domain.mr_rkey_pool)
 {
 	fi_info *info = domain.get_device()->get_ofi_info_for_cm();
 	ofi_cq_ptr &cq = ep.get_ofi_cq_for_cm();
 
-	auto av_result = nccl_ofi_ofiutils_av_create(this->ofi_domain);
+	auto av_result = nccl_ofi_ofiutils_av_create(*(this->ofi_domain));
 	if (OFI_UNLIKELY(av_result.is_failure())) {
 		/* We can't return an error. If not caught, this is going to propagate up and
 		 * eventually terminate the program, which may or may not be what we want.
@@ -22,7 +22,7 @@ endpoint::endpoint(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep) :
 	}
 	this->av = std::move(av_result.resource);
 
-	auto ep_result = nccl_ofi_ofiutils_ep_create(info, this->ofi_domain, this->av, cq);
+	auto ep_result = nccl_ofi_ofiutils_ep_create(info, *(this->ofi_domain), this->av, cq);
 	if (OFI_UNLIKELY(ep_result.is_failure())) {
 		throw std::runtime_error("endpoint: failed call to nccl_ofi_ofiutils_ep_create");
 	}
@@ -190,10 +190,10 @@ int endpoint::dereg_mr(void *handle_ptr)
 	int ret = 0;
 	auto handle = static_cast<mr_handle_t *>(handle_ptr);
 
-	if (handle->ep.mr_key_pool.get_size() != 0 &&
+	if (handle->ep->mr_key_pool->get_size() != 0 &&
 			OFI_LIKELY(handle->mr_key != MR_KEY_INIT_VALUE)) {
 
-		handle->ep.mr_key_pool.free_id(handle->mr_key);
+		handle->ep->mr_key_pool->free_id(handle->mr_key);
 	}
 
 	delete handle;
@@ -216,12 +216,12 @@ int endpoint::reg_mr(void *ep_ptr, void *data, size_t size, void **mr_handle)
 	uint64_t regattr_flags = 0;
 
 	/* Allocate cm memory registration handle */
-	struct mr_handle_t *ret_handle = new mr_handle_t { {}, MR_KEY_INIT_VALUE, *ep};
+	mr_handle_t *ret_handle = new mr_handle_t { {}, MR_KEY_INIT_VALUE, ep};
 
 	mr_attr.access = FI_SEND | FI_RECV;
 
-	if (ep->mr_key_pool.get_size() != 0) {
-		size_t key = ep->mr_key_pool.allocate_id();
+	if (ep->mr_key_pool->get_size() != 0) {
+		size_t key = ep->mr_key_pool->allocate_id();
 		if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 			NCCL_OFI_WARN("MR key allocation failed");
 			ret = -ENOMEM;
@@ -231,7 +231,7 @@ int endpoint::reg_mr(void *ep_ptr, void *data, size_t size, void **mr_handle)
 		mr_attr.requested_key = ret_handle->mr_key;
 	}
 
-	mr_result = nccl_ofi_ofiutils_mr_regattr(ep->ofi_domain, &mr_attr, regattr_flags);
+	mr_result = nccl_ofi_ofiutils_mr_regattr(*(ep->ofi_domain), &mr_attr, regattr_flags);
 	if (OFI_UNLIKELY(mr_result.is_failure())) {
 		NCCL_OFI_WARN("CM: Unable to register memory. RC: %d, Error: %s",
 			      mr_result.error_code, fi_strerror(-mr_result.error_code));
