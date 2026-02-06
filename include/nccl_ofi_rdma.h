@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_RDMA_H_
@@ -1049,7 +1049,9 @@ public:
 		    nccl_net_ofi_send_comm_t **send_comm,
 		    int trafficClass) override;
 
-	int release_ep(bool skip_lock, bool force_cleanup) override;
+	// TODO: Disable thread safety analysis until conditional locking is
+	// removed
+	int release_ep(bool skip_lock, bool force_cleanup) override NO_THREAD_SAFETY_ANALYSIS;
 
 	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
 	{

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_H_
@@ -529,8 +529,11 @@ public:
 	 * @param	force_cleanup
 	 * 		false, not release when endpoint exists.
 	 * 		true, release no matter endpoint exists nor not.
+	 *
+	 * TODO: Disable thread safety analysis until conditional locking is
+	 * removed.
 	 */
-	int release_domain(bool skip_device_lock, bool force_cleanup);
+	int release_domain(bool skip_device_lock, bool force_cleanup) NO_THREAD_SAFETY_ANALYSIS;
 
 	/*
 	 * Protocol-agnostic MR cache for this device.
@@ -713,8 +716,11 @@ public:
 	 * @param	force_cleanup
 	 * 		false, not release when endpoint has ref count.
 	 * 		true, release no matter endpoint has ref count or not.
+	 *
+	 * TODO: Disable thread safety analysis until conditional locking is
+	 * removed.
 	 */
-	virtual int release_ep(bool skip_lock, bool force_cleanup);
+	virtual int release_ep(bool skip_lock, bool force_cleanup) NO_THREAD_SAFETY_ANALYSIS;
 
 	/**
 	 * @brief	Increments the base endpoint reference count.

@@ -45,6 +45,7 @@ noinst_HEADERS = \
 	nccl_ofi_system.h \
 	nccl_ofi_topo.h \
 	nccl_ofi_tracepoint.h \
+	nccl_ofi_tsa.h \
 	ofi/resource_wrapper.h \
 	platform-aws.h \
 	internal/tuner/nccl_defaults.h \
