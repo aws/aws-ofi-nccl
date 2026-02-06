@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  * Copyright (c) 2025, Advanced Micro Devices, Inc. All rights reserved.
  */
 
@@ -21,12 +21,6 @@
 
 #ifndef PATH_MAX
 #define PATH_MAX	4096
-#endif
-
-#if __has_attribute(__fallthrough__)
-# define fallthrough                    __attribute__((__fallthrough__))
-#else
-# define fallthrough                    do {} while (0)  /* fallthrough */
 #endif
 
 #include <stdint.h>
