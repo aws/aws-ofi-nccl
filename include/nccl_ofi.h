@@ -443,7 +443,7 @@ public:
 	 * depending on the transport; in that case, this will be the domain object
 	 * associated with the "leader NIC".
 	 */
-	virtual ofi_domain_ptr &get_ofi_domain_for_cm() = 0;
+	virtual ofi_domain_ptr *get_ofi_domain_for_cm() = 0;
 
 	/**
 	 * Retrieve the fid_domain object associated with this plugin domain

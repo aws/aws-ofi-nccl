@@ -44,7 +44,7 @@ public:
 
 		ofi_mr_ptr mr;
 		uint64_t mr_key;
-		endpoint &ep;
+		endpoint *ep;
 	};
 
 	/**
@@ -111,8 +111,8 @@ public:
 	static int dereg_mr(void *handle_ptr);
 private:
 	/* Input to CM */
-	ofi_domain_ptr &ofi_domain;
-	nccl_ofi_idpool_t &mr_key_pool;
+	ofi_domain_ptr *ofi_domain;
+	nccl_ofi_idpool_t *mr_key_pool;
 
 	/* Created by CM */
 	ofi_av_ptr av;
