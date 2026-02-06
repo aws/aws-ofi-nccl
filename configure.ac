@@ -52,6 +52,8 @@ dnl use C++17, disable runtime type information
 AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
 CXXFLAGS="${CXXFLAGS} -fno-rtti"
 
+AX_COMPILER_VENDOR
+
 dnl AM_PROG_AR must be called before LT_INIT
 AM_PROG_AR
 AC_PROG_RANLIB
@@ -276,6 +278,11 @@ AS_IF([test "${enable_picky_compiler}" != "no"], [
     dnl ADD_PICKY_FLAGS([-fanalyzer])
 
     dnl todo: clang-sa flags
+
+    AS_IF([test "$ax_cv_cxx_compiler_vendor" = "clang"],
+          [dnl Squash Clang warnings about variable length array extensions, because
+           dnl not having them is sadness.
+	   ADD_PICKY_FLAGS([-Wno-vla-cxx-extension])])
 
     AC_MSG_NOTICE([Adding ${picky_cxxflags} to CXXFLAGS.])
     CXXFLAGS="${CXXFLAGS} ${picky_cxxflags}"
