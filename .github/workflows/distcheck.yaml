@@ -33,6 +33,9 @@ jobs:
           - latest
           - 1.34.0
           - 1.25.0
+        build-type:
+          - release
+          - debug
         exclude:
           # Neuron requires platform-aws, which requires newer EFA installer
           - efainstaller: 1.25.0
@@ -51,7 +54,7 @@ jobs:
 
     runs-on: ubuntu-latest
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
-    name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/build+test
+    name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/${{ matrix.build-type }}
     steps:
       - uses: actions/checkout@v3
 
@@ -71,7 +74,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --${{ matrix.platform-aws }}-platform-aws \
-                        --enable-neuron
+                        --enable-neuron \
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -79,7 +83,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --${{ matrix.platform-aws }}-platform-aws \
-                        --with-cuda=/usr/local/cuda/
+                        --with-cuda=/usr/local/cuda/ \
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
           fi
 
       - name: Call `make`
@@ -110,6 +115,9 @@ jobs:
         sdk:
           - cuda
           - neuron
+        build-type:
+          - release
+          - debug
         include:
           - cc-variant: latest
             cc: clang
@@ -118,7 +126,7 @@ jobs:
             cc: gcc
             cc-version: 13
 
-    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}/build+test
+    name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}//${{ matrix.build-type }}
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v4
@@ -150,7 +158,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
-                        --enable-neuron
+                        --enable-neuron \
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -158,7 +167,8 @@ jobs:
                         --enable-werror=yes \
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
-                        --with-cuda=/usr/local/cuda/
+                        --with-cuda=/usr/local/cuda/ \
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
           fi
 
       - name: Call `make`
