@@ -64,4 +64,6 @@ static inline int memfd_create(const char *name, unsigned int flags)
 #define HAVE_GPU 0
 #endif
 
+#include "nccl_ofi_tsa.h"
+
 #endif

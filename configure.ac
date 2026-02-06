@@ -290,6 +290,30 @@ AS_IF([test "${enable_picky_compiler}" != "no"], [
 ])
 AS_UNSET([picky_cxxflags])
 
+AC_ARG_ENABLE([thread-analysis],
+    [AS_HELP_STRING([--enable-thread-analysis], [(Developer) Enable Clang Thread Safety Analysis checks. [default=no]])])
+AS_IF([test "${enable_thread_analysis}" = "yes"],
+      [AS_IF([test "$ax_cv_cxx_compiler_vendor" = "clang"],
+             [AC_MSG_CHECKING([for LLVM's libc++])
+              AC_COMPILE_IFELSE([AC_LANG_PROGRAM([[
+#include <iostream>
+#ifndef _LIBCPP_VERSION
+#error "Not using libc++"
+#endif
+                                                 ]], [[]])],
+                                [AC_MSG_RESULT([yes])],
+                                [AC_MSG_RESULT([no])
+                                 AC_MSG_ERROR([Clang Thread Safety Analysis requires LLVM's libc++])])
+	      AC_MSG_NOTICE([Enabling Clang Thread Safety Analysis])
+              tsa_define=1
+              CXXFLAGS="${CXXFLAGS} -Wthread-safety"
+	      AC_DEFINE([_LIBCPP_ENABLE_THREAD_SAFETY_ANNOTATIONS], [1], [If std::mutex and friends should be annotated])],
+	     [AC_MSG_ERROR([Thread safety analays (--enable-thread-analysis) is only available on
+Clang compilers, but this is $ax_cv_cxx_compiler_vendor])])],
+      [tsa_define=0])
+AC_DEFINE_UNQUOTED([NCCL_OFI_WANT_THREAD_ANALYSIS], [$tsa_define],
+                   [Whether to enable TSA annotations])
+
 werror_flags="-Werror"
 AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
