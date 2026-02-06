@@ -216,18 +216,21 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	if (ofi_nccl_protocol.get_source() != ParamSource::DEFAULT) {
 		bool dummy;
 
-		if (ofi_nccl_protocol.get() == PROTOCOL::SENDRECV) {
+		switch (ofi_nccl_protocol.get()) {
+		case PROTOCOL::SENDRECV:
 			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 				goto exit;
 			}
-		} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
+			break;
+		case PROTOCOL::RDMA:
 			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy, topo);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize rdma protocol");
 				goto exit;
 			}
+			break;
 		}
 	} else {
 		bool have_multiple_rails = false;
