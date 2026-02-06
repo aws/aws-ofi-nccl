@@ -74,11 +74,12 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 	}
 #endif
 
-	this->local_comm_id = resources.alloc_comm_id(); /* TODO free */
-	if (OFI_UNLIKELY(this->local_comm_id == FI_KEY_NOTAVAIL)) {
+	size_t comm_id = resources.alloc_comm_id(); /* TODO free */
+	if (OFI_UNLIKELY(comm_id == FI_KEY_NOTAVAIL)) {
 		NCCL_OFI_WARN("No comm id available");
 		throw std::runtime_error("No comm id available");
 	}
+	this->local_comm_id = comm_id;
 
 	resources.set_comm(local_comm_id, *this);
 	resources.increment_ref_cnt();
