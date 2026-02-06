@@ -28,14 +28,13 @@ inline nccl_ofi_device_copy &get_device_copy()
  */
 class nccl_ofi_gin_listen_comm {
 private:
-	int dev;
 	nccl_net_ofi_ep_t *ep;
 	nccl_net_ofi_listen_comm_t *l_comm;
 
 public:
 	nccl_ofi_gin_listen_comm(int dev_arg, nccl_net_ofi_ep_t *ep_arg,
 				 nccl_net_ofi_listen_comm_t *l_comm_arg)
-	    : dev(dev_arg), ep(ep_arg), l_comm(l_comm_arg)
+	    : ep(ep_arg), l_comm(l_comm_arg)
 	{
 	}
 
