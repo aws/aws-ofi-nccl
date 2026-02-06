@@ -55,29 +55,6 @@ nccl_ofi_logger_t ofi_log_function = NULL;
 	})
 
 
-/**
- * @brief Verifies if a message length is within the maximum allowed size
- *
- * @return ncclSuccess, if size is valid
- *         ncclInternalError, if exceeded
- */
-
-static inline ncclResult_t msg_length_verify_max_size(const size_t *sizes, const size_t len) {
-	if (OFI_UNLIKELY(sizes == NULL)) {
-		NCCL_OFI_WARN("Invalid argument: NULL pointer provided for sizes array");
-		return ncclInvalidArgument;
-	}
-
-	for (size_t i = 0; i < len; i++) {
-		if (OFI_UNLIKELY(sizes[i] > INT_MAX)) {
-			NCCL_OFI_WARN("Message size %zu exceeds maximum allowed size %d at index %zu", sizes[i], INT_MAX, i);
-			return ncclInternalError;
-		}
-	}
-	return ncclSuccess;
-}
-
-
 ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 {
 	int ret = 0;
