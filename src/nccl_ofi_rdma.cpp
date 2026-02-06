@@ -2285,6 +2285,8 @@ static inline uint64_t* get_flush_buffer_for_rail(void *ptr, uint16_t rail_id){
 	return &(fl_data[rail_id].flag);
 }
 
+
+#if HAVE_GPU
 static inline bool has_flush_completed(nccl_net_ofi_rdma_req_t *req)
 {
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
@@ -2302,6 +2304,9 @@ static inline bool has_flush_completed(nccl_net_ofi_rdma_req_t *req)
 
 	return true;
 }
+#endif
+
+
 /*
  * @brief Check the contents of the control mailbox to check if the
  * control message has arrived or not
