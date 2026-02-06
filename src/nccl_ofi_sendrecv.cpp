@@ -1940,36 +1940,6 @@ out:
 	return ret;
 }
 
-/*
- * @brief	Prepare a send request for a given s_comm
- *
- * @param	Valid send communicator object
- *
- * @return	NCCL OFI request, on success
- * 		NULL, others
- */
-static inline nccl_net_ofi_sendrecv_req_t *sendrecv_send_comm_prepare_send_req(nccl_net_ofi_sendrecv_send_comm_t *s_comm)
-{
-	nccl_net_ofi_sendrecv_req_t *req = NULL;
-
-	if (OFI_UNLIKELY(s_comm == NULL)) {
-		return NULL;
-	}
-
-	req = sendrecv_allocate_req(s_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(req == NULL)) {
-		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
-			      s_comm->base.base.dev_id);
-		return NULL;
-	}
-
-	req->comm = &s_comm->base.base;
-	req->dev_id = s_comm->base.base.dev_id;
-	req->direction = NCCL_OFI_SENDRECV_SEND;
-
-	return req;
-}
-
 
 /**
  * Update send comm information from the conn response message received from
