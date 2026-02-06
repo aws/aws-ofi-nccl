@@ -1,6 +1,8 @@
 /*
- * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
+
+#include "config.h"
 
 #include "nccl_ofi_platform.h"
 #ifdef WANT_AWS_PLATFORM

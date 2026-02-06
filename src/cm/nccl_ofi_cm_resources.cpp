@@ -1,3 +1,9 @@
+/*
+ * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
+ */
+
+#include "config.h"
+
 #include "cm/nccl_ofi_cm_resources.h"
 
 #include "nccl_ofi_ofiutils.h"

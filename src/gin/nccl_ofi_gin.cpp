@@ -2,6 +2,8 @@
  * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
+#include "config.h"
+
 #include "gin/nccl_ofi_gin.h"
 
 #include "nccl_ofi_assert.h"
