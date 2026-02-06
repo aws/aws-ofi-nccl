@@ -293,7 +293,7 @@ public:
 		auto *req = static_cast<T *>(freelist_elem->ptr);
 
 		/* Keep a backpointer to freelist element to free */
-		req->fl_elem = freelist_elem;
+		req->set_fl_entry(freelist_elem);
 
 		return req;
 	}
@@ -301,7 +301,7 @@ public:
 	template <typename T> void return_req_to_pool(T *req)
 	{
 		/* Cache the fl_elem member since we will destruct the req. */
-		auto *fl_elem = req->fl_elem;
+		auto *fl_elem = req->get_fl_entry();
 
 		/* Run req's destructor */
 		req->~T();

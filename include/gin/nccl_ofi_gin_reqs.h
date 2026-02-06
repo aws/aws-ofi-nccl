@@ -53,13 +53,21 @@ public:
  * GIN base request type.
  */
 class nccl_net_ofi_gin_base_req {
+public:
+	void set_fl_entry(nccl_ofi_freelist::fl_entry *entry)
+	{
+		this->fl_elem = entry;
+	}
+
+	nccl_ofi_freelist::fl_entry *get_fl_entry()
+	{
+		return this->fl_elem;
+	}
+
 private:
 	/* Source freelist element. This allows the request to be returned to a
 	   request freelist when complete */
 	nccl_ofi_freelist::fl_entry *fl_elem = nullptr;
-
-	/* Friend the resources class to allow access for freelist usage */
-	friend class nccl_ofi_gin_resources;
 };
 
 /**
