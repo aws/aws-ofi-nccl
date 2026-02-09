@@ -267,6 +267,64 @@ jobs:
           path: config.log
           if-no-files-found: ignore
 
+  thread-safety-check:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cc:
+          - clang-18
+        tracing:
+          - none
+        sdk:
+          - cuda
+          - neuron
+        build-type:
+          - release
+
+    name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/Thread Safety Analysis
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build Plugin
+        run: |
+          set -x
+          cc_family=`echo ${{ matrix.cc }} | awk -F'-' '{print $1}'`
+          cc_version=`echo ${{ matrix.cc }} | awk -F'-' '{print $2}'`
+          if [ "${cc_family}" != "clang" ]; then
+              echo "Unexpected compiler family ${cc_family}"
+              exit 1
+          else
+              export CC="clang-${cc_version}"
+              export CXX="clang++-${cc_version}"
+              export CPP="clang-cpp-${cc_version}"
+              export CXXFLAGS="-stdlib=libc++"
+          fi
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
+                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                      --enable-thread-analysis
+
+      - name: Call `make`
+        run: make V=1
+
+      - name: Upload config.log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cc }}-${{ matrix.sdk }}-tsa-config.log
+          path: config.log
+          if-no-files-found: ignore
+
   codechecker:
     runs-on: ubuntu-22.04
     needs: [distcheck]
