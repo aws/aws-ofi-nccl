@@ -1,0 +1,56 @@
+# docker/base/Dockerfile.ubuntu
+FROM ubuntu:24.04
+
+# Accept build arguments
+ARG CC_TYPE=gcc13
+ARG ENABLE_TRACING=false
+ARG ENABLE_CUDA=false
+ARG EFA_INSTALLER_VERSION=latest
+
+# Install updates and base packages
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y software-properties-common && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      curl wget git build-essential \
+      libhwloc-dev make sudo lsb-release pciutils \
+      libevent-core-2.1-7 libevent-pthreads-2.1-7 \
+      udev dmidecode ethtool iproute2
+
+# Install EFA
+RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-*.tar.gz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y --skip-kmod && \
+    cd .. && \
+    rm -rf aws-efa-installer*
+
+# Install compiler based on arguments
+RUN cc_family=`echo ${CC_TYPE} | awk -F'-' '{print $1}'` && \
+    cc_version=`echo ${CC_TYPE} | awk -F'-' '{print $2}'` && \
+    if [ "$cc_family" = "clang" ]; then \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y \
+	    libc++-dev clang-${cc_version} lldb-${cc_version} lld-${cc_version} ; \
+    elif [ "$cc_family" = "gcc" ]; then \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-${cc_version} g++-${cc_version} ; \
+    else \
+        echo "$cc_family unkonwn.  Aborting." ; exit 1 ; \
+    fi
+
+# Install CUDA if enabled
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
+        wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
+        dpkg -i cuda-keyring_1.1-1_all.deb && \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 ; \
+    fi
+
+# Install lttng if enabled
+RUN if [ "$ENABLE_TRACING" = "true" ]; then \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev ; \
+    fi
+
+RUN rm -rf /var/lib/apt/lists/*
+
+WORKDIR /workspace
