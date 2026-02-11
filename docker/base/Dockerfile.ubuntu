@@ -37,7 +37,6 @@ RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLE
 # Install compiler based on arguments
 RUN apt-get update && \
     if [ "$CC_TYPE" = "clang" ]; then \
-        DEBIAN_FRONTEND=noninteractive apt-get install -y libc++-dev && \
         if [ "$CC_VARIANT" = "latest" ]; then \
             wget https://apt.llvm.org/llvm.sh && \
             chmod +x llvm.sh && \
