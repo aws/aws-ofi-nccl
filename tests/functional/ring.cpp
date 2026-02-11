@@ -29,8 +29,8 @@ int main(int argc, char *argv[])
 	ofi_log_function = logger;
 
 	/* Initialisation for data transfer */
-	nccl_net_ofi_req_t *send_req[NUM_REQUESTS] = {NULL};
-	nccl_net_ofi_req_t *recv_req[NUM_REQUESTS] = {NULL};
+	nccl_net_ofi_req *send_req[NUM_REQUESTS] = {NULL};
+	nccl_net_ofi_req *recv_req[NUM_REQUESTS] = {NULL};
 	void *send_mhandle[NUM_REQUESTS];
 	void *recv_mhandle[NUM_REQUESTS];
 	int req_completed_send[NUM_REQUESTS] = {};
@@ -294,7 +294,7 @@ int main(int argc, char *argv[])
 						NCCL_OFI_TRACE(NCCL_NET,
 							"Issue flush for data consistency. Request idx: %d",
 							idx);
-						nccl_net_ofi_req_t *iflush_req = NULL;
+						nccl_net_ofi_req *iflush_req = NULL;
 						OFINCCLCHECKGOTO(extNet->iflush((void *)rComm, nrecv,
 										(void **)&recv_buf[idx], sizesInt,
 										&recv_mhandle[idx], (void **)&iflush_req), res, exit);

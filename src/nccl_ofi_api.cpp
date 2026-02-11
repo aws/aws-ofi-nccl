@@ -456,7 +456,7 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, size_t size,
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sendComm;
 	nccl_net_ofi_mr_handle_t *handle = (nccl_net_ofi_mr_handle_t *)mhandle;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)request;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)request;
 
 	/* Validate send_comm */
 	if (OFI_UNLIKELY(send_comm == NULL)) {
@@ -499,7 +499,7 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n, void** data,
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)recvComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)request;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)request;
 
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
@@ -540,7 +540,7 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 		return check_return(ncclInternalError);
 	}
 
-	nccl_net_ofi_req_t *base_req = (nccl_net_ofi_req_t *)req;
+	nccl_net_ofi_req *base_req = (nccl_net_ofi_req *)req;
 	int ret = base_req->test(base_req, done, size);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
@@ -552,7 +552,7 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
 
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid communicator object provided");
@@ -696,7 +696,7 @@ ncclResult_t nccl_net_ofi_iwrite(void* sComm, void* src, size_t size, void* mhan
 {
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sComm;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
 
 	/* Validate send_comm */
 	if (OFI_UNLIKELY(send_comm == NULL)) {
@@ -724,7 +724,7 @@ ncclResult_t nccl_net_ofi_iwrite_inline(void* sComm, void* src, size_t size,
 {
 	nccl_net_ofi_send_comm_t *send_comm =
 		(nccl_net_ofi_send_comm_t *)sComm;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
 
 	/* Validate send_comm */
 	if (OFI_UNLIKELY(send_comm == NULL)) {
@@ -752,7 +752,7 @@ ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhan
 {
 	nccl_net_ofi_recv_comm_t *recv_comm =
 		(nccl_net_ofi_recv_comm_t *)rComm;
-	nccl_net_ofi_req_t **base_req = (nccl_net_ofi_req_t **)req;
+	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
 
 	/* Validate recv_comm */
 	if (OFI_UNLIKELY(recv_comm == NULL)) {
