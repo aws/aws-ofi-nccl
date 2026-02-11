@@ -191,6 +191,79 @@ jobs:
           path: config.log
           if-no-files-found: ignore
 
+  Ubuntu2404:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        cc:
+          - gcc-13
+          - gcc-14
+          - clang-18
+        tracing:
+          - lttng
+          - none
+        sdk:
+          - cuda
+          - neuron
+        build-type:
+          - release
+          - debug
+
+    name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/${{matrix.tracing}}/${{ matrix.build-type }}
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build Plugin
+        run: |
+          set -x
+          cc_family=`echo ${{ matrix.cc }} | awk -F'-' '{print $1}'`
+          cc_version=`echo ${{ matrix.cc }} | awk -F'-' '{print $2}'`
+          if [ "${cc_family}" = "gcc" ]; then
+              export CC="gcc-${cc_version}"
+              export CXX="g++-${cc_version}"
+              export CPP="cpp-${cc_version}"
+          elif [ "${cc_family}" = "clang" ]; then
+              export CC="clang-${cc_version}"
+              export CXX="clang++-${cc_version}"
+              export CPP="clang-cpp-${cc_version}"
+          else
+              echo "unknown compiler family ${cc_family}"
+              exit 1
+          fi
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-werror=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
+                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
+
+      - name: Call `make`
+        run: make V=1
+
+      - name: Call `make check`
+        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+
+      - name: Call `make install`
+        run: sudo make install V=1
+
+      - name: Call `make distcheck`
+        run: make distcheck V=1
+
+      - name: Upload config.log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.cc }}-${{ matrix.sdk }}-config.log
+          path: config.log
+          if-no-files-found: ignore
+
   codechecker:
     runs-on: ubuntu-22.04
     needs: [distcheck]
