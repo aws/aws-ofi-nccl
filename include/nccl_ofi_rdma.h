@@ -252,8 +252,7 @@ class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
 
-struct nccl_net_ofi_rdma_req;
-typedef struct nccl_net_ofi_rdma_req nccl_net_ofi_rdma_req_t;
+class nccl_net_ofi_rdma_req;
 
 typedef struct {
 	/* Rx buffer freelist item */
@@ -348,9 +347,9 @@ typedef struct {
 
 typedef struct {
 	/* Pointer to rx buffer containing eager data */
-	nccl_net_ofi_rdma_req_t *eager_rx_buff_req;
+	nccl_net_ofi_rdma_req *eager_rx_buff_req;
 	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req_t *recv_req;
+	nccl_net_ofi_rdma_req *recv_req;
 } rdma_req_eager_copy_data_t;
 
 /*
@@ -358,7 +357,7 @@ typedef struct {
  */
 typedef struct {
 	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req_t *recv_req;
+	nccl_net_ofi_rdma_req *recv_req;
 } rdma_req_recv_segms_data_t;
 
 /*
@@ -372,9 +371,9 @@ typedef struct {
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
 	/* Pointer to receive segments child request */
-	nccl_net_ofi_rdma_req_t *recv_segms_req;
+	nccl_net_ofi_rdma_req *recv_segms_req;
 	/* (Eager messages) pointer to eager local copy request */
-	nccl_net_ofi_rdma_req_t *eager_copy_req;
+	nccl_net_ofi_rdma_req *eager_copy_req;
 	/* Total number of completions. Expect one send ctrl
 	 * completion and one completion that indicates that all
 	 * segments have arrived.
@@ -402,13 +401,20 @@ typedef struct {
 	int total_num_compls;
 } rdma_req_flush_data_t;
 
+
+/* needed to make cpp_container_of() happy */
+struct nccl_net_ofi_rdma_req_ctx_list {
+public:
+	nccl_net_ofi_context_t& operator[](size_t pos) {return ctx[pos]; }
+	nccl_net_ofi_context_t ctx[MAX_NUM_RAILS];
+};
+
 /*
  * @brief	RDMA request
  */
-typedef struct nccl_net_ofi_rdma_req {
-	nccl_net_ofi_req_t base;
-
-	nccl_net_ofi_context_t ctx[MAX_NUM_RAILS];
+class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
+public:
+	nccl_net_ofi_rdma_req_ctx_list ctx;
 
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
@@ -455,10 +461,10 @@ typedef struct nccl_net_ofi_rdma_req {
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	int (*free)(nccl_net_ofi_rdma_req_t *req,
+	int (*free)(nccl_net_ofi_rdma_req *req,
 		    bool dec_inflight_reqs);
 
-} nccl_net_ofi_rdma_req_t;
+};
 
 /*
  * Rdma endpoint name
@@ -644,7 +650,7 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
-	nccl_net_ofi_rdma_req_t *send_close_req;
+	nccl_net_ofi_rdma_req *send_close_req;
 
 	/* Counters for total sent and received control messages */
 	uint64_t n_ctrl_sent;
@@ -984,7 +990,7 @@ public:
 	pthread_mutex_t rx_buff_mutex;
 
 	/* Allocate a receive buffer request for this rail (eager or ctrl) */
-	nccl_net_ofi_rdma_req_t* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
+	nccl_net_ofi_rdma_req* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
 						      nccl_net_ofi_rdma_ep_rail_t *rail);
 };
 
@@ -1110,7 +1116,7 @@ public:
 	 * @brief	Re-post a rx buffer that has not yet been removed from active
 	 * 		count
 	 */
-	int repost_rx_buff(nccl_net_ofi_rdma_req_t *rx_buff_req);
+	int repost_rx_buff(nccl_net_ofi_rdma_req *rx_buff_req);
 
 	/**
 	 * @brief	Decrement the number of rx buffers posted for the rail
@@ -1138,7 +1144,7 @@ public:
 	int ofi_process_cq();
 
 	int handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
-			     nccl_net_ofi_rdma_req_t *req,
+			     nccl_net_ofi_rdma_req *req,
 			     size_t num_buffs_failed);
 
 	int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *rail);
@@ -1232,7 +1238,7 @@ public:
 	std::vector<nccl_net_ofi_rdma_cq_rail_t> cq_rails;
 
 	/* Pending requests queue */
-	std::deque<nccl_net_ofi_rdma_req_t *> pending_reqs_queue;
+	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
 	/* Lock for `pending_reqs_queue` */
 	pthread_mutex_t pending_reqs_lock;
 

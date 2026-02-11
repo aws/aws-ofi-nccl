@@ -24,7 +24,7 @@ nccl_ofi_gin_allgather_comm::~nccl_ofi_gin_allgather_comm()
 int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 {
 	nccl_net_ofi_mr_handle_t *rmhandle = nullptr, *smhandle = nullptr;
-	nccl_net_ofi_req_t *rreq = nullptr, *sreq = nullptr;
+	nccl_net_ofi_req *rreq = nullptr, *sreq = nullptr;
 	int srank, rrank;
 	int done, req_size, tag;
 	void *buf = NULL;

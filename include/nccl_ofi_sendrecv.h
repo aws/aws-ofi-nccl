@@ -375,10 +375,9 @@ protected:
 	 */
 	int sendrecv_device_prepare_for_connection();
 };
-	
-typedef struct nccl_net_ofi_sendrecv_req {
-	nccl_net_ofi_req_t base;
 
+class nccl_net_ofi_sendrecv_req : public nccl_net_ofi_req {
+public:
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
 
@@ -402,7 +401,7 @@ typedef struct nccl_net_ofi_sendrecv_req {
 
 	/* Backpointer to freelist elem (for cleanup) */
 	nccl_ofi_freelist::fl_entry *elem;
-} nccl_net_ofi_sendrecv_req_t;
+};
 
 
 /*
