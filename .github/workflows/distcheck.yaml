@@ -159,7 +159,8 @@ jobs:
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
                         --enable-neuron \
-                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                        ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
           else
             ./configure --with-mpi=/opt/amazon/openmpi \
                         --with-libfabric=/opt/amazon/efa \
@@ -168,7 +169,8 @@ jobs:
                         --enable-picky-compiler=yes \
                         --enable-platform-aws \
                         --with-cuda=/usr/local/cuda/ \
-                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
+                        ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                        ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
           fi
 
       - name: Call `make`
@@ -242,7 +244,8 @@ jobs:
                       --enable-picky-compiler=yes \
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
+                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                      ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
 
       - name: Call `make`
         run: make V=1
