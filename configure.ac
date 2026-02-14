@@ -202,6 +202,10 @@ AS_IF([test "${enable_tests}" != "no" -a "${found_mpi}" = "no" ],
 AS_IF([test "${enable_tests}" != "no" -a "${have_device_interface}" = "neuron" ],
       [AC_MSG_WARN([Functional tests not available on neuron, disabling.])
        build_func_tests=no])
+
+# Check for GoogleTest/GoogleMock
+CHECK_PKG_GTEST()
+
 AM_CONDITIONAL([ENABLE_UNIT_TESTS], [test "$build_unit_tests" == "yes"])
 AM_CONDITIONAL([ENABLE_FUNC_TESTS], [test "$build_func_tests" == "yes"])
 
@@ -350,4 +354,5 @@ echo "*"
 echo "* AWS OFI NCCL plugin has been configured."
 echo "*"
 echo "* Enabled Platforms: ${ENABLED_PLATFORMS}"
+echo "* GoogleTest mock build: ${have_gtest}"
 echo "*"
