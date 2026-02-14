@@ -66,6 +66,19 @@ This is similar to the requirements of most MPI implementations and a
 generally tested path in Libfabric.  For GPUDirect RDMA support, the
 plugin also requires `FI_HMEM` support, as well as RDMA support.
 
+## Unit Testing
+
+The project includes a GoogleTest/GoogleMock framework for unit testing with
+complete libfabric API mocking.  To build and run unit tests:
+
+```bash
+./configure --enable-gtest
+make check
+```
+
+See [tests/unit/GTEST_README.md](tests/unit/GTEST_README.md) for details on
+writing tests and adding new mocks.
+
 ## Getting Help
 
 If you have any issues in building or using the package or if you think you may
