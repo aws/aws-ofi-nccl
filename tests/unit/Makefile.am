@@ -53,6 +53,14 @@ libfabric_mock_test_CPPFLAGS = $(AM_CPPFLAGS) $(GTEST_CPPFLAGS)
 libfabric_mock_test_CXXFLAGS = -Wno-error
 libfabric_mock_test_LDADD = $(GTEST_LIBS)
 libfabric_mock_test_LDFLAGS = $(GTEST_LDFLAGS) $(GTEST_MOCK_WRAP_FLAGS)
+
+noinst_PROGRAMS += ofiutils_get_providers_test
+ofiutils_get_providers_test_SOURCES = ofiutils_get_providers_test.cpp libfabric_mock_impl.cpp \
+	$(top_srcdir)/src/nccl_ofi_ofiutils.cpp
+ofiutils_get_providers_test_CPPFLAGS = $(AM_CPPFLAGS) $(GTEST_CPPFLAGS)
+ofiutils_get_providers_test_CXXFLAGS = -Wno-error
+ofiutils_get_providers_test_LDADD = $(GTEST_LIBS)
+ofiutils_get_providers_test_LDFLAGS = $(GTEST_LDFLAGS) $(GTEST_MOCK_WRAP_FLAGS)
 endif
 
 if WANT_PLATFORM_AWS

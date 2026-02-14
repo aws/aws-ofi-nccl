@@ -16,3 +16,4 @@ platform_manager
 gdrcopy
 libfabric_mock_test
 core.*
+ofiutils_get_providers_test
