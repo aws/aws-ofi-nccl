@@ -10,6 +10,20 @@
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
 
+/**
+ * Structure to hold GIN context data.
+ * This is created once per NCCL communicator and passed to all listen() calls
+ * for that communicator. It stores the comm_id which is used as the endpoint
+ * key, ensuring different communicators get different endpoints even when
+ * created on the same thread.
+ */
+struct nccl_ofi_gin_context {
+	uint64_t comm_id; // Unique communicator identifier (from commHash)
+	
+	// Constructor to initialize comm_id
+	explicit nccl_ofi_gin_context(uint64_t id) : comm_id(id) {}
+};
+
 static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
 {
 	if (ofi_log_function == nullptr) {
@@ -43,7 +57,17 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 		return ncclInternalError;
 	}
 
-	*ctx = nullptr;
+	/* Create per-communicator context to store the comm_id.
+	   This allows listen() to use comm_id as the endpoint key for
+	   endpoint lookup, giving each NCCL communicator its own
+	   endpoint instead of sharing one per thread. */
+	try {
+		nccl_ofi_gin_context *context = new nccl_ofi_gin_context(commId);
+		*ctx = context;
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("Failed to allocate GIN context: %s", e.what());
+		return ncclSystemError;
+	}
 
 	return ncclSuccess;
 }
@@ -91,6 +115,15 @@ static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t 
 
 static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listenComm)
 {
+	/* Extract communicator ID from GIN context */
+	nccl_ofi_gin_context *context = static_cast<nccl_ofi_gin_context *>(ctx);
+	if (context == nullptr) {
+		NCCL_OFI_WARN("GIN listen: ctx is NULL");
+		return ncclInternalError;
+	}
+
+	uint64_t comm_id = context->comm_id;
+
 	auto plugin = nccl_net_ofi_get_plugin();
 	if (plugin == nullptr) {
 		NCCL_OFI_WARN("Error accessing plugin: plugin has not been initialized.");
@@ -105,8 +138,16 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 
 	try {
 		/* Note: although the GIN plugin uses its own endpoint type, we still need
-		the transport endpoint to set up the bootstrap AG ring. */
-		nccl_net_ofi_ep_t *ep = device->get_ep();
+		the transport endpoint to set up the bootstrap AG ring.
+
+		Use comm_id as endpoint_key to ensure all GIN contexts within the same
+		communicator share the same endpoint. This creates one endpoint per
+		communicator instead of one per thread.
+		
+		domain_key=0 uses the default domain, endpoint_key=comm_id caches endpoints
+		by communicator ID instead of thread ID. */
+
+		nccl_net_ofi_ep_t *ep = device->get_ep(0, static_cast<long>(comm_id));
 
 		nccl_net_ofi_listen_comm_t *l_comm = nullptr;
 		int ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), &l_comm);
@@ -128,7 +169,6 @@ static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks,
 					 void *listenComm, void **collComm)
 {
 	auto *gin_handles = reinterpret_cast<nccl_net_ofi_conn_handle_t **>(handles);
-
 	auto *gin_l_comm = static_cast<nccl_ofi_gin_listen_comm *>(listenComm);
 
 	int ret = 0;
@@ -258,6 +298,18 @@ static ncclResult_t nccl_ofi_gin_iput(void *collComm, uint64_t srcOff, void *src
 
 static ncclResult_t nccl_ofi_gin_finalize(void *ctx)
 {
+	/* Clean up the GIN context structure.
+	   If ctx is NULL, init() was never called or failed, so there's
+	   nothing to clean up. This can happen when child communicators
+	   inherit a NULL context from a parent whose init() failed. */
+	if (ctx == nullptr) {
+		NCCL_OFI_TRACE(NCCL_NET | NCCL_INIT, "GIN finalize called with NULL context, nothing to clean up");
+		return ncclSuccess;
+	}
+
+	nccl_ofi_gin_context *context = static_cast<nccl_ofi_gin_context *>(ctx);
+	delete context;
+
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Finalizing");
 	return ncclSuccess;
 }

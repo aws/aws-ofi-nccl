@@ -311,7 +311,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	device = plugin->get_device(0);
 
 	/* get the endpoint from the default domain, domain_key = 0 */
-	ep = device->get_ep(0);
+	ep = device->get_ep(0, nccl_net_ofi_gettid());
 	if (ep == nullptr) {
 		goto exit;
 	}
@@ -701,7 +701,7 @@ nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain(unsigned int domain_key
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key)
+nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key, long endpoint_key)
 {
 	nccl_net_ofi_domain_t *domain = nullptr;
 	nccl_net_ofi_ep_t *ep = nullptr;
@@ -713,7 +713,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key)
 		return nullptr;
 	}
 
-	ep = domain->get_ep();
+	ep = domain->get_ep(endpoint_key);
 	if (ep == nullptr) {
 		return nullptr;
 	}
@@ -832,15 +832,13 @@ void nccl_net_ofi_domain_t::remove_ep_from_map(nccl_net_ofi_ep_t *ep)
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
+nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep(long endpoint_key)
 {
 	nccl_net_ofi_ep_t *ep = nullptr;
 
 	std::lock_guard scoped_domain_lock(this->domain_lock);
 
-	long lookup_key = nccl_net_ofi_gettid();
-
-	auto ep_iter = this->ep_table.find(lookup_key);
+	auto ep_iter = this->ep_table.find(endpoint_key);
 
 	if (ep_iter != this->ep_table.end()) {
 		ep = ep_iter->second;
@@ -852,11 +850,11 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep()
 			return nullptr;
 		}
 
-		this->ep_table.insert(std::pair(lookup_key, ep));
+		this->ep_table.insert(std::pair(endpoint_key, ep));
 		this->increment_ref_cnt();
 
-		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created",
-			       ep, this);
+		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created with endpoint_key=%ld",
+			       ep, this, endpoint_key);
 	}
 
 	ep->increment_ref_cnt();

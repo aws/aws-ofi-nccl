@@ -168,7 +168,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 		}
 
 		/* Retrieve and validate endpoint */
-		ep = device->get_ep(domain_key);
+		ep = device->get_ep(domain_key, nccl_net_ofi_gettid());
 		if (OFI_UNLIKELY(ep == nullptr)) {
 			NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
 			return check_return(ncclInternalError);
@@ -241,7 +241,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
 				return check_return(ncclInternalError);
 			}
 
-			ep = device->get_ep(domain_key);
+			ep = device->get_ep(domain_key, nccl_net_ofi_gettid());
 			if (OFI_UNLIKELY(ep == nullptr)) {
 				return check_return(ncclInternalError);
 			}
