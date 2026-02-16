@@ -323,8 +323,12 @@ public:
 
 	/* Retrieve an endpoint associated with this device under the requested
 	 * domain scope.
+	 *
+	 * @param domain_key Key for domain selection
+	 * @param endpoint_key Key for endpoint caching within the domain.
+	 *                     Caller must provide an explicit key (e.g., TID or comm_id).
 	 */
-	nccl_net_ofi_ep_t *get_ep(unsigned int domain_key = 0);
+	nccl_net_ofi_ep_t *get_ep(unsigned int domain_key, long endpoint_key);
 
 	/**
 	 * implementation of retreiving a domain from a device.  This code
@@ -518,8 +522,11 @@ public:
 	 * Retrieve an endpoint for this domain.  If a suitable
 	 * endpoint does not exist, call create_endpoint() to create
 	 * one and return that endpoint.
+	 *
+	 * @param endpoint_key Key for endpoint caching.
+	 * Caller must provide an explicit key (e.g., TID or comm_id).
 	 */
-	nccl_net_ofi_ep_t *get_ep();
+	nccl_net_ofi_ep_t *get_ep(long endpoint_key);
 
 	/**
 	 * @brief 	Release resources associated with the domain
