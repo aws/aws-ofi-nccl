@@ -465,8 +465,7 @@ public:
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	int (*free)(nccl_net_ofi_rdma_req *req,
-		    bool dec_inflight_reqs);
+	int free(bool dec_inflight_reqs);
 
 };
 
