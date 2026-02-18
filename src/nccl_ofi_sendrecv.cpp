@@ -451,14 +451,13 @@ static inline int sendrecv_comm_free_req(nccl_net_ofi_comm_t *base_comm,
 	}
 }
 
-static int sendrecv_req_test(nccl_net_ofi_req *base_req, int *done, int *size)
+int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 {
 	int ret = 0;
-	nccl_net_ofi_sendrecv_req *req = (nccl_net_ofi_sendrecv_req *)base_req;
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm = req->comm;
+	nccl_net_ofi_comm_t *base_comm = this->comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return -EINVAL;
@@ -476,25 +475,25 @@ static int sendrecv_req_test(nccl_net_ofi_req *base_req, int *done, int *size)
 	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
 
 	/* Process more completions unless the current request is completed */
-	if (req->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
+	if (this->state != NCCL_OFI_SENDRECV_REQ_COMPLETED) {
 		ret = sendrecv_cq_process(ep->cq.get());
 		if (OFI_UNLIKELY(ret != 0))
 			goto exit;
 	}
 
 	/* Determine whether the request has finished and free if done */
-	if (OFI_LIKELY(req->state == NCCL_OFI_SENDRECV_REQ_COMPLETED ||
-		       req->state == NCCL_OFI_SENDRECV_REQ_ERROR)) {
-		if (size)
-			*size = req->size;
+	if (OFI_LIKELY(this->state == NCCL_OFI_SENDRECV_REQ_COMPLETED ||
+		       this->state == NCCL_OFI_SENDRECV_REQ_ERROR)) {
+		if (size_p) {
+			*size_p = this->size;
+		}
 		/* Mark as done */
 		*done = 1;
 
-		if (OFI_UNLIKELY(req->state == NCCL_OFI_SENDRECV_REQ_ERROR))
+		if (OFI_UNLIKELY(this->state == NCCL_OFI_SENDRECV_REQ_ERROR))
 			ret = -ENOTSUP;
 
-		int dev_id = base_comm->dev_id;
-		sendrecv_comm_free_req(base_comm, dev_id, req, true);
+		sendrecv_comm_free_req(base_comm, base_comm->dev_id, this, true);
 	}
 	else {
 		*done = 0;
@@ -1273,16 +1272,19 @@ static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_dom
 	return ret;
 }
 
+nccl_net_ofi_sendrecv_req::nccl_net_ofi_sendrecv_req()
+{
+}
 
+// TODO: Templatize freelist and eliminate this wrapper function. 
 static int sendrecv_fl_req_entry_init(void *entry)
 {
-	auto req = static_cast<nccl_net_ofi_sendrecv_req *>(entry);
-	req->test = sendrecv_req_test;
+	// Use placement new to call constructor and initialize vtable
+	auto req = new (entry) nccl_net_ofi_sendrecv_req();
+	
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
-
 	req->ctx.handle_cq_entry = sendrecv_req_handle_cq_entry;
 	req->ctx.handle_error_entry = sendrecv_req_handle_error_entry;
-
 	return 0;
 }
 

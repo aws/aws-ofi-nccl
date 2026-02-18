@@ -414,6 +414,10 @@ public:
  */
 class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
 public:
+	nccl_net_ofi_rdma_req();
+	
+	int test(int *done, int *size_p) override;
+
 	nccl_net_ofi_rdma_req_ctx_list ctx;
 
 	/* Associated Comm object */

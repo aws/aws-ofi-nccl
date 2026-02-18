@@ -378,6 +378,10 @@ protected:
 
 class nccl_net_ofi_sendrecv_req : public nccl_net_ofi_req {
 public:
+	nccl_net_ofi_sendrecv_req();
+	
+	int test(int *done, int *size_p) override;
+
 	/* Associated Comm object */
 	nccl_net_ofi_comm_t *comm;
 
