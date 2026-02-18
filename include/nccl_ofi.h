@@ -129,7 +129,7 @@ typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
  */
 class nccl_net_ofi_req {
 public:
-	int (*test)(nccl_net_ofi_req *req, int *done, int *size);
+	virtual int test(int *done, int *size_p) = 0;
 };
 
 class nccl_net_ofi_mr_handle_t {

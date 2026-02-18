@@ -2359,19 +2359,18 @@ static inline int update_send_request(nccl_net_ofi_rdma_send_comm_t* s_comm, ncc
 }
 
 
-static int test(nccl_net_ofi_req *base_req, int *done, int *size)
+int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_req *req = (nccl_net_ofi_rdma_req *)base_req;
 	*done = 0;
-	assert(req->type == NCCL_OFI_RDMA_WRITE ||
-	       req->type == NCCL_OFI_RDMA_READ ||
-	       req->type == NCCL_OFI_RDMA_SEND ||
-	       req->type == NCCL_OFI_RDMA_RECV ||
-	       req->type == NCCL_OFI_RDMA_FLUSH);
+	assert(this->type == NCCL_OFI_RDMA_WRITE ||
+	       this->type == NCCL_OFI_RDMA_READ ||
+	       this->type == NCCL_OFI_RDMA_SEND ||
+	       this->type == NCCL_OFI_RDMA_RECV ||
+	       this->type == NCCL_OFI_RDMA_FLUSH);
 
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm = req->comm;
+	nccl_net_ofi_comm_t *base_comm = this->comm;
 	assert(base_comm != NULL);
 
 	/* Retrieve and validate endpoint */
@@ -2387,10 +2386,10 @@ static int test(nccl_net_ofi_req *base_req, int *done, int *size)
 	* If not, process more completions since they could result in the
 	* request getting completed.
 	*/
-	if (req->state != NCCL_OFI_RDMA_REQ_COMPLETED
-		&& OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
+	if (this->state != NCCL_OFI_RDMA_REQ_COMPLETED
+		&& OFI_LIKELY(this->state != NCCL_OFI_RDMA_REQ_ERROR)) {
 #if HAVE_GPU
-		if (req->type == NCCL_OFI_RDMA_FLUSH) {
+		if (this->type == NCCL_OFI_RDMA_FLUSH) {
 			/*
 			 * Check if the flush is complete and mark it as complete
 			 * if the host buffers have been populated with the sentinel value.
@@ -2398,15 +2397,16 @@ static int test(nccl_net_ofi_req *base_req, int *done, int *size)
 			 * on the request's completion event. The request will be freed once
 			 * all completions are processed.
 			 */
-			if (has_flush_completed(req))
+			if (has_flush_completed(this))
 			{
-				req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
-				size_t req_size = req->size;
+				this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+				size_t req_size = this->size;
 
-				if (size)
-					*size = req_size;
+				if (size_p) {
+					*size_p = req_size;
+				}
 
-				auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(req->comm);
+				auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>(this->comm);
 				r_comm->num_pending_flush_comps++;
 				*done = 1;
 				goto exit;
@@ -2424,8 +2424,8 @@ static int test(nccl_net_ofi_req *base_req, int *done, int *size)
 		 * here and increase the number of completions if it has.
 		 * Also update the message size if required
 		*/
-		if (req->type == NCCL_OFI_RDMA_SEND) {
-			ret = update_send_request((nccl_net_ofi_rdma_send_comm_t *)base_comm, req);
+		if (this->type == NCCL_OFI_RDMA_SEND) {
+			ret = update_send_request((nccl_net_ofi_rdma_send_comm_t *)base_comm, this);
 			if (ret != 0) {
 				goto exit;
 			}
@@ -2433,42 +2433,43 @@ static int test(nccl_net_ofi_req *base_req, int *done, int *size)
 	}
 
 	/* Determine whether the request has finished without error and free if done */
-	if (OFI_LIKELY(req->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
+	if (OFI_LIKELY(this->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
 
 		size_t req_size;
-		nccl_net_ofi_mutex_lock(&req->req_lock);
+		nccl_net_ofi_mutex_lock(&this->req_lock);
 
-		req_size = req->size;
+		req_size = this->size;
 
-		nccl_net_ofi_mutex_unlock(&req->req_lock);
+		nccl_net_ofi_mutex_unlock(&this->req_lock);
 
-		if (size)
-			*size = req_size;
+		if (size_p) {
+			*size_p = req_size;
+		}
 		/* Mark as done */
 		*done = 1;
 
-		if (req->type == NCCL_OFI_RDMA_RECV) {
+		if (this->type == NCCL_OFI_RDMA_RECV) {
 			/* Mark as complete in message buffer */
 			nccl_ofi_msgbuff_t *msgbuff = ((nccl_net_ofi_rdma_recv_comm_t *)base_comm)->msgbuff;
 
 			nccl_ofi_msgbuff_status_t stat;
-			nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_complete(msgbuff, req->msg_seq_num, &stat);
+			nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_complete(msgbuff, this->msg_seq_num, &stat);
 			if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
-				NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu", req->msg_seq_num);
+				NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu", this->msg_seq_num);
 				ret = -EINVAL;
 				goto exit;
 			}
 		}
 
-		if (req->type == NCCL_OFI_RDMA_SEND) {
-			NCCL_OFI_TRACE_SEND_END(req->dev_id, base_comm, req);
-		} else if (req->type == NCCL_OFI_RDMA_RECV) {
-			NCCL_OFI_TRACE_RECV_END(req->dev_id, base_comm, req);
+		if (this->type == NCCL_OFI_RDMA_SEND) {
+			NCCL_OFI_TRACE_SEND_END(this->dev_id, base_comm, this);
+		} else if (this->type == NCCL_OFI_RDMA_RECV) {
+			NCCL_OFI_TRACE_RECV_END(this->dev_id, base_comm, this);
 		}
 
-		assert(req->free);
-		req->free(req, true);
-	} else if (OFI_UNLIKELY(req->state == NCCL_OFI_RDMA_REQ_ERROR)) {
+		assert(this->free);
+		this->free(this, true);
+	} else if (OFI_UNLIKELY(this->state == NCCL_OFI_RDMA_REQ_ERROR)) {
 		ret = -EINVAL;
 		goto exit;
 	}
@@ -4190,15 +4191,21 @@ static int rma_read(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size
 }
 
 
+nccl_net_ofi_rdma_req::nccl_net_ofi_rdma_req()
+{
+}
+
+
+// TODO: Templatize freelist and eliminate this wrapper function. 
 /**
  * Freelist callback to initialize new RDMA request type
  */
 static int rdma_fl_req_entry_init(void *entry)
 {
-	auto req = static_cast<nccl_net_ofi_rdma_req *>(entry);
+	// Use placement new to call constructor and initialize vtable
+	auto req = new (entry) nccl_net_ofi_rdma_req();
 	assert(req);
 	zero_nccl_ofi_req(req);
-	req->test = test;
 
 	/* Initialize mutex for request access */
 	int ret = nccl_net_ofi_mutex_init(&req->req_lock, NULL);
@@ -4213,11 +4220,14 @@ static int rdma_fl_req_entry_init(void *entry)
 }
 
 
+// TODO: Templatize freelist to eliminate this wrapper function.
+/**
+ * Freelist callback to finalize RDMA request
+ */
 static void rdma_fl_req_entry_fini(void *entry)
 {
 	nccl_net_ofi_rdma_req *req = static_cast<nccl_net_ofi_rdma_req *>(entry);
 	assert(req);
-
 	nccl_net_ofi_mutex_destroy(&req->req_lock);
 }
 

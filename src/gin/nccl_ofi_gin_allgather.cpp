@@ -77,7 +77,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 			done = 0;
 			req_size = 0;
 			if (rreq) {
-				ret = rreq->test(rreq, &done, &req_size);
+				ret = rreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
 					return ret;
@@ -88,7 +88,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				}
 			}
 			if (sreq) {
-				ret = sreq->test(sreq, &done, &req_size);
+				ret = sreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
 					return ret;

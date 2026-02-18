@@ -541,7 +541,7 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 	}
 
 	nccl_net_ofi_req *base_req = (nccl_net_ofi_req *)req;
-	int ret = base_req->test(base_req, done, size);
+	int ret = base_req->test(done, size);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
