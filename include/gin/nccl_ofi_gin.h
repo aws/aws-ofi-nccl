@@ -29,18 +29,18 @@ inline nccl_ofi_device_copy &get_device_copy()
 class nccl_ofi_gin_listen_comm {
 private:
 	nccl_net_ofi_ep_t *ep;
-	nccl_net_ofi_listen_comm_t *l_comm;
+	nccl_net_ofi_listen_comm *l_comm;
 
 public:
 	nccl_ofi_gin_listen_comm(int dev_arg, nccl_net_ofi_ep_t *ep_arg,
-				 nccl_net_ofi_listen_comm_t *l_comm_arg)
+				 nccl_net_ofi_listen_comm *l_comm_arg)
 	    : ep(ep_arg), l_comm(l_comm_arg)
 	{
 	}
 
 	~nccl_ofi_gin_listen_comm()
 	{
-		int ret = l_comm->close(l_comm);
+		int ret = l_comm->close();
 		if (ret != 0) {
 			NCCL_OFI_WARN("GIN: Unable to close net listen comm: %d", ret);
 		}

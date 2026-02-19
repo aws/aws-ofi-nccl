@@ -147,8 +147,8 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 	int ret = 0;
 	nccl_net_ofi_device_t *device = nullptr;
 	nccl_net_ofi_ep_t *ep = nullptr;
-	nccl_net_ofi_listen_comm_t **listen_comm =
-		reinterpret_cast<nccl_net_ofi_listen_comm_t **>(lComm);
+	nccl_net_ofi_listen_comm **listen_comm =
+		reinterpret_cast<nccl_net_ofi_listen_comm **>(lComm);
 
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == nullptr)) {
@@ -308,13 +308,13 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 	}
 
 	/* Invoke listen communicator accept() function */
-	nccl_net_ofi_listen_comm_t *listen_comm =
-		reinterpret_cast<nccl_net_ofi_listen_comm_t *>(lComm);
+	nccl_net_ofi_listen_comm *listen_comm =
+		reinterpret_cast<nccl_net_ofi_listen_comm *>(lComm);
 	nccl_net_ofi_recv_comm_t **recv_comm =
 		reinterpret_cast<nccl_net_ofi_recv_comm_t **>(rComm);
 	int ret = 0;
 	try {
-		ret = listen_comm->accept(listen_comm, recv_comm);
+		ret = listen_comm->accept(recv_comm);
 	}
 	catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in plugin accept: %s", e.what());
@@ -642,8 +642,8 @@ ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 
 ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
-	nccl_net_ofi_listen_comm_t *listen_comm =
-		(nccl_net_ofi_listen_comm_t *)lComm;
+	nccl_net_ofi_listen_comm *listen_comm =
+		(nccl_net_ofi_listen_comm *)lComm;
 
 	/* neuron has a cleanup race between the atexit handler and *
 	 * calling close on all the communicators, so be more silent
@@ -659,7 +659,7 @@ ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 		return check_return(ncclInternalError);
 	}
 
-	int ret = listen_comm->close(listen_comm);
+	int ret = listen_comm->close();
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 

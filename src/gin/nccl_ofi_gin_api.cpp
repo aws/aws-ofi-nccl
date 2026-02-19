@@ -108,7 +108,7 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 		the transport endpoint to set up the bootstrap AG ring. */
 		nccl_net_ofi_ep_t *ep = device->get_ep();
 
-		nccl_net_ofi_listen_comm_t *l_comm = nullptr;
+		nccl_net_ofi_listen_comm *l_comm = nullptr;
 		int ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), &l_comm);
 		if (ret != 0) {
 			NCCL_OFI_WARN("GIN: error listening on device %i.", dev);
