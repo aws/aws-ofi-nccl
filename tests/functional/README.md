@@ -35,7 +35,7 @@ struct ThreadContext {
     std::vector<int> device_map;  // Logical to physical device mapping
 
     // Connection state (per device)
-    std::vector<nccl_net_ofi_listen_comm_t*> lcomms;
+    std::vector<nccl_net_ofi_listen_comm*> lcomms;
     std::vector<nccl_net_ofi_send_comm_t*> scomms;
     std::vector<nccl_net_ofi_recv_comm_t*> rcomms;
     std::vector<test_nccl_net_device_handle_t*> shandles, rhandles;

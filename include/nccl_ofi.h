@@ -111,12 +111,11 @@ class nccl_net_ofi_ep_t;
 class nccl_net_ofi_plugin_t;
 
 struct nccl_net_ofi_comm;
-struct nccl_net_ofi_listen_comm;
+class nccl_net_ofi_listen_comm;
 struct nccl_net_ofi_send_comm;
 struct nccl_net_ofi_recv_comm;
 
 typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
-typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
 typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
 typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
 
@@ -682,7 +681,7 @@ public:
 	 * handle is set to COMM_CREATE_START.
 	 */
 	virtual int listen(nccl_net_ofi_conn_handle_t *handle,
-			   nccl_net_ofi_listen_comm_t **listen_comm) = 0;
+			   nccl_net_ofi_listen_comm **listen_comm) = 0;
 
 	/* Create a connection to a process that has called
 	 * listen().
@@ -864,12 +863,14 @@ struct nccl_net_ofi_comm {
 /**
  * Listen Communicator - Communicator for a listen/accept pairing
  */
-struct nccl_net_ofi_listen_comm {
+class nccl_net_ofi_listen_comm {
+public:
 	nccl_net_ofi_comm_t base;
 
-	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
-			       nccl_net_ofi_recv_comm_t **recv_comm);
-	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
+	virtual ~nccl_net_ofi_listen_comm() = default;
+
+	virtual int accept(nccl_net_ofi_recv_comm_t **recv_comm) = 0;
+	virtual int close() = 0;
 };
 
 struct nccl_net_ofi_send_comm {

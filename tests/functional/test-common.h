@@ -496,7 +496,7 @@ struct ThreadContext {
 	test_nccl_net_t* ext_net;
 	/* ctx object returned from ext_net->init() */
 	void* net_ctx;
-	std::vector<nccl_net_ofi_listen_comm_t*> lcomms;
+	std::vector<nccl_net_ofi_listen_comm*> lcomms;
 	std::vector<nccl_net_ofi_send_comm_t*> scomms;
 	std::vector<nccl_net_ofi_recv_comm_t*> rcomms;
 	ncclResult_t result;
@@ -553,7 +553,7 @@ public:
 		char local_handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 		char peer_handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 
-		nccl_net_ofi_listen_comm_t* lcomm = nullptr;
+		nccl_net_ofi_listen_comm* lcomm = nullptr;
 		nccl_net_ofi_send_comm_t* scomm = nullptr;
 		nccl_net_ofi_recv_comm_t* rcomm = nullptr;
 		test_nccl_net_device_handle_t* shandle = nullptr;

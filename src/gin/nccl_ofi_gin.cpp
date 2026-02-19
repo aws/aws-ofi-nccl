@@ -160,7 +160,7 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 			}
 		}
 		if (r_comm == nullptr) {
-			ret = l_comm->accept(l_comm, &r_comm);
+			ret = l_comm->accept(&r_comm);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error in bootstrap ring accept: %d", ret);
 				return ret;

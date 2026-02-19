@@ -50,11 +50,10 @@ public:
 	ofi_mr_ptr mr;
 };
 
-typedef struct nccl_net_ofi_sendrecv_listen_comm {
-	/* This base listen communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_listen_comm_t base;
+class nccl_net_ofi_sendrecv_listen_comm : public nccl_net_ofi_listen_comm {
+public:
+	int accept(nccl_net_ofi_recv_comm_t **recv_comm) override;
+	int close() override;
 
 	struct fid_ep *local_ep;
 	fi_addr_t local_ep_addr;
@@ -62,7 +61,8 @@ typedef struct nccl_net_ofi_sendrecv_listen_comm {
 	save_comm_state_t state;
 
 	nccl_ofi_cm_listener *listener;
-} nccl_net_ofi_sendrecv_listen_comm_t;
+};
+
 
 typedef struct nccl_net_ofi_sendrecv_send_comm {
 	/* This base send communicator must be the first member of this
@@ -183,7 +183,7 @@ public:
 	nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg);
 
 	int listen(nccl_net_ofi_conn_handle_t *handle,
-		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+		   nccl_net_ofi_listen_comm **listen_comm) override;
 
 	int connect(nccl_net_ofi_conn_handle_t *handle,
 		    nccl_net_ofi_send_comm_t **send_comm,

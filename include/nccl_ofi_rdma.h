@@ -684,11 +684,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	uint64_t remote_mr_key[MAX_NUM_RAILS];
 } nccl_net_ofi_rdma_recv_comm_t;
 
-typedef struct nccl_net_ofi_rdma_listen_comm {
-	/* This base listen communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_listen_comm_t base;
+class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
+public:
+	int accept(nccl_net_ofi_recv_comm_t **recv_comm) override;
+	int close() override;
 
 	/* Associated listener from connection manager */
 	nccl_ofi_cm_listener *listener;
@@ -698,7 +697,7 @@ typedef struct nccl_net_ofi_rdma_listen_comm {
 
 	/* Stage of connection establishment on listen side */
 	nccl_ofi_comm_stage_t stage;
-} nccl_net_ofi_rdma_listen_comm_t;
+};
 
 
 class nccl_net_ofi_rdma_domain_rail_t {
@@ -1035,7 +1034,7 @@ public:
 	int cleanup_resources() override;
 
 	int listen(nccl_net_ofi_conn_handle_t *handle,
-		   nccl_net_ofi_listen_comm_t **listen_comm) override;
+		   nccl_net_ofi_listen_comm **listen_comm) override;
 
 	/**
 	 * @brief	Execute the connect functionality from listen/connect/accept
