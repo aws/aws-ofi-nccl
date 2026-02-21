@@ -530,11 +530,15 @@ typedef struct nccl_net_ofi_rdma_send_comm_rail {
  * Use function `calloc_rdma_send_comm(int num_rails, int num_control_rails)' to
  * allocate a RDMA send communicator with `num_rails'+`num_control_rails' rails.
  */
-typedef struct nccl_net_ofi_rdma_send_comm {
-	/* This base send communicator must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_send_comm_t base;
+class nccl_net_ofi_rdma_send_comm : public nccl_net_ofi_send_comm {
+public:
+    
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
+    int close() override;
+    int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) override;
+    int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) override;
 
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
@@ -578,7 +582,10 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	/* Sender's control mailbox mr_handle */
 	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
-} nccl_net_ofi_rdma_send_comm_t;
+};
+
+typedef class nccl_net_ofi_rdma_send_comm nccl_net_ofi_rdma_send_comm_t;
+
 
 /*
  * @brief	Receive communicator rail
@@ -615,11 +622,14 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
  * Use function `calloc_rdma_recv_comm(int num_rails, int num_control_rails)' to
  * allocate a RDMA receive communicator with `num_rails'+`num_control_rails' rails.
  */
-typedef struct nccl_net_ofi_rdma_recv_comm {
-	/* This base receive communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_recv_comm_t base;
+class nccl_net_ofi_rdma_recv_comm : public nccl_net_ofi_recv_comm {
+public:
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int flush(int n, void **data, int *sizes, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int close() override;
+    int read(void* dest, size_t size, void* dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) override;
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver;
@@ -682,7 +692,10 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	/* Addr and key of remote control mailbox */
 	uint64_t remote_mailbox_addr;
 	uint64_t remote_mr_key[MAX_NUM_RAILS];
-} nccl_net_ofi_rdma_recv_comm_t;
+};
+
+typedef class nccl_net_ofi_rdma_recv_comm nccl_net_ofi_rdma_recv_comm_t;
+
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
 public:
@@ -1466,7 +1479,7 @@ public:
 			/* Received a ctrl message for a non-existent send comm */
 			return nullptr;
 		}
-		assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
+		assert(s_comm->type == NCCL_NET_OFI_SEND_COMM);
 		return s_comm;
 	}
 
@@ -1481,7 +1494,7 @@ public:
 			/* Received a message for a non-existent recv comm */
 			return nullptr;
 		}
-		assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
+		assert(r_comm->type == NCCL_NET_OFI_RECV_COMM);
 		return r_comm;
 	}
 

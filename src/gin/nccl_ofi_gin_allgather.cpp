@@ -10,12 +10,12 @@
 
 nccl_ofi_gin_allgather_comm::~nccl_ofi_gin_allgather_comm()
 {
-	int ret = s_comm->close(s_comm);
+	int ret = s_comm->close();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to close transport send comm");
 	}
 
-	ret = r_comm->close(r_comm);
+	ret = r_comm->close();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to close transport recv comm");
 	}
@@ -56,7 +56,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 		while (!rreq || !sreq) {
 			if (!rreq) {
 				buf = ((char *)data) + (rrank * size);
-				ret = r_comm->recv(r_comm, 1, &buf, &size, &tag, &rmhandle, &rreq);
+				ret = r_comm->recv(1, &buf, &size, &tag, &rmhandle, &rreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather irecv failed");
 					return ret;
@@ -65,7 +65,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 
 			if (!sreq) {
 				buf = ((char *)data) + (srank * size);
-				ret = s_comm->send(s_comm, buf, size, tag, smhandle, &sreq);
+				ret = s_comm->send(buf, size, tag, smhandle, &sreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather isend failed");
 					return ret;

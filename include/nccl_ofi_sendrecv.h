@@ -64,11 +64,14 @@ public:
 };
 
 
-typedef struct nccl_net_ofi_sendrecv_send_comm {
-	/* This base send communicator must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_send_comm_t base;
+class nccl_net_ofi_sendrecv_send_comm : public nccl_net_ofi_send_comm {
+public:
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
+    int close() override;
+    int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) override;
+    int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) override;
 
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist *nccl_ofi_reqs_fl;
@@ -79,7 +82,9 @@ typedef struct nccl_net_ofi_sendrecv_send_comm {
 	struct fid_ep *local_ep;
 
 	nccl_ofi_cm_send_connector *connector;
-} nccl_net_ofi_sendrecv_send_comm_t;
+};
+
+typedef class nccl_net_ofi_sendrecv_send_comm nccl_net_ofi_sendrecv_send_comm_t;
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_sendrecv_flush_buffer {
@@ -89,11 +94,14 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
-typedef struct nccl_net_ofi_sendrecv_recv_comm {
-	/* This base receive communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_recv_comm_t base;
+class nccl_net_ofi_sendrecv_recv_comm : public nccl_net_ofi_recv_comm {
+public:
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int flush(int n, void **data, int *sizes, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int close() override;
+    int read(void* dest, size_t size, void* dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) override;
 
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist *nccl_ofi_reqs_fl;
@@ -106,7 +114,9 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 
 	nccl_ofi_cm_receiver *receiver;
-} nccl_net_ofi_sendrecv_recv_comm_t;
+};
+
+typedef class nccl_net_ofi_sendrecv_recv_comm nccl_net_ofi_sendrecv_recv_comm_t;
 
 /* Forward declarations needed for sendrecv transport endpoint type */
 class nccl_net_ofi_sendrecv_device_t;

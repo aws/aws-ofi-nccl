@@ -99,7 +99,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Send_ctrl_recv", 0x00ffff); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
-		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(s_comm->base.base.ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
+		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(s_comm->ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Send_ctrl_recv", 0x00ffff); \
 	} \
 } while (0)
@@ -187,7 +187,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
-		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->base.base.ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
+		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Eager_recv", 0x0000FF); \
 	} \
 } while(0)

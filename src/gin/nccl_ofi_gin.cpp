@@ -52,7 +52,7 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 				     nccl_net_ofi_send_comm_t *s_comm_,
 				     nccl_net_ofi_recv_comm_t *r_comm_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
-      dev(s_comm_->base.dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
+      dev(s_comm_->dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
       metadata_fl(nullptr, &freelist_deleter)
 {
 	auto &ep = resources.get_ep();
