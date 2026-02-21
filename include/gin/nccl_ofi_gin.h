@@ -151,7 +151,7 @@ struct gin_sym_mr_handle {
 class nccl_ofi_gin_comm {
 public:
 	nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
-			  nccl_net_ofi_send_comm_t *s_comm_, nccl_net_ofi_recv_comm_t *r_comm_);
+			  nccl_net_ofi_send_comm *s_comm_, nccl_net_ofi_recv_comm *r_comm_);
 
 	~nccl_ofi_gin_comm();
 
