@@ -854,7 +854,10 @@ enum nccl_net_ofi_comm_type_t {
  * but instead underlying transports should extend the listen, send,
  * and recv communicators.
  */
-struct nccl_net_ofi_comm {
+class nccl_net_ofi_comm {
+public:
+	virtual ~nccl_net_ofi_comm() = default;
+
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
 	int dev_id;
@@ -873,9 +876,8 @@ public:
 	virtual int close() = 0;
 };
 
-class nccl_net_ofi_send_comm {
+class nccl_net_ofi_send_comm : public nccl_net_ofi_comm_t {
 public:
-	nccl_net_ofi_comm_t base;
 	// TODO: Potentially store this here: int trafficClass;
 
 	/*
@@ -902,10 +904,8 @@ public:
 	virtual int write_inline( void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) = 0;
 };
 
-class nccl_net_ofi_recv_comm {
+class nccl_net_ofi_recv_comm : public nccl_net_ofi_comm_t {
 public:
-	nccl_net_ofi_comm_t base;
-
 	/*
 	 * @brief	Register memory region on recv communicator (both Host and CUDA)
 	 *
