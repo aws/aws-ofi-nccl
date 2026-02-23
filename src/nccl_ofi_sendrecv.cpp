@@ -399,7 +399,7 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 /*
  * @brief	Prepares sendrecv request for reuse
  */
-static inline int sendrecv_send_comm_free_req(nccl_net_ofi_sendrecv_send_comm_t *s_comm,
+static inline int sendrecv_send_comm_free_req(nccl_net_ofi_sendrecv_send_comm *s_comm,
 					      int dev_id,
 					      nccl_net_ofi_sendrecv_req *req,
 					      bool dec_inflight_reqs)
@@ -413,7 +413,7 @@ static inline int sendrecv_send_comm_free_req(nccl_net_ofi_sendrecv_send_comm_t 
 /*
  * @brief	Prepares sendrecv request for reuse
  */
-static inline int sendrecv_recv_comm_free_req(nccl_net_ofi_sendrecv_recv_comm_t *r_comm,
+static inline int sendrecv_recv_comm_free_req(nccl_net_ofi_sendrecv_recv_comm *r_comm,
 					      int dev_id,
 					      nccl_net_ofi_sendrecv_req *req,
 					      bool dec_inflight_reqs)
@@ -427,20 +427,20 @@ static inline int sendrecv_recv_comm_free_req(nccl_net_ofi_sendrecv_recv_comm_t 
 /*
  * @brief	Prepares sendrecv request for reuse
  */
-static inline int sendrecv_comm_free_req(nccl_net_ofi_comm_t *base_comm,
+static inline int sendrecv_comm_free_req(nccl_net_ofi_comm *base_comm,
 					 int dev_id,
 					 nccl_net_ofi_sendrecv_req *req,
 					 bool dec_inflight_reqs)
 {
 	if (req->direction == NCCL_OFI_SENDRECV_SEND) {
-		nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-			(nccl_net_ofi_sendrecv_send_comm_t *)base_comm;
+		nccl_net_ofi_sendrecv_send_comm *s_comm =
+			(nccl_net_ofi_sendrecv_send_comm *)base_comm;
 		return sendrecv_send_comm_free_req(s_comm, dev_id,
 						   req, dec_inflight_reqs);
 	}
 	else if (req->direction == NCCL_OFI_SENDRECV_RECV) {
-		nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
-			(nccl_net_ofi_sendrecv_recv_comm_t *)base_comm;
+		nccl_net_ofi_sendrecv_recv_comm *r_comm =
+			(nccl_net_ofi_sendrecv_recv_comm *)base_comm;
 		return sendrecv_recv_comm_free_req(r_comm, dev_id,
 						   req, dec_inflight_reqs);
 	}
@@ -457,7 +457,7 @@ int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 	nccl_net_ofi_sendrecv_ep_t *ep = NULL;
 
 	/* Retrieve and validate comm */
-	nccl_net_ofi_comm_t *base_comm = this->comm;
+	nccl_net_ofi_comm *base_comm = this->comm;
 	if (OFI_UNLIKELY(base_comm == NULL)) {
 		NCCL_OFI_WARN("Invalid comm object provided");
 		return -EINVAL;
@@ -756,7 +756,7 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 }
 
 
-static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm_t *base_comm,
+static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 				     nccl_ofi_mr_ckey_ref ckey,
 				     int type,
 				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
@@ -906,8 +906,8 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req *req = NULL;
 	nccl_net_ofi_sendrecv_ep_t *endpoint = NULL;
-	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
-		(nccl_net_ofi_sendrecv_recv_comm_t *)this;
+	nccl_net_ofi_sendrecv_recv_comm *r_comm =
+		(nccl_net_ofi_sendrecv_recv_comm *)this;
 	int device_id = r_comm->dev_id;
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
@@ -1018,8 +1018,8 @@ void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 
 int nccl_net_ofi_sendrecv_recv_comm::close()
 {
-	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
-		(nccl_net_ofi_sendrecv_recv_comm_t *)this;
+	nccl_net_ofi_sendrecv_recv_comm *r_comm =
+		(nccl_net_ofi_sendrecv_recv_comm *)this;
 	int ret = 0;
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
 
@@ -1074,8 +1074,8 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
                                     	   nccl_net_ofi_req **base_req)
 {
 	int ret = 0;
-	nccl_net_ofi_sendrecv_recv_comm_t *r_comm =
-		(nccl_net_ofi_sendrecv_recv_comm_t *)this;
+	nccl_net_ofi_sendrecv_recv_comm *r_comm =
+		(nccl_net_ofi_sendrecv_recv_comm *)this;
 	nccl_net_ofi_sendrecv_req *req = NULL;
 	ssize_t rc = 0;
 	uint64_t cuda_key = 0ULL;
@@ -1308,7 +1308,7 @@ static int sendrecv_fl_req_entry_init(void *entry)
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_ofi_sendrecv_listen_comm *l_comm,
+static nccl_net_ofi_sendrecv_recv_comm *sendrecv_recv_comm_prepare(nccl_net_ofi_sendrecv_listen_comm *l_comm,
 								     nccl_net_ofi_sendrecv_device_t *device,
 								     nccl_net_ofi_sendrecv_domain_t *domain,
 								     nccl_net_ofi_sendrecv_ep_t *ep,
@@ -1316,7 +1316,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 {
 	int ret = 0;
 	fi_addr_t remote_ep;
-	nccl_net_ofi_sendrecv_recv_comm_t *r_comm = NULL;
+	nccl_net_ofi_sendrecv_recv_comm *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req);
 	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
 	int dev_id = device->dev_id;
@@ -1331,7 +1331,7 @@ static nccl_net_ofi_sendrecv_recv_comm_t *sendrecv_recv_comm_prepare(nccl_net_of
 	}
 
 	/* Build recv_comm */
-	void* r_comm_mem = calloc(1, sizeof(nccl_net_ofi_sendrecv_recv_comm_t));
+	void* r_comm_mem = calloc(1, sizeof(nccl_net_ofi_sendrecv_recv_comm));
 	if (r_comm_mem == NULL) {
 		NCCL_OFI_WARN("Unable to allocate receive Comm object for device %d",
 			      dev_id);
@@ -1391,7 +1391,7 @@ static inline uint8_t *sendrecv_get_local_address(struct fid_ep *ep);
  * Prepare connect response message to be sent back to the connect() side
  */
 static nccl_ofi_connection_info_t sendrecv_prepare_conn_resp_msg
-	(nccl_net_ofi_sendrecv_recv_comm_t *r_comm)
+	(nccl_net_ofi_sendrecv_recv_comm *r_comm)
 {
 	nccl_ofi_connection_info_t conn_resp_msg = { };
 	uint8_t *local_address = sendrecv_get_local_address(r_comm->local_ep);
@@ -1412,7 +1412,7 @@ static nccl_ofi_connection_info_t sendrecv_prepare_conn_resp_msg
 }
 
 
-int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm_t **recv_comm)
+int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 {
 	int ret = 0;
 
@@ -1420,7 +1420,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm_t **recv_co
 
 	/* Extract communicator state from listen communicator object */
 	save_comm_state_t *comm_state = &this->state;
-	auto r_comm = reinterpret_cast<nccl_net_ofi_sendrecv_recv_comm_t *>(comm_state->comm);
+	auto r_comm = reinterpret_cast<nccl_net_ofi_sendrecv_recv_comm *>(comm_state->comm);
 
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
@@ -1713,8 +1713,8 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
                                    nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **base_req)
 {
 	int ret = 0;
-	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		(nccl_net_ofi_sendrecv_send_comm_t *)this;
+	nccl_net_ofi_sendrecv_send_comm *s_comm =
+		(nccl_net_ofi_sendrecv_send_comm *)this;
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
 	ssize_t rc = 0;
 	nccl_net_ofi_sendrecv_req *req = NULL;
@@ -1803,8 +1803,8 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
 
 int nccl_net_ofi_sendrecv_send_comm::close()
 {
-	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		(nccl_net_ofi_sendrecv_send_comm_t *)this;
+	nccl_net_ofi_sendrecv_send_comm *s_comm =
+		(nccl_net_ofi_sendrecv_send_comm *)this;
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
@@ -1869,10 +1869,10 @@ int nccl_net_ofi_sendrecv_send_comm::write_inline(void* src, size_t size,
 static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 					    nccl_net_ofi_sendrecv_ep_t *ep,
 					    nccl_ofi_connection_info_t *conn_info,
-					    nccl_net_ofi_sendrecv_send_comm_t **s_comm)
+					    nccl_net_ofi_sendrecv_send_comm **s_comm)
 {
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req);
-	nccl_net_ofi_sendrecv_send_comm_t *ret_s_comm = NULL;
+	nccl_net_ofi_sendrecv_send_comm *ret_s_comm = NULL;
 	*s_comm = NULL;
 	int ret = 0;
 
@@ -1887,7 +1887,7 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	assert(domain_ptr != NULL);
 
 	/* Allocate and initialize send_comm */
-	void *ret_s_comm_mem = calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm_t));
+	void *ret_s_comm_mem = calloc(1, sizeof(nccl_net_ofi_sendrecv_send_comm));
 	if (OFI_UNLIKELY(ret_s_comm_mem == NULL)) {
 		NCCL_OFI_WARN("Couldn't allocate send_comm for dev %d", device->dev_id);
 		return -ENOMEM;
@@ -1956,7 +1956,7 @@ out:
  * accept()
  */
 static inline int sendrecv_send_comm_process_conn_resp
-	(nccl_net_ofi_sendrecv_send_comm_t *s_comm,
+	(nccl_net_ofi_sendrecv_send_comm *s_comm,
 	 nccl_net_ofi_sendrecv_ep_t *ep,
 	 int dev_id,
 	 const nccl_ofi_connection_info_t &conn_resp_msg)
@@ -1978,7 +1978,7 @@ static inline int sendrecv_send_comm_process_conn_resp
 
 
 int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
-					nccl_net_ofi_send_comm_t **send_comm,
+					nccl_net_ofi_send_comm **send_comm,
 					int trafficClass)
 {
 	int ret = 0;
@@ -2003,8 +2003,8 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
-	nccl_net_ofi_sendrecv_send_comm_t *s_comm =
-		reinterpret_cast<nccl_net_ofi_sendrecv_send_comm_t *>(comm_state->comm);
+	nccl_net_ofi_sendrecv_send_comm *s_comm =
+		reinterpret_cast<nccl_net_ofi_sendrecv_send_comm *>(comm_state->comm);
 
 	/* Connection establishment is not done yet */
 	if (comm_state->stage == COMM_CONNECTED) {

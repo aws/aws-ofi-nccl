@@ -497,8 +497,8 @@ struct ThreadContext {
 	/* ctx object returned from ext_net->init() */
 	void* net_ctx;
 	std::vector<nccl_net_ofi_listen_comm*> lcomms;
-	std::vector<nccl_net_ofi_send_comm_t*> scomms;
-	std::vector<nccl_net_ofi_recv_comm_t*> rcomms;
+	std::vector<nccl_net_ofi_send_comm*> scomms;
+	std::vector<nccl_net_ofi_recv_comm*> rcomms;
 	ncclResult_t result;
 	TestScenario* scenario;
 	MPI_Comm thread_comm;
@@ -554,8 +554,8 @@ public:
 		char peer_handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 
 		nccl_net_ofi_listen_comm* lcomm = nullptr;
-		nccl_net_ofi_send_comm_t* scomm = nullptr;
-		nccl_net_ofi_recv_comm_t* rcomm = nullptr;
+		nccl_net_ofi_send_comm* scomm = nullptr;
+		nccl_net_ofi_recv_comm* rcomm = nullptr;
 		test_nccl_net_device_handle_t* shandle = nullptr;
 		test_nccl_net_device_handle_t* rhandle = nullptr;
 
@@ -684,8 +684,8 @@ public:
 	 */
 	void send_receive_test(int dev_idx, size_t size_idx, size_t send_size, size_t recv_size)
 	{
-		nccl_net_ofi_send_comm_t* sComm = scomms[dev_idx];
-		nccl_net_ofi_recv_comm_t* rComm = rcomms[dev_idx];
+		nccl_net_ofi_send_comm* sComm = scomms[dev_idx];
+		nccl_net_ofi_recv_comm* rComm = rcomms[dev_idx];
 
 		// Determine buffer type based on GDR support
 		auto gdr_support = get_support_gdr(ext_net);

@@ -421,7 +421,7 @@ public:
 	nccl_net_ofi_rdma_req_ctx_list ctx;
 
 	/* Associated Comm object */
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 
 	/* Associated Device ID */
 	int dev_id;
@@ -584,8 +584,6 @@ public:
 	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
 };
 
-typedef class nccl_net_ofi_rdma_send_comm nccl_net_ofi_rdma_send_comm_t;
-
 
 /*
  * @brief	Receive communicator rail
@@ -694,19 +692,17 @@ public:
 	uint64_t remote_mr_key[MAX_NUM_RAILS];
 };
 
-typedef class nccl_net_ofi_rdma_recv_comm nccl_net_ofi_rdma_recv_comm_t;
-
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
 public:
-	int accept(nccl_net_ofi_recv_comm_t **recv_comm) override;
+	int accept(nccl_net_ofi_recv_comm **recv_comm) override;
 	int close() override;
 
 	/* Associated listener from connection manager */
 	nccl_ofi_cm_listener *listener;
 
 	/* Communicator created while accept routine is executed */
-	nccl_net_ofi_rdma_recv_comm_t *r_comm;
+	nccl_net_ofi_rdma_recv_comm *r_comm;
 
 	/* Stage of connection establishment on listen side */
 	nccl_ofi_comm_stage_t stage;
@@ -1061,7 +1057,7 @@ public:
 	 * communicator rails using the received connect responce message.
 	 */
 	int connect(nccl_net_ofi_conn_handle_t *handle,
-		    nccl_net_ofi_send_comm_t **send_comm,
+		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
 	// TODO: Disable thread safety analysis until conditional locking is
@@ -1188,7 +1184,7 @@ public:
 	 *
 	 * @return	Connect response message
 	 */
-	void prepare_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+	void prepare_conn_resp(nccl_net_ofi_rdma_recv_comm *r_comm,
 			       int dev_id,
 			       nccl_ofi_rdma_connection_info_t *conn_resp);
 
@@ -1237,7 +1233,7 @@ public:
 	 * 		error, others
 	 *
 	 */
-	int create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_comm);
+	int create_send_comm(nccl_net_ofi_rdma_send_comm **s_comm);
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -1450,7 +1446,7 @@ public:
 	/**
 	 * @brief	Get endpoint communicator with given ID
 	 */
-	inline nccl_net_ofi_comm_t *rdma_device_get_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_comm *rdma_device_get_comm(uint32_t local_comm_id)
 	{
 		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 		assert(local_comm_id < num_comm_ids);
@@ -1461,7 +1457,7 @@ public:
 	 * @brief	Set endpoint communicator with given ID
 	 */
 	inline void rdma_device_set_comm(uint32_t local_comm_id,
-					 nccl_net_ofi_comm_t *comm)
+					 nccl_net_ofi_comm *comm)
 	{
 		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 		assert(local_comm_id < num_comm_ids);
@@ -1471,9 +1467,9 @@ public:
 	/**
 	 * @brief	Get endpoint send communicator with given ID
 	 */
-	inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_send_comm *rdma_device_get_send_comm(uint32_t local_comm_id)
 	{
-		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>
+		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			/* Received a ctrl message for a non-existent send comm */
@@ -1486,9 +1482,9 @@ public:
 	/**
 	 * @brief	Get endpoint recv communicator with given comm_id
 	 */
-	inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_recv_comm *rdma_device_get_recv_comm(uint32_t local_comm_id)
 	{
-		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>
+		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(r_comm == nullptr)) {
 			/* Received a message for a non-existent recv comm */
@@ -1559,7 +1555,7 @@ protected:
 
 	/* Array of open comms associated with this device. This is needed for fast
 	   lookup of comms in the RDMA protocol. */
-	std::vector<nccl_net_ofi_comm_t *> comms;
+	std::vector<nccl_net_ofi_comm *> comms;
 };
 
 
@@ -1574,7 +1570,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 /*
  * @brief Return send communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
+static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm *s_comm,
 								uint16_t rail_id)
 {
 	assert(s_comm->rails);
@@ -1585,7 +1581,7 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_n
 /*
  * @brief Return receive communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm *r_comm,
 								uint16_t rail_id)
 {
 	assert(r_comm->rails);

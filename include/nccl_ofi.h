@@ -115,10 +115,6 @@ class nccl_net_ofi_listen_comm;
 class nccl_net_ofi_send_comm;
 class nccl_net_ofi_recv_comm;
 
-typedef class nccl_net_ofi_comm nccl_net_ofi_comm_t;
-typedef class nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
-typedef class nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
-
 /**
  * Request - handle for an outstanding non-blocking communication
  *
@@ -203,7 +199,7 @@ typedef enum nccl_ofi_comm_stage {
 } nccl_ofi_comm_stage_t;
 
 typedef struct save_comm_state {
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 
@@ -699,7 +695,7 @@ public:
 	 * The callee must allocate memory for send_comm.
 	 */
 	virtual int connect(nccl_net_ofi_conn_handle_t *handle,
-			    nccl_net_ofi_send_comm_t **send_comm,
+			    nccl_net_ofi_send_comm **send_comm,
 			    int trafficClass) = 0;
 
 	/**
@@ -868,15 +864,15 @@ public:
  */
 class nccl_net_ofi_listen_comm {
 public:
-	nccl_net_ofi_comm_t base;
+	nccl_net_ofi_comm base;
 
 	virtual ~nccl_net_ofi_listen_comm() = default;
 
-	virtual int accept(nccl_net_ofi_recv_comm_t **recv_comm) = 0;
+	virtual int accept(nccl_net_ofi_recv_comm **recv_comm) = 0;
 	virtual int close() = 0;
 };
 
-class nccl_net_ofi_send_comm : public nccl_net_ofi_comm_t {
+class nccl_net_ofi_send_comm : public nccl_net_ofi_comm {
 public:
 	// TODO: Potentially store this here: int trafficClass;
 
@@ -904,7 +900,7 @@ public:
 	virtual int write_inline( void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) = 0;
 };
 
-class nccl_net_ofi_recv_comm : public nccl_net_ofi_comm_t {
+class nccl_net_ofi_recv_comm : public nccl_net_ofi_comm {
 public:
 	/*
 	 * @brief	Register memory region on recv communicator (both Host and CUDA)

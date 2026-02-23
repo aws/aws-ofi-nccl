@@ -12,14 +12,14 @@
  */
 class nccl_ofi_gin_allgather_comm {
 private:
-	nccl_net_ofi_send_comm_t *s_comm;
-	nccl_net_ofi_recv_comm_t *r_comm;
+	nccl_net_ofi_send_comm *s_comm;
+	nccl_net_ofi_recv_comm *r_comm;
 	size_t rank;
 	size_t nranks;
 
 public:
-	nccl_ofi_gin_allgather_comm(nccl_net_ofi_send_comm_t *s_comm_arg,
-				    nccl_net_ofi_recv_comm_t *r_comm_arg, size_t rank_arg,
+	nccl_ofi_gin_allgather_comm(nccl_net_ofi_send_comm *s_comm_arg,
+				    nccl_net_ofi_recv_comm *r_comm_arg, size_t rank_arg,
 				    size_t nranks_arg)
 	    : s_comm(s_comm_arg), r_comm(r_comm_arg), rank(rank_arg), nranks(nranks_arg)
 	{

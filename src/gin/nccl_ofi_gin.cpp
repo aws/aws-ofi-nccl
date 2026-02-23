@@ -49,8 +49,8 @@ static inline void set_write_ack_buff_info(nccl_ofi_gin_resources &resources,
 }
 
 nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
-				     nccl_net_ofi_send_comm_t *s_comm_,
-				     nccl_net_ofi_recv_comm_t *r_comm_)
+				     nccl_net_ofi_send_comm *s_comm_,
+				     nccl_net_ofi_recv_comm *r_comm_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
       dev(s_comm_->dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
       metadata_fl(nullptr, &freelist_deleter)
@@ -139,8 +139,8 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 
 	assert(nranks > 0);
 
-	nccl_net_ofi_send_comm_t *s_comm = nullptr;
-	nccl_net_ofi_recv_comm_t *r_comm = nullptr;
+	nccl_net_ofi_send_comm *s_comm = nullptr;
+	nccl_net_ofi_recv_comm *r_comm = nullptr;
 
 	const int next_rank = (rank + 1) % nranks;
 	auto *connect_handle = static_cast<nccl_net_ofi_conn_handle_t *>(handles[next_rank]);

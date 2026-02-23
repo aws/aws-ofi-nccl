@@ -52,7 +52,7 @@ public:
 
 class nccl_net_ofi_sendrecv_listen_comm : public nccl_net_ofi_listen_comm {
 public:
-	int accept(nccl_net_ofi_recv_comm_t **recv_comm) override;
+	int accept(nccl_net_ofi_recv_comm **recv_comm) override;
 	int close() override;
 
 	struct fid_ep *local_ep;
@@ -84,7 +84,6 @@ public:
 	nccl_ofi_cm_send_connector *connector;
 };
 
-typedef class nccl_net_ofi_sendrecv_send_comm nccl_net_ofi_sendrecv_send_comm_t;
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_sendrecv_flush_buffer {
@@ -116,7 +115,6 @@ public:
 	nccl_ofi_cm_receiver *receiver;
 };
 
-typedef class nccl_net_ofi_sendrecv_recv_comm nccl_net_ofi_sendrecv_recv_comm_t;
 
 /* Forward declarations needed for sendrecv transport endpoint type */
 class nccl_net_ofi_sendrecv_device_t;
@@ -196,7 +194,7 @@ public:
 		   nccl_net_ofi_listen_comm **listen_comm) override;
 
 	int connect(nccl_net_ofi_conn_handle_t *handle,
-		    nccl_net_ofi_send_comm_t **send_comm,
+		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
 	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
@@ -393,7 +391,7 @@ public:
 	int test(int *done, int *size_p) override;
 
 	/* Associated Comm object */
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 
 	/* Associated context */
 	nccl_net_ofi_context_t ctx;
