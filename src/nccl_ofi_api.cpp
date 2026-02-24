@@ -323,14 +323,13 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 
 	/* Invoke release_ep() on listen comm's endpoint since accept failed */
 	if (ret != 0) {
-		/* Retrieve and validate endpoint */
-		nccl_net_ofi_ep_t *ep = listen_comm->base.ep;
-		if (OFI_UNLIKELY(ep == nullptr)) {
+		/* Validate endpoint */
+		if (OFI_UNLIKELY(listen_comm->ep == nullptr)) {
 			NCCL_OFI_WARN("Invalid endpoint provided");
 			ret = -EINVAL;
 			goto error;
 		}
-		ep->release_ep(false, false);
+		listen_comm->ep->release_ep(false, false);
 	}
 
 error:
@@ -758,5 +757,3 @@ ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhan
 	int ret = recv_comm->read(dest, size, mhandle, src, mr_key, base_req);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
-
-

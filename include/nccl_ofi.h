@@ -862,10 +862,8 @@ public:
 /**
  * Listen Communicator - Communicator for a listen/accept pairing
  */
-class nccl_net_ofi_listen_comm {
+class nccl_net_ofi_listen_comm : public nccl_net_ofi_comm {
 public:
-	nccl_net_ofi_comm base;
-
 	virtual ~nccl_net_ofi_listen_comm() = default;
 
 	virtual int accept(nccl_net_ofi_recv_comm **recv_comm) = 0;
