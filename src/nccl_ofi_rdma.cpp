@@ -4586,10 +4586,10 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 				      nccl_net_ofi_rdma_listen_comm *l_comm,
 				      nccl_net_ofi_rdma_recv_comm **r_comm_ptr)
 {
-	int dev_id = l_comm->base.dev_id;
+	int dev_id = l_comm->dev_id;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->base.ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep;
 	assert(l_comm_ep != NULL);
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 
@@ -4683,22 +4683,22 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)this->base.ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)this->ep;
 	assert(l_comm_ep != NULL);
 
-	nccl_net_ofi_rdma_ep_t *ep = l_comm_ep;
+	nccl_net_ofi_rdma_ep_t *endpoint = l_comm_ep;
 	if (this->r_comm) {
-		ep = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
-		assert(ep != NULL);
+		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
+		assert(endpoint != NULL);
 	}
 
 	/* Retrieve and validate device */
 	nccl_net_ofi_rdma_domain_t *domain = l_comm_ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
 
-	CHECK_ENDPOINT_ACTIVE(ep, "accept");
+	CHECK_ENDPOINT_ACTIVE(endpoint, "accept");
 
 	/* Set return receive communicator to NULL until accept finalizes */
 	*recv_comm = NULL;
@@ -4732,8 +4732,8 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 			return 0;
 		}
 
-		ep = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
-		assert(ep != NULL);
+		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
+		assert(endpoint != NULL);
 
 		this->stage = COMM_CONN_RESP_REQ_PENDING;
 
@@ -4744,7 +4744,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 		 * cleanup and return receive communicator. */
 
 		/* Progress our engine to get completions */
-		ret = ep->ofi_process_cq();
+		ret = endpoint->ofi_process_cq();
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
@@ -4808,9 +4808,8 @@ int nccl_net_ofi_rdma_listen_comm::close()
 {
 	int ret = 0;
 
-	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *ep = this->base.ep;
-	assert(ep != NULL);
+	/* Validate endpoint */
+	assert(this->ep != NULL);
 
 	if (this->r_comm) {
 		ret = recv_comm_destroy(this->r_comm);
@@ -4824,7 +4823,7 @@ int nccl_net_ofi_rdma_listen_comm::close()
 	this->listener = nullptr;
 
 	delete this;
-	ret = ep->release_ep(false, false);
+	ret = this->ep->release_ep(false, false);
 
 	return ret;
 }
@@ -4863,9 +4862,9 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 	}
 
 	/* Initialize listen communicator */
-	l_comm->base.type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->base.ep = this;
-	l_comm->base.dev_id = dev_id;
+	l_comm->type = NCCL_NET_OFI_LISTEN_COMM;
+	l_comm->ep = this;
+	l_comm->dev_id = dev_id;
 
 	/* Create CM listener */
 	l_comm->listener = this->cm->listen();
