@@ -43,7 +43,7 @@ case `git show ${reference}:RELEASENOTES.md | sed 15q` in
 esac
 
 # Make the tag
-git tag -a -m "Create ${tagname} release tag" "${tagname}" "${reference}"
+git tag -s -a -m "Create ${tagname} release tag" "${tagname}" "${reference}"
 if test $? -ne 0 ; then
     echo "Creating tag ${tagname} on reference ${reference} failed".
     exit 1
