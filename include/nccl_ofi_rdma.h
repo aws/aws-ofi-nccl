@@ -421,7 +421,7 @@ public:
 	nccl_net_ofi_rdma_req_ctx_list ctx;
 
 	/* Associated Comm object */
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 
 	/* Associated Device ID */
 	int dev_id;
@@ -530,11 +530,15 @@ typedef struct nccl_net_ofi_rdma_send_comm_rail {
  * Use function `calloc_rdma_send_comm(int num_rails, int num_control_rails)' to
  * allocate a RDMA send communicator with `num_rails'+`num_control_rails' rails.
  */
-typedef struct nccl_net_ofi_rdma_send_comm {
-	/* This base send communicator must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_send_comm_t base;
+class nccl_net_ofi_rdma_send_comm : public nccl_net_ofi_send_comm {
+public:
+    
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
+    int close() override;
+    int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) override;
+    int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) override;
 
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
@@ -578,7 +582,8 @@ typedef struct nccl_net_ofi_rdma_send_comm {
 
 	/* Sender's control mailbox mr_handle */
 	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
-} nccl_net_ofi_rdma_send_comm_t;
+};
+
 
 /*
  * @brief	Receive communicator rail
@@ -615,11 +620,14 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
  * Use function `calloc_rdma_recv_comm(int num_rails, int num_control_rails)' to
  * allocate a RDMA receive communicator with `num_rails'+`num_control_rails' rails.
  */
-typedef struct nccl_net_ofi_rdma_recv_comm {
-	/* This base receive communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_recv_comm_t base;
+class nccl_net_ofi_rdma_recv_comm : public nccl_net_ofi_recv_comm {
+public:
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int flush(int n, void **data, int *sizes, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int close() override;
+    int read(void* dest, size_t size, void* dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) override;
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver;
@@ -682,18 +690,19 @@ typedef struct nccl_net_ofi_rdma_recv_comm {
 	/* Addr and key of remote control mailbox */
 	uint64_t remote_mailbox_addr;
 	uint64_t remote_mr_key[MAX_NUM_RAILS];
-} nccl_net_ofi_rdma_recv_comm_t;
+};
+
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
 public:
-	int accept(nccl_net_ofi_recv_comm_t **recv_comm) override;
+	int accept(nccl_net_ofi_recv_comm **recv_comm) override;
 	int close() override;
 
 	/* Associated listener from connection manager */
 	nccl_ofi_cm_listener *listener;
 
 	/* Communicator created while accept routine is executed */
-	nccl_net_ofi_rdma_recv_comm_t *r_comm;
+	nccl_net_ofi_rdma_recv_comm *r_comm;
 
 	/* Stage of connection establishment on listen side */
 	nccl_ofi_comm_stage_t stage;
@@ -1048,7 +1057,7 @@ public:
 	 * communicator rails using the received connect responce message.
 	 */
 	int connect(nccl_net_ofi_conn_handle_t *handle,
-		    nccl_net_ofi_send_comm_t **send_comm,
+		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
 	// TODO: Disable thread safety analysis until conditional locking is
@@ -1175,7 +1184,7 @@ public:
 	 *
 	 * @return	Connect response message
 	 */
-	void prepare_conn_resp(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+	void prepare_conn_resp(nccl_net_ofi_rdma_recv_comm *r_comm,
 			       int dev_id,
 			       nccl_ofi_rdma_connection_info_t *conn_resp);
 
@@ -1224,7 +1233,7 @@ public:
 	 * 		error, others
 	 *
 	 */
-	int create_send_comm(nccl_net_ofi_rdma_send_comm_t **s_comm);
+	int create_send_comm(nccl_net_ofi_rdma_send_comm **s_comm);
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -1437,7 +1446,7 @@ public:
 	/**
 	 * @brief	Get endpoint communicator with given ID
 	 */
-	inline nccl_net_ofi_comm_t *rdma_device_get_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_comm *rdma_device_get_comm(uint32_t local_comm_id)
 	{
 		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 		assert(local_comm_id < num_comm_ids);
@@ -1448,7 +1457,7 @@ public:
 	 * @brief	Set endpoint communicator with given ID
 	 */
 	inline void rdma_device_set_comm(uint32_t local_comm_id,
-					 nccl_net_ofi_comm_t *comm)
+					 nccl_net_ofi_comm *comm)
 	{
 		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 		assert(local_comm_id < num_comm_ids);
@@ -1458,30 +1467,30 @@ public:
 	/**
 	 * @brief	Get endpoint send communicator with given ID
 	 */
-	inline nccl_net_ofi_rdma_send_comm_t *rdma_device_get_send_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_send_comm *rdma_device_get_send_comm(uint32_t local_comm_id)
 	{
-		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm_t *>
+		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			/* Received a ctrl message for a non-existent send comm */
 			return nullptr;
 		}
-		assert(s_comm->base.base.type == NCCL_NET_OFI_SEND_COMM);
+		assert(s_comm->type == NCCL_NET_OFI_SEND_COMM);
 		return s_comm;
 	}
 
 	/**
 	 * @brief	Get endpoint recv communicator with given comm_id
 	 */
-	inline nccl_net_ofi_rdma_recv_comm_t *rdma_device_get_recv_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_recv_comm *rdma_device_get_recv_comm(uint32_t local_comm_id)
 	{
-		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm_t *>
+		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(r_comm == nullptr)) {
 			/* Received a message for a non-existent recv comm */
 			return nullptr;
 		}
-		assert(r_comm->base.base.type == NCCL_NET_OFI_RECV_COMM);
+		assert(r_comm->type == NCCL_NET_OFI_RECV_COMM);
 		return r_comm;
 	}
 
@@ -1546,7 +1555,7 @@ protected:
 
 	/* Array of open comms associated with this device. This is needed for fast
 	   lookup of comms in the RDMA protocol. */
-	std::vector<nccl_net_ofi_comm_t *> comms;
+	std::vector<nccl_net_ofi_comm *> comms;
 };
 
 
@@ -1561,7 +1570,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 /*
  * @brief Return send communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm_t *s_comm,
+static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm *s_comm,
 								uint16_t rail_id)
 {
 	assert(s_comm->rails);
@@ -1572,7 +1581,7 @@ static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_n
 /*
  * @brief Return receive communicator rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm_t *r_comm,
+static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm *r_comm,
 								uint16_t rail_id)
 {
 	assert(r_comm->rails);

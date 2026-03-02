@@ -110,14 +110,10 @@ class nccl_net_ofi_domain_t;
 class nccl_net_ofi_ep_t;
 class nccl_net_ofi_plugin_t;
 
-struct nccl_net_ofi_comm;
+class nccl_net_ofi_comm;
 class nccl_net_ofi_listen_comm;
-struct nccl_net_ofi_send_comm;
-struct nccl_net_ofi_recv_comm;
-
-typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
-typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
-typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
+class nccl_net_ofi_send_comm;
+class nccl_net_ofi_recv_comm;
 
 /**
  * Request - handle for an outstanding non-blocking communication
@@ -203,7 +199,7 @@ typedef enum nccl_ofi_comm_stage {
 } nccl_ofi_comm_stage_t;
 
 typedef struct save_comm_state {
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 
@@ -699,7 +695,7 @@ public:
 	 * The callee must allocate memory for send_comm.
 	 */
 	virtual int connect(nccl_net_ofi_conn_handle_t *handle,
-			    nccl_net_ofi_send_comm_t **send_comm,
+			    nccl_net_ofi_send_comm **send_comm,
 			    int trafficClass) = 0;
 
 	/**
@@ -854,7 +850,10 @@ enum nccl_net_ofi_comm_type_t {
  * but instead underlying transports should extend the listen, send,
  * and recv communicators.
  */
-struct nccl_net_ofi_comm {
+class nccl_net_ofi_comm {
+public:
+	virtual ~nccl_net_ofi_comm() = default;
+
 	enum nccl_net_ofi_comm_type_t type;
 	nccl_net_ofi_ep_t *ep;
 	int dev_id;
@@ -863,18 +862,16 @@ struct nccl_net_ofi_comm {
 /**
  * Listen Communicator - Communicator for a listen/accept pairing
  */
-class nccl_net_ofi_listen_comm {
+class nccl_net_ofi_listen_comm : public nccl_net_ofi_comm {
 public:
-	nccl_net_ofi_comm_t base;
-
 	virtual ~nccl_net_ofi_listen_comm() = default;
 
-	virtual int accept(nccl_net_ofi_recv_comm_t **recv_comm) = 0;
+	virtual int accept(nccl_net_ofi_recv_comm **recv_comm) = 0;
 	virtual int close() = 0;
 };
 
-struct nccl_net_ofi_send_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_send_comm : public nccl_net_ofi_comm {
+public:
 	// TODO: Potentially store this here: int trafficClass;
 
 	/*
@@ -884,8 +881,7 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
+	virtual int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) = 0;
 
 	/*
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
@@ -894,22 +890,16 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	virtual int deregMr(nccl_net_ofi_mr_handle_t *mhandle) = 0;
 
-	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, size_t size, int tag,
-			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req);
-
-	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
-
-	int (*write)(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* src_mhandle,
-		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req);
-	int (*write_inline)(nccl_net_ofi_send_comm_t *, void* src, size_t size,
-			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request);
+	virtual int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) = 0;
+	virtual int close() = 0;
+	virtual int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) = 0;
+	virtual int write_inline( void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) = 0;
 };
 
-struct nccl_net_ofi_recv_comm {
-	nccl_net_ofi_comm_t base;
-
+class nccl_net_ofi_recv_comm : public nccl_net_ofi_comm {
+public:
 	/*
 	 * @brief	Register memory region on recv communicator (both Host and CUDA)
 	 *
@@ -917,8 +907,7 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
+	virtual int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) = 0;
 
 	/*
 	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
@@ -927,18 +916,18 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	virtual int deregMr(nccl_net_ofi_mr_handle_t *mhandle) = 0;
 
-	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, size_t *sizes, int *tags,
-			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req);
+	virtual int recv(int n, void **data, size_t *sizes, int *tags,
+			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) = 0;
 
-	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
-			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req);
+	virtual int flush(int n, void **data, int *sizes,
+			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) = 0;
 
-	int (*close)(nccl_net_ofi_recv_comm_t *recv_comm);
+	virtual int close() = 0;
 
-	int (*read)(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size, void* dest_mhandle,
-		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req);
+	virtual int read(void* dest, size_t size, void* dest_mhandle,
+		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) = 0;
 };
 
 /**
