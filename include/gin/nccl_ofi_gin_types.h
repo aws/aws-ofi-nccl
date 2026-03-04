@@ -49,19 +49,28 @@ struct nccl_net_ofi_gin_signal_metadata_msg_t {
 /**
  * Format of immediate data:
  *
- * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
+ * | 4-bit segment count | 1-bit ack_requested | 17-bit comm ID | 10-bit msg_seq_num |
  */
 #define GIN_IMM_NUM_SEQ_BITS_SIZE 10
-#define GIN_IMM_COMM_BITS_SIZE 18
+#define GIN_IMM_COMM_BITS_SIZE 17
 #define GIN_MAX_COMMS (1 << GIN_IMM_COMM_BITS_SIZE)
-#define GIN_IMM_SEG_SHIFT (GIN_IMM_NUM_SEQ_BITS_SIZE + GIN_IMM_COMM_BITS_SIZE)
+#define GIN_IMM_ACK_REQUESTED_SHIFT (GIN_IMM_NUM_SEQ_BITS_SIZE + GIN_IMM_COMM_BITS_SIZE)
+#define GIN_IMM_SEG_SHIFT (GIN_IMM_ACK_REQUESTED_SHIFT + 1)
 #define GIN_IMM_NUM_SEG_BITS_SIZE 4
 #define GIN_IMM_SEQ_MASK ((1 << GIN_IMM_NUM_SEQ_BITS_SIZE) - 1)
 #define GIN_IMM_GET_SEQ_NUM(data) ((data) & GIN_IMM_SEQ_MASK)
 #define GIN_IMM_GET_COMM_ID(data)                                                                  \
 	(((data) >> GIN_IMM_NUM_SEQ_BITS_SIZE) & ((1 << GIN_IMM_COMM_BITS_SIZE) - 1))
+#define GIN_IMM_GET_ACK_REQUESTED(data) (((data) >> GIN_IMM_ACK_REQUESTED_SHIFT) & 1)
 #define GIN_IMM_GET_SEG_CNT(data) ((data) >> GIN_IMM_SEG_SHIFT)
-#define GIN_IMM_GET_IMM_DATA(comm_id, msg_seq_num, nseg)                                           \
-	(((nseg) << GIN_IMM_SEG_SHIFT) | ((comm_id) << GIN_IMM_NUM_SEQ_BITS_SIZE) | (msg_seq_num))
+#define GIN_IMM_GET_IMM_DATA(comm_id, msg_seq_num, nseg, is_ack_requested)                         \
+	(((nseg) << GIN_IMM_SEG_SHIFT) | ((is_ack_requested) << GIN_IMM_ACK_REQUESTED_SHIFT) |     \
+	 ((comm_id) << GIN_IMM_NUM_SEQ_BITS_SIZE) | (msg_seq_num))
+
+/* ACK interval for PUT-only messages. Send an ACK every N consecutive PUTs
+   to prevent sequence number wraparound. */
+#define GIN_ACK_INTERVAL 64
+static_assert(GIN_ACK_INTERVAL <= (1 << GIN_IMM_NUM_SEQ_BITS_SIZE),
+	      "GIN_ACK_INTERVAL must not exceed sequence number space");
 
 #endif
