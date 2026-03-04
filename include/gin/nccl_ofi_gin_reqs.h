@@ -191,9 +191,10 @@ public:
 	nccl_net_ofi_gin_iputsignal_req_t(
 		nccl_ofi_gin_comm &gin_comm_arg, uint32_t peer_rank_arg, uint16_t msg_seq_num_arg,
 		std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs_arg,
-		nccl_net_ofi_gin_metadata_send_req_t *send_req_arg)
+		nccl_net_ofi_gin_metadata_send_req_t *send_req_arg,
+		bool is_ack_requested_arg)
 	    : write_reqs(write_reqs_arg), send_req(send_req_arg), gin_comm(gin_comm_arg),
-	      peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg)
+	      peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg), is_ack_requested(is_ack_requested_arg)
 	{
 	}
 
@@ -217,6 +218,8 @@ private:
 	uint32_t peer_rank;
 	/* Message sequence number */
 	uint16_t msg_seq_num;
+	/* True if sender is requesting an ACK (SIGNAL, PUT-SIGNAL, or every Nth PUT) */
+	bool is_ack_requested;
 };
 
 /**
@@ -252,6 +255,11 @@ private:
 	 * True if metadata has been populated.
 	 */
 	bool metadata_received;
+
+	/**
+	 * True if sender is requesting an ACK
+	 */
+	bool is_ack_requested = false;
 
 	/**
 	 * Metadata received as part of this request

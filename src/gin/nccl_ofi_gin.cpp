@@ -242,7 +242,7 @@ int nccl_ofi_gin_comm::writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_
 
 	auto &rank_comm = gin_comm.rank_comms[peer_rank];
 	uint32_t peer_comm_id = rank_comm.comm_id;
-	uint32_t imm_data = GIN_IMM_GET_IMM_DATA(peer_comm_id, msg_seq_num, WRITEDATA_ACK_NSEG);
+	uint32_t imm_data = GIN_IMM_GET_IMM_DATA(peer_comm_id, msg_seq_num, WRITEDATA_ACK_NSEG, 0);
 
 	auto &ep = gin_comm.resources.get_ep();
 
@@ -416,6 +416,23 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		return -EBUSY;
 	}
 
+	/* Determine if this message needs an ACK:
+	 * - SIGNAL or PUT-SIGNAL: always needs ACK
+	 * - PUT-only: needs ACK every N consecutive PUTs */
+	bool is_signal = (signalOp != 0);
+	bool is_ack_requested = false;
+
+	if (is_signal) {
+		is_ack_requested = true;
+		rank_comm.consecutive_puts_without_ack = 0;
+	} else {
+		rank_comm.consecutive_puts_without_ack++;
+		if (rank_comm.consecutive_puts_without_ack >= GIN_ACK_INTERVAL) {
+			is_ack_requested = true;
+			rank_comm.consecutive_puts_without_ack = 0;
+		}
+	}
+
 	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	/* Determine how many segments to send */
 	uint16_t nseg = 0;
@@ -428,9 +445,9 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	NCCL_OFI_TRACE(NCCL_NET,
 		       "iputSignal srcOff %lu srcMhandle %p size %zu dstOff %lu"
 		       " dstMhandle %p dst_rank %u signalOff %lu signalMhandle %p"
-		       " signalValue %lu signalOp %u seq_num %hu",
+		       " signalValue %lu signalOp %u seq_num %hu is_ack_requested %d",
 		       srcOff, srcMhandle, size, dstOff, dstMhandle, dst_rank, signalOff,
-		       signalMhandle, signalValue, signalOp, msg_seq_num);
+		       signalMhandle, signalValue, signalOp, msg_seq_num, is_ack_requested);
 
 	int ret = 0;
 	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs {};
@@ -438,7 +455,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 
 	/* Create umbrella request first for tracing */
 	auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_req_t>(
-		*this, dst_rank, msg_seq_num, write_reqs, nullptr);
+		*this, dst_rank, msg_seq_num, write_reqs, nullptr, is_ack_requested);
 
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_BEGIN(dev, size, this, dst_rank, msg_seq_num, req);
 
@@ -454,7 +471,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		nseg += schedule->num_xfer_infos;
 		assert_always(nseg > 0);
 
-		uint64_t data = GIN_IMM_GET_IMM_DATA(remote_comm_id, msg_seq_num, nseg);
+		uint64_t data = GIN_IMM_GET_IMM_DATA(remote_comm_id, msg_seq_num, nseg, is_ack_requested);
 
 		auto &dest_remote_mr = dstMhandle->remote_mr[dst_rank];
 		uint64_t dest = dest_remote_mr.address_offset + dstOff;
@@ -542,7 +559,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	/* Update umbrella request with send_req */
 	req->send_req = send_req;
 
-	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = true;
+	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = is_ack_requested;
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
 
 	*request = req;
@@ -642,11 +659,12 @@ int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint6
 		return ret;
 	}
 
-	/* Write ack */
-	ret = writedata_ack(*this, peer_rank, req->metadata.msg_seq_num);
-
-	if (ret != 0) {
-		return ret;
+	/* Send ACK only if this message requested one */
+	if (req->is_ack_requested) {
+		ret = writedata_ack(*this, peer_rank, req->metadata.msg_seq_num);
+		if (ret != 0) {
+			return ret;
+		}
 	}
 
 	/* Remove this request entry from the map */
@@ -714,6 +732,7 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 		req->total_segments = metadata_msg->num_segments;
 		req->metadata = *metadata_msg;
 		req->metadata_received = true;
+		req->is_ack_requested = true;  // Metadata always requests ACK
 		outstanding_iput_signal_recv_reqs[map_key] = req;
 	} else {
 		req = it->second;
@@ -730,7 +749,7 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 
 int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
 						      uint16_t msg_seq_num, uint64_t total_segms,
-						      size_t len)
+						      bool is_ack_requested, size_t len)
 {
 	int ret = 0;
 
@@ -756,6 +775,7 @@ int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16
 
 		req->num_seg_completions = 1;
 		req->total_segments = total_segms;
+		req->is_ack_requested = is_ack_requested;
 		outstanding_iput_signal_recv_reqs[map_key] = req;
 	} else {
 		req = it->second;

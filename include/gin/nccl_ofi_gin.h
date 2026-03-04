@@ -102,6 +102,11 @@ struct nccl_ofi_gin_peer_rank_info {
 	   which has delivered the signal atomic.
 	   */
 	bool active_put_signal[NCCL_OFI_MAX_REQUESTS];
+	
+	/* Counter for consecutive PUT-only messages without ACK.
+	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
+	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
+	size_t consecutive_puts_without_ack = 0;
 };
 
 /**
@@ -197,9 +202,14 @@ public:
 		outstanding_ack_counter--;
 	}
 
-	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
+	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num) const
 	{
 		return rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS];
+	}
+
+	void clear_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
+	{
+		rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = false;
 	}
 
 	/* Wait for any outstanding requests as necessary. Should be called before
@@ -253,10 +263,12 @@ public:
 	 * @param rail_id: rail ID of the signal
 	 * @param msg_seq_num: sequence number of the signal
 	 * @param total_segms: total number of segments in the signal
+	 * @param is_ack_requested: whether the sender is requesting an ACK
 	 * @param len: length of the signal
 	 */
 	int handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
-					   uint16_t msg_seq_num, uint64_t total_segms, size_t len);
+					   uint16_t msg_seq_num, uint64_t total_segms,
+					   bool is_ack_requested, size_t len);
 
 private:
 	nccl_ofi_gin_resources &resources;

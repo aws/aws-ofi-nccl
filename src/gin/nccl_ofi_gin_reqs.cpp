@@ -86,10 +86,11 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 
 		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
 		uint64_t total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
+		bool is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
 		size_t len = cq_entry->len;
 
 		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg, msg_seq_num,
-							      total_segms, len);
+							      total_segms, is_ack_requested, len);
 		if (ret != 0) {
 			NCCL_OFI_WARN("gin_handle_signal_write_completion failure");
 			return ret;
@@ -205,9 +206,15 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 
 	bool reqs_done = all_writes_done && !send_req;
 	if (reqs_done) {
-		bool ack_outstanding = gin_comm.query_ack_outstanding(peer_rank, msg_seq_num);
-
-		*done = !ack_outstanding;
+		if (is_ack_requested) {
+			/* This message requested ACK (SIGNAL, PUT-SIGNAL, or every Nth PUT) */
+			bool ack_outstanding = gin_comm.query_ack_outstanding(peer_rank, msg_seq_num);
+			*done = !ack_outstanding;
+		} else {
+			/* This message doesn't need ACK (most PUTs) */
+			gin_comm.clear_ack_outstanding(peer_rank, msg_seq_num);
+			*done = 1;
+		}
 	}
 
 	if (*done) {
