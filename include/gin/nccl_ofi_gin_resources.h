@@ -69,7 +69,7 @@ public:
 		return rails[rail_id];
 	}
 
-	nccl_net_ofi_scheduler_t *get_scheduler()
+	nccl_net_ofi_scheduler *get_scheduler()
 	{
 		return scheduler;
 	}
@@ -110,7 +110,7 @@ private:
 
 	std::vector<nccl_ofi_gin_ep_rail_t> rails;
 
-	nccl_net_ofi_scheduler_t *scheduler;
+	nccl_net_ofi_scheduler *scheduler;
 	/**
 	 * Handler for list of CQ entries
 	 */

@@ -717,7 +717,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
-	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
+	nccl_net_ofi_scheduler *scheduler = domain->scheduler;
 
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
@@ -739,7 +739,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	}
 	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
-	send_data->schedule = scheduler->get_schedule(scheduler, send_data->buff_len, device->num_rails);
+	send_data->schedule = scheduler->get_schedule(send_data->buff_len, device->num_rails);
 	if (OFI_UNLIKELY(send_data->schedule == NULL)) {
 		return -EINVAL;
 	}
@@ -4921,7 +4921,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
-	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
+	nccl_net_ofi_scheduler *scheduler = domain->scheduler;
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
@@ -4946,7 +4946,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 	   remote length received in the control message.
 	 */
 	if (eager) {
-		send_data->schedule = scheduler->get_schedule(scheduler, size, device->num_rails);
+		send_data->schedule = scheduler->get_schedule(size, device->num_rails);
 		if (OFI_UNLIKELY(send_data->schedule == NULL)) {
 			return -EINVAL;
 		}
@@ -5229,13 +5229,13 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	nccl_net_ofi_scheduler_t *scheduler = domain->scheduler;
+	nccl_net_ofi_scheduler *scheduler = domain->scheduler;
 	uint16_t rail_id;
 	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size();
 	nccl_net_ofi_schedule_t *schedule = NULL;
 
 	if (ep->num_control_rails > 1) {
-		schedule = scheduler->get_schedule(scheduler, ctrl_msg_len, ep->num_control_rails);
+		schedule = scheduler->get_schedule(ctrl_msg_len, ep->num_control_rails);
 
 		if (OFI_UNLIKELY(!(schedule))) {
 			return -EINVAL;
@@ -6655,12 +6655,8 @@ int nccl_net_ofi_rdma_domain_t::cleanup_resources()
 	}
 
 	if (this->scheduler) {
-		err_code = this->scheduler->fini(this->scheduler);
-		if (err_code != 0) {
-			NCCL_OFI_WARN("Cleanup of RDMA domain failed, scheduler_fini returned %s",
-				      strerror(-ret));
-			ret = -EINVAL;
-		}
+		delete this->scheduler;
+		this->scheduler = nullptr;
 	}
 
 	if (!this->ep_table.empty()) {

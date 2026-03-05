@@ -87,7 +87,7 @@ static inline int set_ref_schedule(nccl_net_ofi_schedule_t *schedule, size_t ind
 	return ret;
 }
 
-static inline int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
+static inline int test_multiplexer(nccl_net_ofi_scheduler *scheduler,
 				   int num_rails,
 				   size_t msg_size,
 				   size_t num_stripes,
@@ -102,7 +102,7 @@ static inline int test_multiplexer(nccl_net_ofi_scheduler_t *scheduler,
 		return ret;
 	};
 
-	schedule = scheduler->get_schedule(scheduler, msg_size, num_rails);
+	schedule = scheduler->get_schedule(msg_size, num_rails);
 	if (!schedule) {
 		NCCL_OFI_WARN("Failed to get schedule");
 		free(ref_schedule);
@@ -135,7 +135,7 @@ static inline int test_threshold_scheduler()
 	ofi_nccl_min_stripe_size.set(4096);
 	ofi_nccl_sched_max_small_msg_size.set(64);
 
-	nccl_net_ofi_scheduler_t *scheduler;
+	nccl_net_ofi_scheduler *scheduler;
 	if (nccl_net_ofi_threshold_scheduler_init(num_rails, &scheduler)) {
 		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
 		return ret;
@@ -308,10 +308,7 @@ static inline int test_threshold_scheduler()
 		}
 	}
 
-	ret = scheduler->fini(scheduler);
-	if (ret) {
-		NCCL_OFI_WARN("Failed to destroy threshold scheduler");
-	}
+	delete scheduler;
 	return 0;
 }
 
