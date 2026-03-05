@@ -250,7 +250,7 @@ class nccl_net_ofi_rdma_ep_t;
 
 class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
-class nccl_net_ofi_rdma_ep_rail_t;
+class nccl_net_ofi_rdma_ep_rail;
 
 class nccl_net_ofi_rdma_req;
 
@@ -267,7 +267,7 @@ typedef struct {
 	 * This is useful for re-posting the buffer on the same rail
 	 * when it gets completed.
 	 */
-	nccl_net_ofi_rdma_ep_rail_t *rail;
+	nccl_net_ofi_rdma_ep_rail *rail;
 	/*
 	 * Back-pointer to associated endpoint
 	 */
@@ -959,18 +959,24 @@ public:
  * Endpoint rail encapsulates data of an endpoint for a
  * specific rail.
  */
-class nccl_net_ofi_rdma_ep_rail_t {
+class nccl_net_ofi_rdma_ep_rail {
 public:
 	/* Default constructor */
-	nccl_net_ofi_rdma_ep_rail_t() = default;
+	nccl_net_ofi_rdma_ep_rail() = default;
+
+	/* Virtual destructor for inheritance */
+	virtual ~nccl_net_ofi_rdma_ep_rail() = default;
 
 	/* Move constructor and assignment */
-	nccl_net_ofi_rdma_ep_rail_t(nccl_net_ofi_rdma_ep_rail_t&&) = default;
-	nccl_net_ofi_rdma_ep_rail_t& operator=(nccl_net_ofi_rdma_ep_rail_t&&) = default;
+	nccl_net_ofi_rdma_ep_rail(nccl_net_ofi_rdma_ep_rail&&) = default;
+	nccl_net_ofi_rdma_ep_rail& operator=(nccl_net_ofi_rdma_ep_rail&&) = default;
 
 	/* Delete copy operations since smart pointers are non-copyable */
-	nccl_net_ofi_rdma_ep_rail_t(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
-	nccl_net_ofi_rdma_ep_rail_t& operator=(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
+	nccl_net_ofi_rdma_ep_rail(const nccl_net_ofi_rdma_ep_rail&) = delete;
+	nccl_net_ofi_rdma_ep_rail& operator=(const nccl_net_ofi_rdma_ep_rail&) = delete;
+
+	/* Allocate a receive buffer request for this rail */
+	virtual nccl_net_ofi_rdma_req* rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep) = 0;
 
 	uint16_t rail_id;
 
@@ -998,10 +1004,22 @@ public:
 	size_t max_rx_buff_posted;
 	/* Mutex for rx buffer operations */
 	pthread_mutex_t rx_buff_mutex;
+};
 
-	/* Allocate a receive buffer request for this rail (eager or ctrl) */
-	nccl_net_ofi_rdma_req* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
-						      nccl_net_ofi_rdma_ep_rail_t *rail);
+/**
+ * @brief	Control rail - uses control buffer freelist
+ */
+class nccl_net_ofi_rdma_ep_ctrl_rail : public nccl_net_ofi_rdma_ep_rail {
+public:
+	nccl_net_ofi_rdma_req* rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep) override;
+};
+
+/**
+ * @brief	Eager rail - uses eager buffer freelist
+ */
+class nccl_net_ofi_rdma_ep_data_rail : public nccl_net_ofi_rdma_ep_rail {
+public:
+	nccl_net_ofi_rdma_req* rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep) override;
 };
 
 /**
@@ -1076,7 +1094,7 @@ public:
 	/**
 	 * @brief Return endpoint rail with index `rail_id`
 	 */
-	inline nccl_net_ofi_rdma_ep_rail_t *rdma_endpoint_get_rail(uint16_t rail_id)
+	inline nccl_net_ofi_rdma_ep_rail *rdma_endpoint_get_rail(uint16_t rail_id)
 	{
 		assert(!rails.empty());
 		assert(rail_id < num_rails);
@@ -1086,7 +1104,7 @@ public:
 	/**
 	 * @brief Return control endpoint rail with index `rail_id`
 	 */
-	inline nccl_net_ofi_rdma_ep_rail_t *rdma_endpoint_get_control_rail(uint16_t rail_id)
+	inline nccl_net_ofi_rdma_ep_rail *rdma_endpoint_get_control_rail(uint16_t rail_id)
 	{
 		assert(!control_rails.empty());
 		assert(rail_id < num_control_rails);
@@ -1122,7 +1140,7 @@ public:
 	/**
 	 * Post all rx buffers for a rail if we don't have enough
 	 */
-	int check_post_rx_buffers_rail(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int check_post_rx_buffers_rail(nccl_net_ofi_rdma_ep_rail *rail);
 
 	/**
 	 * @brief	Re-post a rx buffer that has not yet been removed from active
@@ -1134,7 +1152,7 @@ public:
 	 * @brief	Decrement the number of rx buffers posted for the rail
 	 *		corresponding to rx_buff_req
 	 */
-	int decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail *rail);
 
 	/**
 	 * Attempt to post all requests in the pending requests queue.
@@ -1155,11 +1173,11 @@ public:
 	 */
 	int ofi_process_cq();
 
-	int handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
+	int handle_rx_eagain(nccl_net_ofi_rdma_ep_rail *rail,
 			     nccl_net_ofi_rdma_req *req,
 			     size_t num_buffs_failed);
 
-	int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail *rail);
 
 	/**
 	 * @brief	Post rx buffers for all rails until each is at max
@@ -1240,11 +1258,11 @@ public:
 	/* Number of control rails */
 	uint16_t num_control_rails;
 
-	/* Array of `num_rails` endpoint rails */
-	std::vector<nccl_net_ofi_rdma_ep_rail_t> rails;
+	/* Array of `num_rails` endpoint rails (eager) */
+	std::vector<nccl_net_ofi_rdma_ep_data_rail> rails;
 
-	/* Array of `num_control_rails` endpoint rails */
-	std::vector<nccl_net_ofi_rdma_ep_rail_t> control_rails;
+	/* Array of `num_control_rails` endpoint rails (control) */
+	std::vector<nccl_net_ofi_rdma_ep_ctrl_rail> control_rails;
 
 	/* Array of `num_rails` cq rails */
 	std::vector<nccl_net_ofi_rdma_cq_rail_t> cq_rails;
@@ -1330,7 +1348,7 @@ protected:
 	static int ep_rail_init(int dev_id, uint16_t rail_id,
 				nccl_net_ofi_rdma_device_rail_t *dev_rail,
 				nccl_net_ofi_rdma_domain_rail_t *domain_rail,
-				nccl_net_ofi_rdma_ep_rail_t *ep_rail,
+				nccl_net_ofi_rdma_ep_rail *ep_rail,
 				nccl_net_ofi_rdma_cq_rail_t *cq_rail,
 				uint32_t tclass);
 
