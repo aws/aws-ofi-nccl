@@ -874,7 +874,7 @@ public:
 	nccl_ofi_ep_addr_list_t ep_addr_list;
 
 	/* Message scheduler */
-	nccl_net_ofi_scheduler_t *scheduler = nullptr;
+	nccl_net_ofi_scheduler *scheduler = nullptr;
 
 protected:
 	/**

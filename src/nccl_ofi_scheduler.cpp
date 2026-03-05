@@ -43,11 +43,11 @@ static inline size_t sizeof_schedule(int num_rails)
  * @return	Returns the adjusted number of stripes.
  *
  */
-static int get_num_stripes(nccl_net_ofi_threshold_scheduler_t *scheduler_p, size_t size, int num_rails)
+inline int nccl_net_ofi_threshold_scheduler::get_num_stripes(size_t size, int num_rails)
 {
 	/* Number of stripes is at least 1 for zero-sized messages and at most equal to num of rails */
 	int num_stripes = (int)std::max(1UL, std::min(NCCL_OFI_DIV_CEIL(size,
-									scheduler_p->min_stripe_size),
+									this->min_stripe_size),
 						      static_cast<long unsigned>(num_rails)));
 
 	/* Start the loop from num_stripes and skip 1, as num_rails % 1 is always true.
@@ -71,7 +71,7 @@ static int get_num_stripes(nccl_net_ofi_threshold_scheduler_t *scheduler_p, size
  * data. The number of rails are calculated based on the ratio of
  * (`data_size` / `min_stripe_size`)
  */
-static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *scheduler,
+static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler *scheduler,
 					    size_t size,
 					    int num_rails,
 					    size_t align,
@@ -95,7 +95,7 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 		schedule->rail_xfer_infos[0].msg_size = size;
 		NCCL_OFI_TRACE(NCCL_NET, "scheduler: short size %lu rail %d", size, curr_rail_id);
 	} else {
-		num_stripes = get_num_stripes(scheduler, size, num_rails);
+		num_stripes = scheduler->get_num_stripes(size, num_rails);
 		assert(num_stripes <= num_rails);
 
 		nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
@@ -133,7 +133,7 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler_t *
 	return ret;
 }
 
-void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
+void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler_p,
 				   nccl_net_ofi_schedule_t *schedule)
 {
 	assert(scheduler_p != NULL);
@@ -160,20 +160,15 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
  * @return	schedule, on success
  *		NULL, on others
  */
-static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t *scheduler_p,
-						size_t size,
-						int num_rails)
+nccl_net_ofi_schedule_t *nccl_net_ofi_threshold_scheduler::get_schedule(size_t size,
+									int num_rails)
 {
 	nccl_net_ofi_schedule_t *schedule;
-	nccl_net_ofi_threshold_scheduler_t * scheduler =
-		(nccl_net_ofi_threshold_scheduler_t *)scheduler_p;
 	/* Align stripes to LL128 requirement */
 	size_t align = 128;
 	int ret;
 
-	assert(scheduler != NULL);
-
-	nccl_ofi_freelist::fl_entry *elem = scheduler_p->schedule_fl->entry_alloc();
+	nccl_ofi_freelist::fl_entry *elem = this->schedule_fl->entry_alloc();
 	if (OFI_UNLIKELY(!elem)) {
 		NCCL_OFI_WARN("Failed to allocate schedule");
 		return NULL;
@@ -183,10 +178,10 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
 	assert(schedule);
 	schedule->elem = elem;
 
-	ret = set_schedule_by_threshold(scheduler, size, num_rails, align,
+	ret = set_schedule_by_threshold(this, size, num_rails, align,
 					schedule);
 	if (OFI_UNLIKELY(ret)) {
-		nccl_net_ofi_release_schedule(scheduler_p, schedule);
+		nccl_net_ofi_release_schedule(this, schedule);
 		schedule = NULL;
 	}
 
@@ -203,7 +198,7 @@ static nccl_net_ofi_schedule_t *get_threshold_schedule(nccl_net_ofi_scheduler_t 
  * @return	0, on success
  *		non-zero, on others
  */
-static int scheduler_fini(nccl_net_ofi_scheduler_t *scheduler)
+static int scheduler_fini(nccl_net_ofi_scheduler *scheduler)
 {
 	assert(scheduler);
 	assert(scheduler->schedule_fl);
@@ -219,30 +214,14 @@ static int scheduler_fini(nccl_net_ofi_scheduler_t *scheduler)
  * @return	0, on success
  *		non-zero, on error
  */
-static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
+nccl_net_ofi_threshold_scheduler::~nccl_net_ofi_threshold_scheduler()
 {
-	nccl_net_ofi_threshold_scheduler_t * scheduler =
-		(nccl_net_ofi_threshold_scheduler_t *)scheduler_p;
-	int ret = 0;
-
-	assert(scheduler_p);
-	assert(scheduler_p->schedule_fl);
-
-	ret = nccl_net_ofi_mutex_destroy(&scheduler->rr_lock);
+	int ret = nccl_net_ofi_mutex_destroy(&this->rr_lock);
 	if (ret) {
 		NCCL_OFI_WARN("Could not destroy threshold scheduler pthread mutex");
-		return -ret;
 	}
 
-	ret = scheduler_fini(scheduler_p);
-	if (ret) {
-		NCCL_OFI_WARN("Could not destroy threshold scheduler");
-		return ret;
-	}
-
-	free(scheduler);
-
-	return ret;
+	scheduler_fini(this);
 }
 
 /*
@@ -257,7 +236,7 @@ static int threshold_scheduler_fini(nccl_net_ofi_scheduler_t *scheduler_p)
  * @return	0, on success
  *		non-zero, on others
  */
-static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *scheduler)
+static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler *scheduler)
 {
 	int ret = 0;
 
@@ -267,27 +246,24 @@ static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler_t *schedu
 	return ret;
 }
 
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_t **scheduler_p)
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler **scheduler_p)
 {
 	int ret = 0;
-	nccl_net_ofi_threshold_scheduler_t *scheduler = NULL;
+	nccl_net_ofi_threshold_scheduler *scheduler = NULL;
 	*scheduler_p = NULL;
 
-	scheduler = (nccl_net_ofi_threshold_scheduler_t *)malloc(
-		sizeof(nccl_net_ofi_threshold_scheduler_t));
+	scheduler = new nccl_net_ofi_threshold_scheduler();
 	if (!scheduler) {
 		NCCL_OFI_WARN("Could not allocate threshold scheduler");
 		return -ENOMEM;
 	}
 
-	ret = scheduler_init(num_rails, &scheduler->base);
+	ret = scheduler_init(num_rails, scheduler);
 	if (ret) {
-		free(scheduler);
+		delete scheduler;
 		return ret;
 	}
 
-	scheduler->base.get_schedule = get_threshold_schedule;
-	scheduler->base.fini = threshold_scheduler_fini;
 	scheduler->rr_small_counter = 0;
 	scheduler->rr_counter = 0;
 	scheduler->max_small_msg_size = ofi_nccl_sched_max_small_msg_size();
@@ -296,12 +272,12 @@ int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_
 	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
 	if (ret) {
 		NCCL_OFI_WARN("Could not initialize mutex for round robin counter");
-		scheduler_fini(&scheduler->base);
-		free(scheduler);
+		scheduler_fini(scheduler);
+		delete scheduler;
 		return -ret;
 	}
 
-	*scheduler_p = &scheduler->base;
+	*scheduler_p = scheduler;
 
 	return ret;
 }

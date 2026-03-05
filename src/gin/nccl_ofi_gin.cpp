@@ -448,7 +448,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		auto *src_mhandle = srcMhandle->local_handle;
 
 		const auto schedule =
-			scheduler->get_schedule(scheduler, size, gin_ep.get_num_rails());
+			scheduler->get_schedule(size, gin_ep.get_num_rails());
 		auto &xfers = schedule->rail_xfer_infos;
 
 		nseg += schedule->num_xfer_infos;

@@ -44,21 +44,29 @@ typedef struct nccl_net_ofi_schedule {
 	nccl_net_ofi_xfer_info_t rail_xfer_infos[];
 } nccl_net_ofi_schedule_t;
 
-struct nccl_net_ofi_scheduler;
-typedef struct nccl_net_ofi_scheduler nccl_net_ofi_scheduler_t;
-
 /*
- * @brief	Base scheduler struct
+ * @brief	Base scheduler class
  */
-typedef struct nccl_net_ofi_scheduler {
-	/* Freelist of schedules */
-	nccl_ofi_freelist *schedule_fl;
+class nccl_net_ofi_scheduler {
+public:
+<<<<<<< Updated upstream
+	virtual ~nccl_net_ofi_scheduler() = default;
+=======
+	/*
+	 * @brief	Construct base scheduler
+	 *
+	 * @param	num_rails
+	 *		Number of rails that the scheduler should use.
+	 *		This parameter must be the same as the parameter used to invoke
+	 *		the `get_schedule' method later.
+	 */
+	nccl_net_ofi_scheduler(int num_rails);
+	virtual ~nccl_net_ofi_scheduler();
+>>>>>>> Stashed changes
 
 	/*
-	 * @brief	Scheduler specific function pointer stored in base scheduler to create schedule for a message
+	 * @brief	Create schedule for a message
 	 *
-	 * @param	scheduler
-	 *		The scheduler struct
 	 * @param	size
 	 *		Size of the message in bytes
 	 * @param	num_rails
@@ -68,17 +76,11 @@ typedef struct nccl_net_ofi_scheduler {
 	 * @return	schedule, on success
 	 *		NULL, on others
 	 */
-	nccl_net_ofi_schedule_t *(*get_schedule)(nccl_net_ofi_scheduler_t *scheduler,
-						 size_t size, int num_rails);
+	virtual nccl_net_ofi_schedule_t *get_schedule(size_t size, int num_rails) = 0;
 
-	/*
-	 * brief	Function pointer stored in scheduler to finalize (free) scheduler
-	 *
-	 * @return	0, on success
-	 *		non-zero, on error
-	 */
-	int (*fini)(nccl_net_ofi_scheduler_t *scheduler);
-} nccl_net_ofi_scheduler_t;
+	/* Freelist of schedules */
+	nccl_ofi_freelist *schedule_fl;
+};
 
 /*
  * @brief 	The threshold scheduler
@@ -86,8 +88,35 @@ typedef struct nccl_net_ofi_scheduler {
  * Messages smaller or equal to `ROUND_ROBIN_THRESHOLD' bytes are
  * assigned round-robin; larger messages are multiplexed.
  */
-typedef struct nccl_net_ofi_threshold_scheduler {
-	nccl_net_ofi_scheduler_t base;
+class nccl_net_ofi_threshold_scheduler : public nccl_net_ofi_scheduler {
+public:
+<<<<<<< Updated upstream
+=======
+	/*
+	 * @brief	Construct threshold scheduler
+	 *
+	 * @param	num_rails
+	 *		Number of rails
+	 */
+	nccl_net_ofi_threshold_scheduler(int num_rails);
+>>>>>>> Stashed changes
+	~nccl_net_ofi_threshold_scheduler() override;
+
+	/*
+	 * @brief	Create schedule for a message by multiplexing message or
+	 *		assigning the message round-robin depending on the message size
+	 *
+	 * @param	size
+	 *		Size of the message in bytes
+	 * @param	num_rails
+	 *		Number of rails. This parameter must match the number of rails
+	 *		provided to the scheduler initialization routine.
+	 *
+	 * @return	schedule, on success
+	 *		NULL, on others
+	 */
+	nccl_net_ofi_schedule_t *get_schedule(size_t size, int num_rails) override;
+
 	/* Round robin counter */
 	unsigned int rr_small_counter;
 	unsigned int rr_counter;
@@ -98,12 +127,25 @@ typedef struct nccl_net_ofi_threshold_scheduler {
 	/* Minimum size of the message in bytes before message is
 	 * multiplexed */
 	size_t min_stripe_size;
-} nccl_net_ofi_threshold_scheduler_t;
+
+	/*
+	 * @brief	Calculate optimal number of stripes for the payload size
+	 *		based on the min_stripe_size
+	 *
+	 * @param	size
+	 *		The size of the message being transmitted
+	 * @param	num_rails
+	 *		The number of available rails for transmission
+	 *
+	 * @return	The adjusted number of stripes
+	 */
+	inline int get_num_stripes(size_t size, int num_rails);
+};
 
 /*
  * @brief	Release schedule by returning it back to the scheduler
  */
-void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
+void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler,
 				   nccl_net_ofi_schedule_t *schedule);
 
 /*
@@ -116,6 +158,6 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler_t *scheduler,
  * @return	0, on success
  *		non-zero, on error
  */
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler_t **scheduler);
+int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler **scheduler);
 
 #endif // End NCCL_OFI_SCHEDULER_H_

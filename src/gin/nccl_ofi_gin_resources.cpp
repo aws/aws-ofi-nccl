@@ -33,11 +33,8 @@ nccl_ofi_gin_ep_t::nccl_ofi_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain
 nccl_ofi_gin_ep_t::~nccl_ofi_gin_ep_t()
 {
 	if (scheduler) {
-		int ret = scheduler->fini(this->scheduler);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Cleanup of GIN endpoint failed, scheduler_fini returned %s",
-				      strerror(-ret));
-		}
+		delete scheduler;
+		scheduler = nullptr;
 	}
 }
 
