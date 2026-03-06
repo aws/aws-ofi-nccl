@@ -745,7 +745,7 @@ public:
 	 * @brief	Default constructor.
 	 * 
 	 * Calls base domain class constructor, sets up RDMA domain resources like domain
-	 * rails, message scheduler, endpoint address list, and flush buffer.
+	 * rails, endpoint address list, and flush buffer.
 	 */	
 	nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *domain_args,
 				   unsigned int domain_key = 0);
@@ -883,9 +883,6 @@ public:
 
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t ep_addr_list;
-
-	/* Message scheduler */
-	nccl_net_ofi_scheduler *scheduler = nullptr;
 
 protected:
 	/**
@@ -1309,6 +1306,9 @@ public:
 	 * nccl_ofi_connection_manager doesn't have a default constructor.
 	 */
 	nccl_ofi_connection_manager *cm = nullptr;
+
+	/* Message scheduler */
+	nccl_net_ofi_scheduler *scheduler = nullptr;
 
 protected:
 	/**
