@@ -837,7 +837,10 @@ nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep(long endpoint_key)
 		}
 
 		this->ep_table.insert(std::pair(endpoint_key, ep));
+
+		this->device->device_lock.lock();
 		this->increment_ref_cnt();
+		this->device->device_lock.unlock();
 
 		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created with endpoint_key=%ld",
 			       ep, this, endpoint_key);
