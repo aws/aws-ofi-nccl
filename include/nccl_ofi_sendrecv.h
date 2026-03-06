@@ -184,7 +184,7 @@ protected:
 	 */	
 	~nccl_net_ofi_sendrecv_domain_t();
 
-	int cleanup_resources() override;
+	int cleanup_resources() override REQUIRES(domain_lock);
 };
 
 

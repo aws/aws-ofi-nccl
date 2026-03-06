@@ -4364,9 +4364,9 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 			 * refcnt.
 			 */
 
-			device->device_lock.lock();
+			domain->get_device_lock().lock();
 			domain->increment_ref_cnt();
-			device->device_lock.unlock();
+			domain->get_device_lock().unlock();
 
 			ep_for_addr = new_ep;
 

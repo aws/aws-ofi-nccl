@@ -886,7 +886,7 @@ protected:
 	 */		
 	~nccl_net_ofi_rdma_domain_t() override;
 
-	int cleanup_resources() override;
+	int cleanup_resources() override REQUIRES(domain_lock);
 
 	/**
 	 * @brief	Allocated and registers buffer to flush RDMA operations. On

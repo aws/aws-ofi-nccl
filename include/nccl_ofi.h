@@ -479,7 +479,8 @@ public:
 	 *		This needs to be protected with device_lock as
 	 *		domain life cycle is managed at device level
 	 */
-	inline void increment_ref_cnt() {
+	inline void increment_ref_cnt() REQUIRES(device->device_lock)
+	{
 		ref_cnt++;
 	}
 
@@ -488,9 +489,21 @@ public:
 	 *		This needs to be protected with device_lock as
 	 *		domain life cycle is managed at device level
 	 */
-	inline void decrement_ref_cnt() {
+	inline void decrement_ref_cnt() REQUIRES(device->device_lock)
+	{
 		ref_cnt--;
 	}
+
+
+	/*
+	 * this is a helper function to make TSA happy with our non-standard ways of
+	 * finding the device lock to modify the reference count.
+	 */
+	std::mutex& get_device_lock() RETURN_CAPABILITY(device->device_lock)
+	{
+		return this->get_device()->device_lock;
+	}
+
 
 	/*
 	 * Retrieve an endpoint for this domain.  If a suitable
@@ -530,12 +543,12 @@ public:
 	/**
 	 * @brief       Erase all ep_table elements matching the provided ep
 	 */
-	void remove_ep_from_map(nccl_net_ofi_ep_t *ep);
+	void remove_ep_from_map(nccl_net_ofi_ep_t *ep) REQUIRES(domain_lock);
 
 	/**
 	 * @brief       Increment base domain's unreleased_inactive_ep_counter
 	 */
-	inline void inc_unreleased_inactive_ep_counter()
+	inline void inc_unreleased_inactive_ep_counter() REQUIRES(domain_lock)
 	{
 		++unreleased_inactive_ep_counter;
 	}
@@ -543,7 +556,7 @@ public:
 	/**
 	 * @brief       Decrement base domain's unreleased_inactive_ep_counter
 	 */
-	inline void dec_unreleased_inactive_ep_counter()
+	inline void dec_unreleased_inactive_ep_counter() REQUIRES(domain_lock)
 	{
 		--unreleased_inactive_ep_counter;
 	}
@@ -565,7 +578,7 @@ protected:
 	 * 
 	 * @return	0 if successfully, negative error code on failure.
 	 */
-	virtual int cleanup_resources() = 0;
+	virtual int cleanup_resources() REQUIRES(domain_lock) = 0;
 
 	/* Backpointer to the device associated with this domain. */
 	nccl_net_ofi_device_t *device = nullptr;
@@ -576,7 +589,7 @@ protected:
 	 * multiple endpoints per domain. This counter tracks the number
 	 * of endpoints created on this domain. When it reaches 0, the
 	 * domain can be destroyed. */
-	size_t ref_cnt;
+	size_t ref_cnt GUARDED_BY(device->device_lock);
 
 	/* The Domain index or a key in the device domain table */
 	unsigned int domain_key;
@@ -591,7 +604,7 @@ protected:
 	/**
 	 * hash table indexed by thread id of active endpoints.
 	 */
-	std::unordered_map<long, nccl_net_ofi_ep_t *> ep_table;
+	std::unordered_map<long, nccl_net_ofi_ep_t *> ep_table GUARDED_BY(domain_lock);
 
 	/**
 	 * Number of endpoints that have been deactivated but not freed
@@ -600,7 +613,7 @@ protected:
 	 * to track inactive ednpoint (which aren't in the ep table) which
 	 * were never closed
 	 */
-	size_t unreleased_inactive_ep_counter = 0;
+	size_t unreleased_inactive_ep_counter GUARDED_BY(domain_lock) = 0;
 
 	/** 
 	 * Track whether the cleanup_resources function was already called to avoid calling
@@ -608,7 +621,7 @@ protected:
 	 * indicate that the domain resources were successfully released since this is set
 	 * to true regardless of whether cleanup_resources finished successfully or not.
 	 */
-	bool called_cleanup_resources = false;
+	bool called_cleanup_resources GUARDED_BY(domain_lock) = false;
 };
 
 
