@@ -2,9 +2,9 @@
  * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#include <stdio.h>
-
 #include "config.h"
+
+#include <stdio.h>
 
 #include "nccl_ofi_msgbuff.h"
 
