@@ -49,9 +49,6 @@ typedef struct nccl_net_ofi_schedule {
  */
 class nccl_net_ofi_scheduler {
 public:
-<<<<<<< Updated upstream
-	virtual ~nccl_net_ofi_scheduler() = default;
-=======
 	/*
 	 * @brief	Construct base scheduler
 	 *
@@ -62,7 +59,6 @@ public:
 	 */
 	nccl_net_ofi_scheduler(int num_rails);
 	virtual ~nccl_net_ofi_scheduler();
->>>>>>> Stashed changes
 
 	/*
 	 * @brief	Create schedule for a message
@@ -90,8 +86,6 @@ public:
  */
 class nccl_net_ofi_threshold_scheduler : public nccl_net_ofi_scheduler {
 public:
-<<<<<<< Updated upstream
-=======
 	/*
 	 * @brief	Construct threshold scheduler
 	 *
@@ -99,7 +93,6 @@ public:
 	 *		Number of rails
 	 */
 	nccl_net_ofi_threshold_scheduler(int num_rails);
->>>>>>> Stashed changes
 	~nccl_net_ofi_threshold_scheduler() override;
 
 	/*
@@ -147,17 +140,5 @@ public:
  */
 void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler,
 				   nccl_net_ofi_schedule_t *schedule);
-
-/*
- * brief	Initialize a threshold scheduler
- *
- * @param	num_rails
- *		Number of rails
- * @return	Scheduler, on success
- *		NULL, on error
- * @return	0, on success
- *		non-zero, on error
- */
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler **scheduler);
 
 #endif // End NCCL_OFI_SCHEDULER_H_
