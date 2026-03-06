@@ -763,8 +763,6 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 {
 	int ret, first_error = 0;
 
-	nccl_net_ofi_ep_t *ep;
-
 	std::lock_guard scoped_device_lock(this->device_lock);
 
 	assert(!this->domain_table.empty());
@@ -772,21 +770,9 @@ int nccl_net_ofi_device_t::release_all_domain_and_ep()
 	     domain_iter != this->domain_table.end();) {
 		nccl_net_ofi_domain_t *domain = domain_iter->second;
 		/* For each domain, clean up its endpoints. */
-		domain->domain_lock.lock();
-		if (domain->get_endpoint_ptr()) {
-			ep = domain->get_endpoint_ptr();
-			domain->clear_endpoint();
 
-			ret = ep->release_ep(true, true);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Freeing endpoint failed: %d", ret);
-				if (first_error != 0) {
-					first_error = ret;
-				}
-			}
-			ep = nullptr;
-		}
-		domain->domain_lock.unlock();
+		/* TODO: actually release EPs */
+
 
 		/* The call to domain->release() below will remove this domain
 		   from the table, invalidating domain_iter. So increment it
@@ -875,10 +861,6 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 	this->decrement_ref_cnt();
 
 	if (this->ref_cnt == 0 || force_cleanup) {
-
-		/* If domain ref_cnt is 0, then there should be no remaining
-		   endpoints */
-		assert(this->ref_cnt != 0 || this->endpoint == nullptr);
 
 		/* Remove this domain from the domain table */
 		device_ptr->remove_domain_from_map(this);
@@ -1028,10 +1010,6 @@ int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
 	if (local_ref_cnt == 0 || force_cleanup) {
 		/* If this was the endpoint we stored in domain for connection
 		   management, remove that reference as well */
-		if (domain_ptr->get_endpoint_ptr() == this) {
-			domain_ptr->clear_endpoint();
-		}
-
 		if (force_cleanup && local_ref_cnt != 0) {
 			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
 				      this, local_ref_cnt);
