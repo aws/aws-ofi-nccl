@@ -135,11 +135,7 @@ static inline int test_threshold_scheduler()
 	ofi_nccl_min_stripe_size.set(4096);
 	ofi_nccl_sched_max_small_msg_size.set(64);
 
-	nccl_net_ofi_scheduler *scheduler;
-	if (nccl_net_ofi_threshold_scheduler_init(num_rails, &scheduler)) {
-		NCCL_OFI_WARN("Failed to initialize threshold scheduler");
-		return ret;
-	}
+	nccl_net_ofi_scheduler *scheduler = new nccl_net_ofi_threshold_scheduler(num_rails);
 
 	/* To ensure that the LL128 alignment is maintained below message sizes are tested between the multiple of
 	`min_stripe_size`

@@ -6725,11 +6725,7 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 	}
 
 	/* Create scheduler */
-	ret = nccl_net_ofi_threshold_scheduler_init(this->num_rails, &this->scheduler);
-	if (ret != 0) {
-		throw std::runtime_error("RDMA domain constructor: scheduler init failed");
-	}
-	assert(this->scheduler);
+	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
 }
 
 nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain(unsigned int domain_key)

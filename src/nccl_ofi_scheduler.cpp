@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdexcept>
 
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_log.h"
@@ -188,96 +189,35 @@ nccl_net_ofi_schedule_t *nccl_net_ofi_threshold_scheduler::get_schedule(size_t s
 	return schedule;
 }
 
-/*
- * @brief	Release resources of base scheduler struct
- *
- * This function does not deallocated the scheduler struct. This
- * function should be called by the fini function of the derived
- * scheduler.
- *
- * @return	0, on success
- *		non-zero, on others
- */
-static int scheduler_fini(nccl_net_ofi_scheduler *scheduler)
+nccl_net_ofi_scheduler::nccl_net_ofi_scheduler(int num_rails)
 {
-	assert(scheduler);
-	assert(scheduler->schedule_fl);
-
-	delete scheduler->schedule_fl;
-
-	return 0;
+	this->schedule_fl = new nccl_ofi_freelist(sizeof_schedule(num_rails), 16, 16, 0, NULL, NULL,
+						  "Scheduler", true);
 }
 
-/*
- * brief	Release threshold scheduler resources and free scheduler
- *
- * @return	0, on success
- *		non-zero, on error
- */
+nccl_net_ofi_scheduler::~nccl_net_ofi_scheduler()
+{
+	delete this->schedule_fl;
+}
+
+nccl_net_ofi_threshold_scheduler::nccl_net_ofi_threshold_scheduler(int num_rails)
+	: nccl_net_ofi_scheduler(num_rails),
+	  rr_small_counter(0),
+	  rr_counter(0),
+	  max_small_msg_size(ofi_nccl_sched_max_small_msg_size()),
+	  min_stripe_size(ofi_nccl_min_stripe_size())
+{
+	int ret = nccl_net_ofi_mutex_init(&this->rr_lock, NULL);
+	if (ret) {
+		NCCL_OFI_WARN("Could not initialize mutex for threshold scheduler");
+		throw std::runtime_error("Could not initialize mutex for threshold scheduler");
+	}
+}
+
 nccl_net_ofi_threshold_scheduler::~nccl_net_ofi_threshold_scheduler()
 {
 	int ret = nccl_net_ofi_mutex_destroy(&this->rr_lock);
 	if (ret) {
 		NCCL_OFI_WARN("Could not destroy threshold scheduler pthread mutex");
 	}
-
-	scheduler_fini(this);
-}
-
-/*
- * @brief	Initialize a provided base scheduler struct
- *
- * This function should be called by the init function of a derived scheduler.
- *
- * @param	num_rails
- *		Number of rails that the scheduler should use
- *		This parameter must be the same as the parameter used to invoke
- *		the `get_schedule' function later.
- * @return	0, on success
- *		non-zero, on others
- */
-static inline int scheduler_init(int num_rails, nccl_net_ofi_scheduler *scheduler)
-{
-	int ret = 0;
-
-	scheduler->schedule_fl = new nccl_ofi_freelist(sizeof_schedule(num_rails), 16, 16, 0, NULL, NULL,
-						       "Scheduler", true);
-
-	return ret;
-}
-
-int nccl_net_ofi_threshold_scheduler_init(int num_rails, nccl_net_ofi_scheduler **scheduler_p)
-{
-	int ret = 0;
-	nccl_net_ofi_threshold_scheduler *scheduler = NULL;
-	*scheduler_p = NULL;
-
-	scheduler = new nccl_net_ofi_threshold_scheduler();
-	if (!scheduler) {
-		NCCL_OFI_WARN("Could not allocate threshold scheduler");
-		return -ENOMEM;
-	}
-
-	ret = scheduler_init(num_rails, scheduler);
-	if (ret) {
-		delete scheduler;
-		return ret;
-	}
-
-	scheduler->rr_small_counter = 0;
-	scheduler->rr_counter = 0;
-	scheduler->max_small_msg_size = ofi_nccl_sched_max_small_msg_size();
-	scheduler->min_stripe_size = ofi_nccl_min_stripe_size();
-
-	ret = nccl_net_ofi_mutex_init(&scheduler->rr_lock, NULL);
-	if (ret) {
-		NCCL_OFI_WARN("Could not initialize mutex for round robin counter");
-		scheduler_fini(scheduler);
-		delete scheduler;
-		return -ret;
-	}
-
-	*scheduler_p = scheduler;
-
-	return ret;
 }
