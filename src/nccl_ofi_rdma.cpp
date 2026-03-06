@@ -102,31 +102,13 @@
 
 
 /**
- * Get the endpoint lock
- * If parent endpoint exists, return its lock instead because the
- * lock is mainly to protect the CQ which is owned by the parent endpoint
- *
- * coerce the type so that the compiler can derive the template parameter for
- * std::lock_guard
- */
-static inline decltype(nccl_net_ofi_rdma_ep_t::ep_lock)& ENDPOINT_LOCK(nccl_net_ofi_rdma_ep_t *endpoint)
-{
-	return (endpoint->parent_endpoint ?
-		endpoint->parent_endpoint->ep_lock :
-		endpoint->ep_lock);
-}
-
-
-/**
  * Check if endpoint is active
  * If parent endpoint exists, check its status instead because the
  * check is for CQ state which is owned by the parent endpoint
  * Caller is assumed to hold the endpoint lock
  */
 #define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
-	nccl_net_ofi_rdma_ep_t *ep_ptr = endpoint->parent_endpoint ? \
-					endpoint->parent_endpoint : endpoint; \
-	if (OFI_UNLIKELY(!ep_ptr->ep_active)) { \
+	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
 		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
@@ -2356,7 +2338,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
 	assert(ep != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "test");
 
@@ -3045,7 +3027,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	device = endpoint->rdma_endpoint_get_device();
 	assert(device != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+	std::lock_guard eplock(endpoint->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "recv");
 
@@ -3496,9 +3478,8 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		r_comm->ep;
 
-	std::lock_guard eplock(ENDPOINT_LOCK(ep));
-	if ((ep->parent_endpoint && !ep->parent_endpoint->ep_active) ||
-	    (!ep->ep_active)) {
+	std::lock_guard eplock(ep->ep_lock);
+	if (!ep->ep_active) {
 		/**
 		 * If the endpoint is not active, no need to send the
 		 * close message. Just destroy the communicator
@@ -3687,7 +3668,7 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm *s_comm
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		s_comm->ep;
 
-	std::lock_guard eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ep->ep_lock);
 	if (!ep->ep_active) {
 		/**
 		 * If the endpoint is not active, no need to wait for the
@@ -3801,13 +3782,10 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 	int dev_id = domain_ptr->get_device()->dev_id;
 
-	std::lock_guard eplock(ENDPOINT_LOCK(this));
+	std::lock_guard eplock(this->ep_lock);
 
 	this->release_rdma_ep_resources(dev_id);
-	if (this->parent_endpoint)
-		this->parent_endpoint->invalidate();
-	else
-		this->invalidate();
+	this->invalidate();
 }
 
 /**
@@ -3905,7 +3883,7 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 	bool network_busy = false;
 	nccl_net_ofi_rdma_ep_t *endpoint = rdma_recv_comm_get_ep(this);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+	std::lock_guard eplock(endpoint->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "flush");
 
@@ -4134,7 +4112,7 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
 	assert(endpoint != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+	std::lock_guard eplock(endpoint->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "read");
 
@@ -4314,59 +4292,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	/* Initialize next_msg_seq_num to NCCL_OFI_RDMA_MSG_SEQ_NUM_START */
 	r_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 
-	/* Find a comm to use, given the remote EP name */
-	if (ofi_nccl_endpoint_per_communicator() != 0)
-	{
-		const nccl_ofi_rdma_ep_name_t *remote_rail0_ep_name = &conn_msg->ep_names[0];
-		nccl_net_ofi_ep_t *ep_for_addr = NULL;
-		ret = domain->ep_addr_list.get(remote_rail0_ep_name->ep_name,
-					       remote_rail0_ep_name->ep_name_len, &ep_for_addr);
-		if (ret != 0) {
-			goto error;
-		}
-
-		if (ep_for_addr == NULL) {
-			nccl_net_ofi_ep_t *new_ep;
-			/* Create a new endpoint using l_comm_ep as the parent to reuse its CQ */
-			new_ep = domain->create_endpoint(l_comm_ep);
-			if (new_ep == nullptr) {
-				NCCL_OFI_WARN("Failed to allocate new ep");
-				goto error;
-			}
-
-			nccl_net_ofi_rdma_ep_t *new_ep_rdma_cast = static_cast<nccl_net_ofi_rdma_ep_t *>(new_ep);
-
-			ret = new_ep_rdma_cast->post_rx_buffs();
-			if (ret != 0) {
-				goto error;
-			}
-
-			new_ep_rdma_cast->is_endpoint_per_communicator_ep = true;
-
-			/**
-			 * Since we bypassed domain->get_ep, increment domain
-			 * refcnt.
-			 */
-
-			device->device_lock.lock();
-			domain->increment_ref_cnt();
-			device->device_lock.unlock();
-
-			ep_for_addr = new_ep;
-
-			ret = domain->ep_addr_list.insert(ep_for_addr,
-							  remote_rail0_ep_name->ep_name,
-							  remote_rail0_ep_name->ep_name_len);
-			if (ret != 0) {
-				goto error;
-			}
-		}
-
-		r_comm->ep = ep_for_addr;
-	} else {
-		/* Use the base l_comm ep */
-		r_comm->ep = l_comm_ep;
-	}
+	r_comm->ep = l_comm_ep;
 
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
 
@@ -4675,7 +4601,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 	nccl_net_ofi_rdma_domain_t *domain = l_comm_ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+	std::lock_guard eplock(endpoint->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "accept");
 
@@ -5513,7 +5439,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	domain = endpoint->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+	std::lock_guard eplock(endpoint->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "send");
 
@@ -5914,7 +5840,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm *send_comm, void* src, size_t s
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(ep != NULL);
 
-	std::lock_guard eplock(ENDPOINT_LOCK(ep));
+	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "write");
 
@@ -6324,23 +6250,21 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 		domain_rail = domain_arg->rdma_domain_get_rail(rail_id);
 		cq_rail = this->rdma_endpoint_get_cq_rail(rail_id);
 
-		if (!this->parent_endpoint) {
-			/* If there is no parent endpoint to reuse CQ, create a dedicated
-			 * completion queue for each Libfabric endpoint rail
-			 */
-			struct fi_cq_attr cq_attr = {};
-			cq_attr.format = FI_CQ_FORMAT_DATA;
-			cq_attr.size = ofi_nccl_cq_size();
-			auto cq_result = nccl_ofi_ofiutils_cq_create(domain_rail->domain, &cq_attr);
-			if (OFI_UNLIKELY(cq_result.is_failure())) {
-				NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
-					       cq_result.error_code, fi_strerror(-cq_result.error_code));
-				throw std::runtime_error("RDMA endpoint rail init: ofi cq creation failed");
-			}
-
-			cq_rail->rail_id = rail_id;
-			cq_rail->cq = std::move(cq_result.resource);
+		/* If there is no parent endpoint to reuse CQ, create a dedicated
+		 * completion queue for each Libfabric endpoint rail
+		 */
+		struct fi_cq_attr cq_attr = {};
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+		cq_attr.size = ofi_nccl_cq_size();
+		auto cq_result = nccl_ofi_ofiutils_cq_create(domain_rail->domain, &cq_attr);
+		if (OFI_UNLIKELY(cq_result.is_failure())) {
+			NCCL_OFI_WARN("Couldn't open CQ. RC: %d, ERROR: %s",
+				      cq_result.error_code, fi_strerror(-cq_result.error_code));
+			throw std::runtime_error("RDMA endpoint rail init: ofi cq creation failed");
 		}
+
+		cq_rail->rail_id = rail_id;
+		cq_rail->cq = std::move(cq_result.resource);
 	}
 
 	/* Initialize libfabric resources of endpoint rails */
@@ -6421,79 +6345,6 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 }
 
 
-int nccl_net_ofi_rdma_ep_t::release_ep(bool skip_lock, bool force_cleanup)
-{
-	int ret = 0;
-
-	/* this is a little messy, but because we kind of hacked in
-	 * the endpoint per communicator code, we need ot use a
-	 * different release mechanism depending on the endpoint
-	 * type.  Otherwise, we use the base code release function.
-	 */
-	if (this->is_endpoint_per_communicator_ep) {
-		nccl_net_ofi_rdma_domain_t *domain_ptr = nullptr;
-
-		domain_ptr = this->rdma_endpoint_get_domain();
-		if (OFI_UNLIKELY(domain_ptr == nullptr)) {
-			NCCL_OFI_WARN("Invalid domain provided");
-			return -EINVAL;
-		}
-
-		if (!skip_lock) {
-			domain_ptr->domain_lock.lock();
-		}
-
-		this->decrement_ref_cnt();
-
-		/* Store ref_cnt in local variable in case the endpoint gets deleted */
-		int local_ref_cnt = this->ref_cnt;
-
-		if (local_ref_cnt == 0 || force_cleanup) {
-			if (force_cleanup && local_ref_cnt != 0 ) {
-				NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
-					      this, local_ref_cnt);
-			}
-			ret = domain_ptr->ep_addr_list.remove(this);
-			if (ret != 0) {
-				NCCL_OFI_WARN("delete ep for addr failed: %d", ret);
-				goto unlock;
-			}
-			ret = this->cleanup_resources();
-
-			if (!skip_lock) {
-				domain_ptr->domain_lock.unlock();
-			}
-
-			this->parent_endpoint->release_ep(skip_lock, force_cleanup);
-			this->parent_endpoint = nullptr;
-			delete this;
-
-			if (!force_cleanup && ret == 0 && local_ref_cnt == 0) {
-				/* Release the domain as well */
-				/* Note: this logic mirrors nccl_net_ofi_endpoint_release */
-				ret = domain_ptr->release_domain(skip_lock, false);
-			}
-			return ret;
-		}
-
- unlock:
-		if (!skip_lock) {
-			domain_ptr->domain_lock.lock();
-		}
-		if (!force_cleanup && ret == 0 && local_ref_cnt == 0) {
-			/* Release the domain as well */
-			/* Note: this logic mirrors nccl_net_ofi_endpoint_release */
-			ret = domain_ptr->release_domain(skip_lock, false);
-		}
-	} else {
-		/* Call base endpoint implementation of release_ep */
-		ret = nccl_net_ofi_ep_t::release_ep(skip_lock, force_cleanup);
-	}
-
-	return ret;
-}
-
-
 nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 {
 	/* cleanup_resources should always be called to clean-up endpoint resources before
@@ -6526,18 +6377,12 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 
 nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
 {
-	return this->create_endpoint(nullptr/*no parent endpoint*/);
-}
-
-
-nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint(nccl_net_ofi_ep_t *parent_ep)
-{
 	int ret = 0;
 	nccl_net_ofi_rdma_device_t *device_ptr = this->rdma_domain_get_device();
 	assert(device_ptr != nullptr);
 
 	/* Allocate endpoint */
-	auto *ep = new nccl_net_ofi_rdma_ep_t(this, parent_ep);
+	auto *ep = new nccl_net_ofi_rdma_ep_t(this);
 
 	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created", ep, 
 		       device_ptr->dev_id);
@@ -6559,8 +6404,7 @@ nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint(nccl_net_ofi_ep_t
 }
 
 
-nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain_arg,
-					       nccl_net_ofi_ep_t *parent_ep)
+nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain_arg)
 	: nccl_net_ofi_ep_t(domain_arg)
 {
 	int ret = 0;
@@ -6604,15 +6448,6 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 	this->eager_rx_buff_size = (this->eager_send_size == 0) ?
 		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size;
 
-	this->is_endpoint_per_communicator_ep = false;
-
-	if (parent_ep) {
-		parent_ep->increment_ref_cnt();
-		this->parent_endpoint = static_cast<nccl_net_ofi_rdma_ep_t *>(parent_ep);
-	} else {
-		this->parent_endpoint = nullptr;
-	}
-
 	ret = this->init_rail_ofi_resources(device, domain_arg);
 	if (ret != 0) {
 		throw std::runtime_error("rdma endpoint constructor: initializing rails failed");
@@ -6624,14 +6459,9 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 		throw std::runtime_error("rdma endpoint constructor: initializing rx_buffers failed");
 	}
 
-	/* Create the connection manager only for the endpoints with dedicated CQ,
-	 * those don't share the CQ from parent endpoint
-	 */
-	if (!this->parent_endpoint) {
-		/* Connection manager for this endpoint */
-		this->cm = new nccl_ofi_connection_manager
-				(*domain_arg, *this, sizeof(nccl_ofi_rdma_connection_info_t));
-	}
+	/* Connection manager for this endpoint */
+	this->cm = new nccl_ofi_connection_manager
+		(*domain_arg, *this, sizeof(nccl_ofi_rdma_connection_info_t));
 
 	/* Create scheduler */
 	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);

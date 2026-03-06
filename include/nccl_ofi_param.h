@@ -244,7 +244,8 @@ OFI_NCCL_PARAM(bool, errorcheck_mutex, "ERRORCHECK_MUTEX",
  * communicators.  If non-0, create a Libfabric endpoint per
  * communicator.
  */
-OFI_NCCL_PARAM(bool, endpoint_per_communicator, "ENDPOINT_PER_COMM", false);
+OFI_NCCL_PARAM_DEPRECATED(bool, endpoint_per_communicator, "ENDPOINT_PER_COMM", false,
+			  "Endpoint per comm support has been removed and the OFI_NCCL_ENDPOINT_PER_COMM option is ignored.");
 
 /*
  * Some versions of NCCL (in particular, we know NCCL 2.21-2.23) will
