@@ -332,12 +332,12 @@ public:
 	 * the device->get_ep call, hold the lock while we're also creating
 	 * the ep.
 	 */
-	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(unsigned int domain_key = 0);
+	nccl_net_ofi_domain_t *nccl_net_ofi_device_get_domain_impl(unsigned int domain_key = 0) REQUIRES(device_lock);
 
 	/**
 	 * @brief	Erase all domain_table elements matching the provided domain
 	 */
-	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
+	void remove_domain_from_map(nccl_net_ofi_domain_t *domain) REQUIRES(device_lock);
 
 	nccl_net_ofi_plugin_t *plugin = nullptr;
 
@@ -404,7 +404,7 @@ protected:
 	/**
 	 * hash table indexed by thread id of active domains.
 	 */
-	std::unordered_map<unsigned int, nccl_net_ofi_domain_t *> domain_table;
+	std::unordered_map<unsigned int, nccl_net_ofi_domain_t *> domain_table GUARDED_BY(device_lock);
 
 	/** 
 	 * Track whether the cleanup_resources function was already called to avoid calling
@@ -412,7 +412,7 @@ protected:
 	 * indicate that the device resources were successfully released since this is set
 	 * to true regardless of whether cleanup_resources finished successfully or not.
 	 */
-	bool called_cleanup_resources = false;
+	bool called_cleanup_resources GUARDED_BY(device_lock) = false;
 };
 
 

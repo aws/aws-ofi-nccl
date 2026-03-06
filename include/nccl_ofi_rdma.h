@@ -1407,7 +1407,7 @@ public:
 				   struct fi_info *info_list,
 				   nccl_ofi_topo_t *topo);
 
-	int release_device() override;
+	int release_device() override REQUIRES(device_lock);
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
@@ -1516,7 +1516,7 @@ protected:
 	 */	
 	~nccl_net_ofi_rdma_device_t() override;
 
-	int cleanup_resources() override;
+	int cleanup_resources() override REQUIRES(device_lock);
 
 	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 

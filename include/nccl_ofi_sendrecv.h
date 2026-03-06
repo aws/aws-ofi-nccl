@@ -341,7 +341,7 @@ public:
 				       int device_id,
 				       struct fi_info *info_arg);
 
-	int release_device() override;
+	int release_device() override REQUIRES(device_lock);
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
@@ -375,7 +375,7 @@ public:
 	// fabirc, domain, and cq as well as freeing prov_name.
 
 	/* Fabric handle */
-	ofi_fabric_ptr fabric;
+	ofi_fabric_ptr fabric GUARDED_BY(device_lock);
 
 protected:
 	/**
@@ -387,7 +387,7 @@ protected:
 	 */
 	~nccl_net_ofi_sendrecv_device_t() override;
 
-	int cleanup_resources() override;
+	int cleanup_resources() override REQUIRES(device_lock);
 
 	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 
