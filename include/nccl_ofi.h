@@ -93,6 +93,12 @@ extern bool cuda_flush;
    read in the polling loop without protection of a lock. */
 extern size_t cq_read_count;
 
+/* Maximum number of iterations for GIN CQ processing loop.
+   This variable will be updated during init (hence, can not be
+   const), but will not change during execution.  Therefore, it may be
+   read in the polling loop without protection of a lock. */
+extern size_t gin_cq_process_max_iter;
+
 /* Indicates if endpoint memory registration is required */
 extern bool endpoint_mr;
 

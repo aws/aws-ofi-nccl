@@ -126,6 +126,11 @@ OFI_NCCL_PARAM(bool, mr_cache_disable, "MR_CACHE_DISABLE",
 OFI_NCCL_PARAM(size_t, cq_read_count, "CQ_READ_COUNT", 4);
 
 /*
+ * Maximum number of iterations for GIN CQ processing loop.
+ */
+OFI_NCCL_PARAM(size_t, gin_cq_process_max_iter, "GIN_CQ_PROCESS_MAX_ITER", 4);
+
+/*
  * Completion queue size. Defaults to EFA RDM path size.
  */
 OFI_NCCL_PARAM(size_t, cq_size, "CQ_SIZE", 12288);
