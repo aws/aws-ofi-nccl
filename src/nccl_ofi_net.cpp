@@ -888,9 +888,11 @@ int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_clea
 }
 
 
-nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg)
+nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
+					     unsigned int domain_key_arg)
 	: device(device_arg),
-	ref_cnt(0)
+	  domain_key(domain_key_arg),
+	  ref_cnt(0)
 {
 	assert(this->device != nullptr);
 
