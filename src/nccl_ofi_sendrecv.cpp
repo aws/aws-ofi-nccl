@@ -2140,7 +2140,7 @@ nccl_net_ofi_sendrecv_domain_t::~nccl_net_ofi_sendrecv_domain_t()
 
 nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg,
 							       unsigned int domain_key_arg)
-	: nccl_net_ofi_domain_t(device_arg)
+	: nccl_net_ofi_domain_t(device_arg, domain_key_arg)
 {
 	auto domain_result = nccl_ofi_ofiutils_domain_create(device_arg->fabric,
 							     device_arg->info);
@@ -2150,7 +2150,6 @@ nccl_net_ofi_sendrecv_domain_t::nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_send
 		throw std::runtime_error("SENDRECV domain constructor: domain creation failed");
 	}
 	this->domain = std::move(domain_result.resource);
-	this->domain_key = domain_key_arg;
 }
 
 

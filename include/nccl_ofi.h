@@ -429,13 +429,13 @@ class nccl_net_ofi_domain_t {
 public:
 	/**
 	 * @brief	Default constructor.
-	 * 
+	 *
 	 * Initialize resources associated with the domain base class.
 	 * Expectation is that this will be called by a transport's domain
-	 * constructor 
-	 */	
-	nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg);
-	
+	 * constructor
+	 */
+	nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg, unsigned int domain_key);
+
 	/**
 	 * Retrieve an fid_domain object associated with this domain to be used for 
 	 * connection management. There may be more than one fid_domain per domain,
@@ -581,7 +581,10 @@ protected:
 	virtual int cleanup_resources() REQUIRES(domain_lock) = 0;
 
 	/* Backpointer to the device associated with this domain. */
-	nccl_net_ofi_device_t *device = nullptr;
+	nccl_net_ofi_device_t *const device = nullptr;
+
+	/* The Domain index or a key in the device domain table */
+	const unsigned int domain_key;
 
 	/* Domain reference counter for resource management.
 	 *
@@ -590,9 +593,6 @@ protected:
 	 * of endpoints created on this domain. When it reaches 0, the
 	 * domain can be destroyed. */
 	size_t ref_cnt GUARDED_BY(device->device_lock);
-
-	/* The Domain index or a key in the device domain table */
-	unsigned int domain_key;
 
 	/**
 	 * release all endpoints. This function is a private

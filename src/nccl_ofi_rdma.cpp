@@ -6690,15 +6690,13 @@ nccl_net_ofi_rdma_domain_t::~nccl_net_ofi_rdma_domain_t()
 
 nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_t *device_arg,
 						       unsigned int domain_key_arg)
-	: nccl_net_ofi_domain_t(device_arg)
+	: nccl_net_ofi_domain_t(device_arg, domain_key_arg)
 {
 	int ret = 0;
 	if (OFI_UNLIKELY(device_arg == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		throw std::runtime_error("RDMA domain constructor: invalid device provided");
 	}
-
-	this->domain_key = domain_key_arg;
 
 	this->num_rails = device_arg->num_rails;
 
