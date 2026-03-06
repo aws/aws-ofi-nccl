@@ -784,13 +784,6 @@ public:
 	nccl_net_ofi_ep_t *create_endpoint() override;
 
 	/**
-	 * Reuse CQ from parent endpoint if provided during the endpoint create.
-	 * This is added to support ep_per_rComm feature where every rComm creates
-	 * its own endpoint but shares CQ from lComm.
-	 */
-	nccl_net_ofi_ep_t *create_endpoint(nccl_net_ofi_ep_t *parent_ep);
-
-	/**
 	 * @brief	Register memory region on RDMA domain
 	 *
 	 * @param	ckey
@@ -1029,7 +1022,7 @@ public:
 	 * ep_per_rComm feature where every rComm creates its own endpoint but shares
 	 * CQ from lComm.
 	 */
-	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain, nccl_net_ofi_ep_t *parent_ep = nullptr);
+	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain);
 
 	/**
 	 * @brief	Destructor.
@@ -1067,10 +1060,6 @@ public:
 		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
-	// TODO: Disable thread safety analysis until conditional locking is
-	// removed
-	int release_ep(bool skip_lock, bool force_cleanup) override NO_THREAD_SAFETY_ANALYSIS;
-
 	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
 	{
 		return static_cast<nccl_net_ofi_rdma_domain_t *>(domain);
@@ -1106,9 +1095,6 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_cq_rail_t *rdma_endpoint_get_cq_rail(uint16_t rail_id)
 	{
-		if (parent_endpoint)
-			return parent_endpoint->rdma_endpoint_get_cq_rail(rail_id);
-
 		assert(!cq_rails.empty());
 		assert(rail_id < num_rails);
 		return &cq_rails[rail_id];
@@ -1120,9 +1106,6 @@ public:
 	 */
 	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
 	{
-		if (parent_endpoint)
-			return parent_endpoint->get_ofi_cq_for_cm();
-
 		assert(!cq_rails.empty());
 		return cq_rails[0].cq;
 	}
@@ -1283,16 +1266,6 @@ public:
 	 * disabled.
 	 */
 	ssize_t eager_send_size;
-
-	/* true if the current endpoint is a endpoint_per_communicator
-	   receive communicator */
-	bool is_endpoint_per_communicator_ep;
-
-	/* In case of endpoint per rComm configuration, use lComm
-	 * as the parent endpoint and reuse its CQ across
-	 * all the related rComms.
-	 */
-	nccl_net_ofi_rdma_ep_t *parent_endpoint;
 
 	/**
 	 * Associated connection manager
