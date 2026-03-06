@@ -71,6 +71,8 @@ inline int nccl_net_ofi_threshold_scheduler::get_num_stripes(size_t size, int nu
  * filled from low id to large id. The last rail may get assigned less
  * data. The number of rails are calculated based on the ratio of
  * (`data_size` / `min_stripe_size`)
+ * 
+ * The caller must ensure serialized access.
  */
 static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler *scheduler,
 					    size_t size,
@@ -84,10 +86,8 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler *sc
 	assert(num_rails > 0);
 
 	if (size < scheduler->max_small_msg_size) {
-		nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
 		int curr_rail_id = scheduler->rr_small_counter;
 		scheduler->rr_small_counter = (scheduler->rr_small_counter + 1) % num_rails;
-		nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
 
 		schedule->num_xfer_infos = 1;
 
@@ -99,10 +99,8 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler *sc
 		num_stripes = scheduler->get_num_stripes(size, num_rails);
 		assert(num_stripes <= num_rails);
 
-		nccl_net_ofi_mutex_lock(&scheduler->rr_lock);
 		int curr_rail_id = scheduler->rr_counter;
 		scheduler->rr_counter = (scheduler->rr_counter + num_stripes) % num_rails;
-		nccl_net_ofi_mutex_unlock(&scheduler->rr_lock);
 
 		/* Number of bytes left to assign */
 		size_t left = size;
@@ -145,10 +143,12 @@ void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler_p,
 
 /*
  * @brief	Create schedule for a message by myltiplexing message or
- *		assigning the message round-robin depending on the message size
+ *		assigning the message round-robin depending on the message size.
  *
  * Messages smaller or equal to `ROUND_ROBIN_THRESHOLD' bytes are
  * assigned round-robin; larger messages are multiplexed.
+ * 
+ * The caller must ensure serialized access.
  *
  * @param	scheduler_p
  *		Pointer to threshold scheduler
@@ -207,17 +207,4 @@ nccl_net_ofi_threshold_scheduler::nccl_net_ofi_threshold_scheduler(int num_rails
 	  max_small_msg_size(ofi_nccl_sched_max_small_msg_size()),
 	  min_stripe_size(ofi_nccl_min_stripe_size())
 {
-	int ret = nccl_net_ofi_mutex_init(&this->rr_lock, NULL);
-	if (ret) {
-		NCCL_OFI_WARN("Could not initialize mutex for threshold scheduler");
-		throw std::runtime_error("Could not initialize mutex for threshold scheduler");
-	}
-}
-
-nccl_net_ofi_threshold_scheduler::~nccl_net_ofi_threshold_scheduler()
-{
-	int ret = nccl_net_ofi_mutex_destroy(&this->rr_lock);
-	if (ret) {
-		NCCL_OFI_WARN("Could not destroy threshold scheduler pthread mutex");
-	}
 }
