@@ -212,9 +212,10 @@ static int sendrecv_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 	(void)rail_id;
 	nccl_net_ofi_sendrecv_req *req = cpp_container_of(ctx, &nccl_net_ofi_sendrecv_req::ctx);
 
-	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
+	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
 		      req,
 		      err_entry->err,
+		      err_entry->flags,
 		      err_entry->prov_errno,
 		      fi_cq_strerror(cq,
 				     err_entry->prov_errno,

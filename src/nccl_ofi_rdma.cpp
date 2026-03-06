@@ -1436,9 +1436,9 @@ static inline int rdma_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 	req = rdma_context_get_req(ctx, rail_id);
 	assert(req);
 
-	NCCL_OFI_WARN("Request %p seq %d completed with error. RC: %d. Error: %d (%s). Completed length: %ld, Request: %s",
+	NCCL_OFI_WARN("Request %p seq %d completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
 		      req, req->msg_seq_num, err_entry->err,
-		      err_entry->prov_errno,
+		      err_entry->flags, err_entry->prov_errno,
 		      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 		      (long)err_entry->len, nccl_net_ofi_req_str(req));
 
@@ -1609,8 +1609,8 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 		/* On some providers (including EFA), we cannot rely on the cq data
 		   being valid for an error completion. So don't try to get a request
 		   here. */
-		NCCL_OFI_WARN("Remote write completed with error. RC: %d. Error: %d (%s). Completed length: %ld",
-			      err_entry->err, err_entry->prov_errno,
+		NCCL_OFI_WARN("Remote write completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld",
+			      err_entry->err, err_entry->flags, err_entry->prov_errno,
 			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 			      (long)err_entry->len);
 		return -EIO;

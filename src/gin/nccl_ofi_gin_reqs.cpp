@@ -36,8 +36,8 @@ int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_error_entry(struct fid_cq *cq,
 	nccl_net_ofi_gin_op_req_t *req = cpp_container_of(this, &nccl_net_ofi_gin_op_req_t::ctx);
 
 	NCCL_OFI_WARN(
-		"Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld",
-		req, err_entry->err, err_entry->prov_errno,
+		"Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld",
+		req, err_entry->err, err_entry->flags, err_entry->prov_errno,
 		fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 		(long)err_entry->len);
 

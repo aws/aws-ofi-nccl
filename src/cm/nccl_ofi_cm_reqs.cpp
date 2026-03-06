@@ -43,9 +43,9 @@ static inline int cm_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 	assert(ctx);
 	nccl_ofi_cm_req *req = cpp_container_of(ctx, &nccl_ofi_cm_req::ctx);
 
-	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Error: %d (%s). Completed length: %ld",
+	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld",
 		req, err_entry->err,
-		err_entry->prov_errno,
+		err_entry->flags, err_entry->prov_errno,
 		fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 		(long)err_entry->len);
 
