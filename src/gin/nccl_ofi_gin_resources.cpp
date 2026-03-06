@@ -89,8 +89,10 @@ int nccl_ofi_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 	fi_addr_t src_addrs[cq_read_count];
 	ssize_t rc = 0;
 	int ret = 0;
+	size_t iter = 0;
 
-	while (true) {
+	do {
+		++iter;
 		/* Receive completions for the given rail */
 		rc = fi_cq_readfrom(rail.rail_cq.get(), cqe_buffers, cq_read_count, src_addrs);
 		if (rc > 0) {
@@ -135,7 +137,7 @@ int nccl_ofi_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 			ret = -EINVAL;
 			goto exit;
 		}
-	}
+	} while (iter < gin_cq_process_max_iter);
 
 exit:
 	return ret;
