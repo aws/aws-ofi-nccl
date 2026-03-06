@@ -481,27 +481,6 @@ public:
 	}
 
 	/**
-	 * @brief	Directly returns the endpoint pointer
-	 * 
-	 * 		Returns the endpoint pointer without any changes. Different from
-	 * 		get_ep() since it does not create a new endpoint if the pointer is
-	 * 		nullptr, and does not increment the endpoint ref_cnt if the pointer
-	 * 		has an endpoint.
-	 */
-	inline nccl_net_ofi_ep_t *get_endpoint_ptr()
-	{
-		return endpoint;
-	}
-
-	/**
-	 * @brief	Set the endpoint pointer to nullptr.
-	 */
-	inline void clear_endpoint()
-	{
-		endpoint = nullptr;
-	}
-
-	/**
 	 * @brief	Increments the base domain reference count.
 	 *		This needs to be protected with device_lock as
 	 *		domain life cycle is managed at device level
@@ -596,13 +575,6 @@ protected:
 
 	/* Backpointer to the device associated with this domain. */
 	nccl_net_ofi_device_t *device = nullptr;
-
-	/* endpoint used for (at a minimum) receiving connection
-	   messages.  Send/Recv protocol uses this for all
-	   communication.  The rdma protocol uses this for all tx
-	   requests and all connection-establishment requests, but may
-	   have additional endpoints for the rx side of rdma writes. */
-	nccl_net_ofi_ep_t *endpoint = nullptr;
 
 	/* Domain reference counter for resource management.
 	 *
