@@ -1,0 +1,2 @@
+opt/amazon/ofi-nccl/*
+etc/ld.so.conf.d/100_ofinccl.conf
