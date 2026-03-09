@@ -23,3 +23,22 @@ Description: NCCL libfabric plugin
  libfabric's connection-less reliable interface. This allows NCCL applications
  to take benefit of libfabric's transport layer services like reliable message
  support and operating system bypass.
+
+Package: libnccl-ofi-ngc-v1
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for NGC containers for old NGC containers
+
+Package: libnccl-ofi-ngc-v2
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for NGC containers for newer NGC containers
+
+Package: libnccl-ofi-ngc-v3
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for future NGC containers
+
