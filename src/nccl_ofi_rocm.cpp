@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <hip/hip_runtime_api.h>
 #include <hip/hip_runtime.h>
+#include <unistd.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_rocm.h"
@@ -76,6 +77,21 @@ bool nccl_net_ofi_gpu_have_gdr_support_attr(void)
 
 bool nccl_net_ofi_gpu_have_dma_buf_attr(void)
 {
+	void *ptr = NULL;
+	hipError_t err = hipMalloc(&ptr, 4096);
+	if (err != hipSuccess) {
+		return false;
+	}
+
+	int fd = -1;
+	err = hipMemGetHandleForAddressRange(&fd, (hipDeviceptr_t)ptr,
+		4096, hipMemRangeHandleTypeDmaBufFd, 0);
+	(void)hipFree(ptr);
+
+	if (err == hipSuccess && fd >= 0) {
+		close(fd);
+		return true;
+	}
 	return false;
 }
 
