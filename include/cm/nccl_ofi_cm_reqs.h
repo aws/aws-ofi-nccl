@@ -19,13 +19,22 @@ namespace nccl_ofi_cm {
  */
 
 /**
+ * @brief	CM context - handles CQ completions for connection manager requests
+ */
+class nccl_net_ofi_cm_context : public nccl_net_ofi_context {
+public:
+	int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) override;
+	int handle_error_entry(struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			       uint16_t rail_id) override;
+};
+
+/**
  * Abstract base class for requests
  */
 class nccl_ofi_cm_req
 {
 public:
-	nccl_ofi_cm_req();
-	nccl_net_ofi_context_t ctx;
+	nccl_net_ofi_cm_context ctx;
 
 	/**
 	 * To be called when the request completes

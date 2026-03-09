@@ -160,41 +160,41 @@ public:
 };
 
 /**
- * Struct enclosing the context parameter we pass to every Libfabric operation.
- * Contains callback function members to be invoked upon completion of the
- * corresponding request.
+ * Base class enclosing the context parameter we pass to every Libfabric
+ * operation. Derived classes implement the completion callbacks for each
+ * protocol (RDMA, SendRecv, CM).
  */
-struct nccl_net_ofi_context {
-	/**
-	 * Libfabric context object. A pointer to this context is passed to all
-	 * Libfabric operations
-	 */
-	struct fi_context2 ofi_ctx;
+class nccl_net_ofi_context {
+public:
+	virtual ~nccl_net_ofi_context() = default;
 
 	/**
 	 * Callback to be invoked upon completion of the request
 	 *
-	 * @param ctx: ptr to this context object
 	 * @param cq_entry: cq entry from Libfabric
 	 * @param rail_id: the rail on which the cq entry arrived.
 	 * 		   Ignored in SENDRECV protocol
 	 */
-	int (*handle_cq_entry)(struct nccl_net_ofi_context *ctx, struct fi_cq_entry *cq_entry,
-			       uint16_t rail_id);
+	virtual int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) = 0;
 
 	/**
 	 * Callback to be invoked upon completion-with-error of the request
 	 *
-	 * @param ctx: ptr to this context object
 	 * @param cq: Libfabric completion queue
 	 * @param err_entry: err entry from Libfabric
 	 * @param rail_id: the rail on which the cq err entry arrived.
 	 * 		   Ignored in SENDRECV protocol
 	 */
-	int (*handle_error_entry)(struct nccl_net_ofi_context *ctx, struct fid_cq *cq,
-				  struct fi_cq_err_entry *err_entry, uint16_t rail_id);
+	virtual int handle_error_entry(struct fid_cq *cq,
+				       struct fi_cq_err_entry *err_entry,
+				       uint16_t rail_id) = 0;
+
+	/**
+	 * Libfabric context object. A pointer to this context is passed to all
+	 * Libfabric operations
+	 */
+	struct fi_context2 ofi_ctx;
 };
-typedef struct nccl_net_ofi_context nccl_net_ofi_context_t;
 
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
