@@ -229,7 +229,7 @@ public:
 	 *      The CM will create its own endpoint, bound to the CQ provided
 	 *      via the plugin endpoint argument.
 	 *      Ops submitted through the CM code will have a context pointer to
-	 *      nccl_net_ofi_context_t, with appropriate completion handling
+	 *      nccl_net_ofi_context, with appropriate completion handling
 	 *      functions
 	 *
 	 * @param ep:

@@ -398,6 +398,16 @@ protected:
 	int sendrecv_device_prepare_for_connection();
 };
 
+/**
+ * @brief	SendRecv context - handles CQ completions for SendRecv protocol requests
+ */
+class nccl_net_ofi_sendrecv_context : public nccl_net_ofi_context {
+public:
+	int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) override;
+	int handle_error_entry(struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			       uint16_t rail_id) override;
+};
+
 class nccl_net_ofi_sendrecv_req : public nccl_net_ofi_req {
 public:
 	nccl_net_ofi_sendrecv_req();
@@ -408,7 +418,7 @@ public:
 	nccl_net_ofi_comm *comm;
 
 	/* Associated context */
-	nccl_net_ofi_context_t ctx;
+	nccl_net_ofi_sendrecv_context ctx;
 
 	/* Associated Device ID */
 	int dev_id;

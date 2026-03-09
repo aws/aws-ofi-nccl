@@ -13,19 +13,17 @@
 using namespace nccl_ofi_cm;
 
 
-static inline int cm_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
-					 struct fi_cq_entry *cq_entry_base,
-					 uint16_t rail_id)
+int nccl_net_ofi_cm_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
+					    uint16_t rail_id)
 {
-	nccl_ofi_cm_req *req = cpp_container_of(ctx, &nccl_ofi_cm_req::ctx);
+	nccl_ofi_cm_req *req = cpp_container_of(this, &nccl_ofi_cm_req::ctx);
 
 	return req->handle_completion();
 }
 
-static inline int cm_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
-					    struct fid_cq *cq,
-					    struct fi_cq_err_entry *err_entry,
-					    uint16_t rail_id)
+int nccl_net_ofi_cm_context::handle_error_entry(struct fid_cq *cq,
+						struct fi_cq_err_entry *err_entry,
+						uint16_t rail_id)
 {
 	int ret = 0;
 
@@ -40,8 +38,7 @@ static inline int cm_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 		return 0;
 	}
 
-	assert(ctx);
-	nccl_ofi_cm_req *req = cpp_container_of(ctx, &nccl_ofi_cm_req::ctx);
+	nccl_ofi_cm_req *req = cpp_container_of(this, &nccl_ofi_cm_req::ctx);
 
 	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld",
 		req, err_entry->err,
@@ -60,12 +57,6 @@ static inline int cm_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 	return ret;
 }
 
-
-nccl_ofi_cm_req::nccl_ofi_cm_req()
-{
-	ctx.handle_cq_entry = cm_req_handle_cq_entry;
-	ctx.handle_error_entry = cm_req_handle_error_entry;
-}
 
 
 nccl_ofi_cm_rx_req::nccl_ofi_cm_rx_req(cm_resources &_resources) :

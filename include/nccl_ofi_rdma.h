@@ -402,11 +402,22 @@ typedef struct {
 } rdma_req_flush_data_t;
 
 
+/**
+ * @brief	RDMA context - handles CQ completions for RDMA protocol requests
+ */
+class nccl_net_ofi_rdma_context : public nccl_net_ofi_context {
+public:
+	int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) override;
+	int handle_error_entry(struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			       uint16_t rail_id) override;
+	nccl_net_ofi_rdma_req *get_req(uint16_t rail_id);
+};
+
 /* needed to make cpp_container_of() happy */
 struct nccl_net_ofi_rdma_req_ctx_list {
 public:
-	nccl_net_ofi_context_t& operator[](size_t pos) {return ctx[pos]; }
-	nccl_net_ofi_context_t ctx[MAX_NUM_RAILS];
+	nccl_net_ofi_rdma_context& operator[](size_t pos) {return ctx[pos]; }
+	nccl_net_ofi_rdma_context ctx[MAX_NUM_RAILS];
 };
 
 /*

@@ -1211,20 +1211,15 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req);
 static int post_eager_copy(nccl_net_ofi_rdma_req *req);
 
 
-static nccl_net_ofi_rdma_req *rdma_context_get_req(nccl_net_ofi_context_t *ctx,
-						     uint16_t rail_id)
+nccl_net_ofi_rdma_req *nccl_net_ofi_rdma_context::get_req(uint16_t rail_id)
 {
-	if (OFI_UNLIKELY(ctx == NULL)) {
-		return NULL;
-	}
-
 	/* To find the request, we need to find the
 	 * start of the context array.  Since the
 	 * sender will always use its rail_id for the
 	 * ctx array index, we can do the same.
 	 */
-	ctx -= rail_id;
-	nccl_net_ofi_rdma_req_ctx_list *ctx_list = (nccl_net_ofi_rdma_req_ctx_list*)ctx;
+	nccl_net_ofi_rdma_context *start = this - rail_id;
+	nccl_net_ofi_rdma_req_ctx_list *ctx_list = (nccl_net_ofi_rdma_req_ctx_list*)start;
 	return cpp_container_of(ctx_list, &nccl_net_ofi_rdma_req::ctx);
 }
 
@@ -1235,9 +1230,8 @@ static nccl_net_ofi_rdma_req *rdma_context_get_req(nccl_net_ofi_context_t *ctx,
  * @return	0, on success
  *		error, on others
  */
-static inline int rdma_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
-					   struct fi_cq_entry *cq_entry_base,
-					   uint16_t rail_id)
+int nccl_net_ofi_rdma_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
+					       uint16_t rail_id)
 {
 	int ret = 0;
 	auto cq_entry = reinterpret_cast<fi_cq_data_entry *>(cq_entry_base);
@@ -1247,7 +1241,7 @@ static inline int rdma_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 	rdma_req_rma_op_data_t *rma_op_data = NULL;
 
 	/* The context for these operations is req. */
-	nccl_net_ofi_rdma_req *req = rdma_context_get_req(ctx, rail_id);
+	nccl_net_ofi_rdma_req *req = this->get_req(rail_id);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Completion with unexpected NULL op_context");
 		return -EINVAL;
@@ -1368,7 +1362,8 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
 	int ret = 0;
 
 	for (uint64_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
-		void *op_ctx = cq_entry[comp_idx].op_context;
+		struct fi_context2 *op_ctx =
+				static_cast<struct fi_context2 *>(cq_entry[comp_idx].op_context);
 
 		if (cq_entry[comp_idx].flags & FI_REMOTE_WRITE) {
 			ret = handle_write_comp(&cq_entry[comp_idx], device, rail_id);
@@ -1386,11 +1381,10 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_context_t *ctx = container_of(op_ctx,
-							   nccl_net_ofi_context_t,
-							   ofi_ctx);
+		nccl_net_ofi_context *ctx = cpp_container_of(op_ctx,
+							     &nccl_net_ofi_context::ofi_ctx);
 
-		ret = ctx->handle_cq_entry(ctx, reinterpret_cast<struct fi_cq_entry *>(&cq_entry[comp_idx]),
+		ret = ctx->handle_cq_entry(reinterpret_cast<struct fi_cq_entry *>(&cq_entry[comp_idx]),
 					   rail_id);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Context progress failed: %d", ret);
@@ -1408,10 +1402,9 @@ static inline int rdma_process_completions(struct fi_cq_data_entry *cq_entry,
  * @return	0, on success
  *		error, on others
  */
-static inline int rdma_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
-					      struct fid_cq *cq,
-					      struct fi_cq_err_entry *err_entry,
-					      uint16_t rail_id)
+int nccl_net_ofi_rdma_context::handle_error_entry(struct fid_cq *cq,
+						  struct fi_cq_err_entry *err_entry,
+						  uint16_t rail_id)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_req *req = NULL;
@@ -1428,12 +1421,7 @@ static inline int rdma_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
 		goto exit;
 	}
 
-	if (OFI_UNLIKELY(ctx == NULL)) {
-		NCCL_OFI_WARN("Invalid ctx");
-		return -EINVAL;
-	}
-
-	req = rdma_context_get_req(ctx, rail_id);
+	req = this->get_req(rail_id);
 	assert(req);
 
 	NCCL_OFI_WARN("Request %p seq %d completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
@@ -1618,18 +1606,19 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 
 	/* For all other completion types, op_ctx should be a valid
 	   pointer */
-	void *op_ctx = err_entry->op_context;
+	struct fi_context2 *op_ctx = static_cast<struct fi_context2 *>(err_entry->op_context);
 	if (OFI_UNLIKELY(op_ctx == NULL)) {
 		NCCL_OFI_WARN("Invalid request context provided");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_context_t *ctx = container_of(op_ctx, nccl_net_ofi_context_t, ofi_ctx);
+	nccl_net_ofi_context *ctx = cpp_container_of(op_ctx,
+						     &nccl_net_ofi_context::ofi_ctx);
 
-	int ret = ctx->handle_error_entry(ctx, cq, err_entry, rail_id);
+	int ret = ctx->handle_error_entry(cq, err_entry, rail_id);
 	if (ret == -FI_ECANCELED) {
 		/* Non-fatal cancellation event -- see comment in
-		   rdma_req_handle_error_entry. Ignore. */
+		   nccl_net_ofi_rdma_context::handle_error_entry. Ignore. */
 		return 0;
 	} else {
 		return ret;
@@ -2473,14 +2462,6 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	return ret;
 }
 
-
-static inline void rdma_req_init_ctx(nccl_net_ofi_rdma_req *req)
-{
-	for (uint16_t i = 0; i < MAX_NUM_RAILS; ++i) {
-		req->ctx[i].handle_cq_entry = rdma_req_handle_cq_entry;
-		req->ctx[i].handle_error_entry = rdma_req_handle_error_entry;
-	}
-}
 
 int nccl_net_ofi_rdma_req::free(bool dec_inflight_reqs)
 {
@@ -4221,8 +4202,6 @@ static int rdma_fl_req_entry_init(void *entry)
 		NCCL_OFI_WARN("Unable to initialize mutex");
 		return ret;
 	}
-
-	rdma_req_init_ctx(req);
 
 	return ret;
 }

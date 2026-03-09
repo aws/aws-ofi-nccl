@@ -184,15 +184,14 @@ static inline void *sendrecv_req_get_ofi_context(nccl_net_ofi_sendrecv_req *req)
 }
 
 
-static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
-					struct fi_cq_entry *cq_entry_base,
-					uint16_t rail_id)
+int nccl_net_ofi_sendrecv_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
+						   uint16_t rail_id)
 {
 	auto cq_entry = reinterpret_cast<struct fi_cq_tagged_entry *>(cq_entry_base);
 
-	nccl_net_ofi_sendrecv_req *req = cpp_container_of(ctx, &nccl_net_ofi_sendrecv_req::ctx);
+	nccl_net_ofi_sendrecv_req *req = cpp_container_of(this, &nccl_net_ofi_sendrecv_req::ctx);
 
-	NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req->direction, req, &ctx->ofi_ctx);
+	NCCL_OFI_TRACE_COMPLETIONS_SENDRECV(req->dev_id, req->direction, req, &this->ofi_ctx);
 
 	if (cq_entry->flags & FI_RECV) {
 		sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_COMPLETED, cq_entry->len);
@@ -204,13 +203,12 @@ static int sendrecv_req_handle_cq_entry(nccl_net_ofi_context_t *ctx,
 }
 
 
-static int sendrecv_req_handle_error_entry(nccl_net_ofi_context_t *ctx,
-					   struct fid_cq *cq,
-					   struct fi_cq_err_entry *err_entry,
-					   uint16_t rail_id)
+int nccl_net_ofi_sendrecv_context::handle_error_entry(struct fid_cq *cq,
+						      struct fi_cq_err_entry *err_entry,
+						      uint16_t rail_id)
 {
 	(void)rail_id;
-	nccl_net_ofi_sendrecv_req *req = cpp_container_of(ctx, &nccl_net_ofi_sendrecv_req::ctx);
+	nccl_net_ofi_sendrecv_req *req = cpp_container_of(this, &nccl_net_ofi_sendrecv_req::ctx);
 
 	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
 		      req,
@@ -241,19 +239,18 @@ static inline int sendrecv_process_completions(struct fi_cq_tagged_entry *cq_ent
 	int ret = 0;
 
 	for (size_t comp_idx = 0; comp_idx < num_cqes; comp_idx++) {
-		void *op_ctx = cq_entry[comp_idx].op_context;
+		struct fi_context2 *op_ctx =
+				static_cast<struct fi_context2 *>(cq_entry[comp_idx].op_context);
 
 		if (OFI_UNLIKELY(op_ctx == NULL)) {
 			NCCL_OFI_WARN("Invalid request context provided");
 			return -EINVAL;
 		}
 
-		nccl_net_ofi_context_t *ctx = container_of(op_ctx,
-							   nccl_net_ofi_context_t,
-							   ofi_ctx);
+		nccl_net_ofi_context *ctx = cpp_container_of(op_ctx,
+							     &nccl_net_ofi_context::ofi_ctx);
 
-		ret = ctx->handle_cq_entry(ctx,
-					   reinterpret_cast<struct fi_cq_entry *>
+		ret = ctx->handle_cq_entry(reinterpret_cast<struct fi_cq_entry *>
 					   (&cq_entry[comp_idx]), 0);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Context progress failed: %d", ret);
@@ -288,7 +285,6 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 				goto exit;
 		}
 		else if (OFI_UNLIKELY(rc == -FI_EAVAIL)) {
-			nccl_net_ofi_context_t *ctx;
 			/*
 			 * On call to fi_cq_readerr, Libfabric requires some members of
 			 * err_entry to be zero-initialized or point to valid data.  For
@@ -317,9 +313,11 @@ static int sendrecv_cq_process(struct fid_cq *cq)
 				goto exit;
 			}
 
-			ctx = container_of(err_buffer.op_context,
-					   nccl_net_ofi_context_t, ofi_ctx);
-			ret = ctx->handle_error_entry(ctx, cq, &err_buffer, 0);
+			struct fi_context2 *op_ctx =
+					static_cast<struct fi_context2 *>(err_buffer.op_context);
+			nccl_net_ofi_context *ctx = cpp_container_of(op_ctx,
+								     &nccl_net_ofi_context::ofi_ctx);
+			ret = ctx->handle_error_entry(cq, &err_buffer, 0);
 			if (ret != 0) {
 				goto exit;
 			}
@@ -1277,8 +1275,6 @@ static int sendrecv_fl_req_entry_init(void *entry)
 	auto req = new (entry) nccl_net_ofi_sendrecv_req();
 	
 	req->state = NCCL_OFI_SENDRECV_REQ_CREATED;
-	req->ctx.handle_cq_entry = sendrecv_req_handle_cq_entry;
-	req->ctx.handle_error_entry = sendrecv_req_handle_error_entry;
 	return 0;
 }
 
