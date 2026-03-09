@@ -8,16 +8,20 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=+lto
 
 OFI_NCCL_PREFIX=/opt/amazon/ofi-nccl
 
+# NGC installs (both old and new image flavors) go to this path
+OFI_NCCL_NGC_PREFIX=/opt/amazon/aws-ofi-nccl
+
 override_dh_missing:
-	find debian/ -name *.la -delete
-	mkdir -p debian/libnccl-ofi/etc/ld.so.conf.d && echo "${OFI_NCCL_PREFIX}/lib" >> debian/libnccl-ofi/etc/ld.so.conf.d/100_ofinccl.conf
+	find build/ -name *.la -delete
 	dh_missing --fail-missing
 
 override_dh_shlibdeps:
 	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
 
+# build also for alternate pacakges with NGC install path
 override_dh_auto_configure:
-	dh_auto_configure -- \
+	dh_auto_configure \
+		--builddirectory=build/libnccl-ofi -- \
 		--with-libfabric=/opt/amazon/efa \
 		--prefix=${OFI_NCCL_PREFIX} \
 		--libdir=${OFI_NCCL_PREFIX}/lib \
@@ -28,6 +32,78 @@ override_dh_auto_configure:
 		--without-lttng \
 		--without-valgrind \
 		--disable-werror
+	dh_auto_configure \
+		--builddirectory=build/libnccl-ofi-ngc-v1 -- \
+		--with-libfabric=/opt/amazon/efa \
+		--prefix=${OFI_NCCL_NGC_PREFIX} \
+		--libdir=${OFI_NCCL_NGC_PREFIX}/lib \
+		--enable-platform-aws \
+		--with-cuda=/usr/local/cuda \
+		--enable-cudart-dynamic \
+		--disable-tests \
+		--without-lttng \
+		--without-valgrind \
+		--disable-werror \
+		--disable-nccl-net-library
+	dh_auto_configure \
+		--builddirectory=build/libnccl-ofi-ngc-v2 -- \
+		--with-libfabric=/opt/amazon/efa \
+		--prefix=${OFI_NCCL_NGC_PREFIX} \
+		--libdir=${OFI_NCCL_NGC_PREFIX}/lib \
+		--enable-platform-aws \
+		--with-cuda=/usr/local/cuda \
+		--enable-cudart-dynamic \
+		--disable-tests \
+		--without-lttng \
+		--without-valgrind \
+		--disable-werror \
+		--disable-nccl-net-library
+	dh_auto_configure \
+		--builddirectory=build/libnccl-ofi-ngc-v3 -- \
+		--with-libfabric=/opt/amazon/efa \
+		--prefix=${OFI_NCCL_PREFIX} \
+		--libdir=${OFI_NCCL_PREFIX}/lib \
+		--enable-platform-aws \
+		--with-cuda=/usr/local/cuda \
+		--enable-cudart-dynamic \
+		--disable-tests \
+		--without-lttng \
+		--without-valgrind \
+		--disable-werror \
+		--disable-nccl-net-library
+
+override_dh_auto_build:
+	dh_auto_build --builddirectory=build/libnccl-ofi
+	dh_auto_build --builddirectory=build/libnccl-ofi-ngc-v1
+	dh_auto_build --builddirectory=build/libnccl-ofi-ngc-v2
+	dh_auto_build --builddirectory=build/libnccl-ofi-ngc-v3
+
+override_dh_auto_install:
+	dh_auto_install --builddirectory=build/libnccl-ofi --destdir=debian/tmp
+	dh_auto_install --builddirectory=build/libnccl-ofi-ngc-v1 --destdir=debian/tmp-ngc-v1
+	dh_auto_install --builddirectory=build/libnccl-ofi-ngc-v2 --destdir=debian/tmp-ngc-v2
+	dh_auto_install --builddirectory=build/libnccl-ofi-ngc-v3 --destdir=debian/tmp-ngc-v3
+	mkdir -p debian/tmp/etc/ld.so.conf.d && echo "${OFI_NCCL_PREFIX}/lib" >> debian/tmp/etc/ld.so.conf.d/100_ofinccl.conf
+	mv $(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-net-ofi.so \
+		$(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-net-aws-ofi.so
+	mv $(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-tuner-ofi.so \
+		$(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-tuner-aws-ofi.so
+	find debian/tmp -name *.la -delete
+	find debian/tmp-ngc-v1 -name *.la -delete
+	find debian/tmp-ngc-v2 -name *.la -delete
+	find debian/tmp-ngc-v3 -name *.la -delete
+
+override_dh_install:
+	dh_install -p libnccl-ofi --sourcedir=debian/tmp
+	dh_install -p libnccl-ofi-ngc-v1 --sourcedir=debian/tmp-ngc-v1
+	dh_install -p libnccl-ofi-ngc-v2 --sourcedir=debian/tmp-ngc-v2
+	dh_install -p libnccl-ofi-ngc-v3 --sourcedir=debian/tmp-ngc-v3
+
+override_dh_auto_clean:
+	dh_auto_clean --builddirectory=build/libnccl-ofi
+	dh_auto_clean --builddirectory=build/libnccl-ofi-ngc-v1
+	dh_auto_clean --builddirectory=build/libnccl-ofi-ngc-v2
+	dh_auto_clean --builddirectory=build/libnccl-ofi-ngc-v3
 
 #%:
 #	dh $@
