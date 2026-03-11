@@ -258,17 +258,21 @@ public:
 	/**
 	 * Callback for write completion.
 	 *
-	 * @param gin_comm: communicator to be used for signal
 	 * @param src_addr: source address of the signal
 	 * @param rail_id: rail ID of the signal
-	 * @param msg_seq_num: sequence number of the signal
+	 * @param is_ack_msg: true if this is an ACK message (bit 0 set)
+	 * @param msg_seq_num: sequence number of the signal. For ACK messages,
+	 *        this is the ack_seq_num (high-water mark of the acknowledged range).
 	 * @param total_segms: total number of segments in the signal
-	 * @param is_ack_requested: whether the sender is requesting an ACK
 	 * @param len: length of the signal
+	 * @param is_ack_requested: whether the sender is requesting an ACK
+	 * @param ack_count: for ACK messages, the number of seq_nums in the
+	 *        acknowledged range. Unused for non-ACK messages.
 	 */
 	int handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
-					   uint16_t msg_seq_num, uint64_t total_segms,
-					   bool is_ack_requested, size_t len);
+					   bool is_ack_msg, uint16_t msg_seq_num,
+					   uint64_t total_segms, size_t len,
+					   bool is_ack_requested, uint16_t ack_count);
 
 private:
 	nccl_ofi_gin_resources &resources;
@@ -309,12 +313,15 @@ private:
 	size_t outstanding_ack_counter = 0;
 
 	/**
-	 * Send a writedata acknowledgement
+	 * Send a writedata acknowledgement for a range of sequence numbers.
 	 *
+	 * @param gin_comm communicator to send the ACK on
 	 * @param peer_rank rank to send the acknowledgement to
-	 * @param msg_seq_num sequence number of the message being acknowledged
+	 * @param ack_seq_num last (highest) sequence number in the acknowledged range
+	 * @param count number of seq_nums in the acknowledged range
 	 */
-	int writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank, uint32_t msg_seq_num);
+	int writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
+			  uint32_t ack_seq_num, uint32_t count);
 
 	/**
 	 * Freelist of buffers storing signal information (type
