@@ -4122,16 +4122,27 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 	nccl_net_ofi_rdma_req *req = NULL;
 	nccl_net_ofi_rdma_ep_t *endpoint = NULL;
 
+	if (this->comm_active == false) {
+		NCCL_OFI_WARN("Called iread on inactive communicator");
+		*base_req = NULL;
+		return -EINVAL;
+	}
+
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(this->num_inflight_reqs == NCCL_OFI_MAX_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_REQUESTS);
-		goto error;
+		*base_req = NULL;
+		return ret;
 	}
 
 	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
 	assert(endpoint != NULL);
+
+	std::lock_guard eplock(ENDPOINT_LOCK(endpoint));
+
+	CHECK_ENDPOINT_ACTIVE(endpoint, "read");
 
 	ret = endpoint->process_cq_if_pending();
 	if (ret == -EAGAIN) {
@@ -5895,16 +5906,27 @@ static int rma_write_impl(nccl_net_ofi_send_comm *send_comm, void* src, size_t s
 
 	assert(s_comm != NULL);
 
+	if (s_comm->comm_active == false) {
+		NCCL_OFI_WARN("Called iwrite on inactive communicator");
+		*base_req = NULL;
+		return -EINVAL;
+	}
+
 	/* Support only NCCL_OFI_MAX_REQUESTS inflight requests. */
 	if (OFI_UNLIKELY(s_comm->num_inflight_reqs == NCCL_OFI_MAX_SEND_REQUESTS)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Can not support more than %d inflight requests",
 			      NCCL_OFI_MAX_SEND_REQUESTS);
-		goto error;
+		*base_req = NULL;
+		return ret;
 	}
 
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(ep != NULL);
+
+	std::lock_guard eplock(ENDPOINT_LOCK(ep));
+
+	CHECK_ENDPOINT_ACTIVE(ep, "write");
 
 	ret = ep->process_cq_if_pending();
 	if (ret == -EAGAIN) {
