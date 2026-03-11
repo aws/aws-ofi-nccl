@@ -80,17 +80,27 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 
 	if (cq_entry->flags & FI_REMOTE_WRITE) {
 		/* RDMA write-immediate completion */
+		bool is_ack_msg = GIN_IMM_IS_ACK(cq_entry->data);
 		uint32_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
+		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
 
 		auto &gin_comm = resources.get_comm(comm_id);
 
-		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
-		uint64_t total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
-		bool is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
+		uint64_t total_segms = 0;
+		bool is_ack_requested = false;
+		uint16_t ack_count = 0;
+
+		if (is_ack_msg) {
+			ack_count = GIN_IMM_ACK_GET_COUNT(cq_entry->data);
+		} else {
+			total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
+			is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
+		}
 		size_t len = cq_entry->len;
 
-		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg, msg_seq_num,
-							      total_segms, is_ack_requested, len);
+		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg, is_ack_msg,
+							      msg_seq_num, total_segms, len,
+							      is_ack_requested, ack_count);
 		if (ret != 0) {
 			NCCL_OFI_WARN("gin_handle_signal_write_completion failure");
 			return ret;
@@ -212,7 +222,6 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 			*done = !ack_outstanding;
 		} else {
 			/* This message doesn't need ACK (most PUTs) */
-			gin_comm.clear_ack_outstanding(peer_rank, msg_seq_num);
 			*done = 1;
 		}
 	}
