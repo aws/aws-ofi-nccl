@@ -25,12 +25,12 @@ struct nccl_net_ofi_gin_signal_metadata_msg_t {
 	uint64_t signal_offset;
 	uint64_t signal_value;
 
-	/* Message sequence number */
-	uint32_t msg_seq_num;
-
 	/* A comm identitifer that uniquely identifies the comm
 	 * on the receiver side */
 	uint32_t remote_comm_id;
+
+	/* Message sequence number */
+	uint16_t msg_seq_num;
 
 	/* Number of completions the target will receive
 	 *
@@ -38,8 +38,14 @@ struct nccl_net_ofi_gin_signal_metadata_msg_t {
 	 * 1: if this is a signal without any associated data (zero-sized
 	 *    put-signal) or data without any signal (put)
 	 * 2: For put-signal (data + signal) */
-	uint32_t num_segments;
+	uint8_t num_segments;
+
+	/* Adding 1 byte padding to align the struct DO NOT USE*/
+	uint8_t padding;
 };
+
+static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
+	      "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
 
 /**
  * Constants
