@@ -56,6 +56,14 @@ ${version}" 1>&2
     exit 0
 fi
 
+# Try environment variable from AWS internal Brazil Package Builder
+# (Package Builder strips .git/ before build scripts run but provides
+# the commit ID via env var).
+if test "${BRAZIL_PACKAGE_CHANGE_ID}" != "" ; then
+    echo "git-${BRAZIL_PACKAGE_CHANGE_ID:0:7}"
+    exit 0
+fi
+
 # Give up
 echo "No version found.  This usually means you are not building from a git repo or existing release
 tarball.  Cannot continue." 1>&2
