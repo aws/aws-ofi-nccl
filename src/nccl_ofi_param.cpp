@@ -8,8 +8,16 @@
 #include "nccl_ofi_param_impl.h"
 
 
-#define OFI_NCCL_PARAM(type, name, env, default_value)						    \
+#define OFI_NCCL_PARAM(type, name, env, default_value)                                              \
 	class ofi_nccl_param_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value);
+
+#define OFI_NCCL_PARAM_DEPRECATED(type, name, env, default_value, deprecation_msg)                  \
+	class ofi_nccl_param_deprecated_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value, \
+								   deprecation_msg, false);
+
+#define OFI_NCCL_PARAM_REMOVED(type, name, env, default_value, deprecation_msg)                     \
+	class ofi_nccl_param_deprecated_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value, \
+								   deprecation_msg, true);
 
 std::forward_list<ofi_nccl_param_base *> ofi_nccl_parameter_list;
 

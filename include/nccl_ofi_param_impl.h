@@ -309,4 +309,40 @@ protected:
 	std::optional<std::string> string_val;
 };
 
+
+template <typename T>
+class ofi_nccl_param_deprecated_impl : public ofi_nccl_param_impl<T> {
+public:
+	ofi_nccl_param_deprecated_impl(const char *envname_arg, const T default_val,
+				       const char *deprecation_msg_arg, bool error_on_use_arg)
+		: ofi_nccl_param_impl<T>(envname_arg, default_val),
+		  deprecation_msg(deprecation_msg_arg), error_on_use(error_on_use_arg)
+	{
+	}
+
+
+	virtual int initialize()
+	{
+		int ret = ofi_nccl_param_impl<T>::initialize();
+		if (ret != 0) {
+			return ret;
+		}
+
+		if (this->source != ParamSource::DEFAULT) {
+			NCCL_OFI_WARN("WARNING: Use of %s is deprecated.\n%s",
+				      this->envname, this->deprecation_msg);
+			if (this->error_on_use) {
+				return -EINVAL;
+			}
+		}
+
+		return 0;
+	}
+
+
+protected:
+	const char  *const deprecation_msg;
+	const bool error_on_use;
+};
+
 #endif /* NCCL_OFI_PARAM_IMPL_H_ */
