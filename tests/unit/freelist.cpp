@@ -1,13 +1,13 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
 #include <stdio.h>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_freelist.h"
 
 void *simple_base;
@@ -73,8 +73,7 @@ int main(int argc, char *argv[])
 	nccl_ofi_freelist::fl_entry *entry;
 	size_t i;
 
-	system_page_size = 4096;
-	ofi_log_function = logger;
+	unit_test_init();
 
 	/* initial size larger than max size */
 	freelist = new nccl_ofi_freelist(1,

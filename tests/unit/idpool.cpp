@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -7,8 +7,8 @@
 #include <stdexcept>
 #include <stdio.h>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_math.h"
 
@@ -28,12 +28,13 @@ public:
 };
 
 
-int main(int argc, char *argv[]) {
-
-	ofi_log_function = logger;
+int main(int argc, char *argv[])
+{
 	int ret = 0;
 	(void) ret; // Avoid unused-variable warning
 	size_t sizes[] = {0, 5, 63, 64, 65, 127, 128, 129, 255};
+
+	unit_test_init();
 
 	for (long unsigned int t = 0; t < sizeof(sizes) / sizeof(size_t); t++) {
 		size_t size = sizes[t];

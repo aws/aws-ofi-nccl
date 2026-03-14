@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -8,16 +8,18 @@
 
 #include "nccl_ofi_msgbuff.h"
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
+
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
 	const uint16_t max_inprogress = 4;
 	const uint16_t num_msg_seq_num_bits = 4;
 	const uint16_t field_size = 1 << num_msg_seq_num_bits;
 	uint16_t *result;
+
+	unit_test_init();
 
 	uint16_t *buff_store = (uint16_t *)calloc(max_inprogress, sizeof(uint16_t));
 	if (!buff_store) {

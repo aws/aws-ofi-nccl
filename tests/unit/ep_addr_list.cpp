@@ -1,13 +1,13 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
 #include <stdio.h>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_ep_addr_list.h"
 
 static void insert_addresses(nccl_ofi_ep_addr_list_t &ep_addr_list, size_t num_addr, int ep_num)
@@ -57,7 +57,7 @@ static int get_ep_for_addr(nccl_ofi_ep_addr_list_t &ep_addr_list, int addr_val)
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
+	unit_test_init();
 
 	const size_t num_addr = 10;
 

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -7,8 +7,9 @@
 #include <stdio.h>
 #include <memory>
 
+#include "unit_test.h"
 #include "nccl_ofi_platform.h"
-#include "test-logger.h"
+
 
 // Test helper class to access protected constructor
 class TestPlatformManager : public PlatformManager {
@@ -105,7 +106,7 @@ int main(int argc, char *argv[])
 {
 	int ret = 0;
 
-	ofi_log_function = logger;
+	unit_test_init();
 
 	ret += test_default_platform_creation();
 	ret += test_platform_manager_default_registration();

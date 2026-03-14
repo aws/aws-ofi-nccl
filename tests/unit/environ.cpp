@@ -1,12 +1,12 @@
 /*
- * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
+#include "unit_test.h"
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_environ.h"
-#include "test-logger.h"
 
 
 // test_env_manager exists only to remove the singleton restriction for unit
@@ -101,7 +101,7 @@ static void replace_check()
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
+	unit_test_init();
 
 	no_change_check();
 	addition_check();

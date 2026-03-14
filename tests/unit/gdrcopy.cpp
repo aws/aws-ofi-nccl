@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -7,8 +7,8 @@
 #include <cuda_runtime_api.h>
 #include <stdexcept>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 
@@ -137,7 +137,7 @@ static int test_small_buffer(nccl_ofi_gdrcopy_ctx &gdr)
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
+	unit_test_init();
 
 	/* Initialize CUDA support */
 	int ret = nccl_net_ofi_gpu_init();

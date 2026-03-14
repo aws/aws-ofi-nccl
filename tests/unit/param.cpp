@@ -1,12 +1,12 @@
 /*
- * Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
+#include "unit_test.h"
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_param.h"
-#include "test-logger.h"
 
 OFI_NCCL_PARAM_VALUE_SET(TEST_ENUM, (ALPHA)(BRAVO)(CHARLIE)(DELTA))
 
@@ -162,16 +162,18 @@ static void check_init_logger()
 	// The param init code can't use the logger, because the param init code
 	// is all called before the plugin is initialized by NCCL.  Add a test
 	// to make sure we don't mess that up in the future.
+	nccl_ofi_logger_t curr_logger = ofi_log_function;
+
 	ofi_log_function = checking_logger;
 	check_invalid_variable();
-	ofi_log_function = logger;
+	ofi_log_function = curr_logger;
 }
 
 
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
+	unit_test_init();
 
 	check_string_to_value();
 	check_value_to_string();

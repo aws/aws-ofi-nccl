@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -9,10 +9,10 @@
 #include <nccl/err.h>
 #include <nccl/net.h>
 
+#include "unit_test.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_param.h"
 
 static inline int verify_xfer_info(nccl_net_ofi_xfer_info_t *xfer, nccl_net_ofi_xfer_info_t *ref_xfer, int xfer_id)
@@ -311,8 +311,8 @@ static inline int test_threshold_scheduler()
 int main(int argc, char *argv[])
 {
 	int ret = 0;
-	ofi_log_function = logger;
-	system_page_size = 4096;
+
+	unit_test_init();
 
 	ret = test_threshold_scheduler();
 

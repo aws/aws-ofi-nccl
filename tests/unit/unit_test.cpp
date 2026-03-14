@@ -1,13 +1,14 @@
 /*
- * Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef TEST_LOGGER_H_
-#define TEST_LOGGER_H_
+#include "config.h"
 
 #include <stdarg.h>
 #include <stdio.h>
 
+#include "unit_test.h"
+#include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
 static inline void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
@@ -44,5 +45,10 @@ static inline void logger(ncclDebugLogLevel level, unsigned long flags, const ch
 	va_end(vargs);
 #pragma GCC diagnostic pop
 }
-#endif // End TEST_LOGGER_H_
 
+
+void unit_test_init()
+{
+	system_page_size = 4096;
+	ofi_log_function = logger;
+}
