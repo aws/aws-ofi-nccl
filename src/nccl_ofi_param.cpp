@@ -4,22 +4,31 @@
 
 #include "config.h"
 
-/*
- * This is an ugly hack.  The original implementation of
- * nccl_ofi_param created inline functions to access each environment
- * variable, using the macros found in nccl_ofi_param.h.  However,
- * this creates something of an ODR problem, as multiple complication
- * units can call the same param lookup function, and that results in
- * naming conflicts.  So instead, we have the header file act like a
- * normal header file most of the time, and when included from
- * nccl_ofi_param.c with OFI_NCCL_PARAM_DEFINE set to 1, stamps out
- * the original implementations of the functions.  So now we have one
- * copy of each function that everyone can call.
- *
- * This is intended to be a transient state.  We want to rewrite the
- * entire param system once we've finished moving to C++, but need to
- * solve the ODR problem before we move to C++.  So here lies one of
- * the more terrible pieces of code I've ever written.
- */
-#define OFI_NCCL_PARAM_DEFINE 1
+#include "nccl_ofi_log.h"
+#include "nccl_ofi_param_impl.h"
+
+
+#define OFI_NCCL_PARAM(type, name, env, default_value)						    \
+	class ofi_nccl_param_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value);
+
+std::forward_list<ofi_nccl_param_base *> ofi_nccl_parameter_list;
+
+// This is ugly, but we define declaration versions of the macros before
+// including nccl_ofi_param so that we have implemtations of the classes
+// *somewhere*.  Note that it is very important that the parameter list object be
+// created  before including this file, so that each object can register properly.
 #include "nccl_ofi_param.h"
+
+extern int ofi_nccl_parameters_init()
+{
+	for (auto iter = ofi_nccl_parameter_list.begin() ;
+	     iter != ofi_nccl_parameter_list.end() ;
+	     ++iter) {
+		int ret = (*iter)->initialize();
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	return 0;
+}
