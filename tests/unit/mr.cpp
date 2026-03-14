@@ -1,13 +1,13 @@
 /*
- * Copyright (c) 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
 #include <stdlib.h>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "nccl_ofi_mr.h"
 
 static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
@@ -95,12 +95,13 @@ static inline bool test_make_aligned_key_impl(uintptr_t addr, size_t size, uintp
 
 int main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
 	const size_t cache_init_size = 16;
 
 	/* Doesn't have to be correct -- for functionality test only */
 	const size_t fake_page_size = 1024;
 	mr_cache_alignment = fake_page_size;
+
+	unit_test_init();
 
 	nccl_ofi_mr_cache_t *cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
 	if (!cache) {

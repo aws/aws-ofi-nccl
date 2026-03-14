@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
@@ -8,6 +8,7 @@
 #include <math.h>
 #include <stdio.h>
 
+#include "unit_test.h"
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "nccl_ofi_param.h"
 
@@ -248,6 +249,9 @@ static int test_is_inside_region(void) {
 
 int main(int argc, const char **argv) {
     int ret = 0;
+
+    unit_test_init();
+
     if ((ret |= test_extend_region()) < 0) {
         printf("Extend Region test failed\n");
     };

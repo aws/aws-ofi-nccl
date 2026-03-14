@@ -1,13 +1,13 @@
 //
-// Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+// Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
 //
 
 #include "config.h"
 
 #include <iostream>
 
+#include "unit_test.h"
 #include "nccl_ofi.h"
-#include "test-logger.h"
 #include "stats/histogram.h"
 
 
@@ -136,7 +136,7 @@ static void check_timer_histogram(void)
 int
 main(int argc, char *argv[])
 {
-	ofi_log_function = logger;
+	unit_test_init();
 
 	check_histogram();
 	check_timer_histogram();

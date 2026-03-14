@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "unit_test.h"
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_spinlock.h"
 
@@ -104,6 +105,8 @@ static void multi_thread_trylock_test()
 int
 main(int argc, char *argv[])
 {
+	unit_test_init();
+
 	single_thread_lock_test();
 	single_thread_trylock_test();
 	multi_thread_lock_test();

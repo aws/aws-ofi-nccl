@@ -1,13 +1,14 @@
 /*
- * Copyright (c) 2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2024-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #include "config.h"
 
-#include "nccl_ofi.h"
-#include "test-logger.h"
 #include <stdio.h>
 #include <string.h>
+
+#include "unit_test.h"
+#include "nccl_ofi.h"
 
 #include "platform-aws.h"
 
@@ -116,7 +117,8 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 
 int main(int argc, char *argv[]) {
 	int ret = 0;
-	ofi_log_function = logger;
+
+	unit_test_init();
 
 	/* verify we get the answer we want on real platforms */
 	ret += check_known_platforms();

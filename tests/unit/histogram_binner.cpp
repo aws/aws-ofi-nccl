@@ -1,11 +1,12 @@
 //
-// Copyright (c) 2025 Amazon.com, Inc. or its affiliates. All rights reserved.
+// Copyright (c) 2025-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
 //
 
 #include "config.h"
 
 #include <iostream>
 
+#include "unit_test.h"
 #include "stats/histogram_binner.h"
 
 
@@ -61,6 +62,8 @@ static void check_custom(void)
 int
 main(int argc, char *argv[])
 {
+	unit_test_init();
+
 	check_linear();
 	check_custom();
 
