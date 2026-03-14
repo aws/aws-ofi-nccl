@@ -248,6 +248,12 @@ AS_IF([test "${enable_picky_compiler}" != "no"], [
           [ADD_PICKY_FLAGS([-Wimplicit-fallthrough])],
           [ADD_PICKY_FLAGS([-Wimplicit-fallthrough=5])])
 
+    dnl -Wshadow (from -~all) only warns about local variables shadowing other
+    dnl variables.  Add -Wshadow-all when on Clang to also catch field hiding
+    dnl (ie, a derived class member hiding a base class member).
+    AS_IF([test "$ax_cv_cxx_compiler_vendor" = "clang"],
+          [ADD_PICKY_FLAGS([-Wshadow-all])])
+
     dnl functions should either have internal linkage (static) or there should be a
     dnl header declarating the function.
     ADD_PICKY_FLAGS([-Wmissing-declarations])

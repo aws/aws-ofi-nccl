@@ -171,9 +171,6 @@ public:
 	/* Access Domain handle */
 	ofi_domain_ptr domain;
 
-	/* The domain index or a key in the domain table */
-	unsigned int domain_key;
-
 protected:
 	/**
 	 * @brief	SENDRECV domain destructor.
