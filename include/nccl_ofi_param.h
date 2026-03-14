@@ -11,8 +11,18 @@
 // header.  nccl_ofi_param.cc will define these to actually create
 // instantiations of the declared classes.
 #ifndef OFI_NCCL_PARAM
-#define OFI_NCCL_PARAM(type, name, env, default_value)					\
+#define OFI_NCCL_PARAM(type, name, env, default_value)                                  \
 	extern class ofi_nccl_param_impl<type> ofi_nccl_##name;
+#endif
+
+#ifndef OFI_NCCL_PARAM_DEPRECATED
+#define OFI_NCCL_PARAM_DEPRECATED(type, name, env, default_value, deprecation_msg)      \
+	extern class ofi_nccl_param_deprecated_impl<type> ofi_nccl_##name;
+#endif
+
+#ifndef OFI_NCCL_PARAM_REMOVED
+#define OFI_NCCL_PARAM_REMOVED(type, name, env, default_value, deprecation_msg)         \
+	extern class ofi_nccl_param_deprecated_impl<type> ofi_nccl_##name;
 #endif
 
 
