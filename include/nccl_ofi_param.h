@@ -29,22 +29,10 @@
 #define OFI_NCCL_PARAM(type, name, env, default_value) \
 	extern class ofi_nccl_param_impl<type> ofi_nccl_##name;
 
-#define OFI_NCCL_PARAM_UINT(name, env, default_value) \
-	OFI_NCCL_PARAM(long unsigned int, name, env, default_value)
-
-#define OFI_NCCL_PARAM_INT(name, env, default_value) \
-	OFI_NCCL_PARAM(int, name, env, default_value)
-
 #else
 
 #define OFI_NCCL_PARAM(type, name, env, default_value) \
 	class ofi_nccl_param_impl<type> ofi_nccl_##name("OFI_NCCL_"  env, default_value);
-
-#define OFI_NCCL_PARAM_UINT(name, env, default_value)	\
-	OFI_NCCL_PARAM(long unsigned int, name, env, default_value)
-
-#define OFI_NCCL_PARAM_INT(name, env, default_value) \
-	OFI_NCCL_PARAM(int, name, env, default_value)
 
 #endif
 
@@ -76,7 +64,7 @@ OFI_NCCL_PARAM(bool, gdr_flush_disable, "GDR_FLUSH_DISABLE", false);
  * NIC_DUP_CONNS.  Each chosen Libfabric provider will be duplicated N
  * times and exposed to NCCL as a unique endpoint.
  */
-OFI_NCCL_PARAM_INT(nic_dup_conns, "NIC_DUP_CONNS", 0);
+OFI_NCCL_PARAM(int, nic_dup_conns, "NIC_DUP_CONNS", 0);
 
 /*
  * When using GPUDirect use the cudaDeviceFlushGPUDirectRDMAWrites
@@ -92,7 +80,7 @@ OFI_NCCL_PARAM(bool, cuda_flush_enable, "CUDA_FLUSH_ENABLE", false);
  * Specify the memory registration key size in bytes when using a libfabric
  * provider that supports application-selected memory registration keys.
  */
-OFI_NCCL_PARAM_UINT(mr_key_size, "MR_KEY_SIZE", 2);
+OFI_NCCL_PARAM(unsigned long int, mr_key_size, "MR_KEY_SIZE", 2);
 
 /*
  * Disable the MR cache. The MR cache is used to keep track of registered
@@ -179,13 +167,13 @@ OFI_NCCL_PARAM(bool, disable_dmabuf, "DISABLE_DMABUF", false);
 /*
  * Messages sized larger than this threshold will be striped across multiple rails
  */
-OFI_NCCL_PARAM_UINT(min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
+OFI_NCCL_PARAM(unsigned long int, min_stripe_size, "MIN_STRIPE_SIZE", (128 * 1024));
 
 /*
  * The round robin scheduler has two round robin counts, for small (likely
  * control) and medium (likely data) messages.  This parameter moves that value.
  */
-OFI_NCCL_PARAM_UINT(sched_max_small_msg_size, "SCHED_MAX_SMALL_RR_SIZE", 64);
+OFI_NCCL_PARAM(unsigned long int, sched_max_small_msg_size, "SCHED_MAX_SMALL_RR_SIZE", 64);
 
 /*
  * Deprecated value to control both eager and control bounce counts.
@@ -242,7 +230,7 @@ OFI_NCCL_PARAM(float, net_latency, "NET_LATENCY", 0.0);
  * Eager message size limit when using RDMA protocol. Message sizes greater than
  * this limit will always be sent using RDMA write instead of eagerly.
  */
-OFI_NCCL_PARAM_INT(eager_max_size, "EAGER_MAX_SIZE", 8192);
+OFI_NCCL_PARAM(int, eager_max_size, "EAGER_MAX_SIZE", 8192);
 
 /*
  * Decide whether or not mutexes should default to errorcheck mode.
@@ -288,7 +276,7 @@ OFI_NCCL_PARAM(TUNER_TYPE, tuner_force_type, "TUNER_TYPE", TUNER_TYPE::REGION);
  * can come later (once a proto+algo combination is chosen, we can compute the
  * cost with different channel count and optimize for it.
  */
-OFI_NCCL_PARAM_INT(tuner_num_channels, "TUNER_NUM_CHANNELS", 8);
+OFI_NCCL_PARAM(int, tuner_num_channels, "TUNER_NUM_CHANNELS", 8);
 
 /*
  * Latency in µsecs. Note, this is currently different from the network plugin's param for
@@ -298,13 +286,13 @@ OFI_NCCL_PARAM_INT(tuner_num_channels, "TUNER_NUM_CHANNELS", 8);
  * combine the parameters. This parameter is meant for internal testing only and
  * is not meant to be documented for users.
  */
-OFI_NCCL_PARAM_INT(tuner_net_latency, "TUNER_NET_LATENCY", 20);
+OFI_NCCL_PARAM(int, tuner_net_latency, "TUNER_NET_LATENCY", 20);
 
 /*
  * With EFA, we expect a ~2µsec cost in the device and ~1µsec cost to write that
  * completion up to the host stack.
  */
-OFI_NCCL_PARAM_INT(tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
+OFI_NCCL_PARAM(int, tuner_net_comp_overhead, "TUNER_NET_COMP_OVERHEAD", 3);
 
 /*
  * Do we want to set the LOW_LATENCY traffic class for control
@@ -361,7 +349,7 @@ OFI_NCCL_PARAM(bool, skip_nics_without_accel,
  * Posting buffers will use more memory, but may make connection establishment
  * complete more quickly, especially with large numbers of ranks.
  */
-OFI_NCCL_PARAM_UINT(cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
+OFI_NCCL_PARAM(unsigned long int, cm_num_rx_buffers, "CM_NUM_RX_BUFFERS", 32);
 
 /*
  * Progress mode requested.  Valid options are AUTO, MANUAL,
