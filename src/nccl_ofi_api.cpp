@@ -65,6 +65,12 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	ofi_log_function = logFunction;
 
+	// initialize environment variable system
+	ret = ofi_nccl_parameters_init();
+	if (OFI_UNLIKELY(ret != 0)) {
+		return nccl_net_ofi_retval_translate_impl(ret);
+	}
+
 	abort_on_error = (ofi_nccl_abort_on_error() != 0);
 	try {
 		ret = nccl_net_ofi_create_plugin(&plugin);

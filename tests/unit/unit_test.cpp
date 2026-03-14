@@ -10,6 +10,7 @@
 #include "unit_test.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
+#include "nccl_ofi_param_impl.h"
 
 static inline void logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
 			  int line, const char *fmt, ...)
@@ -51,4 +52,10 @@ void unit_test_init()
 {
 	system_page_size = 4096;
 	ofi_log_function = logger;
+
+	int ret = ofi_nccl_parameters_init();
+	if (ret != 0) {
+		printf("Initializing parameter system failed: %d\n", ret);
+		abort();
+	}
 }

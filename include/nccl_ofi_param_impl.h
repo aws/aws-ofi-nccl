@@ -8,15 +8,18 @@
 #include <boost/preprocessor.hpp>
 #include <cstring>
 #include <errno.h>
+#include <forward_list>
 #include <iostream>
 #include <mutex>
 #include <optional>
 #include <sstream>
 #include <type_traits>
 
+#include "nccl_ofi_assert.h"
 #include "nccl_ofi_log.h"
 
 enum class ParamSource {
+	INVALID,
 	DEFAULT,
 	ENVIRONMENT,
 	API
@@ -155,6 +158,28 @@ inline std::string ofi_nccl_param_value_to_string<bool>(const bool val)
 }
 
 
+class ofi_nccl_param_base;
+
+// list of parameters that have been declared.  Today only useful for initialization.
+extern std::forward_list<ofi_nccl_param_base *> ofi_nccl_parameter_list;
+
+// Initializer function.  Must be called before the first use of any parameter.
+extern int ofi_nccl_parameters_init();
+
+
+// base class for parameter objects.  Exists only for managing the delayed
+// initialization path
+class ofi_nccl_param_base {
+public:
+	ofi_nccl_param_base()
+	{
+		ofi_nccl_parameter_list.push_front(this);
+	}
+
+	virtual int initialize() = 0;
+};
+
+
 // class for representing parameters.  Each parameter is its own object (we
 // could likely do better than that if we enabled RTTI, but we don't want to do
 // that for performance reasons right now).
@@ -169,33 +194,52 @@ inline std::string ofi_nccl_param_value_to_string<bool>(const bool val)
 // The same idempotency is not guaranteed for get_source() calls, as calls to
 // set() are allowed after get_source() is called.
 template <typename T>
-class ofi_nccl_param_impl {
+class ofi_nccl_param_impl : public ofi_nccl_param_base {
 public:
 	ofi_nccl_param_impl(const char *envname_arg, const T default_val)
 		: envname(envname_arg), retrieved(false),
-		  source(ParamSource::DEFAULT), val(default_val)
+		  source(ParamSource::INVALID), val(default_val)
 	{
+	}
+
+
+	virtual int initialize()
+	{
+		std::lock_guard l(lock);
+
+		source = ParamSource::DEFAULT;
+
 		char *envval = getenv(envname);
 		if (envval != NULL) {
 			source = ParamSource::ENVIRONMENT;
 			auto val_opt = ofi_nccl_param_string_to_value<T>(envval);
 			if (!val_opt) {
-				// object creation happens before plugin init(),
-				// so NCCL_OFI_WARN will not be initialized at
-				// this point.
-				std::cerr << "WARNING: " << envname << " set to invalid value "
-					  << envval << std::endl;
-				throw std::runtime_error("Invalid environment option value");
+				NCCL_OFI_WARN("WARNING: %s set to invalid value %s",
+					      envname, envval);
+				return -EINVAL;
 			} else {
 				val = *val_opt;
 			}
 		}
+
+		return 0;
 	}
 
+
+	void verify_active()
+	{
+		if (this->source == ParamSource::INVALID) {
+			NCCL_OFI_WARN("Param %s used before initialized", this->envname);
+			assert_always(0);
+		}
+	}
 
 	T get()
 	{
 		std::lock_guard l(lock);
+
+		verify_active();
+
 		retrieved = true;
 		return val;
 	}
@@ -204,6 +248,9 @@ public:
 	const char *get_string()
 	{
 		std::lock_guard l(lock);
+
+		verify_active();
+
 		retrieved = true;
 		if (!string_val) {
 			string_val = ofi_nccl_param_value_to_string<T>(val);
@@ -224,6 +271,8 @@ public:
 	{
 		std::lock_guard l(lock);
 
+		verify_active();
+
 		if (retrieved) {
 			NCCL_OFI_WARN("Attempt to set %s after get() called.", envname);
 			return -EINVAL;
@@ -236,6 +285,9 @@ public:
 	ParamSource get_source()
 	{
 		std::lock_guard l(lock);
+
+		verify_active();
+
 		return source;
 	}
 

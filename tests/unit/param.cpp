@@ -115,60 +115,40 @@ static void check_value_to_string()
 
 static void check_invalid_variable()
 {
-	bool caught = false;
-
 	setenv("OFI_NCCL_CHECK_INVALID", "true", 1);
 
-	try {
-		ofi_nccl_param_impl<int> param("OFI_NCCL_CHECK_INVALID", 0);
-	} catch (...) {
-		caught = true;
-	}
-	assert_always(caught);
+	ofi_nccl_parameter_list.clear();
+	ofi_nccl_param_impl<int> param("OFI_NCCL_CHECK_INVALID", 0);
+	assert_always(ofi_nccl_parameters_init() == -EINVAL);
 }
 
 
 static void check_sources()
 {
+	ofi_nccl_parameter_list.clear();
 	ofi_nccl_param_impl<int> param1("OFI_NCCL_CHECK_SOURCES", 1);
+	assert_always(ofi_nccl_parameters_init() == 0);
 	assert_always(param1.get_source() == ParamSource::DEFAULT);
 
 	param1.set(2);
 	assert_always(param1.get_source() == ParamSource::API);
 
 	setenv("OFI_NCCL_CHECK_SOURCES", "1", 1);
+	ofi_nccl_parameter_list.clear();
 	ofi_nccl_param_impl<int> param2("OFI_NCCL_CHECK_SOURCES", 1);
+	assert_always(ofi_nccl_parameters_init() == 0);
 	assert_always(param2.get_source() == ParamSource::ENVIRONMENT);
 }
 
 
 static void check_late_set()
 {
+	ofi_nccl_parameter_list.clear();
 	ofi_nccl_param_impl<int> param("womp", 1);
+	assert_always(ofi_nccl_parameters_init() == 0);
 	assert_always(param() == 1);
 	assert_always(param.set(5) == -EINVAL);
 }
-
-
-static void checking_logger(ncclDebugLogLevel level, unsigned long flags, const char *filefunc,
-			    int line, const char *fmt, ...)
-{
-	assert_always(false);
-}
-
-
-static void check_init_logger()
-{
-	// The param init code can't use the logger, because the param init code
-	// is all called before the plugin is initialized by NCCL.  Add a test
-	// to make sure we don't mess that up in the future.
-	nccl_ofi_logger_t curr_logger = ofi_log_function;
-
-	ofi_log_function = checking_logger;
-	check_invalid_variable();
-	ofi_log_function = curr_logger;
-}
-
 
 
 int main(int argc, char *argv[])
@@ -180,7 +160,6 @@ int main(int argc, char *argv[])
 	check_invalid_variable();
 	check_sources();
 	check_late_set();
-	check_init_logger();
 
 	return 0;
 }
