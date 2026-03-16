@@ -323,7 +323,7 @@ AC_DEFINE_UNQUOTED([NCCL_OFI_WANT_THREAD_ANALYSIS], [$tsa_define],
 werror_flags="-Werror"
 AC_ARG_ENABLE([werror],
    [AS_HELP_STRING([--enable-werror], [(Developer) Enable setting -Werror.  Off by default, unless building from Git tree.])])
-AS_IF([test -d "${srcdir}/.git" -a -z "${enable_werror}"],
+AS_IF([test -e "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Found .git directory.  Adding ${werror_flags} to CXXFLAGS.])
        CXXFLAGS="${werror_flags} ${CXXFLAGS} "],
       [test "${enable_werror}" = "yes"],

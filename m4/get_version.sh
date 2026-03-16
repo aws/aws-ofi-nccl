@@ -13,7 +13,7 @@ if test -f .release_version ; then
 fi
 
 # pull the version from git
-if test -d .git ; then
+if git rev-parse --git-dir > /dev/null 2>&1 ; then
     # am I on a tag?
     version=`git tag --points-at HEAD`
     if test ${?} -ne 0 ; then
