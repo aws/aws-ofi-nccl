@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-#include "test-common.h"
+#include "functional_test.h"
 
 int main(int argc, char *argv[])
 {
@@ -15,9 +15,9 @@ int main(int argc, char *argv[])
 	/* Plugin defines */
 	int ndev;
 
-	nccl_net_ofi_send_comm *sComm_next = NULL;
-	nccl_net_ofi_listen_comm *lComm = NULL;
-	nccl_net_ofi_recv_comm *rComm = NULL;
+	void *sComm_next = NULL;
+	void *lComm = NULL;
+	void *rComm = NULL;
 	char handle[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_prev[NCCL_NET_HANDLE_MAXSIZE] = {};
 	char src_handle_next[NCCL_NET_HANDLE_MAXSIZE] = {};
@@ -26,11 +26,10 @@ int main(int argc, char *argv[])
 	void *net_ctx = NULL;
 	test_nccl_net_config_t config = {.trafficClass = -1};
 
-	ofi_log_function = logger;
 
 	/* Initialisation for data transfer */
-	nccl_net_ofi_req *send_req[NUM_REQUESTS] = {NULL};
-	nccl_net_ofi_req *recv_req[NUM_REQUESTS] = {NULL};
+	void *send_req[NUM_REQUESTS] = {NULL};
+	void *recv_req[NUM_REQUESTS] = {NULL};
 	void *send_mhandle[NUM_REQUESTS];
 	void *recv_mhandle[NUM_REQUESTS];
 	int req_completed_send[NUM_REQUESTS] = {};
@@ -59,9 +58,9 @@ int main(int argc, char *argv[])
 
 	/* For grouped receives */
 	int tag = 1;
-	int nrecv = NCCL_OFI_MAX_RECVS;
+	int nrecv = TEST_NUM_RECVS;
 	size_t *sizes = (size_t *)malloc(sizeof(size_t) * nrecv);
-	int sizesInt[NCCL_OFI_MAX_RECVS];
+	int sizesInt[TEST_NUM_RECVS];
 	int *tags = (int *)malloc(sizeof(int)*nrecv);
 	if (sizes == NULL || tags == NULL) {
 		NCCL_OFI_WARN("Failed to allocate memory");
@@ -131,7 +130,7 @@ int main(int argc, char *argv[])
 	}
 
 	/* Init API */
-	OFINCCLCHECKGOTO(extNet->init(&net_ctx, 0, &config, logger, nullptr), res, exit);
+	OFINCCLCHECKGOTO(extNet->init(&net_ctx, 0, &config, functional_test_logger, nullptr), res, exit);
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCLNet device used on %s is %s.",
 		      rank, &all_proc_name[PROC_NAME_IDX(rank)], extNet->name);
 
@@ -294,7 +293,7 @@ int main(int argc, char *argv[])
 						NCCL_OFI_TRACE(NCCL_NET,
 							"Issue flush for data consistency. Request idx: %d",
 							idx);
-						nccl_net_ofi_req *iflush_req = NULL;
+						void *iflush_req = NULL;
 						OFINCCLCHECKGOTO(extNet->iflush((void *)rComm, nrecv,
 										(void **)&recv_buf[idx], sizesInt,
 										&recv_mhandle[idx], (void **)&iflush_req), res, exit);
@@ -306,10 +305,7 @@ int main(int argc, char *argv[])
 						}
 					}
 
-					if ((buffer_type == NCCL_PTR_CUDA) && !ofi_nccl_gdr_flush_disable()) {
-						/* Data validation may fail if flush operations are disabled */
-					} else
-						OFINCCLCHECKGOTO(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type), res, exit);
+					OFINCCLCHECKGOTO(validate_data(recv_buf[idx], expected_buf, SEND_SIZE, buffer_type), res, exit);
 
 					/* Deregister memory handle */
 					OFINCCLCHECKGOTO(extNet->deregMr((void *)rComm, recv_mhandle[idx]), res, exit);

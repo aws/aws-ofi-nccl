@@ -8,7 +8,7 @@
  */
 
 #include "config.h"
-#include "test-common.h"
+#include "functional_test.h"
 
 class MessageTransferTest : public TestScenario {
 
@@ -58,7 +58,6 @@ private:
 
 int main(int argc, char* argv[])
 {
-	ofi_log_function = logger;
 	TestSuite suite;
 	MessageTransferTest test;
 	MessageTransferTest mt_test(4);

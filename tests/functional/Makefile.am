@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2023, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2026, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -11,7 +11,7 @@ AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 AM_CPPFLAGS += $(MPI_CPPFLAGS) $(CUDA_CPPFLAGS)
 AM_LDFLAGS = $(MPI_LDFLAGS) $(CUDA_LDFLAGS)
-LDADD = $(top_builddir)/src/libinternal_plugin.la $(MPI_LIBS) $(CUDA_LIBS) $(CUDA_RUNTIME_LIBS)
+LDADD = $(MPI_LIBS) $(CUDA_LIBS) $(CUDA_RUNTIME_LIBS)
 
 # this is a little jenky, but we've always assumed we had wrapper compilers
 # available for MPI.  We don't want to just override CXX to get mpicxx used,
@@ -31,14 +31,16 @@ CXXLINK = OMPI_CXX="$(CXX)" MPICH_CXX="$(CXX)" \
 
 
 if ENABLE_FUNC_TESTS
-noinst_HEADERS = test-common.h
+noinst_HEADERS = functional_test.h
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin
 
-nccl_connection_SOURCES = nccl_connection.cpp
-nccl_message_transfer_SOURCES = nccl_message_transfer.cpp
-ring_SOURCES = ring.cpp
-inflight_close_SOURCES = inflight_close.cpp
-reuse_listen_comm_SOURCES = reuse_listen_comm.cpp
-gin_SOURCES = gin.cpp
+base_sources = functional_test.cpp
+
+nccl_connection_SOURCES = $(base_sources) nccl_connection.cpp
+nccl_message_transfer_SOURCES = $(base_sources) nccl_message_transfer.cpp
+ring_SOURCES = $(base_sources) ring.cpp
+inflight_close_SOURCES = $(base_sources) inflight_close.cpp
+reuse_listen_comm_SOURCES = $(base_sources) reuse_listen_comm.cpp
+gin_SOURCES = $(base_sources) gin.cpp
 endif
