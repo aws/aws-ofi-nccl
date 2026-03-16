@@ -7,7 +7,7 @@
  */
 
 #include "config.h"
-#include "test-common.h"
+#include "functional_test.h"
 
 class ConnectionTest : public TestScenario {
 public:
@@ -45,7 +45,6 @@ public:
 
 int main(int argc, char* argv[])
 {
-	ofi_log_function = logger;
 	TestSuite suite;
 	ConnectionTest test;
 	ConnectionTest mt_test(4);

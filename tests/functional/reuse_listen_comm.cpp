@@ -7,7 +7,7 @@
  */
 
 #include "config.h"
-#include "test-common.h"
+#include "functional_test.h"
 
 class ReuseListenCommTest : public TestScenario {
 public:
@@ -126,7 +126,6 @@ private:
 
 int main(int argc, char* argv[])
 {
-	ofi_log_function = logger;
 	TestSuite suite;
 	ReuseListenCommTest test(0, 10);      // single-threaded, 10 iterations
 	ReuseListenCommTest mt_test(4, 10);   // 4 threads, 10 iterations each

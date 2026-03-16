@@ -4,8 +4,9 @@
 
 #include "config.h"
 
-#include "test-common.h"
+#include "functional_test.h"
 
+#include <assert.h>
 #include <deque>
 #include <vector>
 
@@ -85,8 +86,6 @@ int main(int argc, char *argv[])
 	std::vector<proc_handle> handles(nranks);
 	std::vector<void *> handles_ptrs(nranks);
 
-	ofi_log_function = logger;
-
 	if (nranks < 2) {
 		NCCL_OFI_WARN("Expected at least two ranks but got %d. "
 			      "The gin functional test should be run with at least two ranks.",
@@ -134,12 +133,12 @@ int main(int argc, char *argv[])
 	 * the underlying structures. NCCL will always initialize the net plugin
 	 * before the GIN plugin, so emulating that behavior here.
 	 */
-	OFINCCLCHECK(extNet->init(&netCtx, 0, &netConfig, &logger, nullptr));
+	OFINCCLCHECK(extNet->init(&netCtx, 0, &netConfig, &functional_test_logger, nullptr));
 
 	void *ginCtx = nullptr;
 
 	/* Init API */
-	OFINCCLCHECK(extGin->init(&ginCtx, 0, &logger));
+	OFINCCLCHECK(extGin->init(&ginCtx, 0, &functional_test_logger));
 	NCCL_OFI_INFO(NCCL_NET, "Process rank %d started. NCCL-GIN device used on %s is %s.", rank,
 		      &all_proc_name[PROC_NAME_IDX(rank)], extGin->name);
 
@@ -210,7 +209,10 @@ int main(int argc, char *argv[])
 
 	const int send_val = 42; /* arbitrary */
 	const int NUM_REQS_PER_PEER = 64;
-	assert((NUM_REQS_PER_PEER * 2) <= NCCL_OFI_MAX_REQUESTS);
+	/* TODO: using the public interface, there's no way to verify the
+	 * assumption that we can have 2 * NUM_REQS_PER_PEER outstanding, given
+	 * that the public interface sets a much smaller MAX_REQUESTS limit
+	 */
 
 	if (rank == 0) {
 		OFINCCLCHECK(initialize_buff(put_buff, SEND_SIZE, buffer_type, send_val));
