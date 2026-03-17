@@ -22,24 +22,7 @@ struct gin_connect_handle {
 	 * structs. The member `num_rails` indicates
 	 * the number of entries that are in use. */
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
-
-	/* Write ack buffer addr and its mr_key */
-	uint64_t write_ack_buff_addr_offset;
-	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
 };
-
-static inline void set_write_ack_buff_info(nccl_ofi_gin_resources &resources,
-					   gin_connect_handle &handle)
-{
-	handle.write_ack_buff_addr_offset = resources.get_write_ack_buffer_addr_offset();
-	auto *mr_handle = resources.get_write_ack_buffer_mr_handle();
-
-	for (size_t i = 0; i < resources.get_ep().get_num_rails(); ++i) {
-		uint64_t key = fi_mr_key(mr_handle->get_mr(i));
-		assert_always(key != FI_KEY_NOTAVAIL);
-		handle.write_ack_buff_mr_key[i] = key;
-	}
-}
 
 nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
@@ -185,8 +168,6 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 		set_rail_address(gin_ep.get_rail(i), my_gin_handle.ep_names[i]);
 	}
 
-	set_write_ack_buff_info(gin_comm->resources, my_gin_handle);
-
 	gin_comm->rank_comms.resize(nranks);
 
 	/**
@@ -207,7 +188,6 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 		const gin_connect_handle &gin_handle = all_handles[i];
 		nccl_ofi_gin_peer_rank_info &remote_rank_comm = gin_comm->rank_comms[i];
 		remote_rank_comm.comm_id = gin_handle.comm_id;
-		remote_rank_comm.write_ack_buff_addr_offset = gin_handle.write_ack_buff_addr_offset;
 
 		for (int r = 0; r < num_rails; ++r) {
 			ret = rail_addr_insert(gin_ep.get_rail(r), gin_handle.ep_names[r],
@@ -217,8 +197,6 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 				delete gin_comm;
 				return ret;
 			}
-			remote_rank_comm.write_ack_buff_mr_key[r] =
-				gin_handle.write_ack_buff_mr_key[r];
 		}
 	}
 
@@ -226,10 +204,10 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 	return 0;
 }
 
-int nccl_ofi_gin_comm::writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
-				     uint32_t ack_seq_num, uint32_t count)
+int nccl_ofi_gin_comm::send_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
+			       uint32_t ack_seq_num, uint32_t count)
 {
-	assert(count <= GIN_IMM_ACK_COUNT_MASK);
+	assert(count <= GIN_ACK_COUNT_MASK);
 
 	/* For now, always send acks on rail 0.
 	   TODO round-robin this like the payload data itself. */
@@ -237,15 +215,34 @@ int nccl_ofi_gin_comm::writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_
 
 	auto &rank_comm = gin_comm.rank_comms[peer_rank];
 	uint32_t peer_comm_id = rank_comm.comm_id;
-	uint32_t imm_data = GIN_IMM_ACK_DATA(peer_comm_id, ack_seq_num, count);
 
 	auto &ep = gin_comm.resources.get_ep();
+	auto *ack_fl = gin_comm.resources.get_ack_send_fl();
+
+	auto *ack_elem = ack_fl->entry_alloc();
+	if (!ack_elem) {
+		NCCL_OFI_WARN("Failed to allocate ACK send buffer");
+		return -ENOMEM;
+	}
+
+	auto *ack_msg = static_cast<gin_ack_msg_t *>(ack_elem->ptr);
+	ack_msg->msg_type = GIN_MSG_TYPE_ACK;
+	ack_msg->reserved = 0;
+	ack_msg->comm_id = static_cast<uint16_t>(peer_comm_id);
+	ack_msg->ack_seq_num = static_cast<uint16_t>(ack_seq_num);
+	ack_msg->count = static_cast<uint16_t>(count);
 
 	auto *ofi_ep = ep.get_rail(rail_id).ofi_ep.get();
 
-	auto *req = gin_comm.resources.get_req_from_pool<nccl_net_ofi_gin_writeack_req_t>(
-		gin_comm, ofi_ep, rail_id, imm_data, rank_comm.address[rail_id],
-		rank_comm.write_ack_buff_addr_offset, rank_comm.write_ack_buff_mr_key[rail_id]);
+	nccl_net_ofi_gin_sendack_req_t *req;
+	try {
+		req = gin_comm.resources.get_req_from_pool<nccl_net_ofi_gin_sendack_req_t>(
+			gin_comm, ofi_ep, rail_id, ack_elem,
+			rank_comm.address[rail_id], ack_fl);
+	} catch (...) {
+		ack_fl->entry_free(ack_elem);
+		throw;
+	}
 
 	NCCL_OFI_TRACE_GIN_ACK_SEND(dev, rail_id, &gin_comm, peer_rank, ack_seq_num);
 
@@ -683,13 +680,13 @@ int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 		/* Flush if adding this seq_num would overflow the 10-bit
 		   ack_count field. range_span uses GIN_IMM_SEQ_MASK for
 		   correct wraparound in the 11-bit sequence space.
-		   ack_count uses GIN_IMM_ACK_COUNT_MASK to match the
+		   ack_count uses GIN_ACK_COUNT_MASK to match the
 		   10-bit field it is encoded into. */
 		if (any_ack_requested) {
 			uint32_t range_span = ((next_seq_num - first_acked_seq_num + 1) & GIN_IMM_SEQ_MASK);
-			if (range_span > GIN_IMM_ACK_COUNT_MASK) {
-				uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_IMM_ACK_COUNT_MASK);
-				ret = writedata_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
+			if (range_span > GIN_ACK_COUNT_MASK) {
+				uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_ACK_COUNT_MASK);
+				ret = send_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
 				if (OFI_UNLIKELY(ret != 0)) {
 					return ret;
 				}
@@ -732,11 +729,11 @@ int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 	}
 
 	/* Flush any remaining accumulated range ACK. ack_count uses
-	   GIN_IMM_ACK_COUNT_MASK to match the 10-bit field; the
+	   GIN_ACK_COUNT_MASK to match the 10-bit field; the
 	   mid-loop overflow guard ensures the value always fits. */
 	if (any_ack_requested) {
-		uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_IMM_ACK_COUNT_MASK);
-		ret = writedata_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
+		uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_ACK_COUNT_MASK);
+		ret = send_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
 	}
 
 	return ret;
@@ -777,39 +774,43 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 	return ret;
 }
 
+int nccl_ofi_gin_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
+					     const gin_ack_msg_t *ack_msg)
+{
+	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
+	uint16_t ack_seq_num = ack_msg->ack_seq_num;
+	uint16_t count = ack_msg->count;
+	assert(count > 0);
+
+	NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, this, peer_rank, ack_seq_num);
+
+	/* Self-contained range ACK: clear ack_outstanding from start_seq
+	   to ack_seq_num. Each ACK carries ack_seq_num and a count so
+	   the sender needs no cumulative state (e.g. last_acked_seq_num).
+	   This is critical because EFA does not guarantee fi_send
+	   ordering — ACKs from different deliver_all calls can arrive
+	   in any order. A single ack_seq_num would require cumulative
+	   state that breaks under reordering. */
+	uint16_t start_seq = (ack_seq_num - count + 1) & GIN_IMM_SEQ_MASK;
+
+	uint16_t seq = start_seq;
+	while (true) {
+		clear_ack_outstanding(peer_rank, seq);
+		if (seq == ack_seq_num) {
+			break;
+		}
+		seq = (seq + 1) & GIN_IMM_SEQ_MASK;
+	}
+	return 0;
+}
+
 int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
-						      bool is_ack_msg, uint16_t msg_seq_num,
-						      uint64_t total_segms, size_t len,
-						      bool is_ack_requested, uint16_t ack_count)
+						      uint16_t msg_seq_num, uint64_t total_segms,
+						      size_t len, bool is_ack_requested)
 {
 	int ret = 0;
 
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
-	if (is_ack_msg) {
-		assert(len == 0);
-
-		/* Self-contained range ACK: clear ack_outstanding from start_seq
-		   to ack_seq_num. Each ACK carries ack_seq_num and a count so
-		   the sender needs no cumulative state (e.g. last_acked_seq_num).
-		   This is critical because EFA does not guarantee fi_writedata
-		   ordering — ACKs from different deliver_all calls can arrive
-		   in any order. A single ack_seq_num would require cumulative
-		   state that breaks under reordering. */
-		uint16_t ack_seq_num = msg_seq_num;
-		uint16_t start_seq = (ack_seq_num - ack_count + 1) & GIN_IMM_SEQ_MASK;
-
-		NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, this, peer_rank, ack_seq_num);
-
-		uint16_t seq = start_seq;
-		while (true) {
-			clear_ack_outstanding(peer_rank, seq);
-			if (seq == ack_seq_num) {
-				break;
-			}
-			seq = (seq + 1) & GIN_IMM_SEQ_MASK;
-		}
-		return 0;
-	}
 
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
 

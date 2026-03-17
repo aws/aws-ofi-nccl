@@ -80,42 +80,52 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 
 	if (cq_entry->flags & FI_REMOTE_WRITE) {
 		/* RDMA write-immediate completion */
-		bool is_ack_msg = GIN_IMM_IS_ACK(cq_entry->data);
 		uint32_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
 		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
 
 		auto &gin_comm = resources.get_comm(comm_id);
 
-		uint64_t total_segms = 0;
-		bool is_ack_requested = false;
-		uint16_t ack_count = 0;
-
-		if (is_ack_msg) {
-			ack_count = GIN_IMM_ACK_GET_COUNT(cq_entry->data);
-		} else {
-			total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
-			is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
-		}
+		uint64_t total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
+		bool is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
 		size_t len = cq_entry->len;
 
-		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg, is_ack_msg,
-							      msg_seq_num, total_segms, len,
-							      is_ack_requested, ack_count);
+		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg,
+							      msg_seq_num, total_segms,
+							      len, is_ack_requested);
 		if (ret != 0) {
 			NCCL_OFI_WARN("gin_handle_signal_write_completion failure");
 			return ret;
 		}
 	} else {
-		auto *msg =
-			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(rx_buff_elem->ptr);
+		/* Dispatch by length and message type. Once metadata gains
+		   a msg_type field, length check can be dropped. */
+		if (cq_entry->len == sizeof(gin_ack_msg_t) &&
+		    static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr)->msg_type == GIN_MSG_TYPE_ACK) {
+			auto *ack_msg =
+				static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
 
-		/* Get the gin comm */
-		auto &gin_comm = resources.get_comm(msg->remote_comm_id);
+			auto &gin_comm = resources.get_comm(ack_msg->comm_id);
 
-		ret = gin_comm.handle_signal_metadata_completion(src_addr, rail_id_arg, msg);
-		if (ret != 0) {
-			NCCL_OFI_WARN("gin_handle_signal_metadata_completion failure");
-			return ret;
+			ret = gin_comm.handle_ack_completion(src_addr, rail_id_arg,
+							     ack_msg);
+			if (ret != 0) {
+				NCCL_OFI_WARN("handle_ack_completion failure");
+				return ret;
+			}
+		} else {
+			/* Metadata message */
+			auto *msg = static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(
+				rx_buff_elem->ptr);
+
+			auto &gin_comm = resources.get_comm(msg->remote_comm_id);
+
+			ret = gin_comm.handle_signal_metadata_completion(src_addr,
+									 rail_id_arg, msg);
+			if (ret != 0) {
+				NCCL_OFI_WARN(
+					"gin_handle_signal_metadata_completion failure");
+				return ret;
+			}
 		}
 	}
 
@@ -149,7 +159,7 @@ int nccl_net_ofi_gin_recv_req_t::post_or_add_pending()
 	return ret;
 }
 
-int nccl_net_ofi_gin_writeack_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/,
+int nccl_net_ofi_gin_sendack_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/,
 						     fi_addr_t /*src_addr*/,
 						     uint16_t /*rail_id_arg*/)
 {
@@ -160,23 +170,27 @@ int nccl_net_ofi_gin_writeack_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_e
 	return 0;
 }
 
-int nccl_net_ofi_gin_writeack_req_t::post()
+int nccl_net_ofi_gin_sendack_req_t::post()
 {
-	auto *write_ack_buff = gin_comm.get_resources().get_write_ack_buffer_addr();
+	auto *ack_handle =
+		static_cast<nccl_ofi_gin_mr_handle_t *>(ack_elem->mr_handle);
 
-	auto *desc = fi_mr_desc(
-		gin_comm.get_resources().get_write_ack_buffer_mr_handle()->get_mr(rail_id));
-
-	ssize_t rc = fi_writedata(ep, write_ack_buff, 0, desc, imm_data, remote_addr, dest, key,
-				  &ctx.ofi_ctx);
+	ssize_t rc = fi_send(ep, ack_elem->ptr, sizeof(gin_ack_msg_t),
+			     fi_mr_desc(ack_handle->get_mr(rail_id)), remote_addr,
+			     &ctx.ofi_ctx);
 
 	if (rc != 0 && rc != -FI_EAGAIN) {
-		NCCL_OFI_WARN("Failed to post write ack. RC: %zd", rc);
+		NCCL_OFI_WARN("Failed to post ACK send. RC: %zd", rc);
 	} else if (rc == 0) {
 		gin_comm.increment_outstanding_ack_counter();
 	}
 
 	return rc;
+}
+
+nccl_net_ofi_gin_sendack_req_t::~nccl_net_ofi_gin_sendack_req_t()
+{
+	ack_fl->entry_free(ack_elem);
 }
 
 int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)

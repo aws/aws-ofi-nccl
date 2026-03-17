@@ -152,32 +152,33 @@ private:
  * 1) updates gin_comm->outstanding_ack_counter
  * 2) deletes itself (returns to request pool)
  */
-class nccl_net_ofi_gin_writeack_req_t : public nccl_net_ofi_gin_op_req_t {
+class nccl_net_ofi_gin_sendack_req_t : public nccl_net_ofi_gin_op_req_t {
 public:
 	int handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/, fi_addr_t /*src_addr*/,
 			    uint16_t /*rail_id*/) override;
 
-	nccl_net_ofi_gin_writeack_req_t(nccl_ofi_gin_comm &gin_comm_arg, fid_ep *ep_arg,
-					int rail_id_arg, uint64_t imm_data_arg,
-					fi_addr_t remote_addr_arg, uint64_t dest_arg,
-					uint64_t key_arg)
+	nccl_net_ofi_gin_sendack_req_t(nccl_ofi_gin_comm &gin_comm_arg, fid_ep *ep_arg,
+					int rail_id_arg,
+					nccl_ofi_freelist::fl_entry *ack_elem_arg,
+					fi_addr_t remote_addr_arg,
+					nccl_ofi_freelist *ack_fl_arg)
 	    : nccl_net_ofi_gin_op_req_t(), gin_comm(gin_comm_arg), ep(ep_arg),
-	      imm_data(imm_data_arg), dest(dest_arg), key(key_arg), remote_addr(remote_addr_arg),
-	      rail_id(rail_id_arg)
-
+	      rail_id(rail_id_arg), ack_elem(ack_elem_arg),
+	      remote_addr(remote_addr_arg), ack_fl(ack_fl_arg)
 	{
 	}
 
 	int post() override;
 
+	virtual ~nccl_net_ofi_gin_sendack_req_t() override;
+
 private:
 	nccl_ofi_gin_comm &gin_comm;
 	struct fid_ep *ep;
-	uint64_t imm_data;
-	uint64_t dest;
-	uint64_t key;
-	fi_addr_t remote_addr;
 	int rail_id;
+	nccl_ofi_freelist::fl_entry *ack_elem;
+	fi_addr_t remote_addr;
+	nccl_ofi_freelist *ack_fl;
 };
 
 class nccl_net_ofi_gin_write_req_t;
@@ -388,7 +389,7 @@ union nccl_net_ofi_gin_union_req {
 private:
 	nccl_net_ofi_gin_base_req base_req;
 	nccl_net_ofi_gin_recv_req_t recv_req;
-	nccl_net_ofi_gin_writeack_req_t writeack_req;
+	nccl_net_ofi_gin_sendack_req_t sendack_req;
 	nccl_net_ofi_gin_iputsignal_req_t iputsignal_req;
 	nccl_net_ofi_gin_iputsignal_recv_req iputsignal_recv_req;
 	nccl_net_ofi_gin_write_req_t write_req;
