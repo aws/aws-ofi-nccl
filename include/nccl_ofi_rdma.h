@@ -550,6 +550,10 @@ public:
     int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) override;
     int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) override;
 
+    nccl_net_ofi_rdma_ep_t *get_ep();
+    nccl_net_ofi_rdma_send_comm_rail_t *get_rail(uint16_t rail_id);
+    void free_comm();
+
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
 
@@ -638,6 +642,17 @@ public:
     int flush(int n, void **data, int *sizes, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
     int close() override;
     int read(void* dest, size_t size, void* dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) override;
+
+    nccl_net_ofi_rdma_ep_t *get_ep();
+    nccl_net_ofi_rdma_recv_comm_rail_t *get_rail(uint16_t rail_id);
+    nccl_net_ofi_rdma_recv_comm_rail_t *get_control_rail(uint16_t rail_id);
+    int allocate_recv_req(nccl_net_ofi_rdma_device_t *device,
+			  int dev_id_arg, uint16_t msg_seq_num, void *buff,
+			  size_t size,
+			  nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
+			  nccl_net_ofi_rdma_req **ret_req,
+			  bool recv_completion_optional);
+    void free_comm();
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver;
@@ -1550,25 +1565,4 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   bool *found_multi_rail,
 			   nccl_ofi_topo_t *topo);
 
-/*
- * @brief Return send communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_send_comm_rail_t *rdma_send_comm_get_rail(nccl_net_ofi_rdma_send_comm *s_comm,
-								uint16_t rail_id)
-{
-	assert(s_comm->rails);
-	assert(rail_id < s_comm->num_rails);
-	return &s_comm->rails[rail_id];
-}
-
-/*
- * @brief Return receive communicator rail with index `rail_id`
- */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_rail(nccl_net_ofi_rdma_recv_comm *r_comm,
-								uint16_t rail_id)
-{
-	assert(r_comm->rails);
-	assert(rail_id < r_comm->num_rails);
-	return &r_comm->rails[rail_id];
-}
 #endif // End NCCL_OFI_RDMA_H_

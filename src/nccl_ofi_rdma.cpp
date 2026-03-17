@@ -174,25 +174,44 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 }
 
 
-static nccl_net_ofi_rdma_ep_t *rdma_send_comm_get_ep(nccl_net_ofi_rdma_send_comm *s_comm)
+nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_send_comm::get_ep()
 {
-	return (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	return (nccl_net_ofi_rdma_ep_t *)this->ep;
 }
 
 /*
  * @brief Return receive communicator control rail with index `rail_id`
  */
-static inline nccl_net_ofi_rdma_recv_comm_rail_t *rdma_recv_comm_get_control_rail(nccl_net_ofi_rdma_recv_comm *r_comm,
-								uint16_t rail_id)
+nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_control_rail(uint16_t rail_id)
 {
-	assert(r_comm->control_rails);
-	assert(rail_id < r_comm->num_control_rails);
-	return &r_comm->control_rails[rail_id];
+	assert(this->control_rails);
+	assert(rail_id < this->num_control_rails);
+	return &this->control_rails[rail_id];
 }
 
-static nccl_net_ofi_rdma_ep_t *rdma_recv_comm_get_ep(nccl_net_ofi_rdma_recv_comm *r_comm)
+nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_recv_comm::get_ep()
 {
-	return (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	return (nccl_net_ofi_rdma_ep_t *)this->ep;
+}
+
+/*
+ * @brief Return send communicator rail with index `rail_id`
+ */
+nccl_net_ofi_rdma_send_comm_rail_t *nccl_net_ofi_rdma_send_comm::get_rail(uint16_t rail_id)
+{
+	assert(this->rails);
+	assert(rail_id < this->num_rails);
+	return &this->rails[rail_id];
+}
+
+/*
+ * @brief Return receive communicator rail with index `rail_id`
+ */
+nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_rail(uint16_t rail_id)
+{
+	assert(this->rails);
+	assert(rail_id < this->num_rails);
+	return &this->rails[rail_id];
 }
 
 
@@ -1443,7 +1462,7 @@ static int post_rma_read(nccl_net_ofi_rdma_req *req)
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
 	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 	uint16_t rail_id = 0;
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_rail(rail_id);
 
 	ssize_t rc;
 	/* Post RMA read */
@@ -2839,10 +2858,9 @@ static inline int insert_recv_segms_req(
 /**
  * @brief	Allocate a new recv req from freelist
  */
-static inline int allocate_rdma_recv_req(
-				nccl_net_ofi_rdma_recv_comm *r_comm,
+int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 				nccl_net_ofi_rdma_device_t *device,
-				int dev_id, uint16_t msg_seq_num, void *buff,
+				int dev_id_arg, uint16_t msg_seq_num, void *buff,
 				size_t size,
 				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 				nccl_net_ofi_rdma_req **ret_req,
@@ -2852,16 +2870,16 @@ static inline int allocate_rdma_recv_req(
 	rdma_req_recv_data_t *recv_data;
 
 	/* Allocate receive request */
-	nccl_net_ofi_rdma_req *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
+	nccl_net_ofi_rdma_req *req = allocate_req(this->nccl_ofi_reqs_fl);
 	if (OFI_UNLIKELY(req == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI receive request for device %d",
-						dev_id);
+						dev_id_arg);
 		return -EINVAL;
 	}
 
 	/* Init receive request */
-	req->comm = r_comm;
-	req->dev_id = dev_id;
+	req->comm = this;
+	req->dev_id = dev_id_arg;
 	req->type = NCCL_OFI_RDMA_RECV;
 	req->msg_seq_num = msg_seq_num;
 
@@ -2873,7 +2891,7 @@ static inline int allocate_rdma_recv_req(
 	recv_data->dst_len = size;
 	recv_data->dest_mr_handle = buff_mr_handle;
 
-	ret = insert_recv_segms_req(r_comm, device, dev_id, msg_seq_num, buff, size, req);
+	ret = insert_recv_segms_req(this, device, dev_id_arg, msg_seq_num, buff, size, req);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to insert receive segments request into recv request");
 		return ret;
@@ -2888,16 +2906,16 @@ static inline int allocate_rdma_recv_req(
 	* been received. Also, since the size of the mailbox is less than MSG_SEQ_NUM_MASK+1
 	* wrap around works fine too */
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	r_comm->ctrl_mailbox[slot].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
+	this->ctrl_mailbox[slot].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 	/* Calculate offset from MR base address. For virtual address mode, base_addr is 0. */
-	r_comm->ctrl_mailbox[slot].buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
-	r_comm->ctrl_mailbox[slot].buff_len = size;
+	this->ctrl_mailbox[slot].buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
+	this->ctrl_mailbox[slot].buff_len = size;
 	if (recv_completion_optional) {
-		r_comm->ctrl_mailbox[slot].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
+		this->ctrl_mailbox[slot].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
 	}
 
 	uint16_t rail_id = 0;
-	for (; rail_id < r_comm->num_rails; rail_id++) {
+	for (; rail_id < this->num_rails; rail_id++) {
 		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id].get());
 
 		if (rkey == FI_KEY_NOTAVAIL) {
@@ -2905,7 +2923,7 @@ static inline int allocate_rdma_recv_req(
 			return -ENOENT;
 		}
 
-		r_comm->ctrl_mailbox[slot].mr_key[rail_id] = rkey;
+		this->ctrl_mailbox[slot].mr_key[rail_id] = rkey;
 	}
 
 	*ret_req = req;
@@ -3100,7 +3118,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 		}
 	}
 
-	ret = allocate_rdma_recv_req(this, device, device_id, msg_seq_num,
+	ret = this->allocate_recv_req(device, device_id, msg_seq_num,
 					buffers[0], sizes[0],
 					mr_handles[0], &req, recv_completion_optional);
 	if (ret != 0) {
@@ -3340,19 +3358,17 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	return ret;
 }
 
-static inline void free_rdma_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm) {
-	if (r_comm) {
-		if (r_comm->control_rails) {
-			free(r_comm->control_rails);
-		}
-		if (r_comm->rails) {
-			free(r_comm->rails);
-		}
-		if (r_comm->ctrl_mailbox) {
-			free(r_comm->ctrl_mailbox);
-		}
-		delete r_comm;
+void nccl_net_ofi_rdma_recv_comm::free_comm() {
+	if (this->control_rails) {
+		free(this->control_rails);
 	}
+	if (this->rails) {
+		free(this->rails);
+	}
+	if (this->ctrl_mailbox) {
+		free(this->ctrl_mailbox);
+	}
+	delete this;
 }
 
 
@@ -3362,7 +3378,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = rdma_recv_comm_get_ep(r_comm);
+	nccl_net_ofi_rdma_ep_t *ep = r_comm->get_ep();
 	if (OFI_UNLIKELY(ep == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -3415,7 +3431,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 	/* Release communicator ID */
 	device->comm_idpool.free_id(r_comm->local_comm_id);
 
-	free_rdma_recv_comm(r_comm);
+	r_comm->free_comm();
 
 	ret = ep->release_ep(false, false);
 
@@ -3592,19 +3608,17 @@ exit:
 	return ret;
 }
 
-static inline void free_rdma_send_comm(nccl_net_ofi_rdma_send_comm *s_comm) {
-	if (s_comm) {
-		if (s_comm->control_rails) {
-			free(s_comm->control_rails);
-		}
-		if (s_comm->rails) {
-			free(s_comm->rails);
-		}
-		if (s_comm->ctrl_mailbox) {
-			free(s_comm->ctrl_mailbox);
-		}
-		delete s_comm;
+void nccl_net_ofi_rdma_send_comm::free_comm() {
+	if (this->control_rails) {
+		free(this->control_rails);
 	}
+	if (this->rails) {
+		free(this->rails);
+	}
+	if (this->ctrl_mailbox) {
+		free(this->ctrl_mailbox);
+	}
+	delete this;
 }
 
 static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
@@ -3641,7 +3655,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
 	}
 #endif
 
-	free_rdma_send_comm(s_comm);
+	s_comm->free_comm();
 
 	ret = ep->release_ep(false, false);
 
@@ -3810,7 +3824,7 @@ int nccl_net_ofi_rdma_recv_comm::close()
 		NCCL_OFI_WARN("Closing recv_comm %p with inflight requests. Invalidating domain",
 			      this);
 
-		auto *endpoint = rdma_recv_comm_get_ep(this);
+		auto *endpoint = this->get_ep();
 		endpoint->rdma_endpoint_abort();
 	}
 
@@ -3881,7 +3895,7 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 	int ret = 0;
 	int flush_n = 0;
 	bool network_busy = false;
-	nccl_net_ofi_rdma_ep_t *endpoint = rdma_recv_comm_get_ep(this);
+	nccl_net_ofi_rdma_ep_t *endpoint = this->get_ep();
 
 	std::lock_guard eplock(endpoint->ep_lock);
 
@@ -4022,7 +4036,7 @@ static inline nccl_net_ofi_rdma_recv_comm *calloc_rdma_recv_comm(int num_rails, 
 
 error:
 
-    free_rdma_recv_comm(r_comm);
+    r_comm->free_comm();
     return NULL;
 }
 
@@ -4304,7 +4318,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	/* Initialize local and remote endpoint resources for each control rail */
 	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 		nccl_net_ofi_rdma_ep_rail_t *rail = ep->rdma_endpoint_get_control_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->control_ep_names[rail_id];
 
@@ -4335,7 +4349,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	/* Initialize local and remote endpoint resources for each rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
-		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_rail(rail_id);
 		nccl_net_ofi_rdma_ep_rail_t *rail = ep->rdma_endpoint_get_rail(rail_id);
 		const nccl_ofi_rdma_ep_name_t *remote_ep_name = &conn_msg->ep_names[rail_id];
 
@@ -4375,7 +4389,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 						NCCL_OFI_RDMA_MSG_SEQ_NUM_START);
 	if (!r_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
-		free_rdma_recv_comm(r_comm);
+		r_comm->free_comm();
 		return NULL;
 	}
 
@@ -4420,7 +4434,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 		if (COMM_ID_INVALID != r_comm->local_comm_id) {
 			device->comm_idpool.free_id(r_comm->local_comm_id);
 		}
-		free_rdma_recv_comm(r_comm);
+		r_comm->free_comm();
 	}
 
 	return NULL;
@@ -4878,7 +4892,7 @@ static int post_rma_write(nccl_net_ofi_rdma_req *req)
 {
 	nccl_net_ofi_rdma_send_comm *s_comm = (nccl_net_ofi_rdma_send_comm *)req->comm;
 	uint16_t rail_id = 0;
-	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = rdma_send_comm_get_rail(s_comm, rail_id);
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail = s_comm->get_rail(rail_id);
 	rdma_req_rma_op_data_t *rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
 	ssize_t rc;
 
@@ -5061,7 +5075,7 @@ static int send_progress(nccl_net_ofi_rdma_req *req)
 
 			/* Get communicator rail information to xfer the req */
 			nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-				rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+				s_comm->get_rail(xfer_info->rail_id);
 
 			ret = post_rdma_eager_send(req, comm_rail, xfer_info);
 		} else {
@@ -5070,7 +5084,7 @@ static int send_progress(nccl_net_ofi_rdma_req *req)
 				nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
 				/* Get communicator rail information to xfer the req */
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-					rdma_send_comm_get_rail(s_comm, xfer_info->rail_id);
+					s_comm->get_rail(xfer_info->rail_id);
 
 				ret = post_rdma_write(req, comm_rail, xfer_info, send_data->no_target_completion);
 
@@ -5112,7 +5126,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm *r_comm,
 		(freelist_regmr_fn_handle_t *)ctrl_fl_elem->mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = fl_handle->mr_handle;
 
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
 	assert(rail_id < mr_handle->num_rails);
 	void *desc = fi_mr_desc(mr_handle->mr[rail_id].get());
@@ -5161,7 +5175,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr[rail_id].get());
-	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = rdma_recv_comm_get_control_rail(r_comm, rail_id);
+	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
 	ssize_t rc = fi_write(comm_rail->local_ep, &r_comm->ctrl_mailbox[slot],
 			ctrl_msg_len, desc,
@@ -5221,7 +5235,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 	// Get communicator rail information to xfer the req
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	uint16_t rx_rail_id = rx_buff_data->rail->rail_id;
-	comm_rail = rdma_recv_comm_get_rail(r_comm, rx_rail_id);
+	comm_rail = r_comm->get_rail(rx_rail_id);
 
 	/* Unpack mr_handle */
 	freelist_regmr_fn_handle_t *fl_handle =
@@ -5266,7 +5280,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 
 	/* iterate all rails and post RDMA local read */
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
-		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		comm_rail = r_comm->get_rail(rail_id);
 		struct fid_mr *mr_handle = NULL;
 
 		void *desc = fi_mr_desc(domain->flush_buff.mr_handle->mr[rail_id].get());
@@ -5316,7 +5330,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 
 	/* iterate all rails and post RDMA local read */
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
-		comm_rail = rdma_recv_comm_get_rail(r_comm, rail_id);
+		comm_rail = r_comm->get_rail(rail_id);
 		struct fid_mr *mr_handle = NULL;
 
 		freelist_regmr_fn_handle_t *fl_handle =
@@ -5579,7 +5593,7 @@ int nccl_net_ofi_rdma_send_comm::close()
 		NCCL_OFI_WARN("Closing send_comm %p with inflight requests. Invalidating domain",
 				s_comm);
 
-		auto *endpoint = rdma_send_comm_get_ep(s_comm);
+		auto *endpoint = s_comm->get_ep();
 		endpoint->rdma_endpoint_abort();
 	} else {
 		assert (s_comm->num_inflight_writes == 0);
@@ -5682,7 +5696,7 @@ static inline nccl_net_ofi_rdma_send_comm *calloc_rdma_send_comm(int num_rails, 
 
 error:
 
-    free_rdma_send_comm(s_comm);
+    s_comm->free_comm();
     return NULL;
 }
 
@@ -6031,7 +6045,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 		domain_ptr->domain_lock.lock();
 		this->decrement_ref_cnt();
 		domain_ptr->domain_lock.unlock();
-		free_rdma_send_comm(ret_s_comm);
+		ret_s_comm->free_comm();
 	}
 
 	return ret;
