@@ -8,6 +8,7 @@
 
 #include <rdma/fabric.h>
 
+#include <array>
 #include <deque>
 
 #include "nccl_ofi.h"
@@ -538,11 +539,14 @@ typedef struct nccl_net_ofi_rdma_send_comm_rail {
 /*
  * @brief	RDMA send communicator
  *
- * Use function `calloc_rdma_send_comm(int num_rails, int num_control_rails)' to
- * allocate a RDMA send communicator with `num_rails'+`num_control_rails' rails.
+ * Rails and control rails are fixed-size arrays of MAX_NUM_RAILS.
+ * The constructor allocates a page-aligned control mailbox.
  */
 class nccl_net_ofi_rdma_send_comm : public nccl_net_ofi_send_comm {
 public:
+	nccl_net_ofi_rdma_send_comm();
+	~nccl_net_ofi_rdma_send_comm() override;
+
     int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
     int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
     int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
@@ -552,7 +556,6 @@ public:
 
     nccl_net_ofi_rdma_ep_t *get_ep();
     nccl_net_ofi_rdma_send_comm_rail_t *get_rail(uint16_t rail_id);
-    void free_comm();
 
 	uint64_t num_inflight_reqs;
 	uint64_t num_inflight_writes;
@@ -569,7 +572,7 @@ public:
 
 	/* Number of rails */
 	uint16_t num_rails;
-	/* Number of rails */
+	/* Number of control rails */
 	uint16_t num_control_rails;
 
 #if HAVE_NVTX_TRACING
@@ -583,15 +586,15 @@ public:
 
 	bool comm_active;
 
-	/* Array of `num_rails` communicator rails */
-	nccl_net_ofi_rdma_send_comm_rail_t *rails;
-	/* Array of `num_control_rails` communicator rails */
-	nccl_net_ofi_rdma_send_comm_rail_t *control_rails;
+	/* Fixed-size array of communicator rails */
+	std::array<nccl_net_ofi_rdma_send_comm_rail_t, MAX_NUM_RAILS> rails;
+	/* Fixed-size array of control communicator rails */
+	std::array<nccl_net_ofi_rdma_send_comm_rail_t, MAX_NUM_RAILS> control_rails;
 
 	/* Connect manager send connector */
 	nccl_ofi_cm_send_connector *connector;
 
-	/* Pointer to the sender's control mailbox */
+	/* Pointer to the sender's control mailbox (page-aligned) */
 	nccl_net_ofi_ctrl_msg_t *ctrl_mailbox;
 
 	/* Sender's control mailbox mr_handle */
