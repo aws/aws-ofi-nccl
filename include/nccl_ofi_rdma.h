@@ -634,11 +634,14 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
 /*
  * @brief	RDMA receive communicator
  *
- * Use function `calloc_rdma_recv_comm(int num_rails, int num_control_rails)' to
- * allocate a RDMA receive communicator with `num_rails'+`num_control_rails' rails.
+ * Rails and control rails are fixed-size arrays of MAX_NUM_RAILS.
+ * The constructor allocates a page-aligned control mailbox.
  */
 class nccl_net_ofi_rdma_recv_comm : public nccl_net_ofi_recv_comm {
 public:
+	nccl_net_ofi_rdma_recv_comm();
+	~nccl_net_ofi_rdma_recv_comm() override;
+
     int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
     int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
     int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
@@ -655,7 +658,6 @@ public:
 			  nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 			  nccl_net_ofi_rdma_req **ret_req,
 			  bool recv_completion_optional);
-    void free_comm();
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver;
@@ -702,22 +704,22 @@ public:
 
 	bool comm_active;
 
-	/* Array of `num_rails` communicator rails */
-	nccl_net_ofi_rdma_recv_comm_rail_t *rails;
-	/* Array of `num_control_rails` communicator rails */
-	nccl_net_ofi_rdma_recv_comm_rail_t *control_rails;
+	/* Fixed-size array of communicator rails */
+	std::array<nccl_net_ofi_rdma_recv_comm_rail_t, MAX_NUM_RAILS> rails;
+	/* Fixed-size array of control communicator rails */
+	std::array<nccl_net_ofi_rdma_recv_comm_rail_t, MAX_NUM_RAILS> control_rails;
 
 	/* Pointer to Local control mailbox and mr_handle.
 	* Receiver will populate a slot in its ctrl mailbox to indicate the
 	* presence of a control message. The contents of this slot will then be
 	* written to the control mailbox on the sender side using
-	* remote_mailbox_addr */
+	* remote_mailbox_addr (page-aligned) */
 	nccl_net_ofi_ctrl_msg_t *ctrl_mailbox;
 	nccl_net_ofi_rdma_mr_handle_t *ctrl_mr_handle;
 
 	/* Addr and key of remote control mailbox */
 	uint64_t remote_mailbox_addr;
-	uint64_t remote_mr_key[MAX_NUM_RAILS];
+	std::array<uint64_t, MAX_NUM_RAILS> remote_mr_key;
 };
 
 

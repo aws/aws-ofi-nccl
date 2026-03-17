@@ -184,7 +184,6 @@ nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_send_comm::get_ep()
  */
 nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_control_rail(uint16_t rail_id)
 {
-	assert(this->control_rails);
 	assert(rail_id < this->num_control_rails);
 	return &this->control_rails[rail_id];
 }
@@ -208,7 +207,6 @@ nccl_net_ofi_rdma_send_comm_rail_t *nccl_net_ofi_rdma_send_comm::get_rail(uint16
  */
 nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_rail(uint16_t rail_id)
 {
-	assert(this->rails);
 	assert(rail_id < this->num_rails);
 	return &this->rails[rail_id];
 }
@@ -3357,17 +3355,10 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	return ret;
 }
 
-void nccl_net_ofi_rdma_recv_comm::free_comm() {
-	if (this->control_rails) {
-		free(this->control_rails);
-	}
-	if (this->rails) {
-		free(this->rails);
-	}
+nccl_net_ofi_rdma_recv_comm::~nccl_net_ofi_rdma_recv_comm() {
 	if (this->ctrl_mailbox) {
 		free(this->ctrl_mailbox);
 	}
-	delete this;
 }
 
 
@@ -3430,7 +3421,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 	/* Release communicator ID */
 	device->comm_idpool.free_id(r_comm->local_comm_id);
 
-	r_comm->free_comm();
+	delete r_comm;
 
 	ret = ep->release_ep(false, false);
 
@@ -3996,40 +3987,45 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
  * @return	communicator, on success
  *		NULL, on error
  */
-static inline nccl_net_ofi_rdma_recv_comm *calloc_rdma_recv_comm(int num_rails, int num_control_rails)
+/*
+ * @brief	Construct a RDMA receive communicator
+ *
+ * Allocates a page-aligned control mailbox. All other members are
+ * zero-initialized via default member initializers. Rails and
+ * control rails are fixed-size arrays sized to MAX_NUM_RAILS.
+ */
+nccl_net_ofi_rdma_recv_comm::nccl_net_ofi_rdma_recv_comm()
 {
-	size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
-	nccl_net_ofi_rdma_recv_comm* r_comm = new nccl_net_ofi_rdma_recv_comm();
-	if (OFI_UNLIKELY(!r_comm)) {
-		NCCL_OFI_WARN("Unable to allocate receive communicator");
-        goto error;
-    }
+	receiver = nullptr;
+	num_inflight_reqs = 0;
+	num_pending_flush_comps = 0;
+	nccl_ofi_reqs_fl = nullptr;
+	local_comm_id = 0;
+	remote_comm_id = 0;
+	next_msg_seq_num = 0;
+	msgbuff = nullptr;
+	ctrl_buff_fl = nullptr;
+	flush_buff_fl = nullptr;
+	send_close_req = nullptr;
+	n_ctrl_sent = 0;
+	n_ctrl_delivered = 0;
+	num_rails = 0;
+	num_control_rails = 0;
+	comm_active = false;
+	rails = {};
+	control_rails = {};
+	ctrl_mailbox = nullptr;
+	ctrl_mr_handle = nullptr;
+	remote_mailbox_addr = 0;
+	remote_mr_key = {};
 
-	r_comm->rails = (nccl_net_ofi_rdma_recv_comm_rail_t *)calloc(num_rails, sizeof(nccl_net_ofi_rdma_recv_comm_rail_t));
-    if (OFI_UNLIKELY(!r_comm->rails)) {
-        NCCL_OFI_WARN("Unable to allocate receive communicator rails array");
-        goto error;
-    }
-
-	r_comm->control_rails = (nccl_net_ofi_rdma_recv_comm_rail_t *)calloc(num_control_rails, sizeof(nccl_net_ofi_rdma_recv_comm_rail_t));
-    if (OFI_UNLIKELY(!r_comm->control_rails)) {
-        NCCL_OFI_WARN("Unable to allocate receive communicator control rails array");
-        goto error;
-    }
-
-	r_comm->ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
-	if (OFI_UNLIKELY(!r_comm->ctrl_mailbox)) {
-		NCCL_OFI_WARN("Unable to allocate send communicator control mailbox");
-		goto error;
+	const size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
+	if (OFI_UNLIKELY(!ctrl_mailbox)) {
+		NCCL_OFI_WARN("Unable to allocate receive communicator control mailbox");
+		throw std::runtime_error("Unable to allocate receive communicator control mailbox");
 	}
-	memset(r_comm->ctrl_mailbox, 0, ctrl_mailbox_size);
-
-    return r_comm;
-
-error:
-
-    r_comm->free_comm();
-    return NULL;
+	memset(ctrl_mailbox, 0, ctrl_mailbox_size);
 }
 
 static void init_rma_op_req(nccl_net_ofi_rdma_req *req,
@@ -4248,20 +4244,18 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	}
 
 	/* Build recv_comm */
-	r_comm = calloc_rdma_recv_comm(num_rails, num_control_rails);
-	if (r_comm == NULL) {
+	r_comm = new nccl_net_ofi_rdma_recv_comm();
+	if (OFI_UNLIKELY(!r_comm->ctrl_mailbox)) {
 		NCCL_OFI_WARN("Unable to allocate receive comm object for device %d",
 			      dev_id);
+		delete r_comm;
+		r_comm = NULL;
 		goto error;
 	}
 
 	r_comm->type = NCCL_NET_OFI_RECV_COMM;
 	r_comm->dev_id = dev_id;
-
 	r_comm->comm_active = true;
-	r_comm->send_close_req = NULL;
-	r_comm->n_ctrl_sent = 0;
-	r_comm->n_ctrl_delivered = 0;
 
 	/* Allocate recv communicator ID */
 	comm_id = device->comm_idpool.allocate_id();
@@ -4381,7 +4375,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 						NCCL_OFI_RDMA_MSG_SEQ_NUM_START);
 	if (!r_comm->msgbuff) {
 		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
-		r_comm->free_comm();
+		delete r_comm;
 		return NULL;
 	}
 
@@ -4426,7 +4420,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 		if (COMM_ID_INVALID != r_comm->local_comm_id) {
 			device->comm_idpool.free_id(r_comm->local_comm_id);
 		}
-		r_comm->free_comm();
+		delete r_comm;
 	}
 
 	return NULL;
