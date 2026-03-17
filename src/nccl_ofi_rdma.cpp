@@ -199,7 +199,6 @@ nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_recv_comm::get_ep()
  */
 nccl_net_ofi_rdma_send_comm_rail_t *nccl_net_ofi_rdma_send_comm::get_rail(uint16_t rail_id)
 {
-	assert(this->rails);
 	assert(rail_id < this->num_rails);
 	return &this->rails[rail_id];
 }
@@ -3608,17 +3607,10 @@ exit:
 	return ret;
 }
 
-void nccl_net_ofi_rdma_send_comm::free_comm() {
-	if (this->control_rails) {
-		free(this->control_rails);
-	}
-	if (this->rails) {
-		free(this->rails);
-	}
+nccl_net_ofi_rdma_send_comm::~nccl_net_ofi_rdma_send_comm() {
 	if (this->ctrl_mailbox) {
 		free(this->ctrl_mailbox);
 	}
-	delete this;
 }
 
 static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
@@ -3655,7 +3647,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
 	}
 #endif
 
-	s_comm->free_comm();
+	delete s_comm;
 
 	ret = ep->release_ep(false, false);
 
@@ -5655,49 +5647,39 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 }
 
 /*
- * @brief	Allocate a RDMA send communicator with `num_rails' rails using `calloc()'
+ * @brief	Construct a RDMA send communicator
  *
- * @param	num_rails
- *		The number of rails of the allocated send communicator
- * @param	num_control_rails
- *		The number of control rails of the allocated send communicator
- * @return	communicator, on success
- *		NULL, on error
+ * Allocates a page-aligned control mailbox. All other members are
+ * zero-initialized via default member initializers. Rails and
+ * control rails are fixed-size arrays sized to MAX_NUM_RAILS.
  */
-static inline nccl_net_ofi_rdma_send_comm *calloc_rdma_send_comm(int num_rails, int num_control_rails)
+nccl_net_ofi_rdma_send_comm::nccl_net_ofi_rdma_send_comm()
 {
-	size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
-	nccl_net_ofi_rdma_send_comm* s_comm = new nccl_net_ofi_rdma_send_comm();
-	if (OFI_UNLIKELY(!s_comm)) {
-		NCCL_OFI_WARN("Unable to allocate send communicator");
-        goto error;
-    }
+	num_inflight_reqs = 0;
+	num_inflight_writes = 0;
+	nccl_ofi_reqs_fl = nullptr;
+	local_comm_id = 0;
+	remote_comm_id = 0;
+	next_msg_seq_num = 0;
+	num_rails = 0;
+	num_control_rails = 0;
+	received_close_message = false;
+	n_ctrl_received = 0;
+	n_ctrl_expected = 0;
+	comm_active = false;
+	rails = {};
+	control_rails = {};
+	connector = nullptr;
+	ctrl_mailbox = nullptr;
+	ctrl_mr_handle = nullptr;
 
-	s_comm->rails = (nccl_net_ofi_rdma_send_comm_rail_t *)calloc(num_rails, sizeof(nccl_net_ofi_rdma_send_comm_rail_t));
-    if (OFI_UNLIKELY(!s_comm->rails)) {
-        NCCL_OFI_WARN("Unable to allocate send communicator rails array");
-        goto error;
-    }
-
-	s_comm->control_rails = (nccl_net_ofi_rdma_send_comm_rail_t *)calloc(num_control_rails, sizeof(nccl_net_ofi_rdma_send_comm_rail_t));
-    if (OFI_UNLIKELY(!s_comm->control_rails)) {
-        NCCL_OFI_WARN("Unable to allocate send communicator control rails array");
-        goto error;
-    }
-
-	s_comm->ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
-	if (OFI_UNLIKELY(!s_comm->ctrl_mailbox)) {
+	const size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
+	if (OFI_UNLIKELY(!ctrl_mailbox)) {
 		NCCL_OFI_WARN("Unable to allocate send communicator control mailbox");
-		goto error;
+		throw std::runtime_error("Unable to allocate send communicator control mailbox");
 	}
-	memset(s_comm->ctrl_mailbox, 0, ctrl_mailbox_size);
-
-    return s_comm;
-
-error:
-
-    s_comm->free_comm();
-    return NULL;
+	memset(ctrl_mailbox, 0, ctrl_mailbox_size);
 }
 
 
@@ -5959,27 +5941,18 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	assert(domain_ptr != NULL);
 
 	/* Allocate and initialize send_comm */
-	ret_s_comm = calloc_rdma_send_comm(num_rails, num_control_rails);
-	if (OFI_UNLIKELY(ret_s_comm == NULL)) {
+	ret_s_comm = new nccl_net_ofi_rdma_send_comm();
+	if (OFI_UNLIKELY(!ret_s_comm->ctrl_mailbox)) {
 		NCCL_OFI_WARN("Couldn't allocate send comm object for dev %d", dev_id);
+		delete ret_s_comm;
 		return -ENOMEM;
 	}
 
 	ret_s_comm->type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->ep = this;
 	ret_s_comm->dev_id = dev_id;
-
 	ret_s_comm->comm_active = true;
-
-	/* Initialize next_msg_seq_num to NCCL_OFI_RDMA_MSG_SEQ_NUM_START */
 	ret_s_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
-
-	ret_s_comm->received_close_message = false;
-	ret_s_comm->n_ctrl_received = 0;
-	ret_s_comm->n_ctrl_expected = 0;
-
-	/* We will get this later from the connect response message */
-	ret_s_comm->remote_comm_id = 0;
 
 	/* The connect() API function acquired the endpoint we are using via
 	   get_ep(). Increase the refcnt so the endpoint is not freed when the
@@ -6045,7 +6018,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 		domain_ptr->domain_lock.lock();
 		this->decrement_ref_cnt();
 		domain_ptr->domain_lock.unlock();
-		ret_s_comm->free_comm();
+		delete ret_s_comm;
 	}
 
 	return ret;
