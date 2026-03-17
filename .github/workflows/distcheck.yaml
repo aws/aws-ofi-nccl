@@ -74,7 +74,7 @@ jobs:
                       --enable-picky-compiler=yes \
                       --${{ matrix.platform-aws }}-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }}
+                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace' || '' }}
 
       - name: Call `make`
         run: make V=1
@@ -220,7 +220,7 @@ jobs:
                       --enable-picky-compiler=yes \
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace'  || '' }} \
                       ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
 
       - name: Call `make`
