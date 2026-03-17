@@ -16,6 +16,14 @@ class nccl_ofi_gin_resources;
 struct nccl_ofi_gin_ep_rail_t;
 
 /**
+ * Message types for GIN sends (metadata and ACK messages).
+ */
+enum gin_msg_type_t : uint8_t {
+	GIN_MSG_TYPE_METADATA = 0,
+	GIN_MSG_TYPE_ACK = 1,
+};
+
+/**
  * Represents metadata associated with a put-signal request. This is sent from
  * the put-signal initiator to the target.
  */
@@ -48,52 +56,45 @@ static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
 	      "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
 
 /**
+ * ACK message sent via fi_send from receiver to sender.
+ *
+ * The receiver dispatches by checking cq_entry->len against
+ * sizeof(gin_ack_msg_t), then verifies the msg_type tag.
+ */
+struct gin_ack_msg_t {
+	/* Message type identifier — must be set explicitly (freelist memory) */
+	gin_msg_type_t msg_type;
+	uint8_t reserved;
+	/* Number of seq_nums in the acknowledged range */
+	uint16_t count;
+	/* comm_id on the sender side (so the sender can look up the comm) */
+	uint16_t comm_id;
+	/* Last (highest) sequence number in the acknowledged range */
+	uint16_t ack_seq_num;
+};
+
+static_assert(sizeof(gin_ack_msg_t) == 8, "gin_ack_msg_t must be exactly 8 bytes for inline send");
+
+/**
  * Constants
  */
 #define MAX_NUM_RAILS (4)
 
 /**
- * Immediate data format (32 bits).
+ * Immediate data format (32 bits) for RDMA write-with-immediate signals.
  *
- * Bit 0 distinguishes message type: 0 = non-ACK, 1 = ACK.
- * Bits 1-10 (comm_id) and bits 11-21 (seq_num) are common to both formats.
- *
- * Non-ACK (bit 0 = 0):
+ * ACKs are no longer sent via immediate data — they use fi_send with
+ * gin_ack_msg_t.  The immediate data is used only for data signals:
  *
  *  31        27  26  25      22 21             11 10            1  0
  *  [  unused  ] [ar] [seg_cnt ] [  msg_seq_num  ] [   comm_id   ] [0]
  *
- * ACK (bit 0 = 1):
- *
- *  31                        22 21             11 10            1  0
- *  [        ack_count         ] [  ack_seq_num  ] [   comm_id   ] [1]
+ * Bit 0 is reserved (always 0 for data signals).
  *
  * comm_id is 10 bits (1024 values). At most NCCL_GIN_MAX_CONTEXTS (4)
  * gin_comms share an endpoint, so at most 4 comm_id values are in use
  * per endpoint at any time. 10 bits provides ample headroom.
- *
- * ack_seq_num is the high-water mark of the ACK range. ack_count is the
- * number of seq_nums in the range; the sender computes
- * start_seq = (ack_seq_num - count + 1) & SEQ_MASK. ack_count is 10 bits
- * (max 1023), which is sufficient to cover up to half the sequence number
- * space (2^11 / 2 = 1024). This is the theoretical maximum in-flight range
- * and is intentionally not tied to the GFD queue depth or ACK interval,
- * which may change independently.
- *
- * Both ack_seq_num and count are needed so each ACK is self-contained.
- * A simpler scheme using only ack_seq_num would require the sender to track
- * last_acked_seq_num and clear from there to ack_seq_num. This breaks because
- * EFA does not guarantee fi_writedata completion ordering: a stale ACK
- * (e.g. ack_seq_num=0) arriving after a newer ACK (e.g. ack_seq_num=5) causes
- * the sender to walk from last_acked_seq_num=6 forward through the entire
- * sequence space back to 0, clearing in-flight requests that have not
- * been delivered — corrupting data. By encoding both ack_seq_num and count,
- * each ACK describes an independent range and no cumulative state is needed
- * on the sender, so reordered ACKs are harmless.
  */
-
-/* Bit 0: message type. 0 = non-ACK, 1 = ACK */
-#define GIN_IMM_IS_ACK(data)   ((data) & 1)
 
 /* Common fields (same position in both formats) */
 #define GIN_IMM_TYPE_BITS      1
@@ -121,15 +122,10 @@ static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
 	(((ack_req) << GIN_IMM_ACK_REQ_SHIFT) | ((nseg) << GIN_IMM_SEG_CNT_SHIFT) |               \
 	 ((seq) << GIN_IMM_SEQ_SHIFT) | ((comm_id) << GIN_IMM_COMM_SHIFT))
 
-/* ACK fields above the common fields */
-#define GIN_IMM_ACK_COUNT_BITS  10
-#define GIN_IMM_ACK_COUNT_SHIFT (GIN_IMM_SEQ_SHIFT + GIN_IMM_SEQ_BITS)
-#define GIN_IMM_ACK_COUNT_MASK  ((1 << GIN_IMM_ACK_COUNT_BITS) - 1)
-
-#define GIN_IMM_ACK_GET_COUNT(data) (((data) >> GIN_IMM_ACK_COUNT_SHIFT) & GIN_IMM_ACK_COUNT_MASK)
-#define GIN_IMM_ACK_DATA(comm_id, seq, count)                                                      \
-	(((count) << GIN_IMM_ACK_COUNT_SHIFT) | ((seq) << GIN_IMM_SEQ_SHIFT) |                     \
-	 ((comm_id) << GIN_IMM_COMM_SHIFT) | 1)
+/* ACK count field width — used by the coalescing logic in deliver_all
+   to cap the range span per ACK. */
+#define GIN_ACK_COUNT_BITS 10
+#define GIN_ACK_COUNT_MASK ((1 << GIN_ACK_COUNT_BITS) - 1)
 
 /* ACK interval for PUT-only messages. Send an ACK every N consecutive PUTs
    to prevent sequence number wraparound. */
