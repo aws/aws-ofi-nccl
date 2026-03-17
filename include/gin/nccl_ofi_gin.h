@@ -88,13 +88,6 @@ struct nccl_ofi_gin_peer_rank_info {
 	 */
 	uint16_t next_delivered_signal_seq_num = 0;
 
-	/* Signal acks are zero-byte RDMA writes (with imm data)
-	   sent from receiver to sender. These writes are required to
-	   target a valid buffer on both sender and receiver, so this
-	   address tracks the empty buffer for each rank */
-	uint64_t write_ack_buff_addr_offset;
-	uint64_t write_ack_buff_mr_key[MAX_NUM_RAILS];
-
 	/* Flag, stored at initiator, indicating the given sequence number (mod
 	   max_requests) is in use at initiator side. This allows initiator to
 	   track in-use sequence numbers to avoid overflow and only mark
@@ -256,23 +249,28 @@ public:
 		const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg);
 
 	/**
-	 * Callback for write completion.
+	 * Callback for write completion (data signals only).
 	 *
 	 * @param src_addr: source address of the signal
 	 * @param rail_id: rail ID of the signal
-	 * @param is_ack_msg: true if this is an ACK message (bit 0 set)
-	 * @param msg_seq_num: sequence number of the signal. For ACK messages,
-	 *        this is the ack_seq_num (high-water mark of the acknowledged range).
+	 * @param msg_seq_num: sequence number of the signal
 	 * @param total_segms: total number of segments in the signal
 	 * @param len: length of the signal
 	 * @param is_ack_requested: whether the sender is requesting an ACK
-	 * @param ack_count: for ACK messages, the number of seq_nums in the
-	 *        acknowledged range. Unused for non-ACK messages.
 	 */
 	int handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
-					   bool is_ack_msg, uint16_t msg_seq_num,
-					   uint64_t total_segms, size_t len,
-					   bool is_ack_requested, uint16_t ack_count);
+					   uint16_t msg_seq_num, uint64_t total_segms,
+					   size_t len, bool is_ack_requested);
+
+	/**
+	 * Callback for ACK message received via fi_recv.
+	 *
+	 * @param src_addr: source address of the ACK sender
+	 * @param rail_id: rail on which the ACK was received
+	 * @param ack_msg: the received ACK message
+	 */
+	int handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
+				  const gin_ack_msg_t *ack_msg);
 
 private:
 	nccl_ofi_gin_resources &resources;
@@ -313,15 +311,15 @@ private:
 	size_t outstanding_ack_counter = 0;
 
 	/**
-	 * Send a writedata acknowledgement for a range of sequence numbers.
+	 * Send a range ACK via fi_send to the peer.
 	 *
 	 * @param gin_comm communicator to send the ACK on
 	 * @param peer_rank rank to send the acknowledgement to
 	 * @param ack_seq_num last (highest) sequence number in the acknowledged range
 	 * @param count number of seq_nums in the acknowledged range
 	 */
-	int writedata_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
-			  uint32_t ack_seq_num, uint32_t count);
+	int send_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
+		     uint32_t ack_seq_num, uint32_t count);
 
 	/**
 	 * Freelist of buffers storing signal information (type
