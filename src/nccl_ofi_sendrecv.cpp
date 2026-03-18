@@ -398,29 +398,23 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 /*
  * @brief	Prepares sendrecv request for reuse
  */
-static inline int sendrecv_send_comm_free_req(nccl_net_ofi_sendrecv_send_comm *s_comm,
-					      int dev_id,
+int nccl_net_ofi_sendrecv_send_comm::free_req(int dev_id_arg,
 					      nccl_net_ofi_sendrecv_req *req,
 					      bool dec_inflight_reqs)
 {
-	uint64_t *num_inflight_reqs = &s_comm->num_inflight_reqs;
-	nccl_ofi_freelist *nccl_ofi_reqs_fl = s_comm->nccl_ofi_reqs_fl;
-	return sendrecv_req_free(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
-				 req, dec_inflight_reqs);
+	return sendrecv_req_free(&this->num_inflight_reqs, this->nccl_ofi_reqs_fl,
+				 dev_id_arg, req, dec_inflight_reqs);
 }
 
 /*
  * @brief	Prepares sendrecv request for reuse
  */
-static inline int sendrecv_recv_comm_free_req(nccl_net_ofi_sendrecv_recv_comm *r_comm,
-					      int dev_id,
+int nccl_net_ofi_sendrecv_recv_comm::free_req(int dev_id_arg,
 					      nccl_net_ofi_sendrecv_req *req,
 					      bool dec_inflight_reqs)
 {
-	uint64_t *num_inflight_reqs = &r_comm->num_inflight_reqs;
-	nccl_ofi_freelist *nccl_ofi_reqs_fl = r_comm->nccl_ofi_reqs_fl;
-	return sendrecv_req_free(num_inflight_reqs, nccl_ofi_reqs_fl, dev_id,
-				 req, dec_inflight_reqs);
+	return sendrecv_req_free(&this->num_inflight_reqs, this->nccl_ofi_reqs_fl,
+				 dev_id_arg, req, dec_inflight_reqs);
 }
 
 /*
@@ -434,14 +428,12 @@ static inline int sendrecv_comm_free_req(nccl_net_ofi_comm *base_comm,
 	if (req->direction == NCCL_OFI_SENDRECV_SEND) {
 		nccl_net_ofi_sendrecv_send_comm *s_comm =
 			(nccl_net_ofi_sendrecv_send_comm *)base_comm;
-		return sendrecv_send_comm_free_req(s_comm, dev_id,
-						   req, dec_inflight_reqs);
+		return s_comm->free_req(dev_id, req, dec_inflight_reqs);
 	}
 	else if (req->direction == NCCL_OFI_SENDRECV_RECV) {
 		nccl_net_ofi_sendrecv_recv_comm *r_comm =
 			(nccl_net_ofi_sendrecv_recv_comm *)base_comm;
-		return sendrecv_recv_comm_free_req(r_comm, dev_id,
-						   req, dec_inflight_reqs);
+		return r_comm->free_req(dev_id, req, dec_inflight_reqs);
 	}
 	else {
 		NCCL_OFI_WARN("Unexpected transaction direction. Transaction direction: %d",
@@ -994,7 +986,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 
  error:
 	if (req)
-		sendrecv_recv_comm_free_req(this, this->dev_id, req, false);
+		this->free_req(this->dev_id, req, false);
  exit:
 	return ret;
 }
@@ -1200,7 +1192,7 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 
  error:
 	if (req)
-		sendrecv_recv_comm_free_req(this, this->dev_id, req, false);
+		this->free_req(this->dev_id, req, false);
  exit:
 	*base_req = NULL;
 	return ret;
@@ -1770,7 +1762,7 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
 
  error:
 	if (req)
-		sendrecv_send_comm_free_req(this, this->dev_id, req, false);
+		this->free_req(this->dev_id, req, false);
  exit:
 	return ret;
 }
