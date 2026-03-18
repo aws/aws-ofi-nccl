@@ -1200,58 +1200,56 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 
 
 /*
- * @brief	Allocated and registers buffer to flush RDMA operations. On
+ * @brief	Allocate and register buffer to flush RDMA operations. On
  * 		Success, receive communicator holds reference to flush buffer
  * 		and associated memory handle.
  *
- * @param	comp
- *		Valid receive object
- * @param	flush_buff
- *		Valid pointer to flush buffer
- * @param	dev_id
- *		Device index
+ * @param	domain_arg
+ *		Domain for memory registration
+ * @param	ep_arg
+ *		Endpoint for memory registration
+ * @param	key_pool
+ *		MR key pool for registration
  *
  * @return	0, on success
  * 		error, on others
  */
-static int sendrecv_recv_comm_alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain,
-						       nccl_net_ofi_sendrecv_ep_t *ep,
-						       nccl_ofi_idpool_t *key_pool,
-						       nccl_net_ofi_sendrecv_flush_buffer_t *flush_buff,
-						       int dev_id)
+int nccl_net_ofi_sendrecv_recv_comm::alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain_arg,
+							      nccl_net_ofi_sendrecv_ep_t *ep_arg,
+							      nccl_ofi_idpool_t *key_pool)
 {
 	int ret = 0;
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
 
 	/* Verify that flush won't read more than the flush buffer size */
-	assert(flush_buff->size <= system_page_size);
+	assert(this->flush_buff.size <= system_page_size);
 
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
-	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(flush_buff->host_buffer));
+	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(this->flush_buff.host_buffer));
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
 	}
 
 	/* Register flush dummy buffer for provider access */
-	ret = sendrecv_mr_buffers_internal_register(domain, ep, key_pool, dev_id,
-						    flush_buff->host_buffer,
+	ret = sendrecv_mr_buffers_internal_register(domain_arg, ep_arg, key_pool, this->dev_id,
+						    this->flush_buff.host_buffer,
 						    system_page_size,
 						    NCCL_PTR_HOST, &mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-			      dev_id);
-		ret = nccl_net_ofi_dealloc_mr_buffer(flush_buff->host_buffer,
+			      this->dev_id);
+		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.host_buffer,
 						    system_page_size);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
 				      ret);
 		}
-		flush_buff->host_buffer = MAP_FAILED;
+		this->flush_buff.host_buffer = MAP_FAILED;
 	}
 
-	flush_buff->mr_handle = mr_handle;
+	this->flush_buff.mr_handle = mr_handle;
 
 	return ret;
 }
@@ -1271,21 +1269,35 @@ static int sendrecv_fl_req_entry_init(void *entry)
 }
 
 
+nccl_net_ofi_sendrecv_recv_comm::nccl_net_ofi_sendrecv_recv_comm()
+{
+	type = NCCL_NET_OFI_RECV_COMM;
+}
+
 /*
- * @brief	Allocate and setup receive communicator object for a peer. This
- * 		prepares plugin to receive messages from the given peer.
+ * @brief	Factory method to allocate and setup receive communicator object
+ * 		for a peer. This prepares plugin to receive messages from the
+ * 		given peer.
  *
- * @param	Valid listen communicator object
- * 		Peer address
+ * @param	l_comm
+ *		Valid listen communicator object
+ * @param	device
+ *		Device associated with the communicator
+ * @param	domain
+ *		Domain associated with the endpoint
+ * @param	ep
+ *		Endpoint for communication
+ * @param	remote_ep_addr
+ *		Peer endpoint address
  *
  * @return	Receive communicator object, on success
  * 		NULL, on error
  */
-static nccl_net_ofi_sendrecv_recv_comm *sendrecv_recv_comm_prepare(nccl_net_ofi_sendrecv_listen_comm *l_comm,
-								     nccl_net_ofi_sendrecv_device_t *device,
-								     nccl_net_ofi_sendrecv_domain_t *domain,
-								     nccl_net_ofi_sendrecv_ep_t *ep,
-								     const char *remote_ep_addr)
+nccl_net_ofi_sendrecv_recv_comm *nccl_net_ofi_sendrecv_recv_comm::create(nccl_net_ofi_sendrecv_listen_comm *l_comm,
+									 nccl_net_ofi_sendrecv_device_t *device,
+									 nccl_net_ofi_sendrecv_domain_t *domain,
+									 nccl_net_ofi_sendrecv_ep_t *ep_arg,
+									 const char *remote_ep_addr)
 {
 	int ret = 0;
 	fi_addr_t remote_ep;
@@ -1295,7 +1307,7 @@ static nccl_net_ofi_sendrecv_recv_comm *sendrecv_recv_comm_prepare(nccl_net_ofi_
 	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
-	ret = fi_av_insert(ep->av.get(), (void *)remote_ep_addr, 1,
+	ret = fi_av_insert(ep_arg->av.get(), (void *)remote_ep_addr, 1,
 			   &remote_ep, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %s",
@@ -1311,19 +1323,18 @@ static nccl_net_ofi_sendrecv_recv_comm *sendrecv_recv_comm_prepare(nccl_net_ofi_
 		return NULL;
 	}
 
-	r_comm->type = NCCL_NET_OFI_RECV_COMM;
-	r_comm->ep = ep;
+	r_comm->ep = ep_arg;
 	r_comm->dev_id = dev_id;
 
 	/* Increase tag ID */
-	if (ep->tag + 1 >=
+	if (ep_arg->tag + 1 >=
 		device->max_tag) {
 		    NCCL_OFI_WARN("Cannot open more connection for device ID %d."
 				  " Maximum is %ld",
 				  dev_id, device->max_tag);
 		    return nullptr;
 	}
-	r_comm->tag = ++ep->tag;
+	r_comm->tag = ++ep_arg->tag;
 
 	r_comm->local_ep = l_comm->local_ep;
 	r_comm->local_ep_addr = l_comm->local_ep_addr;
@@ -1341,9 +1352,8 @@ static nccl_net_ofi_sendrecv_recv_comm *sendrecv_recv_comm_prepare(nccl_net_ofi_
 	 */
 	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
-		ret = sendrecv_recv_comm_alloc_and_reg_flush_buff(domain, ep,
-								  key_pool,
-								  &r_comm->flush_buff, dev_id);
+		ret = r_comm->alloc_and_reg_flush_buff(domain, ep_arg,
+						       key_pool);
 		if (OFI_UNLIKELY(ret != 0)) {
 			delete r_comm;
 			return NULL;
@@ -1459,7 +1469,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 		}
 
 		/* Prepare receive communicator object for the received peer connection */
-		r_comm = sendrecv_recv_comm_prepare(this, device, domain, endpoint, conn_msg->ep_name);
+		r_comm = nccl_net_ofi_sendrecv_recv_comm::create(this, device, domain, endpoint, conn_msg->ep_name);
 		if (OFI_UNLIKELY(r_comm == NULL)) {
 			return -ENOMEM;
 		}
