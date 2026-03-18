@@ -73,6 +73,17 @@ class nccl_net_ofi_sendrecv_req;
 
 class nccl_net_ofi_sendrecv_send_comm : public nccl_net_ofi_send_comm {
 public:
+	nccl_net_ofi_sendrecv_send_comm();
+
+	/* Factory method to allocate and setup send communicator for a peer */
+	static int create(nccl_net_ofi_conn_handle_t *handle,
+			  nccl_net_ofi_sendrecv_ep_t *ep_arg,
+			  nccl_ofi_connection_info_t *conn_info,
+			  nccl_net_ofi_sendrecv_send_comm **s_comm);
+
+	int process_conn_resp(nccl_net_ofi_sendrecv_ep_t *ep_arg,
+			      const nccl_ofi_connection_info_t &conn_resp_msg);
+
     int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
     int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
     int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
