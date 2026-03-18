@@ -1812,20 +1812,28 @@ int nccl_net_ofi_sendrecv_send_comm::close()
 	return ret;
 }
 
+nccl_net_ofi_sendrecv_send_comm::nccl_net_ofi_sendrecv_send_comm()
+{
+	type = NCCL_NET_OFI_SEND_COMM;
+}
+
 /*
- * @brief	Creates send communication for a peer
+ * @brief	Factory method to create send communication for a peer
  *
- * @param	Network device ID
- * 		Connection Handle transferred OOB by NCCL
+ * @param	handle
+ *		Connection handle transferred OOB by NCCL
+ * @param	ep
+ *		Endpoint for communication
+ * @param	conn_info
+ *		Connection info to populate with local endpoint name
+ * @param	s_comm
+ *		Output pointer for the created send communicator
  *
- * @return	Initialized Send Communicator object, on success
- * 		NULL, others
  * @return	0, success
  * 		error, others
- *
  */
-static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
-					    nccl_net_ofi_sendrecv_ep_t *ep,
+int nccl_net_ofi_sendrecv_send_comm::create(nccl_net_ofi_conn_handle_t *handle,
+					    nccl_net_ofi_sendrecv_ep_t *ep_arg,
 					    nccl_ofi_connection_info_t *conn_info,
 					    nccl_net_ofi_sendrecv_send_comm **s_comm)
 {
@@ -1835,13 +1843,13 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	int ret = 0;
 
 	/* Retrieve and validate device */
-	nccl_net_ofi_sendrecv_device_t *device = ep->sendrecv_endpoint_get_device();
+	nccl_net_ofi_sendrecv_device_t *device = ep_arg->sendrecv_endpoint_get_device();
 	if (OFI_UNLIKELY(device == NULL)) {
 		NCCL_OFI_WARN("Error accessing device.");
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep->sendrecv_endpoint_get_domain();
+	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep_arg->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != NULL);
 
 	/* Allocate and initialize send_comm */
@@ -1851,11 +1859,10 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 		return -ENOMEM;
 	}
 
-	ret_s_comm->type = NCCL_NET_OFI_SEND_COMM;
-	ret_s_comm->ep = ep;
+	ret_s_comm->ep = ep_arg;
 	ret_s_comm->dev_id = device->dev_id;
 	ret_s_comm->tag = 0; /* Populate later from connect response */
-	ret_s_comm->local_ep = ep->ofi_ep.get();
+	ret_s_comm->local_ep = ep_arg->ofi_ep.get();
 
 	ret_s_comm->remote_ep = 0; /* Populate later from connect response */
 	ret_s_comm->connector = nullptr;
@@ -1866,12 +1873,12 @@ static inline int sendrecv_send_comm_create(nccl_net_ofi_conn_handle_t *handle,
 	   Caller assumed to hold the domain lock. */
 
 	domain_ptr->domain_lock.lock();
-	ep->increment_ref_cnt();
+	ep_arg->increment_ref_cnt();
 	domain_ptr->domain_lock.unlock();
 
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
-	ret = fi_getname(&(ep->ofi_ep->fid),
+	ret = fi_getname(&(ep_arg->ofi_ep->fid),
 			 (void *)conn_info->ep_name,
 			 &conn_info->ep_namelen);
 	if (ret == -FI_ETOOSMALL) {
@@ -1896,7 +1903,7 @@ out:
 		/* Above code incremented the ep ref counter, so decrement it on
 		   failure */
 		domain_ptr->domain_lock.lock();
-		ep->decrement_ref_cnt();
+		ep_arg->decrement_ref_cnt();
 		domain_ptr->domain_lock.unlock();
 		delete ret_s_comm;
 	}
@@ -1909,21 +1916,19 @@ out:
  * Update send comm information from the conn response message received from
  * accept()
  */
-static inline int sendrecv_send_comm_process_conn_resp
-	(nccl_net_ofi_sendrecv_send_comm *s_comm,
-	 nccl_net_ofi_sendrecv_ep_t *ep,
-	 int dev_id,
+int nccl_net_ofi_sendrecv_send_comm::process_conn_resp
+	(nccl_net_ofi_sendrecv_ep_t *ep_arg,
 	 const nccl_ofi_connection_info_t &conn_resp_msg)
 {
-	s_comm->tag = conn_resp_msg.tag;
+	this->tag = conn_resp_msg.tag;
 
 	/* Insert remote address into AV */
-	int ret = fi_av_insert(ep->av.get(),
+	int ret = fi_av_insert(ep_arg->av.get(),
 			       conn_resp_msg.ep_name, 1,
-			       &s_comm->remote_ep, 0, NULL);
+			       &this->remote_ep, 0, NULL);
 	if (OFI_UNLIKELY(ret != 1)) {
 		NCCL_OFI_WARN("Unable to insert remote address into address vector for device %d. RC: %d",
-			      dev_id, ret);
+			      this->dev_id, ret);
 		return -EINVAL;
 	}
 
@@ -1953,7 +1958,6 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		NCCL_OFI_WARN("Error accessing devices array. Devices array has not been initialized.");
 		return -EINVAL;
 	}
-	int dev_id = device->dev_id;
 
 	/* Extract connection state of the communicator */
 	save_comm_state_t *comm_state = &(handle->state);
@@ -1969,7 +1973,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 
 	if (s_comm == nullptr) {
 		/* Build send_comm */
-		ret = sendrecv_send_comm_create(handle, this, &conn_info, &s_comm);
+		ret = nccl_net_ofi_sendrecv_send_comm::create(handle, this, &conn_info, &s_comm);
 		if (OFI_UNLIKELY(ret != 0 || s_comm == nullptr)) {
 			return ret;
 		}
@@ -2004,8 +2008,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	auto conn_resp_msg = static_cast<const nccl_ofi_connection_info_t *>
 		(data_pair.first);
 
-	ret = sendrecv_send_comm_process_conn_resp(s_comm, this, dev_id,
-						   *conn_resp_msg);
+	ret = s_comm->process_conn_resp(this, *conn_resp_msg);
 	if (ret != 0) {
 		delete s_comm;
 		return ret;
