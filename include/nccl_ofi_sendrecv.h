@@ -64,6 +64,8 @@ public:
 };
 
 
+class nccl_net_ofi_sendrecv_req;
+
 class nccl_net_ofi_sendrecv_send_comm : public nccl_net_ofi_send_comm {
 public:
     int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
@@ -81,6 +83,8 @@ public:
         NCCL_OFI_WARN("RMA write_inline operations are not supported for SendRecv protocol");
         return -ENOTSUP;
     }
+
+	int free_req(int dev_id_arg, nccl_net_ofi_sendrecv_req *req, bool dec_inflight_reqs);
 
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist *nccl_ofi_reqs_fl;
@@ -115,6 +119,8 @@ public:
         NCCL_OFI_WARN("RMA read operations are not supported for SendRecv protocol");
         return -ENOTSUP;
     }
+
+	int free_req(int dev_id_arg, nccl_net_ofi_sendrecv_req *req, bool dec_inflight_reqs);
 
 	uint64_t num_inflight_reqs;
 	nccl_ofi_freelist *nccl_ofi_reqs_fl;
