@@ -50,6 +50,11 @@ public:
 	ofi_mr_ptr mr;
 };
 
+/* Forward declarations needed for comm factory methods */
+class nccl_net_ofi_sendrecv_device_t;
+class nccl_net_ofi_sendrecv_domain_t;
+class nccl_net_ofi_sendrecv_ep_t;
+
 class nccl_net_ofi_sendrecv_listen_comm : public nccl_net_ofi_listen_comm {
 public:
 	int accept(nccl_net_ofi_recv_comm **recv_comm) override;
@@ -108,6 +113,15 @@ typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 
 class nccl_net_ofi_sendrecv_recv_comm : public nccl_net_ofi_recv_comm {
 public:
+	nccl_net_ofi_sendrecv_recv_comm();
+
+	/* Factory method to allocate and setup receive communicator for a peer */
+	static nccl_net_ofi_sendrecv_recv_comm *create(nccl_net_ofi_sendrecv_listen_comm *l_comm,
+						       nccl_net_ofi_sendrecv_device_t *device,
+						       nccl_net_ofi_sendrecv_domain_t *domain,
+						       nccl_net_ofi_sendrecv_ep_t *ep_arg,
+						       const char *remote_ep_addr);
+
     int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
     int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
     int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
@@ -133,11 +147,12 @@ public:
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
 
 	nccl_ofi_cm_receiver *receiver;
+
+private:
+	int alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain_arg,
+				     nccl_net_ofi_sendrecv_ep_t *ep_arg,
+				     nccl_ofi_idpool_t *key_pool);
 };
-
-
-/* Forward declarations needed for sendrecv transport endpoint type */
-class nccl_net_ofi_sendrecv_device_t;
 
 
 /*
