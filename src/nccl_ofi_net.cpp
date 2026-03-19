@@ -307,15 +307,19 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* In order to set endpoint options and potentially NCCL configuration
 	 * options (such as NCCL_PROTO) during the plugin initialization
 	 * process, we need to create an endpoint and call the platform hook
-	 * "platform_config_endpoint" using "get_ep". This code makes the
-	 * assumption that the thread calling "nccl_net_ofi_init" will make
-	 * communication calls. As well, since without this code the endpoint
-	 * would be created the first time "get_ep" in called during a listen or
-	 * connect call, creating the endpoint earlier would not be a waste of
-	 * resources. This initialization happens once per process, and thus it
-	 * does not matter which device is used to create the endpoint.
+	 * "platform_config_endpoint" using "get_ep". This initialization
+	 * happens once per process, and thus it does not matter which device is
+	 * used to create the endpoint.
+	 *
+	 * To avoid every process creating an endpoint on device 0, which may
+	 * exhaust that device's resources during init, we use the PID to spread
+	 * out the devices used by each process. This is a temporary workaround.
+	 *
+	 * The long-term solution is to avoid creating an endpoint or UAR during
+	 * initialization. That will require changes to the Libfabric API to
+	 * provide an alternate way to query the needed properties.
 	 */
-	device = plugin->get_device(0);
+	device = plugin->get_device(getpid() % plugin->get_num_devices());
 
 	/* get the endpoint from the default domain, domain_key = 0 */
 	ep = device->get_ep(0, nccl_net_ofi_gettid());
