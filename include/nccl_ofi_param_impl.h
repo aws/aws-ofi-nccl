@@ -207,6 +207,10 @@ public:
 	{
 		std::lock_guard l(lock);
 
+		if (source != ParamSource::INVALID) {
+			return 0;
+		}
+
 		source = ParamSource::DEFAULT;
 
 		char *envval = getenv(envname);

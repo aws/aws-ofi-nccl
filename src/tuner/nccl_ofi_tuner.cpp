@@ -53,6 +53,14 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		ofi_log_function = logFunction;
 	}
 
+	/* Ensure parameters are initialized.  When the tuner is loaded as a
+	   separate shared library, it gets its own copy of the parameter
+	   space that the net plugin init path does not reach. */
+	int param_ret = ofi_nccl_parameters_init();
+	if (OFI_UNLIKELY(param_ret != 0)) {
+		return ncclInternalError;
+	}
+
 	nccl_net_ofi_mutex_lock(&nccl_ofi_tuner_ctx_lock);
 
 	// Static instance ensures one-time initialization per process
