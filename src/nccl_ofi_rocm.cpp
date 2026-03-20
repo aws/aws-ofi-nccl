@@ -3,6 +3,7 @@
  * Copyright (c) 2015-2018, NVIDIA CORPORATION. All rights reserved.
  * Copyright (c) 2025, Hewlett Packard Enterprise Development LP.
  * Copyright (c) 2025, Advanced Micro Devices, Inc. All rights reserved
+ * Copyright (c) 2026, Cornelis Networks.
  */
 
 #include "config.h"
@@ -15,6 +16,11 @@
 #include "nccl_ofi_rocm.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
+
+#if HAVE_HSA_RUNTIME
+#include <hsa/hsa.h>
+#define HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED ((hsa_system_info_t)0x204)
+#endif
 
 
 int nccl_net_ofi_gpu_init(void)
@@ -76,7 +82,27 @@ bool nccl_net_ofi_gpu_have_gdr_support_attr(void)
 
 bool nccl_net_ofi_gpu_have_dma_buf_attr(void)
 {
+#if HAVE_HSA_RUNTIME
+	bool dmabuf_supported = false;
+	hsa_status_t status;
+
+	status = hsa_system_get_info(HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED, &dmabuf_supported);
+	if (status != HSA_STATUS_SUCCESS) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "hsa_system_get_info(HSA_AMD_SYSTEM_INFO_DMABUF_SUPPORTED) failed with status %d",
+			       (int)status);
+		return false;
+	}
+
+	if (dmabuf_supported) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "ROCm reports DMA-BUF support is available");
+	}
+
+	return dmabuf_supported;
+#else
 	return false;
+#endif
 }
 
 int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
