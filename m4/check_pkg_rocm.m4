@@ -3,6 +3,7 @@
 # Copyright (c) 2018-2023 Amazon.com, Inc. or its affiliates. All rights reserved.
 # Copyright (c) 2025, Hewlett Packard Enterprise Development LP.
 # Copyright (c) 2025, Advanced Micro Devices, Inc. All rights reserved
+# Copyright (c) 2026, Cornelis Networks.
 #
 #
 # See LICENSE.txt for license information
@@ -30,6 +31,14 @@ AC_DEFUN([CHECK_PKG_ROCM], [
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_CHECK_HEADERS([hip/hip_runtime_api.h], [], [check_pkg_found=no], [#define __HIP_PLATFORM_AMD__])])
+
+  dnl Check for HSA runtime header and library (needed for dmabuf support detection)
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_HEADERS([hsa/hsa.h],
+                          [AC_CHECK_LIB([hsa-runtime64], [hsa_system_get_info],
+                                        [AC_DEFINE([HAVE_HSA_RUNTIME], [1], [Have HSA runtime library])],
+                                        [], [])],
+                          [], [AC_INCLUDES_DEFAULT])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define="yes"],
