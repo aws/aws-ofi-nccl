@@ -125,7 +125,7 @@ static inline nccl_ofi_mr_ckey_t nccl_ofi_mr_ckey_mk_dmabuf(int fd, uint64_t off
 	cache_key.fi_mr_dmabuf.fd = fd;
 	cache_key.fi_mr_dmabuf.offset = offset;
 	cache_key.fi_mr_dmabuf.len = len;
-	cache_key.fi_mr_dmabuf.base_addr = base_addr;
+	cache_key.fi_mr_dmabuf.base_addr = (void *)((uintptr_t)base_addr - offset);
 	cache_key.ep = ep_ptr;
 	cache_key.type = NCCL_OFI_MR_CKEY_DMABUF;
 	return cache_key;
