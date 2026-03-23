@@ -137,7 +137,6 @@ public:
 		  num_rails(num_rails_arg),
 		  base_addr(0)
 	{
-		mr.resize(num_rails);
 	}
 
 	/**
@@ -149,8 +148,8 @@ public:
 
 	uint16_t num_rails;
 
-	/* Array of size `num_rails' */
-	std::vector<ofi_mr_ptr> mr;
+	/* Array of size `num_rails', indexed by rail_id */
+	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr;
 
 	/* Base address of the registered memory region for offset calculation */
 	uintptr_t base_addr;
