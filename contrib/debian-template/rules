@@ -11,6 +11,9 @@ OFI_NCCL_PREFIX=/opt/amazon/ofi-nccl
 # NGC installs (both old and new image flavors) go to this path
 OFI_NCCL_NGC_PREFIX=/opt/amazon/aws-ofi-nccl
 
+# Building from a release tarball with pre-generated autotools artifacts.
+override_dh_autoreconf:
+
 override_dh_missing:
 	find build/ -name *.la -delete
 	dh_missing --fail-missing
