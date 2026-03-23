@@ -31,7 +31,6 @@ while running NCCL applications.
 %prep
 %setup -n aws-ofi-nccl-%{version}
 %build
-autoreconf -ivf
 %configure --disable-picky-compiler \
            --sysconfdir=%{_prefix}/conf \
            --with-cuda=/usr/local/cuda \
