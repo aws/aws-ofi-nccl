@@ -97,10 +97,9 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 			return ret;
 		}
 	} else {
-		/* Dispatch by length and message type. Once metadata gains
-		   a msg_type field, length check can be dropped. */
-		if (cq_entry->len == sizeof(gin_ack_msg_t) &&
-		    static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr)->msg_type == GIN_MSG_TYPE_ACK) {
+		/* Dispatch by msg_type — at offset 0 in both message structs. */
+		auto msg_type = static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr)->msg_type;
+		if (msg_type == GIN_MSG_TYPE_ACK) {
 			auto *ack_msg =
 				static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
 
@@ -112,8 +111,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 				NCCL_OFI_WARN("handle_ack_completion failure");
 				return ret;
 			}
-		} else {
-			/* Metadata message */
+		} else if (msg_type == GIN_MSG_TYPE_METADATA) {
 			auto *msg = static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(
 				rx_buff_elem->ptr);
 
@@ -126,6 +124,9 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 					"gin_handle_signal_metadata_completion failure");
 				return ret;
 			}
+		} else {
+			NCCL_OFI_WARN("Unknown GIN message type %d", msg_type);
+			return -EINVAL;
 		}
 	}
 
