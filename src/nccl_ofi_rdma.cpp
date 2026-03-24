@@ -6502,9 +6502,6 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 
 	this->num_rails = device_arg->num_rails;
 
-	this->domain_rails = std::vector<nccl_net_ofi_rdma_domain_rail_t>();
-	this->domain_rails.resize(this->num_rails);
-
 	for (uint16_t i = 0; i < this->num_rails ; i++) {
 		nccl_net_ofi_rdma_device_rail_t *device_rail = device_arg->rdma_device_get_rail(i);
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(i);
