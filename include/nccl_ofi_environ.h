@@ -26,6 +26,13 @@ public:
 	env_manager(const env_manager&) = delete;
 	env_manager& operator=(const env_manager&) = delete;
 
+	void reset()
+	{
+		std::lock_guard l(lock);
+		environ_frozen = false;
+		env.clear();
+	}
+
 	void insert_envvar(std::string name, std::string val, bool overwrite)
 	{
 		std::lock_guard l(lock);
