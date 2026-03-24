@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_GIN_TYPES_H
 #define NCCL_OFI_GIN_TYPES_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 /**
@@ -28,17 +29,8 @@ enum gin_msg_type_t : uint8_t {
  * the put-signal initiator to the target.
  */
 struct nccl_net_ofi_gin_signal_metadata_msg_t {
-	/* Signal information (if applicable) */
-	uint64_t signal_base_address;
-	uint64_t signal_offset;
-	uint64_t signal_value;
-
-	/* A comm identitifer that uniquely identifies the comm
-	 * on the receiver side */
-	uint32_t remote_comm_id;
-
-	/* Message sequence number */
-	uint16_t msg_seq_num;
+	/* Message type identifier — must be GIN_MSG_TYPE_METADATA */
+	gin_msg_type_t msg_type;
 
 	/* Number of completions the target will receive
 	 *
@@ -48,8 +40,17 @@ struct nccl_net_ofi_gin_signal_metadata_msg_t {
 	 * 2: For put-signal (data + signal) */
 	uint8_t num_segments;
 
-	/* Adding 1 byte padding to align the struct DO NOT USE*/
-	uint8_t padding;
+	/* Message sequence number */
+	uint16_t msg_seq_num;
+
+	/* A comm identitifer that uniquely identifies the comm
+	 * on the receiver side */
+	uint32_t remote_comm_id;
+
+	/* Signal information (if applicable) */
+	uint64_t signal_base_address;
+	uint64_t signal_offset;
+	uint64_t signal_value;
 };
 
 static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
@@ -57,9 +58,6 @@ static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
 
 /**
  * ACK message sent via fi_send from receiver to sender.
- *
- * The receiver dispatches by checking cq_entry->len against
- * sizeof(gin_ack_msg_t), then verifies the msg_type tag.
  */
 struct gin_ack_msg_t {
 	/* Message type identifier — must be set explicitly (freelist memory) */
@@ -74,6 +72,10 @@ struct gin_ack_msg_t {
 };
 
 static_assert(sizeof(gin_ack_msg_t) == 8, "gin_ack_msg_t must be exactly 8 bytes for inline send");
+static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, msg_type) == 0,
+	      "msg_type must be at offset 0 for type-based dispatch");
+static_assert(offsetof(gin_ack_msg_t, msg_type) == 0,
+	      "msg_type must be at offset 0 for type-based dispatch");
 
 /**
  * Constants

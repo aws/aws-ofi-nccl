@@ -518,6 +518,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		metadata_send->msg_seq_num = msg_seq_num;
 		metadata_send->num_segments = nseg;
 		metadata_send->remote_comm_id = remote_comm_id;
+		metadata_send->msg_type = GIN_MSG_TYPE_METADATA;
 		metadata_send->signal_base_address =
 			(signalMhandle ? signalMhandle->remote_mr[dst_rank].address : 0);
 		metadata_send->signal_offset = signalOff;
@@ -834,6 +835,7 @@ int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16
 		/* Fill in the fields related to metadata */
 		req->metadata.msg_seq_num = msg_seq_num;
 		req->metadata.num_segments = req->total_segments;
+		req->metadata.msg_type = GIN_MSG_TYPE_METADATA;
 	}
 
 	ret = iput_signal_deliver_all(peer_rank);
