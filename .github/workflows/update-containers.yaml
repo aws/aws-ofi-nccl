@@ -7,6 +7,8 @@ on:
 jobs:
   get-matrix:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       amazonlinux: ${{ steps.set-matrix.outputs.amazonlinux }}
       ubuntu: ${{ steps.set-matrix.outputs.ubuntu }}
