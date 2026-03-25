@@ -1,7 +1,5 @@
-This file is a placeholder on the primary development branch of the
-OFI NCCL Plugin so that "make dist" works properly.  Release branches
-will have an accurate release history in this location, and each
-release tarball will also have up to date release notes.
+# v1.19.0a1 (Pre-release)
 
-If you're looking for Plugin releases, please see the [Releases
-Page](https://github.com/aws/aws-ofi-nccl/releases).
+## Summary
+
+Pre-release to validate source package generation and release workflow.
