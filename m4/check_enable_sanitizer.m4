@@ -8,6 +8,7 @@
 AC_DEFUN([CHECK_ENABLE_SANITIZER_HANDLER], [
   AS_IF([test -n "${sanitizer_flags}"],
         [CFLAGS="${sanitizer_flags} ${CFLAGS}"
+         CXXFLAGS="${sanitizer_flags} ${CXXFLAGS}"
          LDFLAGS="${sanitizer_flags} ${LDFLAGS}"])
 ])
 
@@ -26,9 +27,7 @@ AC_DEFUN([CHECK_ENABLE_SANITIZE_EXPAND_SANITIZER], [
          CFLAGS="$3 ${CFLAGS}"
          AC_LINK_IFELSE([AC_LANG_PROGRAM(
                             [[]],
-                            [[int main(void) {
-                                return 0;
-                              }]])],
+                            [[return 0;]])],
                            [AC_MSG_RESULT([yes])],
                            [AC_MSG_RESULT([no])
                             AC_MSG_ERROR([Compiler and linker need to support flag $3])])
