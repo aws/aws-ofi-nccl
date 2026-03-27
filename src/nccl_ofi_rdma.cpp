@@ -4727,8 +4727,9 @@ int nccl_net_ofi_rdma_listen_comm::close()
 	delete this->listener;
 	this->listener = nullptr;
 
+	auto *ep_ptr = this->ep;
 	delete this;
-	ret = this->ep->release_ep(false, false);
+	ret = ep_ptr->release_ep(false, false);
 
 	return ret;
 }
