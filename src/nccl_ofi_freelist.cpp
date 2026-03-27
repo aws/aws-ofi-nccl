@@ -290,14 +290,14 @@ int nccl_ofi_freelist::add(size_t num_entries)
 		this->entries = entry;
 		this->num_allocated_entries++;
 
-		nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
-
 		if (this->entry_init_fn) {
 			ret = this->entry_init_fn(entry->ptr);
 			if (ret != 0) {
 				goto error;
 			}
 		}
+
+		nccl_net_ofi_mem_noaccess(entry->ptr, user_entry_size);
 
 		buffer += user_entry_size;
 	}
