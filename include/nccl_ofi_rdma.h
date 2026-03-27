@@ -137,7 +137,6 @@ public:
 		  num_rails(num_rails_arg),
 		  base_addr(0)
 	{
-		mr.resize(num_rails);
 	}
 
 	/**
@@ -149,8 +148,8 @@ public:
 
 	uint16_t num_rails;
 
-	/* Array of size `num_rails' */
-	std::vector<ofi_mr_ptr> mr;
+	/* Array of size `num_rails', indexed by rail_id */
+	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr;
 
 	/* Base address of the registered memory region for offset calculation */
 	uintptr_t base_addr;
@@ -772,13 +771,12 @@ public:
 	
 	inline ofi_domain_ptr *get_ofi_domain_for_cm() override
 	{
-		assert(!domain_rails.empty());
+		assert(num_rails > 0);
 		return &domain_rails[0].domain;
 	}
 
 	inline ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) override
 	{
-		assert(!domain_rails.empty());
 		assert(rail_id < num_rails);
 		return domain_rails[rail_id].domain;
 	}
@@ -795,7 +793,6 @@ public:
 
 	inline nccl_net_ofi_rdma_domain_rail_t *rdma_domain_get_rail(uint16_t rail_id)
 	{
-		assert(!domain_rails.empty());
 		assert(rail_id < num_rails);
 		return &domain_rails[rail_id];
 	}
@@ -889,7 +886,7 @@ public:
 	int dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handle);
 
 	uint16_t num_rails;
-	std::vector<nccl_net_ofi_rdma_domain_rail_t> domain_rails;
+	std::array<nccl_net_ofi_rdma_domain_rail_t, MAX_NUM_RAILS> domain_rails;
 
 	/* The flush buffer */
 	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
