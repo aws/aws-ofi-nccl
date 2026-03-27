@@ -1271,6 +1271,7 @@ static int sendrecv_fl_req_entry_init(void *entry)
 
 nccl_net_ofi_sendrecv_recv_comm::nccl_net_ofi_sendrecv_recv_comm()
 {
+	num_inflight_reqs = 0;
 	type = NCCL_NET_OFI_RECV_COMM;
 }
 
@@ -1814,6 +1815,7 @@ int nccl_net_ofi_sendrecv_send_comm::close()
 
 nccl_net_ofi_sendrecv_send_comm::nccl_net_ofi_sendrecv_send_comm()
 {
+	num_inflight_reqs = 0;
 	type = NCCL_NET_OFI_SEND_COMM;
 }
 
