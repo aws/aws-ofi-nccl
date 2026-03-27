@@ -837,36 +837,56 @@ void *TestScenario::thread_function(void *arg)
 	ThreadContext *ctx = static_cast<ThreadContext *>(arg);
 	TestScenario *scenario = ctx->scenario;
 
+	// Initialize CUDA context for this thread
 	try {
-		// Initialize CUDA context for this thread
 		CUDACHECKTHROW(cudaSetDevice(0));
 		CUDACHECKTHROW(cudaFree(nullptr));
-
-		// Execute iterations
-		for (size_t iter = 0; iter < scenario->iterations; iter++) {
-			scenario->setup(*ctx);
-			scenario->run(*ctx);
-			scenario->teardown(*ctx);
-			MPI_Barrier(ctx->thread_comm);
-		}
-
-		// Free thread communicator after all iterations complete
-		if (ctx->thread_comm != MPI_COMM_WORLD) {
-			MPI_Comm_free(&ctx->thread_comm);
-		}
-
-		ctx->result = ncclSuccess;
 	} catch (const std::exception &e) {
-		NCCL_OFI_WARN("Thread %zu failed: %s", ctx->thread_id, e.what());
+		NCCL_OFI_WARN("Thread %zu CUDA init failed: %s",
+			      ctx->thread_id, e.what());
 		ctx->result = ncclSystemError;
+	}
 
-		// Attempt cleanup on error
-		try {
-			scenario->teardown(*ctx);
-		} catch (const std::exception &teardown_error) {
-			NCCL_OFI_WARN("Thread %zu teardown also failed: %s",
-				      ctx->thread_id, teardown_error.what());
+	// Execute iterations
+	for (size_t iter = 0; iter < scenario->iterations; iter++) {
+
+		// Don't attempt to run the test if CUDA init failed
+		if (ctx->result == ncclSuccess) {
+			try {
+				scenario->setup(*ctx);
+				scenario->run(*ctx);
+				scenario->teardown(*ctx);
+			} catch (const std::exception &e) {
+				NCCL_OFI_WARN("Thread %zu rank %d failed (iteration %zu): %s",
+					      ctx->thread_id, ctx->rank, iter + 1, e.what());
+				ctx->result = ncclSystemError;
+
+				try {
+					scenario->teardown(*ctx);
+				} catch (const std::exception &teardown_error) {
+					NCCL_OFI_WARN("Thread %zu teardown also failed: %s",
+						      ctx->thread_id, teardown_error.what());
+				}
+			}
 		}
+
+		// Synchronize all ranks and propagate errors. If any rank
+		// failed this iteration (or CUDA init), all ranks will see
+		// global_ok == 0 and break together. Avoids deadlocks on
+		// MPI operations in the next iteration's setup.
+		int local_ok = (ctx->result == ncclSuccess) ? 1 : 0;
+		int global_ok = 0;
+		MPI_Allreduce(&local_ok, &global_ok, 1, MPI_INT, MPI_MIN, ctx->thread_comm);
+		if (!global_ok) {
+			if (ctx->result == ncclSuccess)
+				ctx->result = ncclSystemError;
+			break;
+		}
+	}
+
+	// Free thread communicator after all iterations complete
+	if (ctx->thread_comm != MPI_COMM_WORLD) {
+		MPI_Comm_free(&ctx->thread_comm);
 	}
 
 	return nullptr;
