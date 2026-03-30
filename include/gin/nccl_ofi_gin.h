@@ -8,6 +8,7 @@
 #include "gin/nccl_ofi_gin_allgather.h"
 #include "gin/nccl_ofi_gin_resources.h"
 #include "gin/nccl_ofi_gin_types.h"
+#include "nccl_ofi_dlist.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_gdrcopy.h"
@@ -63,6 +64,19 @@ struct nccl_ofi_gin_resource_releaser {
 };
 
 /**
+ * Pending bundled ack: accumulated in deliver_all,
+ * sent with the next outgoing metadata message to this peer.
+ * On the pending_ack_list iff node.next != nullptr.
+ */
+struct nccl_ofi_gin_pending_ack_info {
+	nccl_ofi_dlist_node node;
+	uint32_t peer_rank = 0;
+	uint16_t seq_num = 0;
+	uint16_t ack_count = 0;
+	uint32_t start = 0;
+};
+
+/**
  * Represents per-peer-rank data associated with a collective communicator.
  *
  * The collective communicator stores a vector of these structures, of size
@@ -100,6 +114,8 @@ struct nccl_ofi_gin_peer_rank_info {
 	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
 	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
 	size_t consecutive_puts_without_ack = 0;
+
+	nccl_ofi_gin_pending_ack_info pending_ack;
 };
 
 /**
@@ -205,9 +221,22 @@ public:
 		rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = false;
 	}
 
+	void clear_ack_range(uint32_t peer_rank, uint16_t ack_seq_num, uint16_t ack_count)
+	{
+		uint16_t seq = (ack_seq_num - ack_count + 1) & GIN_IMM_SEQ_MASK;
+		while (true) {
+			clear_ack_outstanding(peer_rank, seq);
+			if (seq == ack_seq_num) break;
+			seq = (seq + 1) & GIN_IMM_SEQ_MASK;
+		}
+	}
+
 	/* Wait for any outstanding requests as necessary. Should be called before
 	   the GIN comm is destructed. */
 	int await_pending_requests();
+
+	/* Flush bundled acks that were not sent with metadata. Called from progress. */
+	int flush_stale_acks();
 
 	/**
 	 * iputSignal API. Transfers some user data (determined by memory registrations
@@ -310,6 +339,11 @@ private:
 	   Used to wait for remaining acknowledgements on communicator close. */
 	size_t outstanding_ack_counter = 0;
 
+	/* Active queue of peers with pending acks.
+	   Only these are visited by flush_stale_acks(). */
+	nccl_ofi_dlist pending_ack_list;
+	uint32_t progress_counter = 0;
+
 	/**
 	 * Send a range ACK via fi_send to the peer.
 	 *
@@ -333,6 +367,7 @@ private:
 	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 					    nccl_net_ofi_gin_iputsignal_recv_req *req);
 
+	int stash_pending_ack(uint32_t peer_rank, uint16_t seq_num);
 	int iput_signal_deliver_all(uint32_t peer_rank);
 
 	friend class nccl_ofi_gin_listen_comm;

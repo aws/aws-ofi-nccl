@@ -103,7 +103,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 			auto *ack_msg =
 				static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
 
-			auto &gin_comm = resources.get_comm(ack_msg->comm_id);
+			auto &gin_comm = resources.get_comm(ack_msg->ack.comm_id);
 
 			ret = gin_comm.handle_ack_completion(src_addr, rail_id_arg,
 							     ack_msg);
