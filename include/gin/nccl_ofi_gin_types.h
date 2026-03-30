@@ -28,54 +28,6 @@ enum gin_msg_type_t : uint8_t {
  * Represents metadata associated with a put-signal request. This is sent from
  * the put-signal initiator to the target.
  */
-struct nccl_net_ofi_gin_signal_metadata_msg_t {
-	/* Message type identifier — must be GIN_MSG_TYPE_METADATA */
-	gin_msg_type_t msg_type;
-
-	/* Number of completions the target will receive
-	 *
-	 * This will be either 1 or 2
-	 * 1: if this is a signal without any associated data (zero-sized
-	 *    put-signal) or data without any signal (put)
-	 * 2: For put-signal (data + signal) */
-	uint8_t num_segments;
-
-	/* Message sequence number */
-	uint16_t msg_seq_num;
-
-	/* A comm identitifer that uniquely identifies the comm
-	 * on the receiver side */
-	uint32_t remote_comm_id;
-
-	/* Signal information (if applicable) */
-	uint64_t signal_base_address;
-	uint64_t signal_offset;
-	uint64_t signal_value;
-};
-
-static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
-	      "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
-
-/**
- * ACK message sent via fi_send from receiver to sender.
- */
-struct gin_ack_msg_t {
-	/* Message type identifier — must be set explicitly (freelist memory) */
-	gin_msg_type_t msg_type;
-	uint8_t reserved;
-	/* Number of seq_nums in the acknowledged range */
-	uint16_t count;
-	/* comm_id on the sender side (so the sender can look up the comm) */
-	uint16_t comm_id;
-	/* Last (highest) sequence number in the acknowledged range */
-	uint16_t ack_seq_num;
-};
-
-static_assert(sizeof(gin_ack_msg_t) == 8, "gin_ack_msg_t must be exactly 8 bytes for inline send");
-static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, msg_type) == 0,
-	      "msg_type must be at offset 0 for type-based dispatch");
-static_assert(offsetof(gin_ack_msg_t, msg_type) == 0,
-	      "msg_type must be at offset 0 for type-based dispatch");
 
 /**
  * Constants
@@ -124,15 +76,67 @@ static_assert(offsetof(gin_ack_msg_t, msg_type) == 0,
 	(((ack_req) << GIN_IMM_ACK_REQ_SHIFT) | ((nseg) << GIN_IMM_SEG_CNT_SHIFT) |               \
 	 ((seq) << GIN_IMM_SEQ_SHIFT) | ((comm_id) << GIN_IMM_COMM_SHIFT))
 
-/* ACK count field width — used by the coalescing logic in deliver_all
-   to cap the range span per ACK. */
-#define GIN_ACK_COUNT_BITS 10
-#define GIN_ACK_COUNT_MASK ((1 << GIN_ACK_COUNT_BITS) - 1)
+/* Packed sequence number + segment count (16 bits). */
+struct nccl_net_ofi_gin_metadata_seq_t {
+	uint16_t seq_num:GIN_IMM_SEQ_BITS;
+	uint16_t num_segments:GIN_IMM_SEG_CNT_BITS;
+};
+
+/* Bundled ack payload (32 bits). ack_count == 0 means no ack. */
+#define GIN_ACK_COUNT_BITS    10
+#define GIN_ACK_COUNT_MASK    ((1 << GIN_ACK_COUNT_BITS) - 1)
+struct nccl_net_ofi_gin_ack_t {
+	uint32_t ack_seq_num:GIN_IMM_SEQ_BITS;
+	uint32_t comm_id:GIN_IMM_COMM_BITS;
+	uint32_t ack_count:GIN_ACK_COUNT_BITS;
+};
+
+struct nccl_net_ofi_gin_signal_metadata_msg_t {
+	/* Message type identifier — must be GIN_MSG_TYPE_METADATA */
+	gin_msg_type_t msg_type;
+
+	/* Comm identifier on the receiver side */
+	uint8_t remote_comm_id;
+
+	/* Message sequence number and segment count */
+	nccl_net_ofi_gin_metadata_seq_t seq;
+
+	/* Bundled ack (ack_count == 0 when absent) */
+	nccl_net_ofi_gin_ack_t ack;
+
+	/* Signal information (if applicable) */
+	uint64_t signal_base_address;
+	uint64_t signal_offset;
+	uint64_t signal_value;
+};
+
+static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
+	     "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
+
+/**
+ * ACK message sent via fi_send from receiver to sender.
+ */
+struct gin_ack_msg_t {
+	/* Message type identifier — must be set explicitly (freelist memory) */
+	gin_msg_type_t msg_type;
+	uint8_t reserved;
+	/* Ack payload — same format as bundled ack in metadata */
+	nccl_net_ofi_gin_ack_t ack;
+};
+
+static_assert(sizeof(gin_ack_msg_t) == 8, "gin_ack_msg_t must be exactly 8 bytes for inline send");
+static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, msg_type) == 0,
+	     "msg_type must be at offset 0 for type-based dispatch");
+static_assert(offsetof(gin_ack_msg_t, msg_type) == 0,
+	     "msg_type must be at offset 0 for type-based dispatch");
 
 /* ACK interval for PUT-only messages. Send an ACK every N consecutive PUTs
    to prevent sequence number wraparound. */
 #define GIN_ACK_INTERVAL 64
 static_assert(GIN_ACK_INTERVAL <= (1 << (GIN_IMM_SEQ_BITS - 1)),
 	      "GIN_ACK_INTERVAL must not exceed half the sequence number space");
+
+/* Max progress calls a bundled ack can wait before being flushed. */
+#define GIN_ACK_MAX_AGE 50
 
 #endif

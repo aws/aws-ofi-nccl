@@ -228,9 +228,9 @@ int nccl_ofi_gin_comm::send_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
 	auto *ack_msg = static_cast<gin_ack_msg_t *>(ack_elem->ptr);
 	ack_msg->msg_type = GIN_MSG_TYPE_ACK;
 	ack_msg->reserved = 0;
-	ack_msg->comm_id = static_cast<uint16_t>(peer_comm_id);
-	ack_msg->ack_seq_num = static_cast<uint16_t>(ack_seq_num);
-	ack_msg->count = static_cast<uint16_t>(count);
+	ack_msg->ack.comm_id = static_cast<uint16_t>(peer_comm_id);
+	ack_msg->ack.ack_seq_num = static_cast<uint16_t>(ack_seq_num);
+	ack_msg->ack.ack_count = static_cast<uint16_t>(count);
 
 	auto *ofi_ep = ep.get_rail(rail_id).ofi_ep.get();
 
@@ -372,6 +372,21 @@ int nccl_ofi_gin_comm::await_pending_requests()
 	int ret = 0;
 
 	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
+
+	/* Flush any deferred bundled acks so remote senders can
+	  complete their outstanding requests. */
+	nccl_ofi_dlist_node *pos;
+	nccl_ofi_dlist_for_each_safe(&pending_ack_list, pos) {
+		auto *pa = nccl_ofi_dlist_entry(pos, &nccl_ofi_gin_pending_ack_info::node);
+		if (pa->ack_count > 0) {
+			ret = send_ack(*this, pa->peer_rank,
+				pa->seq_num, pa->ack_count);
+			if (OFI_UNLIKELY(ret != 0)) {
+				return ret;
+			}
+		}
+		pos->remove();
+	}
 
 	while (outstanding_ack_counter > 0) {
 		ret = resources.progress();
@@ -515,8 +530,8 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 		auto *metadata_send =
 			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(metadata_elem->ptr);
 
-		metadata_send->msg_seq_num = msg_seq_num;
-		metadata_send->num_segments = nseg;
+		metadata_send->seq.seq_num = msg_seq_num;
+		metadata_send->seq.num_segments = nseg;
 		metadata_send->remote_comm_id = remote_comm_id;
 		metadata_send->msg_type = GIN_MSG_TYPE_METADATA;
 		metadata_send->signal_base_address =
@@ -528,6 +543,17 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 			metadata_send->signal_value = signalValue;
 		} else {
 			metadata_send->signal_value = 0;
+		}
+
+		/* Bundle pending ack for this peer */
+		if (rank_comm.pending_ack.ack_count > 0) {
+			metadata_send->ack.ack_seq_num = rank_comm.pending_ack.seq_num;
+			/* comm_id is only used for standalone ACKs, setting it here for struct completeness */
+			metadata_send->ack.comm_id = rank_comm.comm_id;
+			metadata_send->ack.ack_count = rank_comm.pending_ack.ack_count;
+			rank_comm.pending_ack.ack_count = 0;
+		} else {
+			metadata_send->ack.ack_count = 0;
 		}
 
 		send_req = resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
@@ -638,14 +664,14 @@ int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint6
 	int ret = 0;
 
 	NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on target",
-		       req->metadata.msg_seq_num);
+		       req->metadata.seq.seq_num);
 
 	if (req->metadata_received) {
 		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN(dev, this, peer_rank,
-							 req->metadata.msg_seq_num, req);
+							 req->metadata.seq.seq_num, req);
 		ret = do_gin_signal(req->metadata);
 		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank,
-						       req->metadata.msg_seq_num, req);
+						       req->metadata.seq.seq_num, req);
 	}
 
 	if (ret != 0) {
@@ -659,41 +685,81 @@ int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint6
 	return ret;
 }
 
+/* Extend the pending bundled ack to include seq_num. If the merged
+   range would overflow the bitfield, flush the old range first. */
+int nccl_ofi_gin_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num)
+{
+	auto &rank_comm = this->rank_comms[peer_rank];
+
+	if (rank_comm.pending_ack.node.on_list()) {
+		if (rank_comm.pending_ack.ack_count > 0) {
+			/* Callers must add ranges in-order (ascending seq_num).
+			   delta must be in (0, half_seq_space] to confirm forward progress. */
+			assert(((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) > 0 &&
+			       ((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) <= (GIN_IMM_SEQ_MASK >> 1));
+
+			uint32_t prev_start = (rank_comm.pending_ack.seq_num
+						- rank_comm.pending_ack.ack_count + 1) & GIN_IMM_SEQ_MASK;
+			uint32_t merged_count = ((seq_num - prev_start + 1) & GIN_IMM_SEQ_MASK);
+
+			if (merged_count > GIN_ACK_INTERVAL) {
+				int ret = send_ack(*this, peer_rank,
+							rank_comm.pending_ack.seq_num,
+							rank_comm.pending_ack.ack_count);
+				if (OFI_UNLIKELY(ret != 0)) {
+					return ret;
+				}
+				merged_count = 1;
+			}
+			rank_comm.pending_ack.ack_count = merged_count;
+		} else {
+			/* Was consumed by iputSignal piggyback; reuse slot */
+			rank_comm.pending_ack.ack_count = 1;
+		}
+	} else {
+		rank_comm.pending_ack.ack_count = 1;
+		rank_comm.pending_ack.peer_rank = peer_rank;
+		pending_ack_list.push_back(&rank_comm.pending_ack.node);
+	}
+
+	rank_comm.pending_ack.seq_num = seq_num;
+	rank_comm.pending_ack.start = progress_counter;
+	return 0;
+}
+
+/* Flush pending bundled acks that have aged past the threshold
+   for peers with no recent completions. Called from progress. */
+int nccl_ofi_gin_comm::flush_stale_acks()
+{
+	++progress_counter;
+	nccl_ofi_dlist_node *pos;
+	nccl_ofi_dlist_for_each_safe(&pending_ack_list, pos) {
+		auto *pa = nccl_ofi_dlist_entry(pos, &nccl_ofi_gin_pending_ack_info::node);
+		if (pa->ack_count == 0 ||
+		    progress_counter - pa->start > GIN_ACK_MAX_AGE) {
+			if (pa->ack_count > 0) {
+				int ret = send_ack(*this, pa->peer_rank,
+						pa->seq_num, pa->ack_count);
+				if (OFI_UNLIKELY(ret != 0)) {
+					return ret;
+				}
+			}
+			pos->remove();
+		}
+	}
+	return 0;
+}
+
 int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 {
 	int ret = 0;
 
-	/* Process undelivered signals in order */
-	uint16_t highest_acked_seq_num = 0;
-	uint16_t first_acked_seq_num = 0;
-	bool any_ack_requested = false;
-
-	/* Coalesce ACKs: instead of one ACK per signal, accumulate a range
-	   of ack-requested seq_nums (first_acked..highest_acked) and send
-	   a single range ACK. Seq_nums in between that did not request an
-	   ACK are harmlessly skipped on the sender side (they never set
-	   ack_outstanding). If the range would overflow the ack_count
-	   field, flush the ACK mid-loop and start a new range. */
+	/* Process undelivered signals in order.  ACK coalescing is
+	   handled entirely by stash_pending_ack(), which merges
+	   ranges and flushes when they exceed GIN_ACK_INTERVAL. */
 	while (true) {
 		auto &rank_comm = this->rank_comms[peer_rank];
 		uint16_t next_seq_num = rank_comm.next_delivered_signal_seq_num;
-
-		/* Flush if adding this seq_num would overflow the 10-bit
-		   ack_count field. range_span uses GIN_IMM_SEQ_MASK for
-		   correct wraparound in the 11-bit sequence space.
-		   ack_count uses GIN_ACK_COUNT_MASK to match the
-		   10-bit field it is encoded into. */
-		if (any_ack_requested) {
-			uint32_t range_span = ((next_seq_num - first_acked_seq_num + 1) & GIN_IMM_SEQ_MASK);
-			if (range_span > GIN_ACK_COUNT_MASK) {
-				uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_ACK_COUNT_MASK);
-				ret = send_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
-				if (OFI_UNLIKELY(ret != 0)) {
-					return ret;
-				}
-				any_ack_requested = false;
-			}
-		}
 
 		uint64_t map_key = get_req_map_key(peer_rank, next_seq_num);
 		auto it = this->outstanding_iput_signal_recv_reqs.find(map_key);
@@ -702,11 +768,10 @@ int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 
 			if (req->num_seg_completions == req->total_segments) {
 				if (req->is_ack_requested) {
-					if (!any_ack_requested) {
-						first_acked_seq_num = next_seq_num;
+					ret = stash_pending_ack(peer_rank, next_seq_num);
+					if (OFI_UNLIKELY(ret != 0)) {
+						return ret;
 					}
-					any_ack_requested = true;
-					highest_acked_seq_num = next_seq_num;
 				}
 				rank_comm.next_delivered_signal_seq_num =
 					(rank_comm.next_delivered_signal_seq_num + 1) &
@@ -729,14 +794,6 @@ int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 		}
 	}
 
-	/* Flush any remaining accumulated range ACK. ack_count uses
-	   GIN_ACK_COUNT_MASK to match the 10-bit field; the
-	   mid-loop overflow guard ensures the value always fits. */
-	if (any_ack_requested) {
-		uint32_t ack_count = ((highest_acked_seq_num - first_acked_seq_num + 1) & GIN_ACK_COUNT_MASK);
-		ret = send_ack(*this, peer_rank, highest_acked_seq_num, ack_count);
-	}
-
 	return ret;
 }
 
@@ -746,9 +803,18 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 {
 	int ret = 0;
 
-	uint16_t msg_seq_num = metadata_msg->msg_seq_num;
+	uint16_t msg_seq_num = metadata_msg->seq.seq_num;
+	uint16_t num_segments = metadata_msg->seq.num_segments;
 
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
+
+	/* Process bundled ack if present */
+	if (metadata_msg->ack.ack_count > 0) {
+		clear_ack_range(peer_rank,
+				metadata_msg->ack.ack_seq_num,
+				metadata_msg->ack.ack_count);
+	}
+
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
 
 	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
@@ -757,7 +823,7 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 		req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
 
 		req->num_seg_completions = 1;
-		req->total_segments = metadata_msg->num_segments;
+		req->total_segments = num_segments;
 		req->metadata = *metadata_msg;
 		req->metadata_received = true;
 		req->is_ack_requested = true;  // Metadata always requests ACK
@@ -779,8 +845,8 @@ int nccl_ofi_gin_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_i
 					     const gin_ack_msg_t *ack_msg)
 {
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
-	uint16_t ack_seq_num = ack_msg->ack_seq_num;
-	uint16_t count = ack_msg->count;
+	uint16_t ack_seq_num = ack_msg->ack.ack_seq_num;
+	uint16_t count = ack_msg->ack.ack_count;
 	assert(count > 0);
 
 	NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, this, peer_rank, ack_seq_num);
@@ -792,16 +858,7 @@ int nccl_ofi_gin_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_i
 	   ordering — ACKs from different deliver_all calls can arrive
 	   in any order. A single ack_seq_num would require cumulative
 	   state that breaks under reordering. */
-	uint16_t start_seq = (ack_seq_num - count + 1) & GIN_IMM_SEQ_MASK;
-
-	uint16_t seq = start_seq;
-	while (true) {
-		clear_ack_outstanding(peer_rank, seq);
-		if (seq == ack_seq_num) {
-			break;
-		}
-		seq = (seq + 1) & GIN_IMM_SEQ_MASK;
-	}
+	clear_ack_range(peer_rank, ack_seq_num, count);
 	return 0;
 }
 
@@ -833,8 +890,8 @@ int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16
 
 	if (req->num_seg_completions == req->total_segments) {
 		/* Fill in the fields related to metadata */
-		req->metadata.msg_seq_num = msg_seq_num;
-		req->metadata.num_segments = req->total_segments;
+		req->metadata.seq.seq_num = msg_seq_num;
+		req->metadata.seq.num_segments = req->total_segments;
 		req->metadata.msg_type = GIN_MSG_TYPE_METADATA;
 	}
 
