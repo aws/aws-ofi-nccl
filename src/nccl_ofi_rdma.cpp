@@ -1747,9 +1747,6 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 	elem = req->elem;
 
-	/* Zero out buffer */
-	zero_nccl_ofi_req(req);
-
 	nccl_ofi_reqs_fl->entry_free(elem);
 
 	/* Reduce inflight commands */
@@ -2815,6 +2812,9 @@ static inline nccl_net_ofi_rdma_req *allocate_req(nccl_ofi_freelist *fl)
 	assert(req);
 
 	req->elem = elem;
+
+	/* Zero out buffer */
+	zero_nccl_ofi_req(req);
 
 	return req;
 }
