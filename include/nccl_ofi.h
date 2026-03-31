@@ -363,6 +363,22 @@ public:
 	 */
 	char *name = nullptr;
 
+	/*
+	 * Cached PCI path for this device (e.g., /sys/devices/pci...).
+	 * Populated on first get_properties() call via realpath() and
+	 * returned on subsequent calls. Freed in the destructor.
+	 */
+	char *pci_path = nullptr;
+
+	/*
+	 * Cached device name returned in properties (domain or NIC
+	 * device name from libfabric). Distinct from the 'name' field
+	 * above which holds the provider name. Populated on first
+	 * get_properties() call via strdup() and returned on subsequent
+	 * calls. Freed in the destructor.
+	 */
+	char *props_name = nullptr;
+
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
 	 * selected.

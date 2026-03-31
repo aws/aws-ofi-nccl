@@ -434,7 +434,7 @@ static int get_device_pci_path(struct fid_nic *nic_info, char** path)
 static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 				 nccl_ofi_properties_t *props)
 {
-	props->name = strdup(nic_prov->domain_attr->name);
+	props->name = nic_prov->domain_attr->name;
 
 	/*
 	 * Currently, libfabric providers provide multiple `fi_info`
@@ -535,19 +535,36 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 			      "No NIC info for dev %d. Supplying default values for NIC properties.",
 			      dev_id);
+		if (OFI_UNLIKELY(device->props_name == nullptr)) {
+			std::lock_guard<std::mutex> lock(device->device_lock);
+			if (device->props_name == nullptr) {
+				device->props_name = strdup(nic_prov->domain_attr->name);
+				assert(device->props_name != nullptr);
+			}
+		}
+		props->name = device->props_name;
 		ret = 0;
 		goto exit;
 	}
 
-	/* name is NULL if device is a part of multirail config */
-	/* overriding default name only if value is available from provider */
-	if (nic_info->device_attr->name) {
-		if (props->name) {
-			free(props->name);
+	/*
+	 * Cache props_name and pci_path on the device. These are
+	 * allocated once and returned on all subsequent calls.
+	 * Double-checked locking avoids the mutex on the common path.
+	 */
+	if (OFI_UNLIKELY(device->props_name == nullptr)) {
+		std::lock_guard<std::mutex> lock(device->device_lock);
+		if (device->props_name == nullptr) {
+			/* Prefer NIC device name; fall back to domain name */
+			if (nic_info->device_attr->name) {
+				device->props_name = strdup(nic_info->device_attr->name);
+			} else {
+				device->props_name = strdup(nic_prov->domain_attr->name);
+			}
+			assert(device->props_name != nullptr);
 		}
-		props->name = strdup(nic_info->device_attr->name);
-		assert(props->name != nullptr);
 	}
+	props->name = device->props_name;
 
 	/* Speed reported in Mbps */
 	props->port_speed = nic_info->link_attr->speed / (1e6);
@@ -569,20 +586,21 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		props->port_speed = 200 * (1e3);
 	}
 
-	ret = get_device_pci_path(nic_info, &props->pci_path);
-	if (ret != 0) {
-		ret = 0;
-		props->pci_path = NULL;
+	if (OFI_UNLIKELY(device->pci_path == nullptr)) {
+		std::lock_guard<std::mutex> lock(device->device_lock);
+		if (device->pci_path == nullptr) {
+			ret = get_device_pci_path(nic_info, &device->pci_path);
+			if (ret != 0) {
+				ret = 0;
+				device->pci_path = nullptr;
+			}
+		}
 	}
+	props->pci_path = device->pci_path;
 
 	goto exit;
 error:
-	if (props->pci_path) {
-		free(props->pci_path);
-	}
-	if (props->name) {
-		free(props->name);
-	}
+	/* pci_path and name are owned by the device, not freed here */
 
 exit:
 	return ret;
@@ -768,6 +786,12 @@ nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 {
 	if (this->name != nullptr) {
 		free(this->name);
+	}
+	if (this->pci_path != nullptr) {
+		free(this->pci_path);
+	}
+	if (this->props_name != nullptr) {
+		free(this->props_name);
 	}
 }
 
