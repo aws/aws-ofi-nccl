@@ -74,6 +74,7 @@ int nccl_ofi_cm_rx_req::progress()
 {
 	auto conn_msg = static_cast<nccl_ofi_cm_conn_msg *>(rx_elem.ptr);
 	auto mr_handle = static_cast<endpoint::mr_handle_t *>(rx_elem.mr_handle);
+	memset(conn_msg, 0, resources.get_conn_msg_size());
 	return resources.ep.recv(*conn_msg, resources.get_conn_msg_size(), *mr_handle, *this);
 }
 
