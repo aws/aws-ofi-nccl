@@ -1030,7 +1030,8 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 		/* Deregister Flush buffer memory region */
 		mr_handle = this->flush_buff.mr_handle;
 		if (mr_handle) {
-			mr_handle->mr.reset();
+			delete mr_handle;
+			this->flush_buff.mr_handle = nullptr;
 		}
 		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.host_buffer,
 						    system_page_size);
