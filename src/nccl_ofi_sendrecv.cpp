@@ -382,9 +382,6 @@ static inline int sendrecv_req_free(uint64_t *num_inflight_reqs,
 
 	elem = req->elem;
 
-	/* Zero out buffer */
-	sendrecv_req_zero(req);
-
 	assert(elem);
 	nccl_ofi_reqs_fl->entry_free(elem);
 	/* Reduce inflight commands */
@@ -883,6 +880,9 @@ static inline nccl_net_ofi_sendrecv_req *sendrecv_allocate_req(nccl_ofi_freelist
 	req = (nccl_net_ofi_sendrecv_req*) elem->ptr;
 	assert(req);
 	req->elem = elem;
+
+	/* Zero out buffer */
+	sendrecv_req_zero(req);
 
  exit:
 	return req;
