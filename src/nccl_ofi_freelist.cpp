@@ -152,6 +152,13 @@ nccl_ofi_freelist::~nccl_ofi_freelist()
 		if (this->entry_fini_fn != NULL) {
 			for (size_t i = 0; i < block->num_entries; ++i) {
 				nccl_ofi_freelist::fl_entry *entry = &block->entries[i];
+
+				/**
+				 * Mark the memory as defined before calling the fini function
+				 * It was initialized previously by entry_init_fn
+				 */
+				this->entry_set_defined(entry->ptr);
+
 				this->entry_fini_fn(entry->ptr);
 			}
 		}

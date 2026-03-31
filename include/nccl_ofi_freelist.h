@@ -177,7 +177,16 @@ public:
 		nccl_net_ofi_mem_defined_unaligned(entry, sizeof(*entry));
 
 		this->entries = entry->next;
-		entry_set_undefined(entry->ptr);
+
+		if (this->entry_init_fn) {
+			/* If the user provided an entry initialization function,
+			   assume the buffer is initialized. This is necessary because
+			   the freelist cannot know which parts of the buffer were actually
+			   initialized by the user's init function. */
+			entry_set_defined(entry->ptr);
+		} else {
+			entry_set_undefined(entry->ptr);
+		}
 
 		this->num_in_use_entries++;
 
@@ -219,6 +228,19 @@ public:
 	}
 
 protected:
+	/*
+	 * Set memcheck guards of freelist entry's user data to accessible and defined
+	 */
+	void entry_set_defined(void *entry_p)
+	{
+		size_t user_entry_size = this->entry_size - MEMCHECK_REDZONE_SIZE;
+
+		/* Entry allocated by the user is accessible and
+		 * defined. Note that this allows the user to
+		 * override the fl_entry structure. */
+		nccl_net_ofi_mem_defined(entry_p, user_entry_size);
+	}
+
 	/* Internal function, which grows the freelist */
 	int add(size_t num_entries);
 
