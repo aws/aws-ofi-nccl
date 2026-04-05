@@ -128,9 +128,9 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 
 int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
 {
-#if defined(HIP_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD)
-	hipError_t ret = hipMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
-						      HIP_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
+#if HAVE_DECL_HIPMEMRANGEHANDLETYPEDMABUFFD
+	hipError_t ret = hipMemGetHandleForAddressRange(fd, (hipDeviceptr_t)aligned_ptr, aligned_size,
+						      hipMemRangeHandleTypeDmaBufFd, 0);
 	*offset = 0;
 	return ret == hipSuccess ? 0 : -EINVAL;
 #else

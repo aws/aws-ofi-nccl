@@ -40,6 +40,14 @@ AC_DEFUN([CHECK_PKG_ROCM], [
                                         [], [])],
                           [], [AC_INCLUDES_DEFAULT])])
 
+  dnl Check for hipMemRangeHandleTypeDmaBufFd enum (needed for DMA-BUF fd retrieval)
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_DECLS([hipMemRangeHandleTypeDmaBufFd],
+                       [],
+                       [],
+                       [[#define __HIP_PLATFORM_AMD__
+#include <hip/hip_runtime_api.h>]])])
+
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define="yes"],
         [check_pkg_define="no"
