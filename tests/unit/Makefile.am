@@ -15,6 +15,7 @@ noinst_HEADERS = unit_test.h
 
 noinst_PROGRAMS = \
 	assert \
+	dlist \
 	environ \
 	freelist \
 	msgbuff \
@@ -49,6 +50,7 @@ endif
 endif
 
 assert_SOURCES = $(base_sources) assert.cpp
+dlist_SOURCES = $(base_sources) dlist.cpp
 environ_SOURCES = $(base_sources) environ.cpp
 idpool_SOURCES = $(base_sources) idpool.cpp
 freelist_SOURCES = $(base_sources) freelist.cpp
