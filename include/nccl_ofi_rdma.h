@@ -895,6 +895,7 @@ public:
 	 */
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		   int type,
+		   nccl_net_ofi_rdma_ep_t *ep,
 		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
 	/**
@@ -950,11 +951,13 @@ public:
 	 */
 	int reg_internal_mr(void *data,
 			    size_t size, int type,
+			    nccl_net_ofi_rdma_ep_t *ep,
 			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
 #if HAVE_DECL_FI_MR_DMABUF
 	int reg_internal_mr_dma_buf(void *data,
 				int fd, uint64_t offset, size_t size, int type,
+				nccl_net_ofi_rdma_ep_t *ep,
 				nccl_net_ofi_rdma_mr_handle_t **mhandle);
 #endif
 	/**
@@ -1009,6 +1012,7 @@ protected:
 private:
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			     int type,
+			     nccl_net_ofi_rdma_ep_t *ep,
 			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
 	/**
