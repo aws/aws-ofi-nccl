@@ -2551,6 +2551,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_no_lock(nccl_net_ofi_rdma_mr_handle_t *
 
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
+						 nccl_net_ofi_rdma_ep_t *ep,
 						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
@@ -2627,6 +2628,7 @@ error:
 
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
+				       nccl_net_ofi_rdma_ep_t *ep,
 				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
@@ -2649,7 +2651,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		}
 		/* Cache miss */
 
-		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -2665,7 +2667,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
-		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -2677,35 +2679,29 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 
 
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
-						size_t size, int type,
-						nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					size_t size, int type,
+					nccl_net_ofi_rdma_ep_t *ep,
+					nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	assert(system_page_size > 0);
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	/* TODO: When the endpoint mr feature is supported for RDMA plugin
-	 * pass the endpoint during the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
-	return this->reg_mr(&ckey, type, mhandle);
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
+	return this->reg_mr(&ckey, type, ep, mhandle);
 }
 
 #if HAVE_DECL_FI_MR_DMABUF
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
-						int fd, uint64_t offset, size_t size, int type,
-						nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					int fd, uint64_t offset, size_t size, int type,
+					nccl_net_ofi_rdma_ep_t *ep,
+					nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	/* TODO: When the endpoint mr feature is supported for RDMA plugin
-	 * pass the endpoint during the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, nullptr);
-	return this->reg_mr(&ckey, type, mhandle);
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, ep);
+	return this->reg_mr(&ckey, type, ep, mhandle);
 }
 #endif
 
@@ -2720,11 +2716,12 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	return domain->reg_mr(ckey,
 			      type_param,
+			      endpoint,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
-								       int type_param, void **mhandle)
+							       int type_param, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
 	nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
@@ -2734,6 +2731,7 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	return domain->reg_mr(ckey,
 			      type_param,
+			      endpoint,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
@@ -2765,7 +2763,7 @@ static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size
 		return -ENOMEM;
 	}
 
-        int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, &mr_handle);
+        int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, nullptr, &mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
 		free(freelist_handle);
@@ -3275,7 +3273,7 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + this->flush_buff.size) <= system_page_size);
 
 	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size,
-				NCCL_PTR_HOST, &mr_handle);
+				NCCL_PTR_HOST, nullptr, &mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
                              dev_id);
@@ -3342,14 +3340,14 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
 
 		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
-						NCCL_PTR_CUDA, &mr_handle);
+						NCCL_PTR_CUDA, nullptr, &mr_handle);
 		close(fd);
 	} else {
-		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
+		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, nullptr, &mr_handle);
 	}
 
 #else
-	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
+	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, nullptr, &mr_handle);
 #endif
 
 	if (OFI_UNLIKELY(ret != 0)) {
@@ -4296,7 +4294,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
-	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, NCCL_PTR_HOST, &mr_handle);
+	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, NCCL_PTR_HOST, l_comm_ep, &mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to register memory for the control mailbox: %d", ret);
 		goto error;
@@ -6000,7 +5998,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 
 	/* Allocate control mailbox */
 	ret = domain_ptr->reg_internal_mr(ret_s_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE,
-						  NCCL_PTR_HOST, &ret_s_comm->ctrl_mr_handle);
+					  NCCL_PTR_HOST, this, &ret_s_comm->ctrl_mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not register memory for control mailbox for dev %d", dev_id);
 		ret = -ENOMEM;
