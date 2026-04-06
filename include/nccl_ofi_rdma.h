@@ -131,25 +131,52 @@ class nccl_net_ofi_rdma_mr_handle_t : public nccl_net_ofi_mr_handle_t {
 public:
 	/**
 	 * @brief 	Default constructor
+	 *
+	 * Every MR handle covers both the data ep rails and the control ep
+	 * rails.  With FI_MR_ENDPOINT a single fid_mr may only be bound to
+	 * one fid_ep, so we keep separate arrays for ownership and access:
+	 *
+	 *   mr_data[0..num_rails-1]       — owned fid_mr objects, bound to data ep rails
+	 *   mr_ctrl_owned[0..num_ctrl_rails-1] — owned fid_mr objects, bound to ctrl ep
+	 *                                        rails (FI_MR_ENDPOINT mode only)
+	 *   mr_ctrl[0..num_ctrl_rails-1]  — non-owning view; always populated after
+	 *                                    registration:
+	 *                                    · FI_MR_ENDPOINT: points into mr_ctrl_owned[]
+	 *                                    · non-endpoint-MR: aliases mr_data[] entries
+	 *
+	 * Using a raw-pointer view for mr_ctrl[] eliminates IO-path conditionals:
+	 * callers always use mr_ctrl[rail_id] without checking whether it is populated.
 	 */
-	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
+	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg, size_t num_ctrl_rails_arg)
 		: nccl_net_ofi_mr_handle_t(0),
 		  num_rails(num_rails_arg),
+		  num_ctrl_rails(num_ctrl_rails_arg),
 		  base_addr(0)
 	{
+		mr_data.resize(num_rails);
+		mr_ctrl.resize(num_ctrl_rails, nullptr);
 	}
 
 	/**
 	 * @brief	Get MR key for RDMA handle
-	 * 
-	 * 		Return MR key associated with first mr array element
+	 *
+	 * 		Return MR key associated with first data mr array element
 	 */
 	int get_mr_key(uint64_t *mr_key_ptr) override;
 
 	uint16_t num_rails;
+	uint16_t num_ctrl_rails;
 
-	/* Array of size `num_rails', indexed by rail_id */
-	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr;
+	/* Owned fid_mr objects, one per data ep rail */
+	std::vector<ofi_mr_ptr> mr_data;
+
+	/* Owned fid_mr objects, one per ctrl ep rail (FI_MR_ENDPOINT mode only).
+	 * In non-endpoint-MR mode this vector remains empty; mr_ctrl[] aliases mr_data[]. */
+	std::vector<ofi_mr_ptr> mr_ctrl_owned;
+
+	/* Non-owning view into either mr_ctrl_owned[] (FI_MR_ENDPOINT) or mr_data[]
+	 * (non-endpoint-MR).  Always populated after reg_mr_on_device() returns. */
+	std::vector<struct fid_mr *> mr_ctrl;
 
 	/* Base address of the registered memory region for offset calculation */
 	uintptr_t base_addr;
