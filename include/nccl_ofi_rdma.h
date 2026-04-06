@@ -960,6 +960,29 @@ private:
 			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
 
 	/**
+	 * @brief	Bind and enable a memory region on an endpoint
+	 *
+	 * Calls fi_mr_bind followed by fi_mr_enable on the given MR and endpoint.
+	 *
+	 * @param	mr
+	 *		The memory region to bind and enable
+	 * @param	ofi_ep
+	 *		The endpoint to bind the MR to
+	 * @param	rail_id
+	 *		Rail index, used only for diagnostic messages
+	 * @param	rail_type
+	 *		Human-readable rail type string (e.g. "data" or "ctrl"),
+	 *		used only for diagnostic messages
+	 *
+	 * @return	0 on success
+	 *		non-zero on error
+	 */
+	int mr_bind_and_enable(struct fid_mr *mr,
+			       struct fid_ep *ofi_ep,
+			       uint16_t rail_id,
+			       const char *rail_type);
+
+	/**
 	 * @brief	Deregister memory region without acquiring memory region cache lock
 	 *
 	 * @param	mr_handle
