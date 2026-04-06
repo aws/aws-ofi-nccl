@@ -918,9 +918,6 @@ public:
 	uint16_t num_rails;
 	std::array<nccl_net_ofi_rdma_domain_rail_t, MAX_NUM_RAILS> domain_rails;
 
-	/* The flush buffer */
-	nccl_net_ofi_rdma_flush_buffer_t flush_buff;
-
 	/* List of endpoints and set of addresses they have connections to */
 	nccl_ofi_ep_addr_list_t ep_addr_list;
 
@@ -931,27 +928,6 @@ protected:
 	 * Cleans up RDMA domain resources (flush buffers, ep_table).
 	 */		
 	~nccl_net_ofi_rdma_domain_t() override;
-
-	/**
-	 * @brief	Allocated and registers buffer to flush RDMA operations. On
-	 * 		Success, receive communicator holds reference to flush buffer
-	 * 		and associated memory handle.
-	 *
-	 * @param	dev_id
-	 *		Device ID
-	 *
-	 * @return	0, on success
-	 * 		error, on others
-	 */
-	int alloc_and_reg_flush_buff(int dev_id);
-
-	/**
-	 * @brief	Deregister flush buffer if flush buffer was registered. Deallocate flush buffer.
-	 *
-	 * @return	0, on success
-	 * 		error, on others
-	 */			    
-	int dealloc_and_dereg_flush_buff();
 
 private:
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
@@ -1323,6 +1299,20 @@ public:
 	nccl_ofi_freelist *eager_rx_buff_fl = nullptr;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist *rx_buff_reqs_fl = nullptr;
+	/* MR handle for the flush buffer used by this endpoint.
+	 * In FI_MR_ENDPOINT mode this is a per-endpoint registration bound to
+	 * the endpoint's own flush_buff allocation; otherwise it aliases the
+	 * domain's shared flush buffer MR.
+	 * Set in init_rx_buffers(); the per-endpoint registration (if any)
+	 * is deregistered in fini_rx_buffers(). */
+	nccl_net_ofi_rdma_mr_handle_t *flush_buff_mr_handle = nullptr;
+	/* Flush buffer for this endpoint.
+	 * In FI_MR_ENDPOINT mode: owns a per-endpoint GPU allocation
+	 * (buffer_base / buffer); freed in fini_rx_buffers().
+	 * In non-endpoint-MR mode: buffer aliases the domain's
+	 * flush_buff.buffer; buffer_base is nullptr (not owned).
+	 * Set in init_rx_buffers(). */
+	nccl_net_ofi_rdma_flush_buffer_t flush_buff = {};
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely
@@ -1363,6 +1353,26 @@ protected:
 	 *		non-zero, on error
 	 */
 	int init_rx_buffers();
+
+	/**
+	 * @brief	Allocate and register a buffer used to flush RDMA operations.
+	 *
+	 * Allocates a GPU (or host, for Neuron) flush buffer into @p fb and
+	 * registers it as an MR via the domain.  In FI_MR_ENDPOINT mode the
+	 * MR is bound and enabled on this endpoint; otherwise it is a
+	 * domain-scoped registration.  The resulting MR handle is written to
+	 * @p mr_out.
+	 *
+	 * @param	dev_id		Device ID (used in error messages)
+	 * @param	fb		Flush-buffer struct to populate
+	 * @param	mr_out		Receives the registered MR handle
+	 *
+	 * @return	0, on success
+	 * 		error, on others
+	 */
+	int alloc_and_reg_flush_buff(int dev_id,
+				     nccl_net_ofi_rdma_flush_buffer_t &fb,
+				     nccl_net_ofi_rdma_mr_handle_t *&mr_out);
 
 	/**
 	 * @brief	Initialize libfabric resources of endpoint rails
