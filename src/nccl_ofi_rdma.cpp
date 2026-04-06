@@ -2803,6 +2803,17 @@ typedef struct {
 } freelist_regmr_fn_handle_t;
 
 /**
+ * Context passed as the opaque pointer to freelist memory registration
+ * callbacks.  Carries both the domain (always required) and, when
+ * FI_MR_ENDPOINT is in use, the endpoint that every new MR must be
+ * bound and enabled on.
+ */
+struct freelist_regmr_ep_ctx_t {
+	nccl_net_ofi_rdma_domain_t *domain;
+	nccl_net_ofi_rdma_ep_t    *ep;      /* nullptr when no ep binding needed */
+};
+
+/**
  * Register host memory for use with the given communicator
  *
  * This interface is suitable for use with freelist_init_mr.
@@ -2812,9 +2823,11 @@ typedef struct {
  * @param	size
  *		Size of memory region. Must be a multiple of page size.
  */
-static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size, void **handle)
+static int freelist_regmr_host_fn(void *opaque, void *data, size_t size, void **handle)
 {
-	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)domain_void_ptr;
+	freelist_regmr_ep_ctx_t *ctx = (freelist_regmr_ep_ctx_t *)opaque;
+	nccl_net_ofi_rdma_domain_t *domain = ctx->domain;
+	nccl_net_ofi_rdma_ep_t *ep = ctx->ep;
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
@@ -2825,7 +2838,7 @@ static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size
 		return -ENOMEM;
 	}
 
-        int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, nullptr, &mr_handle);
+        int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
 		free(freelist_handle);
@@ -3478,6 +3491,8 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 
 	delete r_comm->ctrl_buff_fl;
 	delete r_comm->flush_buff_fl;
+	delete (freelist_regmr_ep_ctx_t *)r_comm->comm_buff_regmr_ctx;
+	r_comm->comm_buff_regmr_ctx = nullptr;
 	delete r_comm->nccl_ofi_reqs_fl;
 
 	if (!nccl_ofi_msgbuff_destroy(r_comm->msgbuff)) {
@@ -4309,6 +4324,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	size_t comm_id = 0;
 	nccl_net_ofi_rdma_recv_comm *r_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	freelist_regmr_ep_ctx_t *comm_ctx = nullptr;
 	nccl_net_ofi_rdma_device_t *device = domain->rdma_domain_get_device();
 	int dev_id = device->dev_id;
 	int num_rails = l_comm_ep->num_rails;
@@ -4459,10 +4475,18 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 		return NULL;
 	}
 
+	/* Allocate a freelist registration context for ctrl_buff_fl and flush_buff_fl.
+	 * In FI_MR_ENDPOINT mode the ep pointer is set so that each registered MR is
+	 * bound and enabled against this endpoint.  In non-endpoint-MR mode ep is nullptr
+	 * so the bind/enable step is skipped.
+	 * Must outlive both freelists; freed in recv_comm_destroy(). */
+	comm_ctx = new freelist_regmr_ep_ctx_t{domain, endpoint_mr ? ep : nullptr};
+	r_comm->comm_buff_regmr_ctx = comm_ctx;
+
 	r_comm->ctrl_buff_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_close_msg_t),
 						     8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
 						     freelist_regmr_host_fn,
-						     freelist_deregmr_host_fn, domain, 1,
+						     freelist_deregmr_host_fn, comm_ctx, 1,
 						     "Ctrl Buffer",
 						     true);
 
@@ -4470,7 +4494,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	r_comm->flush_buff_fl = new nccl_ofi_freelist(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * MAX_NUM_RAILS,
 						      8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
 						      freelist_regmr_host_fn,
-						      freelist_deregmr_host_fn, domain,
+						      freelist_deregmr_host_fn, comm_ctx,
 						      NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE,
 						      "Flush Buffer", true);
 
@@ -5067,7 +5091,12 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem = rx_buff_data->rx_buff_fl_elem;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
 		(freelist_regmr_fn_handle_t *)rx_buff_fl_elem->mr_handle;
-	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr_data[rx_buff_data->rail->rail_id].get());
+	nccl_net_ofi_rdma_mr_handle_t *mr_h = fl_mr_handle->mr_handle;
+	uint16_t rid = rx_buff_data->rail->rail_id;
+	struct fid_mr *raw_mr = ep_rail->is_ctrl
+		? mr_h->mr_ctrl[rid]
+		: mr_h->mr_data[rid].get();
+	void *desc = fi_mr_desc(raw_mr);
 	struct iovec iov;
 	struct fi_msg msg;
 	uint64_t flags = 0;
@@ -5775,20 +5804,30 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 						      "Rx Buffer Requests",
 						      enable_freelist_leak_detection);
 
+	/* Allocate a context for freelist MR registration callbacks.
+	 * In FI_MR_ENDPOINT mode ep is set so newly registered MRs are
+	 * bound and enabled against this endpoint; otherwise ep is nullptr.
+	 * Must outlive the freelists; freed in fini_rx_buffers(). */
+	freelist_regmr_ep_ctx_t *rx_ctx = new freelist_regmr_ep_ctx_t{domain_ptr, endpoint_mr ? this : nullptr};
+	this->rx_buff_regmr_ctx = rx_ctx;
+
+	/* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the unified
+	 * MR handle binds to both data and ctrl ep rails so rx_ctx works for both. */
 	this->ctrl_rx_buff_fl = new nccl_ofi_freelist(this->ctrl_rx_buff_size,
 						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 						      NULL, NULL,
 						      freelist_regmr_host_fn, freelist_deregmr_host_fn,
-						      domain_ptr, 1,
+						      rx_ctx, 1,
 						      "Ctrl Rx Buffer",
 						      enable_freelist_leak_detection);
 
 	if (this->eager_rx_buff_size > 0) {
+		/* Eager rx buffers are posted on data ep rails; use rx_ctx. */
 		this->eager_rx_buff_fl = new nccl_ofi_freelist(this->eager_rx_buff_size,
 							       ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
 							       NULL, NULL,
 							       freelist_regmr_host_fn, freelist_deregmr_host_fn,
-							       domain_ptr, EAGER_RX_BUFFER_ALIGNMENT,
+							       rx_ctx, EAGER_RX_BUFFER_ALIGNMENT,
 							       "Eager Rx Buffer",
 							       enable_freelist_leak_detection);
 	} else {
@@ -5812,6 +5851,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = ctrl_rx_buff_req_alloc;
+		rail->is_ctrl = true;
 	}
 
 	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
@@ -5830,6 +5870,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = eager_rx_buff_req_alloc;
+		rail->is_ctrl = false;
 	}
 
 #if HAVE_GPU
@@ -5875,6 +5916,10 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 	}
 
 	delete this->rx_buff_reqs_fl;
+
+	/* Free the freelist registration context allocated in init_rx_buffers(). */
+	delete (freelist_regmr_ep_ctx_t *)this->rx_buff_regmr_ctx;
+	this->rx_buff_regmr_ctx = nullptr;
 
 	/* Deregister the per-endpoint flush buffer MR if we own one.
 	 * flush_buff_mr_handle points at the shared domain-level registration
