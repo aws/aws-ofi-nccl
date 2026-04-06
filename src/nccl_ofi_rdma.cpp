@@ -2549,6 +2549,29 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_no_lock(nccl_net_ofi_rdma_mr_handle_t *
 }
 
 
+int nccl_net_ofi_rdma_domain_t::mr_bind_and_enable(struct fid_mr *mr,
+						   struct fid_ep *ofi_ep,
+						   uint16_t rail_id,
+						   const char *rail_type)
+{
+	int ret = fi_mr_bind(mr, &ofi_ep->fid, 0);
+	if (ret != 0) {
+		NCCL_OFI_WARN("fi_mr_bind (%s rail %u) failed: rc=%d, error=%s",
+			      rail_type, rail_id, ret, fi_strerror(-ret));
+		return ret;
+	}
+
+	ret = fi_mr_enable(mr);
+	if (ret != 0) {
+		NCCL_OFI_WARN("fi_mr_enable failed on %s rail %u with rc=%d, error=%s",
+			      rail_type, rail_id, ret, fi_strerror(-ret));
+		return ret;
+	}
+
+	return 0;
+}
+
+
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
 						 nccl_net_ofi_rdma_ep_t *ep,
@@ -2563,13 +2586,16 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 
 	/* Allocate rdma memory registration handle.
 	 *
-	 * In non-endpoint-MR mode (the only mode supported at this stage) a
-	 * single domain-level fid_mr is shared across all rails.  We size
-	 * mr_ctrl[] to num_rails and alias each entry to the corresponding
-	 * mr_data[] entry so that IO-path callers can always use
-	 * mr_ctrl[rail_id] unconditionally, without checking whether the
-	 * vector is populated. */
-	uint16_t nctrl = static_cast<uint16_t>(num_rails);
+	 * In FI_MR_ENDPOINT mode (ep != nullptr) a separate fid_mr is registered
+	 * for each ctrl ep rail, so nctrl = ep->num_control_rails.
+	 *
+	 * In non-endpoint-MR mode (ep == nullptr) a single domain-level fid_mr is
+	 * shared across all rails.  We still size mr_ctrl[] to num_rails and alias
+	 * each entry to the corresponding mr_data[] entry so that IO-path callers
+	 * can always use mr_ctrl[rail_id] unconditionally, without checking
+	 * whether the vector is populated. */
+	uint16_t nctrl = ep ? ep->num_control_rails
+	                    : static_cast<uint16_t>(num_rails);
 	auto *ret_handle = new nccl_net_ofi_rdma_mr_handle_t(num_rails, nctrl);
 
 	if (key_pool->get_size() != 0) {
@@ -2604,12 +2630,48 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			goto error;
 		}
 		ret_handle->mr_data[rail_id] = std::move(mr_result.resource);
+
+		if (ep != nullptr) {
+			nccl_net_ofi_rdma_ep_rail_t *ep_rail = ep->rdma_endpoint_get_rail(rail_id);
+			struct fid_ep *ofi_ep = ep_rail->ofi_ep.get();
+			ret = mr_bind_and_enable(ret_handle->mr_data[rail_id].get(), ofi_ep,
+						 rail_id, "data");
+			if (ret != 0) goto error;
+		}
 	}
 
-	/* Non-endpoint-MR: alias mr_ctrl[i] to mr_data[i] so IO-path callers
-	 * can always use mr_ctrl[rail_id] unconditionally. */
-	for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
-		ret_handle->mr_ctrl[rail_id] = ret_handle->mr_data[rail_id].get();
+	if (ep != nullptr) {
+		/* FI_MR_ENDPOINT: register a separate fid_mr per ctrl rail, bind it
+		 * to the ctrl ep, and point mr_ctrl[] at the owned objects. */
+		ret_handle->mr_ctrl_owned.resize(nctrl);
+		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
+			nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
+
+			auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
+								      &mr_attr,
+								      regattr_flags);
+			if (OFI_UNLIKELY(mr_result.is_failure())) {
+				NCCL_OFI_WARN("Could not register memory on ctrl rail %u with flag %lu",
+					      rail_id, regattr_flags);
+				ret = mr_result.error_code;
+				goto error;
+			}
+			ret_handle->mr_ctrl_owned[rail_id] = std::move(mr_result.resource);
+
+			nccl_net_ofi_rdma_ep_rail_t *ctrl_rail = ep->rdma_endpoint_get_control_rail(rail_id);
+			struct fid_ep *ctrl_ofi_ep = ctrl_rail->ofi_ep.get();
+			ret = mr_bind_and_enable(ret_handle->mr_ctrl_owned[rail_id].get(), ctrl_ofi_ep,
+						 rail_id, "ctrl");
+			if (ret != 0) goto error;
+
+			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_ctrl_owned[rail_id].get();
+		}
+	} else {
+		/* Non-endpoint-MR: the domain-level fid_mr is valid for all rails.
+		 * Alias mr_ctrl[i] to mr_data[i] so IO-path callers need no conditional. */
+		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
+			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_data[rail_id].get();
+		}
 	}
 
 	/* Store base address of registered memory region for offset calculations.
@@ -6811,7 +6873,7 @@ static void get_hints(struct fi_info *hints)
 	hints->ep_attr->type = FI_EP_RDM;
 
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
-		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+		FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	hints->domain_attr->threading = FI_THREAD_COMPLETION;
 
@@ -6996,11 +7058,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
 		return ret;
-	}
-
-	if (endpoint_mr) {
-		NCCL_OFI_WARN("RDMA protocol does not support endpoint memory registration.");
-		return -ENOTSUP;
 	}
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
