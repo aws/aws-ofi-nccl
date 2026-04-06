@@ -131,25 +131,51 @@ class nccl_net_ofi_rdma_mr_handle_t : public nccl_net_ofi_mr_handle_t {
 public:
 	/**
 	 * @brief 	Default constructor
+	 *
+	 * Every MR handle covers both the data ep rails and the control ep
+	 * rails.  With FI_MR_ENDPOINT a single fid_mr may only be bound to
+	 * one fid_ep, so we keep separate arrays for ownership and access:
+	 *
+	 *   mr_data[0..num_rails-1]       — owned fid_mr objects, bound to data ep rails
+	 *   mr_ctrl_owned[0..num_ctrl_rails-1] — owned fid_mr objects, bound to ctrl ep
+	 *                                        rails (FI_MR_ENDPOINT mode only)
+	 *   mr_ctrl[0..num_ctrl_rails-1]  — non-owning view; always populated after
+	 *                                    registration:
+	 *                                    · FI_MR_ENDPOINT: points into mr_ctrl_owned[]
+	 *                                    · non-endpoint-MR: aliases mr_data[] entries
+	 *
+	 * Using a raw-pointer view for mr_ctrl[] eliminates IO-path conditionals:
+	 * callers always use mr_ctrl[rail_id] without checking whether it is populated.
 	 */
-	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg)
+	nccl_net_ofi_rdma_mr_handle_t(size_t num_rails_arg, size_t num_ctrl_rails_arg)
 		: nccl_net_ofi_mr_handle_t(0),
 		  num_rails(num_rails_arg),
+		  num_ctrl_rails(num_ctrl_rails_arg),
 		  base_addr(0)
 	{
+		mr_ctrl.fill(nullptr);
 	}
 
 	/**
 	 * @brief	Get MR key for RDMA handle
-	 * 
-	 * 		Return MR key associated with first mr array element
+	 *
+	 * 		Return MR key associated with first data mr array element
 	 */
 	int get_mr_key(uint64_t *mr_key_ptr) override;
 
 	uint16_t num_rails;
+	uint16_t num_ctrl_rails;
 
-	/* Array of size `num_rails', indexed by rail_id */
-	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr;
+	/* Owned fid_mr objects, one per data ep rail */
+	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr_data;
+
+	/* Owned fid_mr objects, one per ctrl ep rail (FI_MR_ENDPOINT mode only).
+	 * In non-endpoint-MR mode entries beyond num_ctrl_rails remain null. */
+	std::array<ofi_mr_ptr, MAX_NUM_RAILS> mr_ctrl_owned;
+
+	/* Non-owning view into either mr_ctrl_owned[] (FI_MR_ENDPOINT) or mr_data[]
+	 * (non-endpoint-MR).  Populated up to num_ctrl_rails after reg_mr_on_device(). */
+	std::array<struct fid_mr *, MAX_NUM_RAILS> mr_ctrl;
 
 	/* Base address of the registered memory region for offset calculation */
 	uintptr_t base_addr;
@@ -1097,7 +1123,6 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_ep_rail_t *rdma_endpoint_get_rail(uint16_t rail_id)
 	{
-		assert(!rails.empty());
 		assert(rail_id < num_rails);
 		return &rails[rail_id];
 	}
@@ -1107,7 +1132,6 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_ep_rail_t *rdma_endpoint_get_control_rail(uint16_t rail_id)
 	{
-		assert(!control_rails.empty());
 		assert(rail_id < num_control_rails);
 		return &control_rails[rail_id];
 	}
@@ -1117,7 +1141,6 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_cq_rail_t *rdma_endpoint_get_cq_rail(uint16_t rail_id)
 	{
-		assert(!cq_rails.empty());
 		assert(rail_id < num_rails);
 		return &cq_rails[rail_id];
 	}
@@ -1128,7 +1151,7 @@ public:
 	 */
 	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
 	{
-		assert(!cq_rails.empty());
+		assert(num_rails > 0);
 		return cq_rails[0].cq;
 	}
 
@@ -1254,13 +1277,13 @@ public:
 	uint16_t num_control_rails;
 
 	/* Array of `num_rails` endpoint rails */
-	std::vector<nccl_net_ofi_rdma_ep_rail_t> rails;
+	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> rails = {};
 
 	/* Array of `num_control_rails` endpoint rails */
-	std::vector<nccl_net_ofi_rdma_ep_rail_t> control_rails;
+	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> control_rails = {};
 
 	/* Array of `num_rails` cq rails */
-	std::vector<nccl_net_ofi_rdma_cq_rail_t> cq_rails;
+	std::array<nccl_net_ofi_rdma_cq_rail_t, MAX_NUM_RAILS> cq_rails = {};
 
 	/* Pending requests queue */
 	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
