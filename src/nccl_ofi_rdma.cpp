@@ -3075,7 +3075,6 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	nccl_net_ofi_rdma_req *req = NULL;
 	rdma_req_recv_data_t *recv_data = NULL;
 	nccl_net_ofi_rdma_ep_t *endpoint = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
 	int device_id = 0;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
@@ -3109,9 +3108,6 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 
 	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
 	assert(endpoint != NULL);
-
-	domain = endpoint->rdma_endpoint_get_domain();
-	assert(domain != NULL);
 
 	device = endpoint->rdma_endpoint_get_device();
 	assert(device != NULL);
@@ -3184,8 +3180,8 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	 */
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
-			buffers[i] = domain->flush_buff.buffer;
-			mr_handles[i] = domain->flush_buff.mr_handle;
+			buffers[i] = endpoint->flush_buff.buffer;
+			mr_handles[i] = endpoint->flush_buff_mr_handle;
 		}
 	}
 
@@ -3304,17 +3300,14 @@ int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
 }
 
 /*
- * @brief	Allocated and registers GPU buffer to flush RDMA operations. On
- * 		Success, receive domain holds reference to flush buffer
- * 		and associated memory handle.
+ * @brief	Allocate and register a GPU buffer used to flush RDMA operations.
  *
- * @param	dev_id
- *		Device ID
- *
- * @return	0, on success
- * 		error, on others
+ * See header for full documentation.
  */
-int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
+int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id,
+							  nccl_net_ofi_rdma_flush_buffer_t &fb,
+							  nccl_net_ofi_rdma_mr_handle_t *&mr_out,
+							  nccl_net_ofi_rdma_ep_t *bind_ep)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
@@ -3323,109 +3316,122 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 	int rc;
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
-	this->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
+	fb.size = NCCL_OFI_FLUSH_SIZE;
 	assert(NCCL_OFI_FLUSH_SIZE <= system_page_size);
-	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(this->flush_buff.buffer));
+	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(fb.buffer));
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
 	}
 
 	/* make sure flush destination address does not overflow beyond host buffer */
-	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + this->flush_buff.size) <= system_page_size);
+	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + fb.size) <= system_page_size);
 
-	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size,
+	ret = this->reg_internal_mr(fb.buffer, system_page_size,
 				NCCL_PTR_HOST, nullptr, &mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
                              dev_id);
-		rc = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
+		rc = nccl_net_ofi_dealloc_mr_buffer(fb.buffer,
 						system_page_size);
 		if (rc != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
 		}
-		this->flush_buff.buffer = MAP_FAILED;
+		fb.buffer = MAP_FAILED;
 	}
 #endif
 
 #if HAVE_GPU
-	int rc;
-	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
-
-	/*
-	* We allocate twice the system page size since GPU memory allocation
-	* does not guarantee that the allocated memory will be system page aligned.
-	* Post allocation, we calculate the page aligned ptr and perform
-	* memory registrations on it.
-	*/
-	this->flush_buff.size = 2 * system_page_size;
-	ret = nccl_net_ofi_gpu_mem_alloc(&(this->flush_buff.buffer_base), this->flush_buff.size);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
-		return ret;
-	}
-
-	/*
-	* Calculate the ptr aligned to system page size
-	*/
-	this->flush_buff.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)this->flush_buff.buffer_base, system_page_size);
-
-	/* Copy flush sentinel value into aligned ptr of gpu buffer */
-	ret =  nccl_net_ofi_gpu_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
-							NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
-		return ret;
-	}
-
-#if HAVE_DECL_FI_MR_DMABUF
-	/*
-        * If dma buf is viable and supported then register flush dummy buffer
-        * using dma buf for provider access
-        */
-	nccl_net_ofi_rdma_device_t *dev = this->rdma_domain_get_device();
-	struct fi_info *nic_prov = dev->get_ofi_info_for_cm();
-
-	if (nccl_ofi_dmabuf_viable_and_supported(nic_prov)) {
-		size_t offset = 0;
-		int fd;
+	{
+		int rc;
+		NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
 
 		/*
-		* Retrieve the fd and offset and the aligned ptr used for dma buf
-		*/
-		ret = nccl_net_ofi_gpu_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
+		 * We allocate twice the system page size since GPU memory
+		 * allocation does not guarantee page alignment.  Post
+		 * allocation we calculate the page-aligned ptr and perform
+		 * memory registration on it.
+		 */
+		fb.size = 2 * system_page_size;
+		ret = nccl_net_ofi_gpu_mem_alloc(&(fb.buffer_base), fb.size);
 		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
+			NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 			return ret;
 		}
 
-		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
+		/* Calculate the ptr aligned to system page size */
+		fb.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)fb.buffer_base,
+							system_page_size);
 
-		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
-						NCCL_PTR_CUDA, nullptr, &mr_handle);
-		close(fd);
-	} else {
-		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, nullptr, &mr_handle);
-	}
-
-#else
-	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, nullptr, &mr_handle);
-#endif
-
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-			      dev_id);
-
-		rc = nccl_net_ofi_gpu_mem_free(&this->flush_buff.buffer_base);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
-				      rc);
+		/* Copy flush sentinel value into aligned ptr of gpu buffer */
+		ret = nccl_net_ofi_gpu_mem_copy_host_to_device(fb.buffer, flush_sentinel,
+							       NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
+			rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+			if (rc != 0) {
+				NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+			}
+			fb.buffer_base = nullptr;
+			return ret;
 		}
-		this->flush_buff.buffer = MAP_FAILED;
+
+#if HAVE_DECL_FI_MR_DMABUF
+		/*
+		 * If dma buf is viable and supported then register the flush
+		 * dummy buffer using dma buf for provider access.
+		 */
+		{
+			nccl_net_ofi_rdma_device_t *dev = this->rdma_domain_get_device();
+			struct fi_info *nic_prov = dev->get_ofi_info_for_cm();
+
+			if (nccl_ofi_dmabuf_viable_and_supported(nic_prov)) {
+				size_t offset = 0;
+				int fd;
+
+				ret = nccl_net_ofi_gpu_get_dma_buf_fd(fb.buffer,
+								      system_page_size,
+								      &fd, &offset);
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
+					rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+					if (rc != 0) {
+						NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+					}
+					fb.buffer_base = nullptr;
+					return ret;
+				}
+
+				NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
+
+				ret = this->reg_internal_mr_dma_buf(fb.buffer, fd, offset,
+								    system_page_size,
+								    NCCL_PTR_CUDA,
+								    bind_ep, &mr_handle);
+				close(fd);
+			} else {
+				ret = this->reg_internal_mr(fb.buffer, system_page_size,
+							    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+			}
+		}
+#else
+		ret = this->reg_internal_mr(fb.buffer, system_page_size,
+					    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+#endif
+
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d", dev_id);
+			rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+			if (rc != 0) {
+				NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+			}
+			fb.buffer_base = nullptr;
+			fb.buffer      = MAP_FAILED;
+		}
 	}
 #endif
-	this->flush_buff.mr_handle = mr_handle;
 
+	mr_out = mr_handle;
 	return ret;
 }
 
@@ -5334,7 +5340,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
  	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -5344,7 +5349,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 		comm_rail = r_comm->get_data_rail(rail_id);
 		struct fid_mr *mr_handle = NULL;
 
-		void *desc = fi_mr_desc(domain->flush_buff.mr_handle->mr_data[rail_id].get());
+		void *desc = fi_mr_desc(ep->flush_buff_mr_handle->mr_data[rail_id].get());
 		mr_handle = flush_data->mr_handle->mr_data[rail_id].get();
 
 
@@ -5360,7 +5365,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 			}
 		}
 
-		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
+		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &ep->flush_buff;
 		uintptr_t host_buff_addr = (uintptr_t)f_buff->buffer + (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
 		uintptr_t buff_offset = (uintptr_t)flush_data->data - flush_data->mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
@@ -5384,7 +5389,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
 	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -5397,7 +5401,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 		freelist_regmr_fn_handle_t *fl_handle =
 			(freelist_regmr_fn_handle_t *)flush_data->flush_fl_elem->mr_handle;
 		void *desc = fi_mr_desc(fl_handle->mr_handle->mr_data[rail_id].get());
-		mr_handle = domain->flush_buff.mr_handle->mr_data[rail_id].get();
+		mr_handle = ep->flush_buff_mr_handle->mr_data[rail_id].get();
 		uint64_t cuda_key = 0ULL;
 
 		if (mr_handle != NULL) {
@@ -5411,7 +5415,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 		}
 
 		uint64_t *host_buff_addr = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
-		uintptr_t buff_offset = (uintptr_t)domain->flush_buff.buffer - domain->flush_buff.mr_handle->base_addr;
+		uintptr_t buff_offset = (uintptr_t)ep->flush_buff.buffer - ep->flush_buff_mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
 			(void *)host_buff_addr,
 			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
@@ -5486,7 +5490,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
     nccl_net_ofi_rdma_send_comm *s_comm = this;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	nccl_net_ofi_rdma_ep_t *endpoint = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_req *req = NULL;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
 	bool have_ctrl = false;
@@ -5510,9 +5513,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 
 	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
 	assert(endpoint != NULL);
-
-	domain = endpoint->rdma_endpoint_get_domain();
-	assert(domain != NULL);
 
 	std::lock_guard eplock(endpoint->ep_lock);
 
@@ -5542,8 +5542,8 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	 * pointer and MR
 	 */
 	if (size == 0) {
-		data = domain->flush_buff.buffer;
-		mr_handle = domain->flush_buff.mr_handle;
+		data = endpoint->flush_buff.buffer;
+		mr_handle = endpoint->flush_buff_mr_handle;
 	}
 
 	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num);
@@ -5832,6 +5832,33 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->rx_buff_req_alloc = eager_rx_buff_req_alloc;
 	}
 
+#if HAVE_GPU
+	if (endpoint_mr) {
+		/* FI_MR_ENDPOINT: allocate a per-endpoint GPU buffer and register
+		 * a per-endpoint MR bound to this endpoint. */
+		nccl_net_ofi_rdma_device_t *dev = domain_ptr->rdma_domain_get_device();
+		ret = domain_ptr->alloc_and_reg_flush_buff(dev->dev_id,
+							   this->flush_buff,
+							   this->flush_buff_mr_handle,
+							   this);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	} else if (domain_ptr->flush_buff.buffer != MAP_FAILED) {
+		/* Non-endpoint-MR: alias the domain's buffer for the IO path
+		 * and share the domain-level MR.  We do not own the buffer. */
+		this->flush_buff.buffer    = domain_ptr->flush_buff.buffer;
+		this->flush_buff_mr_handle = domain_ptr->flush_buff.mr_handle;
+	}
+#elif HAVE_NEURON
+	/* Neuron does not use FI_MR_ENDPOINT; alias the domain-level buffer
+	 * so that the IO path can always read from ep->flush_buff.buffer. */
+	if (domain_ptr->flush_buff.buffer != MAP_FAILED) {
+		this->flush_buff.buffer    = domain_ptr->flush_buff.buffer;
+		this->flush_buff_mr_handle = domain_ptr->flush_buff.mr_handle;
+	}
+#endif /* HAVE_GPU / HAVE_NEURON */
+
 	return ret;
 }
 
@@ -5848,6 +5875,28 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 	}
 
 	delete this->rx_buff_reqs_fl;
+
+	/* Deregister the per-endpoint flush buffer MR if we own one.
+	 * flush_buff_mr_handle points at the shared domain-level registration
+	 * in non-endpoint-MR mode; leave it alone in that case. */
+	if (endpoint_mr && this->flush_buff_mr_handle != nullptr) {
+		nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+		domain_ptr->dereg_mr(this->flush_buff_mr_handle);
+		this->flush_buff_mr_handle = nullptr;
+	}
+
+#if HAVE_GPU
+	/* Free the per-endpoint flush buffer GPU allocation.
+	 * buffer_base is non-null only when endpoint_mr was set and
+	 * init_rx_buffers() allocated an endpoint-owned buffer.  In
+	 * non-endpoint-MR mode buffer_base stays nullptr (the buffer was
+	 * aliased from the domain and is not owned by this endpoint). */
+	if (this->flush_buff.buffer_base != nullptr) {
+		nccl_net_ofi_gpu_mem_free(this->flush_buff.buffer_base);
+		this->flush_buff.buffer_base = nullptr;
+		this->flush_buff.buffer      = MAP_FAILED;
+	}
+#endif /* HAVE_GPU */
 
 	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
 		rail = this->rdma_endpoint_get_rail(rail_id);
@@ -6384,13 +6433,29 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 
 	/* Ideally we would "un-post" the rx buffers, but this
 	 * should be accomplished by closing the endpoint.
+	 *
+	 * In FI_MR_ENDPOINT mode the libfabric spec requires that MRs bound to
+	 * an endpoint are closed before the endpoint itself.  fini_rx_buffers()
+	 * deregisters per-endpoint MRs, so it must run before
+	 * release_rdma_ep_resources() in that mode.  For non-endpoint-MR
+	 * providers the original order is preserved.
 	 */
-	this->release_rdma_ep_resources(device->dev_id);
+	if (endpoint_mr) {
+		err_code = this->fini_rx_buffers();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
+			ret = -EINVAL;
+		}
 
-	err_code = this->fini_rx_buffers();
-	if (err_code != 0) {
-		NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
-		ret = -EINVAL;
+		this->release_rdma_ep_resources(device->dev_id);
+	} else {
+		this->release_rdma_ep_resources(device->dev_id);
+
+		err_code = this->fini_rx_buffers();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
+			ret = -EINVAL;
+		}
 	}
 
 	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
@@ -6597,11 +6662,33 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 
 	/*
 	 * Setup flush resources.
+	 * In FI_MR_ENDPOINT mode no domain-level flush buffer is needed; each
+	 * endpoint allocates its own from init_rx_buffers().  Mark the domain
+	 * fields as not-allocated so dealloc_and_dereg_flush_buff() is a no-op.
 	 */
-	ret = this->alloc_and_reg_flush_buff(device_arg->dev_id);
+#if HAVE_GPU
+	if (endpoint_mr) {
+		this->flush_buff.buffer      = MAP_FAILED;
+		this->flush_buff.buffer_base = nullptr;
+		this->flush_buff.mr_handle   = nullptr;
+	} else {
+		ret = this->alloc_and_reg_flush_buff(device_arg->dev_id,
+						     this->flush_buff,
+						     this->flush_buff.mr_handle,
+						     nullptr);
+		if (OFI_UNLIKELY(ret != 0)) {
+			throw std::runtime_error("RDMA domain constructor: flush buffer alloc/reg failed");
+		}
+	}
+#else
+	ret = this->alloc_and_reg_flush_buff(device_arg->dev_id,
+					     this->flush_buff,
+					     this->flush_buff.mr_handle,
+					     nullptr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		throw std::runtime_error("RDMA domain constructor: flush buffer alloc/reg failed");
 	}
+#endif
 }
 
 nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain(unsigned int domain_key)
