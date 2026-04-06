@@ -121,6 +121,9 @@ static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
  * size to be fixed.
  */
 typedef uint16_t nccl_ofi_rdma_msg_type_t;
+/* Forward declaration for freelist MR registration callback class */
+class freelist_regmr_ep_ctx_t;
+
 /*
  * @brief	Rdma memory registration handle
  *
@@ -714,6 +717,10 @@ public:
 	/* Free list to track host flush buffers, for sending flush messages */
 	nccl_ofi_freelist *flush_buff_fl;
 
+	/* Context shared by ctrl_buff_fl and flush_buff_fl registration callbacks.
+	 * flush_buff_fl registration callbacks.  Freed in recv_comm_destroy(). */
+	freelist_regmr_ep_ctx_t *comm_buff_regmr_ctx = nullptr;
+
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
@@ -925,7 +932,7 @@ protected:
 	/**
 	 * @brief	RDMA domain destructor.
 	 *
-	 * Cleans up RDMA domain resources (flush buffers, ep_table).
+	 * Cleans up RDMA domain resources (ep_table).
 	 */		
 	~nccl_net_ofi_rdma_domain_t() override;
 
@@ -1042,6 +1049,9 @@ public:
 	size_t max_rx_buff_posted;
 	/* Mutex for rx buffer operations */
 	pthread_mutex_t rx_buff_mutex;
+
+	/* True if this rail posts control (ctrl) rx buffers; false for data (eager) */
+	bool is_ctrl = false;
 
 	/* Allocate a receive buffer request for this rail (eager or ctrl) */
 	nccl_net_ofi_rdma_req* (*rx_buff_req_alloc)(nccl_net_ofi_rdma_ep_t *ep,
@@ -1299,6 +1309,9 @@ public:
 	nccl_ofi_freelist *eager_rx_buff_fl = nullptr;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist *rx_buff_reqs_fl = nullptr;
+	/* Context passed to the freelist MR registration callback for rx buffer freelists.
+	 * Heap-allocated freelist_regmr_ep_ctx_t; freed in fini_rx_buffers(). */
+	freelist_regmr_ep_ctx_t *rx_buff_regmr_ctx = nullptr;
 	/* MR handle for the flush buffer used by this endpoint.
 	 * In FI_MR_ENDPOINT mode this is a per-endpoint registration bound to
 	 * the endpoint's own flush_buff allocation; otherwise it aliases the
