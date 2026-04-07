@@ -5,8 +5,9 @@
 #ifndef NCCL_OFI_MSGBUFF_H_
 #define NCCL_OFI_MSGBUFF_H_
 
-#include <pthread.h>
-#include <stdint.h>
+#include <cstdint>
+#include <mutex>
+#include <vector>
 
 /**
  * A "modified circular buffer" used to track in-flight (or INPROGRESS) messages.
@@ -77,105 +78,92 @@ typedef struct {
 	void *elem;
 } nccl_ofi_msgbuff_elem_t;
 
-typedef struct {
-	// Element storage buffer. Allocated in msgbuff_init
-	nccl_ofi_msgbuff_elem_t *buff;
-	/* Max number of INPROGRESS elements. These are the only
-	 * ones backed by the storage buffer, so this is also the
-	 * size of the storage buffer */
+class nccl_ofi_msgbuff {
+public:
+	/**
+	 * Construct a message buffer.
+	 * @param max_inprogress max number of INPROGRESS elements
+	 * @param bit_width bit width of the sequence numbers
+	 * @param start_seq start of sequence numbers
+	 *
+	 * @throws std::invalid_argument if parameters are invalid
+	 * @throws std::bad_alloc on allocation failure
+	 */
+	nccl_ofi_msgbuff(uint16_t max_inprogress, uint16_t bit_width, uint16_t start_seq);
+
+	~nccl_ofi_msgbuff() = default;
+
+	/* Not copyable or movable */
+	nccl_ofi_msgbuff(const nccl_ofi_msgbuff &) = delete;
+	nccl_ofi_msgbuff &operator=(const nccl_ofi_msgbuff &) = delete;
+
+	/**
+	 * Insert a new message element
+	 *
+	 * @param msg_index sequence number of the message
+	 * @param elem pointer to store at msg_index
+	 * @param type type of element
+	 * @param msg_idx_status output: message status, if return value is INVALID_IDX
+	 *
+	 * @return NCCL_OFI_MSGBUFF_SUCCESS, NCCL_OFI_MSGBUFF_INVALID_IDX, or NCCL_OFI_MSGBUFF_ERROR
+	 */
+	nccl_ofi_msgbuff_result_t insert(uint16_t msg_index, void *elem,
+					 nccl_ofi_msgbuff_elemtype_t type,
+					 nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+	/**
+	 * Replace an existing message element
+	 *
+	 * @param msg_index sequence number of the message
+	 * @param elem pointer to store at msg_index
+	 * @param type type of element
+	 * @param msg_idx_status output: message status, if return value is INVALID_IDX
+	 *
+	 * @return NCCL_OFI_MSGBUFF_SUCCESS, NCCL_OFI_MSGBUFF_INVALID_IDX, or NCCL_OFI_MSGBUFF_ERROR
+	 */
+	nccl_ofi_msgbuff_result_t replace(uint16_t msg_index, void *elem,
+					  nccl_ofi_msgbuff_elemtype_t type,
+					  nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+	/**
+	 * Retrieve message with given index
+	 *
+	 * @param msg_index sequence number of the message
+	 * @param elem output: pointer to element at msg_index
+	 * @param type output: type of element
+	 * @param msg_idx_status output: message status, if return value is INVALID_IDX
+	 *
+	 * @return NCCL_OFI_MSGBUFF_SUCCESS, NCCL_OFI_MSGBUFF_INVALID_IDX, or NCCL_OFI_MSGBUFF_ERROR
+	 */
+	nccl_ofi_msgbuff_result_t retrieve(uint16_t msg_index, void **elem,
+					   nccl_ofi_msgbuff_elemtype_t *type,
+					   nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+	/**
+	 * Mark message with given index as complete
+	 *
+	 * @param msg_index sequence number of the message
+	 * @param msg_idx_status output: message status, if return value is INVALID_IDX
+	 *
+	 * @return NCCL_OFI_MSGBUFF_SUCCESS, NCCL_OFI_MSGBUFF_INVALID_IDX, or NCCL_OFI_MSGBUFF_ERROR
+	 */
+	nccl_ofi_msgbuff_result_t complete(uint16_t msg_index,
+					   nccl_ofi_msgbuff_status_t *msg_idx_status);
+
+private:
+	uint16_t distance(uint16_t front, uint16_t back) const;
+	uint16_t num_inflight() const;
+	nccl_ofi_msgbuff_elem_t &buff_idx(uint16_t idx);
+	const nccl_ofi_msgbuff_elem_t &buff_idx(uint16_t idx) const;
+	nccl_ofi_msgbuff_status_t get_idx_status(uint16_t msg_index) const;
+
+	std::vector<nccl_ofi_msgbuff_elem_t> buff;
 	uint16_t max_inprogress;
-
-	/* Size of the range of all possible sequence numbers,
-	 * which depends on how many bits are used for them. */
 	uint16_t field_size;
-	/* Bit mask for the sequence numbers */
 	uint16_t field_mask;
-	// Points to the not-finished message with the lowest sequence number
 	uint16_t msg_last_incomplete;
-	// Points to the message after the inserted message with highest sequence number.
 	uint16_t msg_next;
-	// Mutex for this msg buffer -- locks all non-init operations
-	pthread_mutex_t lock;
-} nccl_ofi_msgbuff_t;
-
-/**
- * Allocates and initializes a new message buffer.
- * @param max_inprogress max number of INPROGRESS elements, which are backed by
- *                       the storage buffer
- * @param bit_width bit_width of the sequence numbers, which provides the range
- *                  of elements tracked by this msgbuff
- * @param start_seq start of sequence numbers
- *
- * @return a new msgbuff, or NULL if initialization failed
- */
-nccl_ofi_msgbuff_t *nccl_ofi_msgbuff_init(uint16_t max_inprogress, uint16_t bit_width, uint16_t start_seq);
-
-/**
- * Destroy a message buffer (free memory used by buffer).
- *
- * @return true if success, false if failed
- */
-bool nccl_ofi_msgbuff_destroy(nccl_ofi_msgbuff_t *msgbuff);
-
-/**
- * Insert a new message element
- *
- * @param elem, pointer to store at msg_index
- *   type, type of element
- *   msg_idx_status, output: message status, if return value is INVALID_IDX
- *
- * @return
- *  NCCL_OFI_MSGBUFF_SUCCESS, success
- *  NCCL_OFI_MSGBUFF_INVALID_IDX, invalid index. See msg_idx_status.
- *  NCCL_OFI_MSGBUFF_ERROR, other error
- */
-nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_insert(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
-
-/**
- * Replace an existing message element
- *
- * @param elem, pointer to store at msg_index
- *   type, type of element
- *   msg_idx_status, output: message status, if return value is INVALID_IDX
- *
- * @return
- *  NCCL_OFI_MSGBUFF_SUCCESS, success
- *  NCCL_OFI_MSGBUFF_INVALID_IDX, invalid index. See msg_idx_status.
- *  NCCL_OFI_MSGBUFF_ERROR, other error
- */
-nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_replace(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void *elem, nccl_ofi_msgbuff_elemtype_t type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
-
-/**
- * Retrieve message with given index
- *
- * @param elem, output: pointer to element at msg_index
- *   type, output: type of element
- *   msg_idx_status, output: message status, if return value is INVALID_IDX
- *
- * @return
- *  NCCL_OFI_MSGBUFF_SUCCESS, success
- *  NCCL_OFI_MSGBUFF_INVALID_IDX, invalid index. See msg_idx_status.
- *  NCCL_OFI_MSGBUFF_ERROR, other error
- */
-nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_retrieve(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, void **elem, nccl_ofi_msgbuff_elemtype_t *type,
-		nccl_ofi_msgbuff_status_t *msg_idx_status);
-
-/**
- * Mark message with given index as complete
- *
- * @param msg_idx_status, output: message status, if return value is INVALID_IDX
- *
- * @return
- *  NCCL_OFI_MSGBUFF_SUCCESS, success
- *  NCCL_OFI_MSGBUFF_INVALID_IDX, invalid index. See msg_idx_status.
- *  NCCL_OFI_MSGBUFF_ERROR, other error
- */
-nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff_complete(nccl_ofi_msgbuff_t *msgbuff,
-		uint16_t msg_index, nccl_ofi_msgbuff_status_t *msg_idx_status);
+	std::mutex lock;
+};
 
 #endif // End NCCL_OFI_MSGBUFF_H_

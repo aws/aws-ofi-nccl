@@ -680,7 +680,7 @@ public:
 
 	uint16_t next_msg_seq_num;
 
-	nccl_ofi_msgbuff_t *msgbuff;
+	nccl_ofi_msgbuff *msgbuff;
 
 	/* Free list to track control buffers, for sending RDMA control messages */
 	nccl_ofi_freelist *ctrl_buff_fl;

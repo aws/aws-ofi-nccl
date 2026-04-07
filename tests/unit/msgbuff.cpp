@@ -31,9 +31,11 @@ int main(int argc, char *argv[])
 		buff_store[i] = i;
 	}
 
-	nccl_ofi_msgbuff_t *msgbuff;
-	if (!(msgbuff = nccl_ofi_msgbuff_init(max_inprogress, num_msg_seq_num_bits, 0))) {
-		NCCL_OFI_WARN("nccl_ofi_msgbuff_init failed");
+	nccl_ofi_msgbuff *msgbuff;
+	try {
+		msgbuff = new nccl_ofi_msgbuff(max_inprogress, num_msg_seq_num_bits, 0);
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("nccl_ofi_msgbuff construction failed: %s", e.what());
 		return 1;
 	}
 
@@ -45,73 +47,73 @@ int main(int argc, char *argv[])
 	for (int rounds = 0; rounds < 4; rounds++) {
 		/** Test insert new **/
 		for (uint16_t i = 0; i < max_inprogress; ++i) {
-			if (nccl_ofi_msgbuff_insert(msgbuff, (msg_seq_num + i) % field_size, &buff_store[i], type,
-						    &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
-				NCCL_OFI_WARN("nccl_ofi_msgbuff_insert failed when non-full");
+			if (msgbuff->insert((msg_seq_num + i) % field_size, &buff_store[i], type,
+					    &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
+				NCCL_OFI_WARN("msgbuff->insert failed when non-full");
 				return 1;
 			}
 		}
 
-		if (nccl_ofi_msgbuff_insert(msgbuff, (msg_seq_num + max_inprogress) % field_size, NULL, type, &stat) !=
+		if (msgbuff->insert((msg_seq_num + max_inprogress) % field_size, NULL, type, &stat) !=
 			    NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_UNAVAILABLE) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_insert did not return unavailable when full");
+			NCCL_OFI_WARN("msgbuff->insert did not return unavailable when full");
 			return 1;
 		}
 
-		if (nccl_ofi_msgbuff_insert(msgbuff, (msg_seq_num + max_inprogress - 1) % field_size, NULL, type,
-					    &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
+		if (msgbuff->insert((msg_seq_num + max_inprogress - 1) % field_size, NULL, type,
+				    &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_INPROGRESS) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_insert did not return inprogress on duplicate insert");
+			NCCL_OFI_WARN("msgbuff->insert did not return inprogress on duplicate insert");
 			return 1;
 		}
 
 		/** Test retrieve **/
 		for (uint16_t i = 0; i < max_inprogress; ++i) {
-			if (nccl_ofi_msgbuff_retrieve(msgbuff, (msg_seq_num + i) % field_size, (void **)&result, &type,
-						      &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
-				NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve failed on valid index");
+			if (msgbuff->retrieve((msg_seq_num + i) % field_size, (void **)&result, &type,
+					      &stat) != NCCL_OFI_MSGBUFF_SUCCESS) {
+				NCCL_OFI_WARN("msgbuff->retrieve failed on valid index");
 				return 1;
 			}
 			if (*result != buff_store[i]) {
-				NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve returned incorrect value");
+				NCCL_OFI_WARN("msgbuff->retrieve returned incorrect value");
 				return 1;
 			}
 		}
 
-		if (nccl_ofi_msgbuff_retrieve(msgbuff, (msg_seq_num + max_inprogress) % field_size, (void **)&result,
-					      &type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
+		if (msgbuff->retrieve((msg_seq_num + max_inprogress) % field_size, (void **)&result,
+				      &type, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve did not return notstarted");
+			NCCL_OFI_WARN("msgbuff->retrieve did not return notstarted");
 			return 1;
 		}
 
-		if (nccl_ofi_msgbuff_retrieve(msgbuff, last_completed, (void **)&result, &type, &stat) !=
+		if (msgbuff->retrieve(last_completed, (void **)&result, &type, &stat) !=
 			    NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_COMPLETED) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_retrieve did not return completed");
+			NCCL_OFI_WARN("msgbuff->retrieve did not return completed");
 			return 1;
 		}
 
 		/** Test complete **/
 		for (uint16_t i = 0; i < max_inprogress; ++i) {
-			if (nccl_ofi_msgbuff_complete(msgbuff, (msg_seq_num + i) % field_size, &stat) !=
+			if (msgbuff->complete((msg_seq_num + i) % field_size, &stat) !=
 			    NCCL_OFI_MSGBUFF_SUCCESS) {
-				NCCL_OFI_WARN("nccl_ofi_msgbuff_complete failed");
+				NCCL_OFI_WARN("msgbuff->complete failed");
 				return 1;
 			}
 		}
 
-		if (nccl_ofi_msgbuff_complete(msgbuff, (msg_seq_num + max_inprogress) % field_size, &stat) !=
+		if (msgbuff->complete((msg_seq_num + max_inprogress) % field_size, &stat) !=
 			    NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_NOTSTARTED) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_complete did not return notstarted");
+			NCCL_OFI_WARN("msgbuff->complete did not return notstarted");
 			return 1;
 		}
 
-		if (nccl_ofi_msgbuff_complete(msgbuff, msg_seq_num, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
+		if (msgbuff->complete(msg_seq_num, &stat) != NCCL_OFI_MSGBUFF_INVALID_IDX ||
 		    stat != NCCL_OFI_MSGBUFF_COMPLETED) {
-			NCCL_OFI_WARN("nccl_ofi_msgbuff_complete did not return completed");
+			NCCL_OFI_WARN("msgbuff->complete did not return completed");
 			return 1;
 		}
 
@@ -119,10 +121,7 @@ int main(int argc, char *argv[])
 		msg_seq_num = (msg_seq_num + max_inprogress) % field_size;
 	}
 
-	if (!nccl_ofi_msgbuff_destroy(msgbuff)) {
-		NCCL_OFI_WARN("nccl_ofi_msgbuff_destroy failed");
-		return 1;
-	}
+	delete msgbuff;
 
 	free(buff_store);
 
