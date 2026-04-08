@@ -27,7 +27,7 @@ inline nccl_ofi_device_copy &get_device_copy()
  * The listen communicator which implements GIN API's nccl_ofi_gin_listen() and
  * nccl_ofi_gin_connect() functionality
  */
-class nccl_ofi_gin_listen_comm {
+class nccl_ofi_gin_listen_comm : public nccl_ofi_gin_listen_comm_t {
 private:
 	nccl_net_ofi_ep_t *ep;
 	nccl_net_ofi_listen_comm *l_comm;
@@ -142,7 +142,7 @@ struct gin_remote_mr {
  * A symmetric memory registration handle. This is the result of GIN API's
  * regMrSym() family of functions.
  */
-struct gin_sym_mr_handle {
+struct gin_sym_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 	/* Address provided by NCCL to regMrSym. This is the base for the offset
 	   provided by NCCL */
 	void *input_address;
@@ -162,7 +162,7 @@ struct gin_sym_mr_handle {
 /**
  * This represents the main GIN communicator
  */
-class nccl_ofi_gin_comm {
+class nccl_ofi_gin_comm : public nccl_ofi_gin_put_comm_t {
 public:
 	nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 			  nccl_net_ofi_send_comm *s_comm_, nccl_net_ofi_recv_comm *r_comm_);

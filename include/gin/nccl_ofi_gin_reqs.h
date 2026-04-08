@@ -5,7 +5,9 @@
 #ifndef NCCL_OFI_GIN_REQS_H
 #define NCCL_OFI_GIN_REQS_H
 
+#include "gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi.h"
+#include "nccl_ofi_gin_base.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_tracepoint.h"
 #include <array>
@@ -52,7 +54,7 @@ public:
 /**
  * GIN base request type.
  */
-class nccl_net_ofi_gin_base_req {
+class nccl_net_ofi_gin_base_req : public nccl_ofi_gin_req_t {
 public:
 	void set_fl_entry(nccl_ofi_freelist::fl_entry *entry)
 	{
@@ -305,9 +307,9 @@ public:
 		return 0;
 	}
 
-	int test(bool &done_arg)
+	int test(int *done_out) override
 	{
-		done_arg = this->done;
+		*done_out = this->done ? 1 : 0;
 		return 0;
 	}
 
@@ -361,9 +363,9 @@ public:
 		return 0;
 	}
 
-	int test(bool &done_arg)
+	int test(int *done_out) override
 	{
-		done_arg = this->done;
+		*done_out = this->done ? 1 : 0;
 		return 0;
 	}
 
