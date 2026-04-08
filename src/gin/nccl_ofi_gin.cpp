@@ -8,6 +8,7 @@
 
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_gdrcopy.h"
+#include "nccl_ofi_rdma.h"
 #include "nccl_ofi_tracepoint.h"
 
 struct gin_connect_handle {
@@ -145,10 +146,11 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 	}
 
 	/* Create a GIN resources object on the endpoint if it does not exist */
-	auto *resources = ep->get_gin_resources();
+	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	auto *resources = rdma_ep->get_gin_resources();
 	if (resources == nullptr) {
 		resources = new nccl_ofi_gin_resources(*ep);
-		ep->set_gin_resources(resources);
+		rdma_ep->set_gin_resources(resources);
 	}
 
 	nccl_ofi_gin_comm *gin_comm =
