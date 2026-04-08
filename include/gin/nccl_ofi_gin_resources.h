@@ -17,6 +17,9 @@
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_scheduler.h"
 
+#include "nccl_ofi_gin_base.h"
+#include "nccl_ofi_rdma.h"
+
 static inline void freelist_deleter(nccl_ofi_freelist *fl)
 {
 	delete fl;
@@ -185,7 +188,7 @@ struct nccl_ofi_gin_ep_holder {
 
 	~nccl_ofi_gin_ep_holder()
 	{
-		ep.set_gin_resources(nullptr);
+		static_cast<nccl_net_ofi_rdma_ep_t &>(ep).set_gin_resources(nullptr);
 		ep.release_ep(false, false);
 	}
 };
