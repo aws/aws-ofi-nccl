@@ -15,9 +15,10 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
-nccl_ofi_gin_ep_t::nccl_ofi_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain(domain_arg)
+nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain(domain_arg)
 {
 	this->num_rails = domain.get_ofi_num_rails();
+	this->cq_process_max_iter = ofi_nccl_gin_cq_process_max_iter();
 	rails.reserve(this->num_rails);
 
 	// Create rails
@@ -27,7 +28,7 @@ nccl_ofi_gin_ep_t::nccl_ofi_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain
 	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
 }
 
-nccl_ofi_gin_ep_t::~nccl_ofi_gin_ep_t()
+nccl_ofi_rdma_gin_ep_t::~nccl_ofi_rdma_gin_ep_t()
 {
 	if (scheduler) {
 		delete scheduler;
@@ -35,7 +36,7 @@ nccl_ofi_gin_ep_t::~nccl_ofi_gin_ep_t()
 	}
 }
 
-int nccl_ofi_gin_ep_t::gin_process_completions(struct fi_cq_data_entry *cq_entry,
+int nccl_ofi_rdma_gin_ep_t::gin_process_completions(struct fi_cq_data_entry *cq_entry,
 					       fi_addr_t *src_addrs, uint64_t num_cqes,
 					       uint16_t rail_id)
 {
@@ -65,7 +66,7 @@ int nccl_ofi_gin_ep_t::gin_process_completions(struct fi_cq_data_entry *cq_entry
 	return 0;
 }
 
-int nccl_ofi_gin_ep_t::gin_process_error_entry(struct fi_cq_err_entry *err_entry, struct fid_cq *cq,
+int nccl_ofi_rdma_gin_ep_t::gin_process_error_entry(struct fi_cq_err_entry *err_entry, struct fid_cq *cq,
 					       uint16_t rail_id)
 {
 	void *op_ctx = err_entry->op_context;
@@ -80,7 +81,7 @@ int nccl_ofi_gin_ep_t::gin_process_error_entry(struct fi_cq_err_entry *err_entry
 	return ctx->handle_error_entry(cq, err_entry, rail_id);
 }
 
-int nccl_ofi_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
+int nccl_ofi_rdma_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 {
 	assert(rail_id < num_rails);
 
@@ -137,13 +138,13 @@ int nccl_ofi_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 			ret = -EINVAL;
 			goto exit;
 		}
-	} while (iter < gin_cq_process_max_iter);
+	} while (iter < cq_process_max_iter);
 
 exit:
 	return ret;
 }
 
-int nccl_ofi_gin_ep_t::process_cq()
+int nccl_ofi_rdma_gin_ep_t::process_cq()
 {
 	int ret = 0;
 
@@ -159,7 +160,7 @@ int nccl_ofi_gin_ep_t::process_cq()
 	return ret;
 }
 
-void nccl_ofi_gin_ep_t::close_ofi_eps()
+void nccl_ofi_rdma_gin_ep_t::close_ofi_eps()
 {
 	rails.clear();
 }
@@ -205,7 +206,7 @@ static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t 
 	return ret;
 }
 
-int nccl_ofi_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
+int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 			      nccl_ofi_gin_mr_handle_t **mhandle)
 {
 	int ret = 0;
@@ -257,7 +258,7 @@ int nccl_ofi_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 	return 0;
 }
 
-void nccl_ofi_gin_ep_t::dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr)
+void nccl_ofi_rdma_gin_ep_t::dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr)
 {
 	if (OFI_UNLIKELY(handle_ptr == NULL)) {
 		NCCL_OFI_WARN("Attempted to deregister NULL memory region handle");
@@ -267,16 +268,16 @@ void nccl_ofi_gin_ep_t::dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr)
 	delete handle_ptr;
 }
 
-int nccl_ofi_gin_ep_t::freelist_regmr_fn(void *ep_ptr, void *data, size_t size, void **mhandle)
+int nccl_ofi_rdma_gin_ep_t::freelist_regmr_fn(void *ep_ptr, void *data, size_t size, void **mhandle)
 {
-	auto ep = static_cast<nccl_ofi_gin_ep_t *>(ep_ptr);
+	auto ep = static_cast<nccl_ofi_rdma_gin_ep_t *>(ep_ptr);
 	/* Setting ep to nullptr for the cache key -- we don't use the MR cache for GIN */
 	auto ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 	return ep->reg_mr(&ckey, NCCL_PTR_HOST,
 			  reinterpret_cast<nccl_ofi_gin_mr_handle_t **>(mhandle));
 }
 
-int nccl_ofi_gin_ep_t::freelist_deregmr_fn(void *handle)
+int nccl_ofi_rdma_gin_ep_t::freelist_deregmr_fn(void *handle)
 {
 	auto mr_handle = static_cast<nccl_ofi_gin_mr_handle_t *>(handle);
 

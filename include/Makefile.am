@@ -14,6 +14,7 @@ noinst_HEADERS = \
 	gin/nccl_ofi_gin_reqs.h \
 	gin/nccl_ofi_gin_resources.h \
 	gin/nccl_ofi_gin_types.h \
+	nccl_ofi_gin_base.h \
 	nccl_ofi.h \
 	nccl_ofi_api.h \
 	nccl_ofi_assert.h \

@@ -53,12 +53,6 @@ bool cuda_flush = false;
    read in the polling loop without protection of a lock. */
 size_t cq_read_count = 1;
 
-/* Maximum number of iterations for GIN CQ processing loop.
-   This variable will be updated during init (hence, can not be
-   const), but will not change during execution.  Therefore, it may be
-   read in the polling loop without protection of a lock. */
-size_t gin_cq_process_max_iter = 0;
-
 /* Indicates if endpoint memory registration is required */
 bool endpoint_mr = false;
 
@@ -179,7 +173,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 	/* configuration parameters */
 	cq_read_count = ofi_nccl_cq_read_count();
-	gin_cq_process_max_iter = ofi_nccl_gin_cq_process_max_iter();
 
 	topo = nccl_ofi_topo_create();
 	if (!topo) {

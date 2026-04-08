@@ -204,8 +204,8 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 	bool all_writes_done = true;
 	for (auto &write_req : write_reqs) {
 		if (write_req) {
-			bool write_done = false;
-			int ret = write_req->test(write_done);
+			int write_done = 0;
+			int ret = write_req->test(&write_done);
 			if (ret != 0)
 				return ret;
 			if (write_done) {
@@ -219,8 +219,8 @@ int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
 	}
 
 	if (send_req) {
-		bool send_done = false;
-		int ret = send_req->test(send_done);
+		int send_done = 0;
+		int ret = send_req->test(&send_done);
 		if (ret != 0)
 			return ret;
 		if (send_done) {
