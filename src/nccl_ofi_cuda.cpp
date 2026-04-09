@@ -15,6 +15,8 @@
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_system.h"
+#include "platform-aws.h"
 
 /* CUDA Runtime function pointers - only for functions without driver equivalents */
 static cudaError_t (*pfn_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
@@ -85,6 +87,9 @@ DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
 DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
+
+static int cuda_driver_version = -1;
+static bool skip_dmabuf_pcie_flag = false;
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -162,6 +167,23 @@ int nccl_net_ofi_gpu_init(void)
 		return -EINVAL;
 	}
 
+	cuda_driver_version = driverVersion;
+
+	/* Pre-compute whether to skip DMA-BUF PCIE mapping type flag.
+	 * On GB200 with NVIDIA driver 595 (CUDA 12090), the PCIE mapping
+	 * type causes fi_mr_regattr failure. */
+	{
+		const char *product = nccl_net_ofi_get_product_name();
+		bool is_gb200 = product != NULL &&
+			strncmp(product, PLATFORM_NAME_P6E_GB200, strlen(PLATFORM_NAME_P6E_GB200)) == 0;
+		bool is_driver_595 = cuda_driver_version >= 12090 && cuda_driver_version < 12100;
+		skip_dmabuf_pcie_flag = is_gb200 && is_driver_595;
+		if (skip_dmabuf_pcie_flag) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				"GB200 with driver 595 detected, will use flags=0 for cuMemGetHandleForAddressRange");
+		}
+	}
+
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 	              "Using CUDA driver version %d with runtime %d",
 	              driverVersion,
@@ -227,14 +249,16 @@ int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int 
 	assert(NCCL_OFI_IS_ALIGNED(aligned_size, system_page_size));
 
 # if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
-	flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+	if (!skip_dmabuf_pcie_flag) {
+		flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+	}
 # endif
 
 	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
 					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, flags);
 	if ((ret == CUDA_ERROR_INVALID_VALUE || ret == CUDA_ERROR_NOT_SUPPORTED) && flags != 0) {
 		NCCL_OFI_INFO(NCCL_NET,
-			"cuMemGetHandleForAddressRange failed with flags: %llu, retrying with no flags", flags);
+			"cuMemGetHandleForAddressRange failed with ret %d, and flags: %llu, retrying with no flags", ret, flags);
 		ret = pfn_cuMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
 					CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0);
 	}
