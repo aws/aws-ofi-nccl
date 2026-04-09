@@ -58,7 +58,8 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset,
+				    bool force_default_path = false);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED

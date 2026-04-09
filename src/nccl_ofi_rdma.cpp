@@ -3316,9 +3316,6 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		size_t offset = 0;
 		int fd;
 
-		/*
-		* Retrieve the fd and offset and the aligned ptr used for dma buf
-		*/
 		ret = nccl_net_ofi_gpu_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
@@ -3330,6 +3327,28 @@ int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
 		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
 						NCCL_PTR_CUDA, &mr_handle);
 		close(fd);
+
+		/*
+		 * If registration failed, the DMA-BUF fd may have been
+		 * exported with FORCE_PCIE mapping which the kernel
+		 * rejected. Retry with a DEFAULT mapping fd (flags=0),
+		 * mirroring NCCL GIN fallback in gdakiRegMrDmaBuf().
+		 */
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "DMA-BUF flush buffer registration failed (%d), "
+				      "retrying with default mapping", ret);
+			ret = nccl_net_ofi_gpu_get_dma_buf_fd(this->flush_buff.buffer,
+							      system_page_size, &fd, &offset, true);
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Unable to retrieve flush buffer fd "
+					      "with default mapping (%d)", ret);
+				return ret;
+			}
+			ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset,
+							    system_page_size, NCCL_PTR_CUDA, &mr_handle);
+			close(fd);
+		}
 	} else {
 		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
 	}

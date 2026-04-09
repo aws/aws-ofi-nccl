@@ -57,7 +57,8 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset,
+				    bool force_default_path = false);
 
 bool nccl_net_ofi_gpu_have_dma_buf_attr(void);
 bool nccl_net_ofi_gpu_have_gdr_support_attr(void);
