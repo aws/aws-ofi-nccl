@@ -2,8 +2,8 @@
  * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_OFI_GIN_RESOURCES_H
-#define NCCL_OFI_GIN_RESOURCES_H
+#ifndef NCCL_OFI_RDMA_GIN_RESOURCES_H
+#define NCCL_OFI_RDMA_GIN_RESOURCES_H
 
 #include "rdma/fabric.h"
 
@@ -12,8 +12,8 @@
 #include <vector>
 #include <unordered_map>
 
-#include "gin/nccl_ofi_gin_reqs.h"
-#include "gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin_reqs.h"
+#include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_gin_base.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_rdma.h"

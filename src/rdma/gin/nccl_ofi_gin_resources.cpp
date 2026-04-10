@@ -4,8 +4,8 @@
 
 #include "config.h"
 
-#include "gin/nccl_ofi_gin_resources.h"
-#include "gin/nccl_ofi_gin_reqs.h"
+#include "rdma/gin/nccl_ofi_gin_resources.h"
+#include "rdma/gin/nccl_ofi_gin_reqs.h"
 
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_cuda.h"
