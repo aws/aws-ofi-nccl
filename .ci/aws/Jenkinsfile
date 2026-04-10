@@ -6,13 +6,16 @@ if (buildNumber > 1) milestone(buildNumber - 1)
 milestone(buildNumber)
 
 
+def get_account_id() {
+    return sh (
+        script: "aws sts get-caller-identity --query Account --output text | tr -dc 0-9",
+        returnStdout: true
+    )
+}
+
 def get_portafiducia_download_path() {
-    /* Stable Portafiducia tarball */
-    def AWS_ACCOUNT_ID = sh (
-                script: "aws sts get-caller-identity --query Account --output text | tr -dc 0-9",
-                returnStdout: true
-              )
-    return "s3://libfabric-ci-$AWS_ACCOUNT_ID-us-west-2/portafiducia/portafiducia.tar.gz"
+    def AWS_ACCOUNT_ID = get_account_id()
+    return "s3://libfabric-ci-${AWS_ACCOUNT_ID}-us-west-2/portafiducia/portafiducia.tar.gz"
 }
 
 def download_and_extract_portafiducia(outputDir) {
@@ -37,6 +40,34 @@ def install_porta_fiducia() {
         pip install --upgrade awscli
         pip install -e /tmp/PortaFiducia
     '''
+}
+
+def get_testing_packages_download_path() {
+    def AWS_ACCOUNT_ID = get_account_id()
+    return "s3://ect-ci-tests-${AWS_ACCOUNT_ID}-us-west-2/"
+}
+
+def download_testing_package(String s3Folder, String localDir) {
+    def s3Base = get_testing_packages_download_path()
+    try {
+        sh "mkdir -p ${localDir} && aws s3 cp ${s3Base}${s3Folder}/ ${localDir}/ --recursive"
+    } catch (Exception e) {
+        unstable("Failed to download ${s3Folder}: ${e.getMessage()}")
+    }
+}
+
+// S3 folder names use hyphens; --test-suite-package flag uses underscores.
+// Keep these two forms in sync.
+def download_all_testing_packages() {
+    def packages = [
+        ['elastic-collectives-nightly-tests', '/tmp/ElasticCollectivesNightlyTests'],
+        ['samwise-test-runner', '/tmp/SamwiseTestRunner'],
+        ['samwise-test-schema', '/tmp/SamwiseTestSchema'],
+        ['nccl-latency-tests', '/tmp/NcclLatencyTests']
+    ]
+    packages.each { pkg ->
+        download_testing_package(pkg[0], pkg[1])
+    }
 }
 
 def get_persistent_cluster_name(build_tag, os, instance_type) {
@@ -157,6 +188,13 @@ pipeline {
 
             }
         }
+        stage("Install Testing suites") {
+            steps {
+                script {
+                    download_all_testing_packages()
+                }
+            }
+        }
         stage("Test OFI NCCL Plugin") {
             steps {
                 script {
@@ -174,8 +212,10 @@ pipeline {
 
                     def persistent_manual_cluster_addl_args = " --keep-cluster --skip-fixture-setup --skip-health-checks --use-existing-installer --skip-portafiducia-install --enable-placement-group false --lean-cluster-setup"
                     def container_addl_args = " --test-in-containers-on-ec2"
+                    // Must match S3 folder in download_all_testing_packages() (hyphens vs underscores).
+                    def test_suite_pkg = "--test-suite-package elastic_collectives_nightly_tests --owner nvidia_ect"
 
-                    def base_args = "${efa_installer} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${nccl_test_iter} ${persistent_manual_cluster_addl_args}"
+                    def base_args = "${efa_installer} ${timeout} ${cluster_type} ${test_target} ${test_type} ${build_type} ${pr_num} ${nccl_test_iter} ${test_suite_pkg} ${persistent_manual_cluster_addl_args}"
 
                     def num_instances = 4
                     def p3dn_lock_label = "p3dn-1-4node"
