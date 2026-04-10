@@ -25,7 +25,7 @@ struct gin_connect_handle {
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
 };
 
-nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
+nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
 				     nccl_net_ofi_recv_comm *r_comm_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
@@ -64,7 +64,7 @@ nccl_ofi_gin_comm::nccl_ofi_gin_comm(nccl_ofi_gin_resources &resources_arg, int 
 	resources.increment_ref_cnt();
 }
 
-nccl_ofi_gin_comm::~nccl_ofi_gin_comm()
+nccl_ofi_rdma_gin_put_comm::~nccl_ofi_rdma_gin_put_comm()
 {
 #if HAVE_NVTX_TRACING
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
@@ -107,8 +107,8 @@ static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_
 	return 0;
 }
 
-int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-				      nccl_ofi_gin_comm **gin_comm_out)
+int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
+				      nccl_ofi_rdma_gin_put_comm **gin_comm_out)
 {
 	int ret = 0;
 
@@ -153,8 +153,8 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 		rdma_ep->set_gin_resources(resources);
 	}
 
-	nccl_ofi_gin_comm *gin_comm =
-		new nccl_ofi_gin_comm(*resources, rank, nranks, s_comm, r_comm);
+	nccl_ofi_rdma_gin_put_comm *gin_comm =
+		new nccl_ofi_rdma_gin_put_comm(*resources, rank, nranks, s_comm, r_comm);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];
@@ -206,7 +206,7 @@ int nccl_ofi_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int
 	return 0;
 }
 
-int nccl_ofi_gin_comm::send_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
+int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
 			       uint32_t ack_seq_num, uint32_t count)
 {
 	assert(count <= GIN_ACK_COUNT_MASK);
@@ -259,12 +259,12 @@ int nccl_ofi_gin_comm::send_ack(nccl_ofi_gin_comm &gin_comm, uint32_t peer_rank,
 	return ret;
 }
 
-int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, uint64_t mrFlags, gin_sym_mr_handle **mr_handle_out)
+int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
+				      int type, uint64_t mrFlags, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
 {
 	auto &gin_ep = resources.get_ep();
 
-	auto *mr_handle = new gin_sym_mr_handle {};
+	auto *mr_handle = new nccl_ofi_rdma_gin_symm_mr_handle {};
 
 	NCCL_OFI_TRACE(NCCL_NET, "regMrSymDmaBuf ptr %p size %zu type %d flags %lu handle %p",
 		       data_ptr, size, type, mrFlags, mr_handle);
@@ -345,7 +345,7 @@ int nccl_ofi_gin_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr,
 	return 0;
 }
 
-int nccl_ofi_gin_comm::deregMrSym(gin_sym_mr_handle *mr_handle)
+int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_rdma_gin_symm_mr_handle *mr_handle)
 {
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
 	if (mr_handle->type == NCCL_PTR_CUDA) {
@@ -369,7 +369,7 @@ int nccl_ofi_gin_comm::deregMrSym(gin_sym_mr_handle *mr_handle)
 	return 0;
 }
 
-int nccl_ofi_gin_comm::await_pending_requests()
+int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 {
 	int ret = 0;
 
@@ -400,11 +400,11 @@ int nccl_ofi_gin_comm::await_pending_requests()
 	return ret;
 }
 
-int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle, size_t size,
-				  uint64_t dstOff, gin_sym_mr_handle *dstMhandle, uint32_t dst_rank,
-				  uint64_t signalOff, gin_sym_mr_handle *signalMhandle,
+int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_symm_mr_handle *srcMhandle, size_t size,
+				  uint64_t dstOff, nccl_ofi_rdma_gin_symm_mr_handle *dstMhandle, uint32_t dst_rank,
+				  uint64_t signalOff, nccl_ofi_rdma_gin_symm_mr_handle *signalMhandle,
 				  uint64_t signalValue, uint32_t signalOp,
-				  nccl_net_ofi_gin_iputsignal_req_t **request)
+				  nccl_ofi_rdma_gin_iputsignal_req **request)
 {
 	if (signalOp != 0 && signalOp != NCCL_NET_SIGNAL_OP_INC &&
 	    signalOp != NCCL_NET_SIGNAL_OP_ADD) {
@@ -463,7 +463,7 @@ int nccl_ofi_gin_comm::iputSignal(uint64_t srcOff, gin_sym_mr_handle *srcMhandle
 	nccl_net_ofi_gin_metadata_send_req_t *send_req = nullptr;
 
 	/* Create umbrella request first for tracing */
-	auto *req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_req_t>(
+	auto *req = resources.get_req_from_pool<nccl_ofi_rdma_gin_iputsignal_req>(
 		*this, dst_rank, msg_seq_num, write_reqs, nullptr, is_ack_requested);
 
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_BEGIN(dev, size, this, dst_rank, msg_seq_num, req);
@@ -603,7 +603,7 @@ static inline uint64_t get_req_map_key(uint32_t peer_rank, uint16_t msg_seq_num)
 	return (static_cast<uint64_t>(peer_rank) << 16) | static_cast<uint64_t>(msg_seq_num);
 }
 
-int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata)
+int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata)
 {
 	void *signal_base = reinterpret_cast<void *>(metadata.signal_base_address);
 
@@ -616,7 +616,7 @@ int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_
 		NCCL_OFI_WARN("Signal base address %p not found in MR handle map", signal_base);
 		return -EINVAL;
 	}
-	gin_sym_mr_handle *mr_handle = it->second;
+	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = it->second;
 
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		uint64_t old_value;
@@ -660,7 +660,7 @@ int nccl_ofi_gin_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_
 	return 0;
 }
 
-int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
+int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 						       nccl_net_ofi_gin_iputsignal_recv_req *req)
 {
 	int ret = 0;
@@ -689,7 +689,7 @@ int nccl_ofi_gin_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint6
 
 /* Extend the pending bundled ack to include seq_num. If the merged
    range would overflow the bitfield, flush the old range first. */
-int nccl_ofi_gin_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num)
+int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num)
 {
 	auto &rank_comm = this->rank_comms[peer_rank];
 
@@ -731,7 +731,7 @@ int nccl_ofi_gin_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num)
 
 /* Flush pending bundled acks that have aged past the threshold
    for peers with no recent completions. Called from progress. */
-int nccl_ofi_gin_comm::flush_stale_acks()
+int nccl_ofi_rdma_gin_put_comm::flush_stale_acks()
 {
 	++progress_counter;
 	nccl_ofi_dlist_node *pos;
@@ -752,7 +752,7 @@ int nccl_ofi_gin_comm::flush_stale_acks()
 	return 0;
 }
 
-int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
+int nccl_ofi_rdma_gin_put_comm::iput_signal_deliver_all(uint32_t peer_rank)
 {
 	int ret = 0;
 
@@ -799,7 +799,7 @@ int nccl_ofi_gin_comm::iput_signal_deliver_all(uint32_t peer_rank)
 	return ret;
 }
 
-int nccl_ofi_gin_comm::handle_signal_metadata_completion(
+int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	fi_addr_t src_addr, uint16_t rail_id,
 	const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg)
 {
@@ -843,7 +843,7 @@ int nccl_ofi_gin_comm::handle_signal_metadata_completion(
 	return ret;
 }
 
-int nccl_ofi_gin_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
+int nccl_ofi_rdma_gin_put_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
 					     const gin_ack_msg_t *ack_msg)
 {
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
@@ -864,7 +864,7 @@ int nccl_ofi_gin_comm::handle_ack_completion(fi_addr_t src_addr, uint16_t rail_i
 	return 0;
 }
 
-int nccl_ofi_gin_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
+int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
 						      uint16_t msg_seq_num, uint64_t total_segms,
 						      size_t len, bool is_ack_requested)
 {

@@ -12,7 +12,7 @@
  * Forward-declarations of GIN types
  */
 class nccl_ofi_gin_mr_handle_t;
-class nccl_ofi_gin_comm;
+class nccl_ofi_rdma_gin_put_comm;
 class nccl_ofi_gin_resources;
 struct nccl_ofi_gin_ep_rail_t;
 
