@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-#include "gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin.h"
 
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_gdrcopy.h"

@@ -2,8 +2,8 @@
  * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_OFI_GIN_ALLGATHER_H
-#define NCCL_OFI_GIN_ALLGATHER_H
+#ifndef NCCL_OFI_RDMA_GIN_ALLGATHER_H
+#define NCCL_OFI_RDMA_GIN_ALLGATHER_H
 
 #include "nccl_ofi.h"
 
@@ -38,4 +38,4 @@ public:
 	int all_gather(void *data, size_t size);
 };
 
-#endif /* NCCL_OFI_GIN_ALLGATHER_H */
+#endif /* NCCL_OFI_RDMA_GIN_ALLGATHER_H */

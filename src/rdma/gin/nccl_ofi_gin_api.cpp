@@ -4,8 +4,8 @@
 
 #include "config.h"
 
-#include "gin/nccl_ofi_gin.h"
-#include "gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"

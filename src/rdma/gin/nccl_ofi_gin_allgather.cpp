@@ -4,7 +4,7 @@
 
 #include "config.h"
 
-#include "gin/nccl_ofi_gin_allgather.h"
+#include "rdma/gin/nccl_ofi_gin_allgather.h"
 
 #include "nccl_ofi_api.h"
 
