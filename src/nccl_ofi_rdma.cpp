@@ -853,7 +853,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 	}
 
 	nccl_ofi_msgbuff_status_t stat;
-	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, msg_seq_num,
+	nccl_ofi_msgbuff_result_t mb_res = r_comm->msgbuff->insert(msg_seq_num,
 		rx_buff_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
 
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
@@ -874,7 +874,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 	// In this case, there is already a req entry here. Initiate eager copy.
 	void *elem;
 	nccl_ofi_msgbuff_elemtype_t type;
-	mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff, msg_seq_num, &elem, &type, &stat);
+	mb_res = r_comm->msgbuff->retrieve( msg_seq_num, &elem, &type, &stat);
 	if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS || type != NCCL_OFI_MSGBUFF_REQ)) {
 		NCCL_OFI_WARN("Invalid message retrieval result for msg %hu", msg_seq_num);
 		return -EINVAL;
@@ -1047,7 +1047,7 @@ static inline nccl_net_ofi_rdma_req *get_req_from_imm_data
 	nccl_ofi_msgbuff_elemtype_t type;
 	nccl_ofi_msgbuff_status_t stat;
 
-	nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_retrieve(r_comm->msgbuff,
+	nccl_ofi_msgbuff_result_t mb_res = r_comm->msgbuff->retrieve(
 		msg_seq_num, &elem, &type, &stat);
 	if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
 		/* Unexpected: we don't have a msgbuff entry corresponding to this message*/
@@ -2424,10 +2424,10 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 
 		if (this->type == NCCL_OFI_RDMA_RECV) {
 			/* Mark as complete in message buffer */
-			nccl_ofi_msgbuff_t *msgbuff = ((nccl_net_ofi_rdma_recv_comm *)base_comm)->msgbuff;
+			nccl_ofi_msgbuff *msgbuff = ((nccl_net_ofi_rdma_recv_comm *)base_comm)->msgbuff;
 
 			nccl_ofi_msgbuff_status_t stat;
-			nccl_ofi_msgbuff_result_t mb_res = nccl_ofi_msgbuff_complete(msgbuff, this->msg_seq_num, &stat);
+			nccl_ofi_msgbuff_result_t mb_res = msgbuff->complete(this->msg_seq_num, &stat);
 			if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
 				NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu", this->msg_seq_num);
 				ret = -EINVAL;
@@ -2940,7 +2940,7 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm 
 		 * There is already a buffer entry in the message buffer, so
 		 * replace it with a request.
 		 */
-		mb_res = nccl_ofi_msgbuff_replace(r_comm->msgbuff,
+		mb_res = r_comm->msgbuff->replace(
 					req->msg_seq_num, req,
 					NCCL_OFI_MSGBUFF_REQ,
 					&msg_stat);
@@ -2951,7 +2951,7 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm 
 		}
 	} else {
 		/* Try inserting the new request */
-		mb_res = nccl_ofi_msgbuff_insert(r_comm->msgbuff, req->msg_seq_num, req,
+		mb_res = r_comm->msgbuff->insert( req->msg_seq_num, req,
 						 NCCL_OFI_MSGBUFF_REQ, &msg_stat);
 
 		if (OFI_UNLIKELY((mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX) &&
@@ -3065,7 +3065,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	nccl_ofi_msgbuff_status_t msg_stat;
 	nccl_ofi_msgbuff_result_t mb_res;
 
-	mb_res = nccl_ofi_msgbuff_retrieve(this->msgbuff, msg_seq_num, &elem,
+	mb_res = this->msgbuff->retrieve( msg_seq_num, &elem,
 					   &elem_type, &msg_stat);
 	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
 
@@ -3400,11 +3400,7 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 	delete r_comm->flush_buff_fl;
 	delete r_comm->nccl_ofi_reqs_fl;
 
-	if (!nccl_ofi_msgbuff_destroy(r_comm->msgbuff)) {
-		NCCL_OFI_WARN("Failed to destroy msgbuff (r_comm)");
-		ret = -EINVAL;
-		return ret;
-	}
+	delete r_comm->msgbuff;
 
 	/* Destroy domain */
 #if HAVE_NVTX_TRACING
@@ -4371,10 +4367,11 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 							 true);
 
 	/* Allocate message buffer with initial sequence number NCCL_OFI_RDMA_MSG_SEQ_NUM_START */
-	r_comm->msgbuff = nccl_ofi_msgbuff_init(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS,
-						NCCL_OFI_RDMA_MSG_SEQ_NUM_START);
-	if (!r_comm->msgbuff) {
-		NCCL_OFI_WARN("Failed to allocate and initialize message buffer");
+	try {
+		r_comm->msgbuff = new nccl_ofi_msgbuff(NCCL_OFI_RDMA_MSGBUFF_SIZE, NCCL_OFI_RDMA_SEQ_BITS,
+						       NCCL_OFI_RDMA_MSG_SEQ_NUM_START);
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("Failed to allocate and initialize message buffer: %s", e.what());
 		delete r_comm;
 		return NULL;
 	}
@@ -4416,7 +4413,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 		if (r_comm->nccl_ofi_reqs_fl)
 			delete r_comm->nccl_ofi_reqs_fl;
 		if (r_comm->msgbuff)
-			nccl_ofi_msgbuff_destroy(r_comm->msgbuff);
+			delete r_comm->msgbuff;
 		if (COMM_ID_INVALID != r_comm->local_comm_id) {
 			device->comm_idpool.free_id(r_comm->local_comm_id);
 		}
