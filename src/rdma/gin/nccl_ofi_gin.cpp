@@ -108,7 +108,7 @@ static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_
 }
 
 int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-				      nccl_ofi_rdma_gin_put_comm **gin_comm_out)
+				      nccl_ofi_gin_put_comm_t **gin_comm_out)
 {
 	int ret = 0;
 
@@ -260,7 +260,7 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 }
 
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, uint64_t mrFlags, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				      int type, uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out)
 {
 	auto &gin_ep = resources.get_ep();
 
@@ -345,8 +345,9 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 	return 0;
 }
 
-int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_rdma_gin_symm_mr_handle *mr_handle)
+int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle_base)
 {
+	auto *mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mr_handle_base);
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		int ret = get_device_copy().deregister_region(mr_handle->gdr_handle);
@@ -400,12 +401,16 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 	return ret;
 }
 
-int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_symm_mr_handle *srcMhandle, size_t size,
-				  uint64_t dstOff, nccl_ofi_rdma_gin_symm_mr_handle *dstMhandle, uint32_t dst_rank,
-				  uint64_t signalOff, nccl_ofi_rdma_gin_symm_mr_handle *signalMhandle,
+int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr_handle_t *srcMhandle, size_t size,
+				  uint64_t dstOff, nccl_ofi_gin_symm_mr_handle_t *dstMhandle, uint32_t dst_rank,
+				  uint64_t signalOff, nccl_ofi_gin_symm_mr_handle_t *signalMhandle,
 				  uint64_t signalValue, uint32_t signalOp,
-				  nccl_ofi_rdma_gin_iputsignal_req **request)
+				  nccl_ofi_gin_req_t **request)
 {
+	auto *src_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(srcMhandle);
+	auto *dst_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(dstMhandle);
+	auto *sig_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(signalMhandle);
+
 	if (signalOp != 0 && signalOp != NCCL_NET_SIGNAL_OP_INC &&
 	    signalOp != NCCL_NET_SIGNAL_OP_ADD) {
 		NCCL_OFI_WARN("Only support signal add/increment");
@@ -470,8 +475,8 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_sy
 
 	if (size > 0) {
 		/* Post write-immediate request with user data */
-		void *src = static_cast<uint8_t *>(srcMhandle->input_address) + srcOff;
-		auto *src_mhandle = srcMhandle->local_handle;
+		void *src = static_cast<uint8_t *>(src_mr->input_address) + srcOff;
+		auto *src_mhandle = src_mr->local_handle;
 
 		const auto schedule =
 			scheduler->get_schedule(size, gin_ep.get_num_rails());
@@ -482,7 +487,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_sy
 
 		uint64_t data = GIN_IMM_SEG_DATA(remote_comm_id, msg_seq_num, nseg, is_ack_requested);
 
-		auto &dest_remote_mr = dstMhandle->remote_mr[dst_rank];
+		auto &dest_remote_mr = dst_mr->remote_mr[dst_rank];
 		uint64_t dest = dest_remote_mr.address_offset + dstOff;
 		int wr_it = 0;
 
@@ -537,7 +542,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_sy
 		metadata_send->remote_comm_id = remote_comm_id;
 		metadata_send->msg_type = GIN_MSG_TYPE_METADATA;
 		metadata_send->signal_base_address =
-			(signalMhandle ? signalMhandle->remote_mr[dst_rank].address : 0);
+			(sig_mr ? sig_mr->remote_mr[dst_rank].address : 0);
 		metadata_send->signal_offset = signalOff;
 		if (signalOp == NCCL_NET_SIGNAL_OP_INC) {
 			metadata_send->signal_value = 1;
