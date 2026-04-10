@@ -194,7 +194,7 @@ nccl_net_ofi_gin_sendack_req_t::~nccl_net_ofi_gin_sendack_req_t()
 	ack_fl->entry_free(ack_elem);
 }
 
-int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
+int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 {
 	*done = 0;
 
