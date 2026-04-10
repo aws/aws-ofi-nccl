@@ -48,7 +48,7 @@ public:
 	}
 
 	int connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-		    nccl_ofi_rdma_gin_put_comm **gin_comm_out);
+		    nccl_ofi_gin_put_comm_t **gin_comm_out) override;
 };
 
 /**
@@ -198,9 +198,9 @@ public:
 	 * @return: 0 on success, non-zero on failure
 	 */
 	int regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
-			   uint64_t mrFlags, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out);
+			   uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out) override;
 
-	int deregMrSym(nccl_ofi_rdma_gin_symm_mr_handle *mr_handle);
+	int deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle) override;
 
 	void increment_outstanding_ack_counter()
 	{
@@ -233,7 +233,7 @@ public:
 
 	/* Wait for any outstanding requests as necessary. Should be called before
 	   the GIN comm is destructed. */
-	int await_pending_requests();
+	int await_pending_requests() override;
 
 	/* Flush bundled acks that were not sent with metadata. Called from progress. */
 	int flush_stale_acks();
@@ -259,10 +259,10 @@ public:
 	 *
 	 * @return: 0 on success, non-zero on failure
 	 */
-	int iputSignal(uint64_t srcOff, nccl_ofi_rdma_gin_symm_mr_handle *srcMhandle, size_t size, uint64_t dstOff,
-		       nccl_ofi_rdma_gin_symm_mr_handle *dstMhandle, uint32_t rank, uint64_t signalOff,
-		       nccl_ofi_rdma_gin_symm_mr_handle *signalMhandle, uint64_t signalValue, uint32_t signalOp,
-		       nccl_ofi_rdma_gin_iputsignal_req **request);
+	int iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr_handle_t *srcMhandle, size_t size, uint64_t dstOff,
+		       nccl_ofi_gin_symm_mr_handle_t *dstMhandle, uint32_t rank, uint64_t signalOff,
+		       nccl_ofi_gin_symm_mr_handle_t *signalMhandle, uint64_t signalValue, uint32_t signalOp,
+		       nccl_ofi_gin_req_t **request) override;
 
 	/**
 	 * Callback for metadata completion.
