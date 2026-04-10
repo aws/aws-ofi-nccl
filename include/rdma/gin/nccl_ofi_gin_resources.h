@@ -2,8 +2,8 @@
  * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_OFI_GIN_RESOURCES_H
-#define NCCL_OFI_GIN_RESOURCES_H
+#ifndef NCCL_OFI_RDMA_GIN_RESOURCES_H
+#define NCCL_OFI_RDMA_GIN_RESOURCES_H
 
 #include "rdma/fabric.h"
 
@@ -12,8 +12,8 @@
 #include <vector>
 #include <unordered_map>
 
-#include "gin/nccl_ofi_gin_reqs.h"
-#include "gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin_reqs.h"
+#include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_gin_base.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_rdma.h"
@@ -219,7 +219,7 @@ public:
 	 * Get GIN communicator with given comm_id from map. Throw exception if
 	 * not found.
 	 */
-	nccl_ofi_gin_comm &get_comm(uint32_t comm_id)
+	nccl_ofi_rdma_gin_put_comm &get_comm(uint32_t comm_id)
 	{
 		auto it = gin_comms.find(comm_id);
 		if (it == gin_comms.end()) {
@@ -234,7 +234,7 @@ public:
 	 * Set a GIN communicator with given comm_id in map. Throw exception if
 	 * comm_id already exists.
 	 */
-	void set_comm(uint32_t comm_id, nccl_ofi_gin_comm &comm)
+	void set_comm(uint32_t comm_id, nccl_ofi_rdma_gin_put_comm &comm)
 	{
 		auto it = gin_comms.insert({ comm_id, &comm });
 		if (!it.second) {
@@ -344,7 +344,7 @@ public:
 private:
 	nccl_ofi_gin_ep_holder ep_holder;
 
-	std::unordered_map<uint32_t, nccl_ofi_gin_comm *> gin_comms;
+	std::unordered_map<uint32_t, nccl_ofi_rdma_gin_put_comm *> gin_comms;
 
 	nccl_ofi_idpool_t comm_id_pool;
 

@@ -4,9 +4,9 @@
 
 #include "config.h"
 
-#include "gin/nccl_ofi_gin.h"
-#include "gin/nccl_ofi_gin_reqs.h"
-#include "gin/nccl_ofi_gin_resources.h"
+#include "rdma/gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin_reqs.h"
+#include "rdma/gin/nccl_ofi_gin_resources.h"
 #include "nccl_ofi_tracepoint.h"
 
 int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
@@ -194,7 +194,7 @@ nccl_net_ofi_gin_sendack_req_t::~nccl_net_ofi_gin_sendack_req_t()
 	ack_fl->entry_free(ack_elem);
 }
 
-int nccl_net_ofi_gin_iputsignal_req_t::test(int *done)
+int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 {
 	*done = 0;
 
