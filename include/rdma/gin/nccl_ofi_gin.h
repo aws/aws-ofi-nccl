@@ -2,12 +2,12 @@
  * Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
-#ifndef NCCL_OFI_GIN_H
-#define NCCL_OFI_GIN_H
+#ifndef NCCL_OFI_RDMA_GIN_H
+#define NCCL_OFI_RDMA_GIN_H
 
-#include "gin/nccl_ofi_gin_allgather.h"
-#include "gin/nccl_ofi_gin_resources.h"
-#include "gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin_allgather.h"
+#include "rdma/gin/nccl_ofi_gin_resources.h"
+#include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_dlist.h"
 
 #include "nccl_ofi.h"
