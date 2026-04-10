@@ -175,7 +175,7 @@ static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks,
 
 	try {
 		ret = gin_l_comm->connect(gin_handles, nranks, rank,
-					  reinterpret_cast<nccl_ofi_rdma_gin_put_comm **>(collComm));
+					  reinterpret_cast<nccl_ofi_gin_put_comm_t **>(collComm));
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in GIN connect: %s", e.what());
 		ret = -EINVAL;
@@ -189,7 +189,7 @@ static ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size
 						void **mhandle, void **ginHandle)
 {
 	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
+	nccl_ofi_gin_symm_mr_handle_t *mr_handle = nullptr;
 
 #if HAVE_DECL_FI_MR_DMABUF
 	const nccl_ofi_mr_ckey_t cache_key =
@@ -223,7 +223,7 @@ static ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t siz
 static ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
 {
 	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	auto *mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mhandle);
+	auto *mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(mhandle);
 
 	int ret = comm->deregMrSym(mr_handle);
 	if (ret != 0) {
@@ -275,11 +275,11 @@ static ncclResult_t nccl_ofi_gin_iputSignal(void *collComm, uint64_t srcOff, voi
 					    uint64_t signalValue, uint32_t signalOp, void **request)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	auto *src_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(srcMhandle);
-	auto *dst_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(dstMhandle);
-	auto *signal_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(signalMhandle);
+	auto *src_mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(srcMhandle);
+	auto *dst_mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(dstMhandle);
+	auto *signal_mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(signalMhandle);
 
-	nccl_ofi_rdma_gin_iputsignal_req *req = nullptr;
+	nccl_ofi_gin_req_t *req = nullptr;
 	int ret = gin_comm->iputSignal(srcOff, src_mr_handle, size, dstOff, dst_mr_handle, rank,
 				       signalOff, signal_mr_handle, signalValue, signalOp, &req);
 	if (ret != 0) {
