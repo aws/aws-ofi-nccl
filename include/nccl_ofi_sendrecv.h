@@ -198,7 +198,7 @@ public:
 	}
 
 	/* Caller must hold the device lock */
-	nccl_net_ofi_ep_t *create_endpoint() override;
+	std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() override;
 
 	/* Access Domain handle */
 	ofi_domain_ptr domain;
@@ -206,14 +206,10 @@ public:
 protected:
 	/**
 	 * @brief	SENDRECV domain destructor.
-	 * 
-	 * Overrides base domain class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up SENDRECV domain resources before the
-	 * destructor was called.
+	 *
+	 * Cleans up SENDRECV domain resources (ep_table).
 	 */	
 	~nccl_net_ofi_sendrecv_domain_t();
-
-	int cleanup_resources() override;
 };
 
 
@@ -231,7 +227,7 @@ public:
 	 * 
 	 * Calls base endpoint class constructor, sets up freelist and endpoint resources.   
 	 */
-	nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg);
+	nccl_net_ofi_sendrecv_ep_t(std::shared_ptr<nccl_net_ofi_sendrecv_domain_t> domain_arg);
 
 	int listen(nccl_net_ofi_conn_handle_t *handle,
 		   nccl_net_ofi_listen_comm **listen_comm) override;
@@ -240,9 +236,12 @@ public:
 		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
+	/* Returns a raw pointer for downcasting to the transport-specific
+	 * domain type. Safe because the ep holds shared_ptr<domain>,
+	 * so the domain is alive as long as the ep exists. */
 	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
 	{
-		return static_cast<nccl_net_ofi_sendrecv_domain_t *>(domain);
+		return static_cast<nccl_net_ofi_sendrecv_domain_t *>(domain.get());
 	}
 
 	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
@@ -277,8 +276,8 @@ public:
 	 *    resources, such as completion queue
 	 *
 	 * After this function returns, the endpoint will still have non-OFI resources
-	 * allocated (freelists, rx requests, etc.), but will not be usable except to
-	 * release it (release_ep).
+	 * allocated (freelists, rx requests, etc.), but will not be usable. The
+	 * endpoint is destroyed when the last shared_ptr to it is dropped.
 	 */
 	void sendrecv_endpoint_abort();
 
@@ -309,17 +308,13 @@ public:
 	 * nccl_ofi_connection_manager doesn't have a default constructor.
 	 */
 	nccl_ofi_connection_manager *cm = nullptr;
-protected:
+
 	/**
 	 * @brief	Destructor.
 	 * 
-	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up SENDRECV endpoint resources before the
-	 * destructor was called.
+	 * Cleans up SENDRECV endpoint resources (OFI endpoint, AV, CM).
 	 */
 	~nccl_net_ofi_sendrecv_ep_t() override;
-
-	int cleanup_resources() override;
 };
 
 
@@ -370,8 +365,6 @@ public:
 				       int device_id,
 				       struct fi_info *info_arg);
 
-	int release_device() override;
-
 	int get_properties(nccl_ofi_properties_t *props) override;
 
 	inline struct fi_info *get_ofi_info_for_cm() override
@@ -409,14 +402,10 @@ public:
 protected:
 	/**
 	 * @brief	SENDRECV device destructor.
-	 * 
-	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up SENDRECV device resources before the
-	 * destructor was called.
+	 *
+	 * Cleans up SENDRECV device resources (domains, fi_info).
 	 */
 	~nccl_net_ofi_sendrecv_device_t() override;
-
-	int cleanup_resources() override;
 
 	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 

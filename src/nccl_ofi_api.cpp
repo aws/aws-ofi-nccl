@@ -152,7 +152,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 {
 	int ret = 0;
 	nccl_net_ofi_device_t *device = nullptr;
-	nccl_net_ofi_ep_t *ep = nullptr;
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	nccl_net_ofi_listen_comm **listen_comm =
 		reinterpret_cast<nccl_net_ofi_listen_comm **>(lComm);
 
@@ -181,15 +181,15 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 		}
 
 		ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), listen_comm);
+		if (ret == 0 && *listen_comm != nullptr) {
+			(*listen_comm)->ep = ep;
+		}
 	}
 	catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in plugin listen: %s", e.what());
 		ret = -EINVAL;
 	}
 
-	if (ret != 0 && ep != nullptr) {
-		ep->release_ep(false, false);
-	}
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -204,11 +204,10 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
  * function with the same handle assume that the endpoint in question
  * is stored in the communicator which itself is referable from the
  * communicator state's struct of the handle.  Also, the callee
- * invokes connect() on the endpoint. If this endpoint connect()
- * function returns a value different from ncclSuccess, the callee
- * releases the handle via release_ep(). When connect() succeeds, the
- * function nccl_net_ofi_closeSend() is responsible for releasing the
- * endpoint handle by invoking release_ep().
+ * invokes connect() on the endpoint. On error, the shared_ptr<ep>
+ * drops automatically on scope exit. On success, the comm holds
+ * a shared_ptr to the endpoint (ep) which keeps it alive
+ * until the comm is closed.
  *
  * @param	Network Device ID
  * 		Connection Handle (transferred OOB by NCCL)
@@ -236,8 +235,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *ep = nullptr;
-	bool created_ep = false;
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	int ret = 0;
 	try {
 		if (ofi_handle->state.comm == nullptr) {
@@ -251,8 +249,8 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
 			if (OFI_UNLIKELY(ep == nullptr)) {
 				return check_return(ncclInternalError);
 			}
-			created_ep = true;
 		} else {
+			/* Reuse existing ep from the handle's comm */
 			ep = ofi_handle->state.comm->ep;
 			if (OFI_UNLIKELY(ep == nullptr)) {
 				NCCL_OFI_WARN("Error accessing endpoint. Endpoint has not been initialized.");
@@ -272,15 +270,7 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
 		ret = -EINVAL;
 	}
 
-	if (created_ep) {
-		/**
-		 * Release the ep if we acquired one before calling
-		 * ep->connect(). The protocol should have acquired its own
-		 * endpoint when creating the communictor.
-		 */
-		ep->release_ep(false, false);
-	}
-
+	/* ep shared_ptr drops on scope exit. No manual release needed */
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -291,7 +281,8 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
  * 		rComm != nullptr
  *
  * If accept fails by returning a result other than ncclSuccess,
- * release_ep() is invoked on the listen communicator's endpoint.
+ * the listen communicator's ep shared_ptr keeps the endpoint
+ * alive until the listen comm is closed.
  *
  * @param	Listen Communicator object
  *
@@ -327,18 +318,10 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 		ret = -EINVAL;
 	}
 
-	/* Invoke release_ep() on listen comm's endpoint since accept failed */
-	if (ret != 0) {
-		/* Validate endpoint */
-		if (OFI_UNLIKELY(listen_comm->ep == nullptr)) {
-			NCCL_OFI_WARN("Invalid endpoint provided");
-			ret = -EINVAL;
-			goto error;
-		}
-		listen_comm->ep->release_ep(false, false);
-	}
+	/* On failure, the listen comm's ep shared_ptr will be
+	 * released when the listen comm is destroyed. No manual
+	 * release needed. */
 
-error:
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -378,14 +361,14 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 
 #if HAVE_DECL_FI_MR_DMABUF
 	const nccl_ofi_mr_ckey_t cache_key = (fd == -1)
-		? nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep)
-		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, base_comm->ep);
+		? nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep.get())
+		: nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, base_comm->ep.get());
 #else
 	if (fd != -1) {
 		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
 		return nccl_net_ofi_retval_translate_impl(-EINVAL);
 	}
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep);
+	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, base_comm->ep.get());
 #endif
 
 	nccl_net_ofi_send_comm *send_comm = NULL;

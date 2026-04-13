@@ -147,7 +147,7 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 		domain_key=0 uses the default domain, endpoint_key=comm_id caches endpoints
 		by communicator ID instead of thread ID. */
 
-		nccl_net_ofi_ep_t *ep = device->get_ep(0, static_cast<long>(comm_id));
+		auto ep = device->get_ep(0, static_cast<long>(comm_id));
 
 		nccl_net_ofi_listen_comm *l_comm = nullptr;
 		int ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), &l_comm);
@@ -155,6 +155,14 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 			NCCL_OFI_WARN("GIN: error listening on device %i.", dev);
 			return nccl_net_ofi_retval_translate(ret);
 		}
+
+		/* TODO: ep->listen() creates the listen_comm but does
+		 * not set l_comm->ep. The API listen() path sets it
+		 * after ep->listen() returns. GIN calls ep->listen()
+		 * directly, so it must also set l_comm->ep here.
+		 * Both callers need this for accept() to propagate
+		 * the ep to the recv_comm. */
+		l_comm->ep = ep;
 
 		*listenComm = new nccl_ofi_rdma_gin_listen_comm(dev, ep, l_comm);
 	} catch (const std::exception &e) {

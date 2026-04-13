@@ -39,6 +39,26 @@
 
 extern char **environ;
 
+namespace {
+
+/*
+ * Purge expired weak_ptr entries from an unordered_map.
+ * Called on cache miss to prevent unbounded table growth.
+ */
+template <typename K, typename V>
+void purge_expired_weak_ptrs(std::unordered_map<K, std::weak_ptr<V>> &table)
+{
+	for (auto it = table.begin(); it != table.end();) {
+		if (it->second.expired()) {
+			it = table.erase(it);
+		} else {
+			++it;
+		}
+	}
+}
+
+} /* anonymous namespace */
+
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
 
@@ -134,7 +154,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	int ret = 0;
 	const char *provider_filter = NULL;
 	nccl_net_ofi_plugin_t *plugin;
-	nccl_net_ofi_ep_t *ep = NULL;
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	nccl_net_ofi_device_t *device = NULL;
 	nccl_ofi_properties_t properties;
 	nccl_ofi_topo_t *topo = nullptr;
@@ -329,10 +349,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		      (properties.regIsGlobal == 0) ? "false" : "true");
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "Support for DMA-BUF registrations: %s",
 		      (properties.dmabuf_support == 0) ? "false" : "true");
-	ret = ep->release_ep(false, false);
-	if (ret != 0) {
-		goto exit;
-	}
+	/* Drop the endpoint. shared_ptr handles cleanup */
+	ep.reset();
 
 	assert(support_gdr != GDR_UNKNOWN);
 
@@ -641,90 +659,78 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 {
 	for (size_t i = 0 ; i < this->get_num_devices() ; i++) {
-		if (this->p_devs[i] != nullptr) {
-			this->p_devs[i]->release_device();
-		}
+		delete this->p_devs[i];
 	}
 }
 
 
 void nccl_net_ofi_device_t::remove_domain_from_map(nccl_net_ofi_domain_t *domain)
 {
-	size_t n_removed = 0;
-
-	assert(!this->domain_table.empty());
 	for (auto it = this->domain_table.begin(); it != this->domain_table.end();) {
-		if (it->second == domain) {
+		auto domain_ptr = it->second.lock();
+		/* Erase if this is the target domain, or if the
+		 * weak_ptr has expired (opportunistic cleanup). */
+		if (domain_ptr.get() == domain || domain_ptr == nullptr) {
 			it = this->domain_table.erase(it);
-			++n_removed;
 		} else {
 			++it;
 		}
 	}
-
-	assert_always(n_removed == 1);
 }
 
 
-nccl_net_ofi_domain_t *nccl_net_ofi_device_t::nccl_net_ofi_device_get_domain_impl(unsigned int domain_key)
+std::shared_ptr<nccl_net_ofi_domain_t> nccl_net_ofi_device_t::get_domain(unsigned int domain_key)
 {
-	nccl_net_ofi_domain_t *domain = nullptr;
+	std::lock_guard scoped_device_lock(this->device_lock);
 
 	assert(this->plugin != nullptr);
 
 	auto domain_iter = this->domain_table.find(domain_key);
 
 	if (domain_iter != this->domain_table.end()) {
-		domain = domain_iter->second;
-	} else {
-		domain = this->create_domain();
-		if (domain == nullptr) {
-			NCCL_OFI_WARN("Initializing a new domain for device %s failed",
-				      this->name);
-			return nullptr;
+		/* Try to promote weak_ptr to shared_ptr */
+		auto domain_ptr = domain_iter->second.lock();
+		if (domain_ptr) {
+			return domain_ptr;
 		}
-
-		this->domain_table.insert(std::pair(domain_key, domain));
-
-		NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
-			       domain,
-			       this->dev_id,
-			       this->name);
+		/* Expired entry, erase stale entry and fall through to create */
+		this->domain_table.erase(domain_iter);
 	}
 
-	return domain;
+	/* Cache miss. Purge expired weak_ptr entries before creating
+	 * a new domain to prevent unbounded table growth. */
+	purge_expired_weak_ptrs(this->domain_table);
+
+	/* Create new domain and insert weak_ptr into table */
+	auto *raw_domain = this->create_domain();
+	if (raw_domain == nullptr) {
+		NCCL_OFI_WARN("Initializing a new domain for device %s failed",
+			      this->name);
+		return nullptr;
+	}
+
+	std::shared_ptr<nccl_net_ofi_domain_t> domain_ptr(raw_domain);
+	this->domain_table.insert(std::make_pair(domain_key, domain_ptr));
+
+	NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
+		       raw_domain, this->dev_id, this->name);
+
+	return domain_ptr;
 }
 
 
-nccl_net_ofi_domain_t *nccl_net_ofi_device_t::get_domain(unsigned int domain_key)
+std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_device_t::get_ep(unsigned int domain_key, long endpoint_key)
 {
-	nccl_net_ofi_domain_t *domain = nullptr;
-
-	std::lock_guard scoped_device_lock(this->device_lock);
-	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
-
-	return domain;
-}
-
-
-nccl_net_ofi_ep_t *nccl_net_ofi_device_t::get_ep(unsigned int domain_key, long endpoint_key)
-{
-	nccl_net_ofi_domain_t *domain = nullptr;
-	nccl_net_ofi_ep_t *ep = nullptr;
-
-	std::lock_guard scoped_device_lock(this->device_lock);
-
-	domain = this->nccl_net_ofi_device_get_domain_impl(domain_key);
+	/* get_domain() acquires and releases device_lock internally.
+	 * By the time we call domain->get_ep() (which takes
+	 * domain_lock), device_lock is already released. The
+	 * shared_ptr keeps the domain alive without the lock. */
+	auto domain = this->get_domain(domain_key);
 	if (domain == nullptr) {
 		return nullptr;
 	}
 
-	ep = domain->get_ep(endpoint_key);
-	if (ep == nullptr) {
-		return nullptr;
-	}
-
-	return ep;
+	return domain->get_ep(endpoint_key);
 }
 
 
@@ -767,131 +773,75 @@ nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 
 int nccl_net_ofi_device_t::release_all_domain_and_ep()
 {
-	int ret, first_error = 0;
-
 	std::lock_guard scoped_device_lock(this->device_lock);
 
-	assert(!this->domain_table.empty());
-	for (auto domain_iter = this->domain_table.begin() ;
-	     domain_iter != this->domain_table.end();) {
-		nccl_net_ofi_domain_t *domain = domain_iter->second;
-		/* For each domain, clean up its endpoints. */
+	/* Clear the tables. The weak_ptrs expire. If any comms still
+	 * hold shared_ptrs to endpoints/domains, those objects stay
+	 * alive until the comms are destroyed. */
+	this->domain_table.clear();
 
-		/* TODO: actually release EPs */
-
-
-		/* The call to domain->release() below will remove this domain
-		   from the table, invalidating domain_iter. So increment it
-		   here first. */
-		++domain_iter;
-
-		/* domain->release takes the domain lock, and removes itself
-		 * from domain_table. Skipping device lock here.*/
-		ret = domain->release_domain(true, true);
-		if (ret != 0 && first_error != 0) {
-			first_error = ret;
-		}
-
-	}
-
-	if (OFI_UNLIKELY(!this->domain_table.empty())) {
-		NCCL_OFI_WARN("%zu domains still active after cleanup",
-			      this->domain_table.size());
-		if (first_error != 0) {
-			first_error = -FI_EBUSY; // Anything else than above
-		}
-	}
-
-	return first_error;
+	return 0;
 }
 
 
 void nccl_net_ofi_domain_t::remove_ep_from_map(nccl_net_ofi_ep_t *ep)
 {
-	size_t n_removed = 0;
-
-	assert(!this->ep_table.empty());
 	for (auto it = this->ep_table.begin(); it != this->ep_table.end();) {
-		if (it->second == ep) {
+		auto ep_ptr = it->second.lock();
+		/* Erase if this is the target ep, or if the
+		 * weak_ptr has expired (opportunistic cleanup). */
+		if (ep_ptr.get() == ep || ep_ptr == nullptr) {
 			it = this->ep_table.erase(it);
-			++n_removed;
 		} else {
 			++it;
 		}
 	}
-
-	assert_always(n_removed == 1);
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_domain_t::get_ep(long endpoint_key)
+std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_domain_t::get_ep(long endpoint_key)
 {
-	nccl_net_ofi_ep_t *ep = nullptr;
-
 	std::lock_guard scoped_domain_lock(this->domain_lock);
 
 	auto ep_iter = this->ep_table.find(endpoint_key);
 
 	if (ep_iter != this->ep_table.end()) {
-		ep = ep_iter->second;
-	} else {
-		ep = this->create_endpoint();
-		if (ep == nullptr) {
-			NCCL_OFI_WARN("Creating new endpoint for domain %p failed",
-				      this);
-			return nullptr;
+		/* Try to promote weak_ptr to shared_ptr */
+		auto ep_ptr = ep_iter->second.lock();
+		if (ep_ptr) {
+			return ep_ptr;
 		}
-
-		this->ep_table.insert(std::pair(endpoint_key, ep));
-		this->increment_ref_cnt();
-
-		NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created with endpoint_key=%ld",
-			       ep, this, endpoint_key);
+		/* Expired entry, erase stale entry and fall through to create */
+		this->ep_table.erase(ep_iter);
 	}
 
-	ep->increment_ref_cnt();
-	return ep;
-}
+	/* Cache miss. Purge expired weak_ptr entries before creating
+	 * a new endpoint to prevent unbounded table growth. The
+	 * normal NCCL path keys by thread ID (fixed set), but the
+	 * GIN path keys by comm_id which can grow if communicators
+	 * are repeatedly created and destroyed. */
+	purge_expired_weak_ptrs(this->ep_table);
 
-
-int nccl_net_ofi_domain_t::release_domain(bool skip_device_lock, bool force_cleanup)
-{
-	int ret = 0;
-	nccl_net_ofi_device_t *device_ptr = this->device;
-
-	// The caller takes device_lock when force_cleanup.
-	if (!skip_device_lock) {
-		device_ptr->device_lock.lock();
+	/* Create new endpoint and insert weak_ptr into table */
+	auto ep_ptr = this->create_endpoint();
+	if (ep_ptr == nullptr) {
+		NCCL_OFI_WARN("Creating new endpoint for domain %p failed", this);
+		return nullptr;
 	}
 
-	this->decrement_ref_cnt();
+	this->ep_table.insert(std::make_pair(endpoint_key, ep_ptr));
 
-	if (this->ref_cnt == 0 || force_cleanup) {
+	NCCL_OFI_TRACE(NCCL_NET, "Endpoint %p for domain %p is created with endpoint_key=%ld",
+		       ep_ptr.get(), this, endpoint_key);
 
-		/* Remove this domain from the domain table */
-		device_ptr->remove_domain_from_map(this);
-
-		ret = this->cleanup_resources();
-		delete this;
-
-		if (ret != 0) {
-			NCCL_OFI_WARN("Freeing domain failed: %d", ret);
-		}
-	}
-
-	if (!skip_device_lock) {
-		device_ptr->device_lock.unlock();
-	}
-
-	return ret;
+	return ep_ptr;
 }
 
 
 nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 					     unsigned int domain_key_arg)
 	: device(device_arg),
-	  domain_key(domain_key_arg),
-	  ref_cnt(0)
+	  domain_key(domain_key_arg)
 {
 	assert(this->device != nullptr);
 
@@ -928,47 +878,14 @@ nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 
 int nccl_net_ofi_domain_t::release_all_ep()
 {
-	int ret, first_error = 0;
-
 	std::lock_guard scoped_domain_lock(this->domain_lock);
 
-	assert(!this->ep_table.empty());
-	for (auto ep_iter = this->ep_table.begin() ;
-	     ep_iter != this->ep_table.end();) {
-		nccl_net_ofi_ep_t *ep = ep_iter->second;
+	/* Clear the table. The weak_ptrs expire. If any comms still
+	 * hold shared_ptrs to endpoints, those objects stay alive
+	 * until the comms are destroyed. */
+	this->ep_table.clear();
 
-		/* The call to ep->release() below will remove this ep
-		 * from the table, invalidating ep_iter. So increment it
-		 * here first.
-		 */
-		++ep_iter;
-
-		/* ep->release takes the domain lock, and removes itself
-		 * from ep_table. Skipping device lock here.
-		 */
-		ret = ep->release_ep(true, true);
-		if (ret != 0 && first_error != 0) {
-			first_error = ret;
-		}
-	}
-
-	if (this->unreleased_inactive_ep_counter > 0) {
-		NCCL_OFI_WARN("%zu inactive endpoint are still open after cleanup",
-			       this->unreleased_inactive_ep_counter);
-
-		if (first_error != 0) {
-			first_error = -FI_EBUSY; // Anything else than above
-		}
-	}
-
-	if (OFI_UNLIKELY(!this->ep_table.empty())) {
-		NCCL_OFI_WARN("%zu endpoint still active after cleanup",
-			       this->ep_table.size());
-		if (first_error != 0) {
-			first_error = -FI_EBUSY; // Anything else than above
-		}
-	}
-	return first_error;
+	return 0;
 }
 
 
@@ -995,69 +912,15 @@ void nccl_net_ofi_ep_t::invalidate()
 		/* Remove this endpoint from the thread->domain table so that it
 		   is not used for future communicators */
 		this->domain->remove_ep_from_map(this);
-
-		this->domain->inc_unreleased_inactive_ep_counter();
 	}
 }
 
 
-int nccl_net_ofi_ep_t::release_ep(bool skip_lock, bool force_cleanup)
-{
-	int ret = 0;
-	nccl_net_ofi_domain_t *domain_ptr = this->domain;
-
-	if (!skip_lock) {
-		domain_ptr->domain_lock.lock();
-	}
-
-	this->decrement_ref_cnt();
-
-	/* Store ref_cnt in local variable in case the endpoint gets deleted */
-	int local_ref_cnt = this->ref_cnt;
-	
-	if (local_ref_cnt == 0 || force_cleanup) {
-		/* If this was the endpoint we stored in domain for connection
-		   management, remove that reference as well */
-		if (force_cleanup && local_ref_cnt != 0) {
-			NCCL_OFI_INFO(NCCL_NET, "Endpoint %p still have ref count %d when released",
-				      this, local_ref_cnt);
-		}
-
-		/* Remove this ep from the ep table if it was active.
-		   If not, it was already removed in ep_invalidate. */
-		if (this->ep_active) {
-			domain_ptr->remove_ep_from_map(this);
-		} else {
-			domain_ptr->dec_unreleased_inactive_ep_counter();
-		}
-
-		ret = this->cleanup_resources();
-		delete this;
-	}
-
-	if (!skip_lock) {
-		domain_ptr->domain_lock.unlock();
-	}
-
-	/* If we freed the endpoint (local_ref_cnt == 0), also release the domain
-	 * (decrement its ref_cnt)
-	 *
-	 * Skip domain->release when handled by device->release_all_domain_and_ep()
-	 * to avoid domain lock issue after the domain freed */
-	if (!force_cleanup && ret == 0 && local_ref_cnt == 0) {
-		ret = domain_ptr->release_domain(skip_lock, false);
-	}
-
-	return ret;
-}
-
-
-nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(nccl_net_ofi_domain_t *domain_arg)
+nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
 	: ep_active(true),
-	  domain(domain_arg),
-	  ref_cnt(0)
+	  domain(std::move(domain_arg))
 {
-	assert(domain_arg != nullptr);
+	assert(domain != nullptr);
 }
 
 

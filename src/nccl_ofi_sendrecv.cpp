@@ -452,7 +452,7 @@ int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 	}
 
 	/* Retrieve and validate endpoint */
-	ep = (nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
+	ep = (nccl_net_ofi_sendrecv_ep_t *)base_comm->ep.get();
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -751,7 +751,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
-		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep;
+		(nccl_net_ofi_sendrecv_ep_t *)base_comm->ep.get();
 	nccl_ofi_idpool_t *key_pool = NULL;
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -836,7 +836,7 @@ int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep_local =
-		(nccl_net_ofi_sendrecv_ep_t *)this->ep;
+		(nccl_net_ofi_sendrecv_ep_t *)this->ep.get();
 	if (OFI_UNLIKELY(ep_local == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -900,7 +900,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
 	/* Retrieve and validate endpoint */
-	endpoint = (nccl_net_ofi_sendrecv_ep_t *)this->ep;
+	endpoint = (nccl_net_ofi_sendrecv_ep_t *)this->ep.get();
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -1010,7 +1010,7 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
 
 	/* Retrieve and validate endpoint */
-	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep);
+	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep.get());
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -1051,7 +1051,6 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 
 	delete this;
 
-	ret = endpoint->release_ep(false, false);
  exit:
 	return ret;
 }
@@ -1070,7 +1069,7 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 	int flush_n = -1;
 	auto **mr_handles = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandles);
 
-	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep);
+	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep.get());
 
 	std::lock_guard eplock(endpoint->ep_lock);
 
@@ -1325,7 +1324,7 @@ nccl_net_ofi_sendrecv_recv_comm *nccl_net_ofi_sendrecv_recv_comm::create(nccl_ne
 		return NULL;
 	}
 
-	r_comm->ep = ep_arg;
+	r_comm->ep = ep_arg->shared_from_this();
 	r_comm->dev_id = dev_id;
 
 	/* Increase tag ID */
@@ -1405,7 +1404,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *endpoint =
-		(nccl_net_ofi_sendrecv_ep_t *)this->ep;
+		(nccl_net_ofi_sendrecv_ep_t *)this->ep.get();
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -1485,9 +1484,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 		 * refcnt and free it up when nccl_net_ofi_closeRecv is
 		 * called.
 		 */
-		domain->domain_lock.lock();
-		ep->increment_ref_cnt();
-		domain->domain_lock.unlock();
+		r_comm->ep = this->ep;
 
 		comm_state->comm = r_comm;
 
@@ -1556,14 +1553,13 @@ int nccl_net_ofi_sendrecv_listen_comm::close()
 	}
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_ep_t *endpoint = this->ep;
+	nccl_net_ofi_ep_t *endpoint = this->ep.get();
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		goto exit;
 	}
 
-	ret = endpoint->release_ep(false, false);
 	delete this;
  exit:
 	return ret;
@@ -1650,7 +1646,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Initialize listen communicator */
 	l_comm->type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->ep = this;
+	l_comm->ep = shared_from_this();
 	l_comm->dev_id = dev_id;
 	l_comm->local_ep = this->ofi_ep.get();
 	l_comm->local_ep_addr = local_ep_addr;
@@ -1668,7 +1664,7 @@ int nccl_net_ofi_sendrecv_send_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *endpoint =
-		(nccl_net_ofi_sendrecv_ep_t *)this->ep;
+		(nccl_net_ofi_sendrecv_ep_t *)this->ep.get();
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -1701,7 +1697,7 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
 
 	/* Validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *endpoint =
-		(nccl_net_ofi_sendrecv_ep_t *)this->ep;
+		(nccl_net_ofi_sendrecv_ep_t *)this->ep.get();
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -1784,7 +1780,7 @@ int nccl_net_ofi_sendrecv_send_comm::close()
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep);
+	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep.get());
 	if (OFI_UNLIKELY(endpoint == NULL)) {
 		ret = -EINVAL;
 		NCCL_OFI_WARN("Invalid endpoint provided");
@@ -1808,8 +1804,6 @@ int nccl_net_ofi_sendrecv_send_comm::close()
 	}
 
 	delete this;
-
-	ret = endpoint->release_ep(false, false);
 
 	return ret;
 }
@@ -1852,9 +1846,6 @@ int nccl_net_ofi_sendrecv_send_comm::create(nccl_net_ofi_conn_handle_t *handle,
 		return -EINVAL;
 	}
 
-	nccl_net_ofi_sendrecv_domain_t *domain_ptr = ep_arg->sendrecv_endpoint_get_domain();
-	assert(domain_ptr != NULL);
-
 	/* Allocate and initialize send_comm */
 	ret_s_comm = new nccl_net_ofi_sendrecv_send_comm();
 	if (OFI_UNLIKELY(ret_s_comm == NULL)) {
@@ -1862,22 +1853,13 @@ int nccl_net_ofi_sendrecv_send_comm::create(nccl_net_ofi_conn_handle_t *handle,
 		return -ENOMEM;
 	}
 
-	ret_s_comm->ep = ep_arg;
+	ret_s_comm->ep = ep_arg->shared_from_this();
 	ret_s_comm->dev_id = device->dev_id;
 	ret_s_comm->tag = 0; /* Populate later from connect response */
 	ret_s_comm->local_ep = ep_arg->ofi_ep.get();
 
 	ret_s_comm->remote_ep = 0; /* Populate later from connect response */
 	ret_s_comm->connector = nullptr;
-
-	/* The connect() API function acquired the endpoint we are using via
-	   get_ep(). Increase the refcnt so the endpoint is not freed when the
-	   API releases it.
-	   Caller assumed to hold the domain lock. */
-
-	domain_ptr->domain_lock.lock();
-	ep_arg->increment_ref_cnt();
-	domain_ptr->domain_lock.unlock();
 
 	conn_info->ep_namelen = sizeof(conn_info->ep_name);
 
@@ -1903,11 +1885,6 @@ int nccl_net_ofi_sendrecv_send_comm::create(nccl_net_ofi_conn_handle_t *handle,
 	*s_comm = ret_s_comm;
 out:
 	if (ret) {
-		/* Above code incremented the ep ref counter, so decrement it on
-		   failure */
-		domain_ptr->domain_lock.lock();
-		ep_arg->decrement_ref_cnt();
-		domain_ptr->domain_lock.unlock();
 		delete ret_s_comm;
 	}
 
@@ -2027,14 +2004,8 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 }
 
 
-int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
+nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
 {
-	int ret = 0;
-
-	/* cleanup_resources should only be called once per endpoint instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
 	if (this->cm) {
 		delete this->cm;
 		this->cm = nullptr;
@@ -2042,30 +2013,20 @@ int nccl_net_ofi_sendrecv_ep_t::cleanup_resources()
 
 	int dev_id = this->domain->get_device()->dev_id;
 	nccl_ofi_ofiutils_ep_release(this->ofi_ep, this->av, dev_id);
-
-	assert(ret == 0);
-
-	return ret;
 }
 
 
-nccl_net_ofi_sendrecv_ep_t::~nccl_net_ofi_sendrecv_ep_t()
+std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_sendrecv_domain_t::create_endpoint()
 {
-	/* cleanup_resources should always be called to clean-up endpoint resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
+	/* Allocate endpoint. Pass shared_from_this() so the ep
+	 * holds a shared_ptr to this domain */
+	return std::make_shared<nccl_net_ofi_sendrecv_ep_t>(
+		std::static_pointer_cast<nccl_net_ofi_sendrecv_domain_t>(shared_from_this()));
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_sendrecv_domain_t::create_endpoint()
-{
-	/* Allocate endpoint */
-	auto ep = new nccl_net_ofi_sendrecv_ep_t(this);
-	return ep;
-}
-
-
-nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_domain_t *domain_arg)
+nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(
+	std::shared_ptr<nccl_net_ofi_sendrecv_domain_t> domain_arg)
 	: nccl_net_ofi_ep_t(domain_arg)
 {
 	nccl_net_ofi_sendrecv_device_t *device = nullptr;
@@ -2109,37 +2070,20 @@ nccl_net_ofi_sendrecv_ep_t::nccl_net_ofi_sendrecv_ep_t(nccl_net_ofi_sendrecv_dom
 }
 
 
-int nccl_net_ofi_sendrecv_domain_t::cleanup_resources()
-{
-	int ret = 0;
-	int err_code = 0;
-
-	/* cleanup_resources should only be called once per domain instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
-	if (!this->ep_table.empty()) {
-		NCCL_OFI_INFO(NCCL_NET, "%zu SENDRECV endpoints still active at close",
-			      this->ep_table.size());
-		err_code = this->release_all_ep();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("Cleanup of SENDRECV domain failed. RC: %d, ERROR: %s",
-				      err_code, fi_strerror(-err_code));
-			ret = -EINVAL;
-		}
-	}
-
-	assert(ret == 0);
-
-	return ret;
-}
-
-
 nccl_net_ofi_sendrecv_domain_t::~nccl_net_ofi_sendrecv_domain_t()
 {
-	/* cleanup_resources should always be called to clean-up domain resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
+	/* Check for leaked endpoints. With weak_ptr entries, expired
+	 * entries are harmless (stale cache). But a live weak_ptr
+	 * means a comm still holds a shared_ptr to an ep, which
+	 * indicates a leak. */
+	for (auto &entry : this->ep_table) {
+		if (!entry.second.expired()) {
+			NCCL_OFI_INFO(NCCL_NET,
+				       "Endpoint for key %ld is still alive at SENDRECV domain cleanup",
+				       entry.first);
+		}
+	}
+	this->release_all_ep();
 }
 
 
@@ -2193,53 +2137,22 @@ int nccl_net_ofi_sendrecv_device_t::sendrecv_device_prepare_for_connection()
 }
 
 
-int nccl_net_ofi_sendrecv_device_t::release_device()
+nccl_net_ofi_sendrecv_device_t::~nccl_net_ofi_sendrecv_device_t()
 {
-	int ret = 0;
-	ret = this->cleanup_resources();
-	delete this;
-
-	return ret;
-}
-
-
-/**
- * Destroy an rdma device object
- */
-int nccl_net_ofi_sendrecv_device_t::cleanup_resources()
-{
-	int ret = 0;
-	int err_code = 0;
-
-	/* cleanup_resources should only be called once per device instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
-	if (!this->domain_table.empty()) {
-		NCCL_OFI_INFO(NCCL_NET, "%zu SENDRECV domains still active at close",
-			      this->domain_table.size());
-		err_code = this->release_all_domain_and_ep();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("Cleanup of SENDRECV domain failed. RC: %d, ERROR: %s",
-				      err_code, fi_strerror(-err_code));
-			ret = -EINVAL;
+	/* Check for leaked domains. Expired weak_ptrs are harmless
+	 * stale cache entries. Live ones indicate a leak. */
+	for (auto &entry : this->domain_table) {
+		if (!entry.second.expired()) {
+			NCCL_OFI_INFO(NCCL_NET,
+				       "Domain for key %u is still alive at SENDRECV device cleanup",
+				       entry.first);
 		}
 	}
+	this->release_all_domain_and_ep();
 
 	if (this->info != NULL) {
 		fi_freeinfo(this->info);
 	}
-
-	assert(ret == 0);
-
-	return ret;
-}
-
-nccl_net_ofi_sendrecv_device_t::~nccl_net_ofi_sendrecv_device_t()
-{
-	/* cleanup_resources should always be called to clean-up device resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
 }
 
 /**

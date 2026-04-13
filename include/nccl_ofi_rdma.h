@@ -799,7 +799,7 @@ public:
 	}
 
 	/* Caller must hold the device lock */
-	nccl_net_ofi_ep_t *create_endpoint() override;
+	std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() override;
 
 	/**
 	 * @brief	Register memory region on RDMA domain
@@ -898,14 +898,10 @@ public:
 protected:
 	/**
 	 * @brief	RDMA domain destructor.
-	 * 
-	 * Overrides base domain class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up RDMA domain resources before the destructor
-	 * was called.
+	 *
+	 * Cleans up RDMA domain resources (flush buffers, ep_table).
 	 */		
 	~nccl_net_ofi_rdma_domain_t() override;
-
-	int cleanup_resources() override;
 
 	/**
 	 * @brief	Allocated and registers buffer to flush RDMA operations. On
@@ -1040,25 +1036,16 @@ public:
 	 * ep_per_rComm feature where every rComm creates its own endpoint but shares
 	 * CQ from lComm.
 	 */
-	nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain);
+	nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma_domain_t> domain);
 
 	/**
 	 * @brief	Destructor.
 	 * 
 	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up RDMA endpoint resources before the destructor
-	 * was called.
-	 * 
-	 * TODO: Make protected once no longer needed to be directly called in 
-	 * nccl_net_ofi_rdma_domain_t::create_endpoint.
+	 * Cleans up RDMA endpoint resources (OFI resources, rx buffers,
+	 * freelists, mutexes).
 	 */
 	~nccl_net_ofi_rdma_ep_t() override;
-
-	/**
-	 * TODO: Make protected once no longer needed to be directly called in 
-	 * nccl_net_ofi_rdma_domain_t::create_endpoint.
-	 */
-	int cleanup_resources() override;
 
 	int listen(nccl_net_ofi_conn_handle_t *handle,
 		   nccl_net_ofi_listen_comm **listen_comm) override;
@@ -1078,9 +1065,12 @@ public:
 		    nccl_net_ofi_send_comm **send_comm,
 		    int trafficClass) override;
 
+	/* Returns a raw pointer for downcasting to the transport-specific
+	 * domain type. Safe because the ep holds shared_ptr<domain>,
+	 * so the domain is alive as long as the ep exists. */
 	inline nccl_net_ofi_rdma_domain_t *rdma_endpoint_get_domain()
 	{
-		return static_cast<nccl_net_ofi_rdma_domain_t *>(domain);
+		return static_cast<nccl_net_ofi_rdma_domain_t *>(domain.get());
 	}
 
 	inline nccl_net_ofi_rdma_device_t *rdma_endpoint_get_device()
@@ -1234,8 +1224,8 @@ public:
 	 *    resources, such as completion queue
 	 *
 	 * After this function returns, the endpoint will still have non-OFI resources
-	 * allocated (freelists, rx requests, etc.), but will not be usable except to
-	 * release it (release_ep).
+	 * allocated (freelists, rx requests, etc.), but will not be usable. The
+	 * endpoint is destroyed when the last shared_ptr to it is dropped.
 	 */
 	void rdma_endpoint_abort();
 
@@ -1427,8 +1417,6 @@ public:
 				   struct fi_info *info_list,
 				   nccl_ofi_topo_t *topo);
 
-	int release_device() override;
-
 	int get_properties(nccl_ofi_properties_t *props) override;
 
 	inline struct fi_info *get_ofi_info_for_cm() override
@@ -1529,14 +1517,10 @@ public:
 protected:
 	/**
 	 * @brief	RDMA device destructor.
-	 * 
-	 * Overrides base device class virtual destructor, asserts that "cleanup_resources"
-	 * had already been called to clean up RDMA domain resources before the destructor
-	 * was called.
+	 *
+	 * Cleans up RDMA device resources (domains, NVTX, OFI resources).
 	 */	
 	~nccl_net_ofi_rdma_device_t() override;
-
-	int cleanup_resources() override;
 
 	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
 

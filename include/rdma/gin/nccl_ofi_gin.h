@@ -29,11 +29,11 @@ inline nccl_ofi_device_copy &get_device_copy()
  */
 class nccl_ofi_rdma_gin_listen_comm : public nccl_ofi_gin_listen_comm_t {
 private:
-	nccl_net_ofi_ep_t *ep;
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	nccl_net_ofi_listen_comm *l_comm;
 
 public:
-	nccl_ofi_rdma_gin_listen_comm(int dev_arg, nccl_net_ofi_ep_t *ep_arg,
+	nccl_ofi_rdma_gin_listen_comm(int dev_arg, const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg,
 				 nccl_net_ofi_listen_comm *l_comm_arg)
 	    : ep(ep_arg), l_comm(l_comm_arg)
 	{

@@ -182,17 +182,16 @@ private:
  * refactoring the base nccl_net_ofi_ep_t class, so deferring that.
  */
 struct nccl_ofi_gin_ep_holder {
-	nccl_net_ofi_ep_t &ep;
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 
-	nccl_ofi_gin_ep_holder(nccl_net_ofi_ep_t &ep_arg) : ep(ep_arg)
+	nccl_ofi_gin_ep_holder(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
+		: ep(ep_arg)
 	{
-		ep.increment_ref_cnt();
 	}
 
 	~nccl_ofi_gin_ep_holder()
 	{
-		static_cast<nccl_net_ofi_rdma_ep_t &>(ep).set_gin_resources(nullptr);
-		ep.release_ep(false, false);
+		static_cast<nccl_net_ofi_rdma_ep_t &>(*ep).set_gin_resources(nullptr);
 	}
 };
 
