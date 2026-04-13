@@ -176,7 +176,7 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 
 nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_send_comm::get_ep()
 {
-	return (nccl_net_ofi_rdma_ep_t *)this->ep;
+	return (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 }
 
 /*
@@ -190,7 +190,7 @@ nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_control_rai
 
 nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_recv_comm::get_ep()
 {
-	return (nccl_net_ofi_rdma_ep_t *)this->ep;
+	return (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 }
 
 /*
@@ -709,7 +709,7 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
 static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_comm,
 				 nccl_net_ofi_rdma_req *req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(ep != NULL);
 
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
@@ -844,7 +844,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 					     nccl_net_ofi_rdma_req *rx_buff_req)
 {
 	int ret;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 
 	/* Decrease rx buffer count. It will be incremented again when reposting */
 	ret = ep->decrease_rx_buff_cnt(get_rx_buff_data(rx_buff_req)->rail);
@@ -1520,7 +1520,7 @@ static int receive_progress(nccl_net_ofi_rdma_req *req, bool add_to_pending)
 	if (rc == -FI_EAGAIN && add_to_pending) {
 		nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 		/* Extract ep */
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 		/* Place in pending requests queue for next try */
 		nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
 		ep->pending_reqs_queue.push_back(req);
@@ -1810,7 +1810,7 @@ static inline int free_send_req(nccl_net_ofi_rdma_req *req,
 	}
 
 	if (send_data->schedule) {
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 		assert(ep != NULL);
 		nccl_net_ofi_release_schedule(ep->scheduler, send_data->schedule);
 		send_data->schedule = NULL;
@@ -1880,7 +1880,7 @@ static inline int free_send_close_req(nccl_net_ofi_rdma_req *req,
 	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
 
 	if (send_close_data->ctrl_schedule) {
-		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 		assert(ep != NULL);
 		nccl_net_ofi_release_schedule(ep->scheduler, send_close_data->ctrl_schedule);
 		send_close_data->ctrl_schedule = NULL;
@@ -2202,7 +2202,7 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm *s_comm)
 	nccl_net_ofi_rdma_device_t *device = NULL;
 
 	/* Validate endpoint */
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	if (OFI_UNLIKELY(ep == NULL)) {
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
@@ -2264,7 +2264,7 @@ static inline bool has_flush_completed(nccl_net_ofi_rdma_req *req)
 {
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_comm *base_comm = req->comm;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep.get();
 
 	/* Check if the flush bufffer is populated across ep rails */
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
@@ -2348,7 +2348,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	assert(base_comm != NULL);
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep.get();
 	assert(ep != NULL);
 
 	std::lock_guard eplock(ep->ep_lock);
@@ -2698,7 +2698,7 @@ int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
 int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
                                        int type_param, void **mhandle)
 {
-	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
     nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
@@ -2712,7 +2712,7 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 								       int type_param, void **mhandle)
 {
-	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
@@ -2785,7 +2785,7 @@ static int freelist_deregmr_host_fn(void *handle)
 int nccl_net_ofi_rdma_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
 
 	nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
@@ -3033,7 +3033,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 
 	device_id = this->dev_id;
 
-	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
 
 	domain = endpoint->rdma_endpoint_get_domain();
@@ -3419,8 +3419,6 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 
 	delete r_comm;
 
-	ret = ep->release_ep(false, false);
-
 	return ret;
 }
 
@@ -3478,7 +3476,7 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm *r
 static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
-		r_comm->ep;
+		r_comm->ep.get();
 
 	std::lock_guard eplock(ep->ep_lock);
 	if (!ep->ep_active) {
@@ -3612,7 +3610,7 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
 	/* Release request freelist */
 	delete s_comm->nccl_ofi_reqs_fl;
 
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *) s_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	device->rdma_device_set_comm(s_comm->local_comm_id, NULL);
 
@@ -3636,8 +3634,6 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
 
 	delete s_comm;
 
-	ret = ep->release_ep(false, false);
-
 	return ret;
 }
 
@@ -3659,7 +3655,7 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm *s_comm
 	}
 
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
-		s_comm->ep;
+		s_comm->ep.get();
 
 	std::lock_guard eplock(ep->ep_lock);
 	if (!ep->ep_active) {
@@ -3829,7 +3825,7 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm *r_comm,
 					nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
 					nccl_net_ofi_rdma_req **ret_req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 	int dev_id = r_comm->dev_id;
 	rdma_req_flush_data_t *flush_data = NULL;
 	*ret_req = NULL;
@@ -4107,7 +4103,7 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 		return ret;
 	}
 
-	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
 
 	std::lock_guard eplock(endpoint->ep_lock);
@@ -4288,9 +4284,9 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	/* Initialize next_msg_seq_num to NCCL_OFI_RDMA_MSG_SEQ_NUM_START */
 	r_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 
-	r_comm->ep = l_comm_ep;
+	r_comm->ep = l_comm_ep->shared_from_this();
 
-	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 
 	/* Add ourselves to ep's lookup array */
 	device->rdma_device_set_comm(r_comm->local_comm_id, r_comm);
@@ -4491,7 +4487,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	int dev_id = l_comm->dev_id;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep.get();
 	assert(l_comm_ep != NULL);
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 
@@ -4545,7 +4541,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	receiver = nullptr;
 	l_comm->r_comm = r_comm;
 
-	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->ep);
+	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->ep.get());
 	assert(ep != NULL);
 
 	/*
@@ -4558,9 +4554,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	 * called.
 	 */
 
-	domain->domain_lock.lock();
-	ep->increment_ref_cnt();
-	domain->domain_lock.unlock();
+	r_comm->ep = l_comm->ep;
 
 	/* Initialize connect response message */
 	nccl_ofi_rdma_connection_info_t conn_resp_msg;
@@ -4585,12 +4579,12 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 	int ret = 0;
 
 	/* Retrieve and validate endpoint */
-	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)this->ep;
+	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(l_comm_ep != NULL);
 
 	nccl_net_ofi_rdma_ep_t *endpoint = l_comm_ep;
 	if (this->r_comm) {
-		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
+		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep.get();
 		assert(endpoint != NULL);
 	}
 
@@ -4634,7 +4628,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 			return 0;
 		}
 
-		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep;
+		endpoint = (nccl_net_ofi_rdma_ep_t *)this->r_comm->ep.get();
 		assert(endpoint != NULL);
 
 		this->stage = COMM_CONN_RESP_REQ_PENDING;
@@ -4724,9 +4718,7 @@ int nccl_net_ofi_rdma_listen_comm::close()
 	delete this->listener;
 	this->listener = nullptr;
 
-	auto *ep_ptr = this->ep;
 	delete this;
-	ret = ep_ptr->release_ep(false, false);
 
 	return ret;
 }
@@ -4766,7 +4758,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	/* Initialize listen communicator */
 	l_comm->type = NCCL_NET_OFI_LISTEN_COMM;
-	l_comm->ep = this;
+	l_comm->ep = shared_from_this();
 	l_comm->dev_id = dev_id;
 
 	/* Create CM listener */
@@ -4782,7 +4774,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 int nccl_net_ofi_rdma_send_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
     /* Retrieve and validate endpoint */
-    nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep;
+    nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
 
 	nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
@@ -4825,7 +4817,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 					bool eager,
 					nccl_net_ofi_rdma_req **ret_req)
 {
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 	nccl_net_ofi_scheduler *scheduler = ep->scheduler;
 	*ret_req = NULL;
@@ -5131,7 +5123,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 	assert(req->type == NCCL_OFI_RDMA_RECV);
 	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 
 	nccl_net_ofi_scheduler *scheduler = ep->scheduler;
 	uint16_t rail_id;
@@ -5256,7 +5248,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
  	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
@@ -5306,7 +5298,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
 	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
-	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep;
+	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
@@ -5431,7 +5423,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		return ret;
 	}
 
-	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(endpoint != NULL);
 
 	domain = endpoint->rdma_endpoint_get_domain();
@@ -5825,7 +5817,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm *send_comm, void* src, size_t s
 		return ret;
 	}
 
-	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep;
+	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(ep != NULL);
 
 	std::lock_guard eplock(ep->ep_lock);
@@ -5941,18 +5933,13 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	}
 
 	ret_s_comm->type = NCCL_NET_OFI_SEND_COMM;
-	ret_s_comm->ep = this;
 	ret_s_comm->dev_id = dev_id;
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 
 	/* The connect() API function acquired the endpoint we are using via
-	   get_ep(). Increase the refcnt so the endpoint is not freed when the
-	   API releases it.*/
-
-	domain_ptr->domain_lock.lock();
-	this->increment_ref_cnt();
-	domain_ptr->domain_lock.unlock();
+	   get_ep(). Store shared_ptr in the comm to keep ep alive. */
+	ret_s_comm->ep = shared_from_this();
 
 	/* Allocate send communicator ID */
 	comm_id = device->comm_idpool.allocate_id();
@@ -6007,9 +5994,6 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 			device->comm_idpool.free_id(ret_s_comm->local_comm_id);
 		}
 
-		domain_ptr->domain_lock.lock();
-		this->decrement_ref_cnt();
-		domain_ptr->domain_lock.unlock();
 		delete ret_s_comm;
 	}
 
@@ -6281,14 +6265,8 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 }
 
 
-int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
-	int ret = 0;
-	int err_code = 0;
-
-	/* cleanup_resources should only be called once per endpoint instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
+nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
+{
 	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
 
 	if (this->cm) {
@@ -6302,33 +6280,18 @@ int nccl_net_ofi_rdma_ep_t::cleanup_resources() {
 	}
 
 	/* Ideally we would "un-post" the rx buffers, but this
-	 * should be accomplished by closing the endpoint.
-	 */
+	 * should be accomplished by closing the endpoint. */
 	this->release_rdma_ep_resources(device->dev_id);
 
-	err_code = this->fini_rx_buffers();
+	int err_code = this->fini_rx_buffers();
 	if (err_code != 0) {
-		NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
-		ret = -EINVAL;
+		NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
 	}
 
 	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
 	if (err_code != 0) {
 		NCCL_OFI_WARN("rdma endpoint destructor: destroying pending_reqs_lock mutex failed, rc %d", err_code);
-		ret = -EINVAL;
 	}
-
-	assert(ret == 0);
-
-	return ret;
-}
-
-
-nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
-{
-	/* cleanup_resources should always be called to clean-up endpoint resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
 }
 
 static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
@@ -6354,16 +6317,18 @@ static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdm
 }
 
 
-nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
+std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_device_t *device_ptr = this->rdma_domain_get_device();
 	assert(device_ptr != nullptr);
 
-	/* Allocate endpoint */
-	auto *ep = new nccl_net_ofi_rdma_ep_t(this);
+	/* Allocate endpoint. Pass shared_from_this() so the ep
+	 * holds a shared_ptr to this domain */
+	auto ep = std::make_shared<nccl_net_ofi_rdma_ep_t>(
+		std::static_pointer_cast<nccl_net_ofi_rdma_domain_t>(shared_from_this()));
 
-	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created", ep, 
+	NCCL_OFI_TRACE(NCCL_NET, "RDMA endpoint %p for dev #%d is created", ep.get(), 
 		       device_ptr->dev_id);
 
 	/* During plugin initialization, this function is invoked the
@@ -6372,18 +6337,16 @@ nccl_net_ofi_ep_t *nccl_net_ofi_rdma_domain_t::create_endpoint()
 	 * path the first time, avoiding data race on
 	 * `max_write_inline_size` when `get_properties()` function
 	 * reads the maximum write inline size variable. */
-	ret = init_max_write_inline_size_if_not_initialized(device_ptr, ep);
+	ret = init_max_write_inline_size_if_not_initialized(device_ptr, ep.get());
 	if (ret != 0) {
-		ep->cleanup_resources();
-		delete ep;
-		ep = nullptr;
+		return nullptr;
 	}
 
 	return ep;
 }
 
 
-nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domain_arg)
+nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma_domain_t> domain_arg)
 	: nccl_net_ofi_ep_t(domain_arg)
 {
 	int ret = 0;
@@ -6427,7 +6390,7 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 	this->eager_rx_buff_size = (this->eager_send_size == 0) ?
 		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size;
 
-	ret = this->init_rail_ofi_resources(device, domain_arg);
+	ret = this->init_rail_ofi_resources(device, domain_arg.get());
 	if (ret != 0) {
 		throw std::runtime_error("rdma endpoint constructor: initializing rails failed");
 	}
@@ -6447,43 +6410,25 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(nccl_net_ofi_rdma_domain_t *domai
 }
 
 
-int nccl_net_ofi_rdma_domain_t::cleanup_resources()
-{
-	int ret = 0;
-	int err_code = 0;
-
-	/* cleanup_resources should only be called once per domain instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
-	err_code = this->dealloc_and_dereg_flush_buff();
-	if (err_code != 0) {
-		NCCL_OFI_WARN("Failed to deregister flush buffer pool");
-		ret = -EINVAL;
-	}
-
-	if (!this->ep_table.empty()) {
-		NCCL_OFI_INFO(NCCL_NET, "%zu RDMA endpoints still active at domain cleanup",
-					 this->ep_table.size());
-		err_code = this->release_all_ep();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("Cleanup of RDMA domain failed. RC: %d, ERROR: %s",
-				       err_code, fi_strerror(-err_code));
-			ret = -EINVAL;
-		}
-	}
-
-	assert(ret == 0);
-
-	return ret;
-}
-
-
 nccl_net_ofi_rdma_domain_t::~nccl_net_ofi_rdma_domain_t()
 {
-	/* cleanup_resources should always be called to clean-up domain resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
+	int err_code = this->dealloc_and_dereg_flush_buff();
+	if (err_code != 0) {
+		NCCL_OFI_WARN("Failed to deregister flush buffer pool");
+	}
+
+	/* Check for leaked endpoints. With weak_ptr entries, expired
+	 * entries are harmless (stale cache). But a live weak_ptr
+	 * means a comm still holds a shared_ptr to an ep, which
+	 * indicates a leak. */
+	for (auto &entry : this->ep_table) {
+		if (!entry.second.expired()) {
+			NCCL_OFI_INFO(NCCL_NET,
+				       "Endpoint for key %ld is still alive at RDMA domain cleanup",
+				       entry.first);
+		}
+	}
+	this->release_all_ep();
 }
 
 
@@ -6605,40 +6550,19 @@ error:
 }
 
 
-int nccl_net_ofi_rdma_device_t::release_device()
+nccl_net_ofi_rdma_device_t::~nccl_net_ofi_rdma_device_t()
 {
-	int ret = 0;
-	ret = this->cleanup_resources();
-	delete this;
-
-	return ret;
-}
-
-
-/**
- * Destroy an rdma device object
- */
-int nccl_net_ofi_rdma_device_t::cleanup_resources()
-{
-	int ret = 0;
-	int err_code = 0;
-
-	/* cleanup_resources should only be called once per device instance */
-	assert(!this->called_cleanup_resources);
-	this->called_cleanup_resources = true;
-
-	if (!this->domain_table.empty()) {
-		NCCL_OFI_INFO(NCCL_NET, "%zu RDMA domains still active at close",
-			      this->domain_table.size());
-		err_code = this->release_all_domain_and_ep();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("Cleanup of RDMA domain failed. RC: %d, ERROR: %s",
-				      err_code, fi_strerror(-err_code));
-			ret = -EINVAL;
+	/* Check for leaked domains. Expired weak_ptrs are harmless
+	 * stale cache entries. Live ones indicate a leak. */
+	for (auto &entry : this->domain_table) {
+		if (!entry.second.expired()) {
+			NCCL_OFI_INFO(NCCL_NET,
+				       "Domain for key %u is still alive at RDMA device cleanup",
+				       entry.first);
 		}
 	}
+	this->release_all_domain_and_ep();
 
-	/* Destroy domain */
 #if HAVE_NVTX_TRACING
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) {
 		for (int i = 0; i < this->num_rails; ++i) {
@@ -6648,18 +6572,6 @@ int nccl_net_ofi_rdma_device_t::cleanup_resources()
 #endif
 
 	this->release_device_ofi_resources();
-
-	assert(ret == 0);
-
-	return ret;
-}
-
-
-nccl_net_ofi_rdma_device_t::~nccl_net_ofi_rdma_device_t()
-{
-	/* cleanup_resources should always be called to clean-up device resources before
-	   the destructor is called */
-	assert(this->called_cleanup_resources);
 }
 
 

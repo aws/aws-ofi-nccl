@@ -146,7 +146,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	}
 
 	/* Create a GIN resources object on the endpoint if it does not exist */
-	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(ep);
+	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(ep.get());
 	auto *resources = rdma_ep->get_gin_resources();
 	if (resources == nullptr) {
 		resources = new nccl_ofi_gin_resources(*ep);
