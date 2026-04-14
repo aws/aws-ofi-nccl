@@ -2923,6 +2923,7 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	entry->buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
 	entry->buff_len = size;
 	entry->tag = 0;
+	entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 
 	uint16_t rail_id = 0;
 	for (; rail_id < this->num_rails; rail_id++) {
@@ -3108,22 +3109,15 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	}
 
 	/*
-	 * TODO: Use NCCL provided tags when using grouped receives aka
-	 * props->maxRecvs > 1.
+	 * Disable eager for grouped receives (n > 1).
+	 * Eager requires matching a single rx bounce buffer to a single dest,
+	 * which doesn't generalize to multiple destinations.
 	 */
+	if (n > 1) {
+		eager = false;
+	}
 
-	/* NCCL versions prior to 2.24 require special handling for 0 byte
-	 * messages when using user buffer registration.  NCCL passes the base
-	 * pointer from the user buffer, but passes the registration from the
-	 * channel buffer, to avoid an MR cache lookup.  This is fine with
-	 * InfiniBand, where the spec says the SGE is not used for a 0 byte
-	 * message, but is a problem for EFA, which validates the pointer / MR
-	 * even for a 0 byte transfer.
-	 *
-	 * To handle this case, we use the flush buffer (note we still move 0
-	 * bytes of data, we just need a valid SGE) instead of the provided base
-	 * pointer and MR
-	 */
+	/* Handle 0-byte messages: use flush buffer for valid SGE */
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
 			buffers[i] = domain->flush_buff.buffer;
@@ -3139,6 +3133,52 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	}
 
 	recv_data = get_recv_data(req);
+
+	/* Populate per-sub-receive metadata for all n buffers */
+	recv_data->num_recvs = n;
+	/* Update recv_segms to expect n senders for grouped receives */
+	if (n > 1) {
+		rdma_req_recv_segms_data_t *segms_data = get_recv_segms_data(recv_data->recv_segms_req);
+		segms_data->num_expected_senders = n;
+	}
+	for (i = 0; i < n; i++) {
+		recv_data->recvs[i].dst_buff = buffers[i];
+		recv_data->recvs[i].dst_len = sizes[i];
+		recv_data->recvs[i].dest_mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mr_handles[i];
+		recv_data->recvs[i].tag = tags[i];
+		recv_data->recvs[i].recv_size = 0;
+		recv_data->recvs[i].ncompls = 0;
+		recv_data->recvs[i].total_segms = 0;
+	}
+
+	/* Update the ctrl mailbox slot with all n sub-entries.
+	 * allocate_recv_req already populated entries[0] and the header.
+	 * Now update num_recvs and populate entries[1..n-1]. */
+	{
+		uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
+		this->ctrl_mailbox[slot].entries[0].num_recvs = n;
+		/* Entry 0 was already populated by allocate_recv_req, but update its tag */
+		this->ctrl_mailbox[slot].entries[0].tag = tags[0];
+		this->ctrl_mailbox[slot].entries[0].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
+
+		for (i = 1; i < n; i++) {
+			nccl_net_ofi_ctrl_msg_entry_t *entry = &this->ctrl_mailbox[slot].entries[i];
+			nccl_net_ofi_rdma_mr_handle_t *mr_h = (nccl_net_ofi_rdma_mr_handle_t *)mr_handles[i];
+			entry->buff_offset = (uintptr_t)buffers[i] - mr_h->base_addr;
+			entry->buff_len = sizes[i];
+			entry->tag = tags[i];
+			entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
+			for (uint16_t rail_id = 0; rail_id < this->num_rails; rail_id++) {
+				uint64_t rkey = fi_mr_key(mr_h->mr[rail_id].get());
+				if (rkey == FI_KEY_NOTAVAIL) {
+					NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
+					ret = -ENOENT;
+					goto error;
+				}
+				entry->mr_key[rail_id] = rkey;
+			}
+		}
+	}
 
 	if (eager) {
 		nccl_net_ofi_rdma_req *rx_buff_req = (nccl_net_ofi_rdma_req *)elem;
@@ -5154,7 +5194,10 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 
 	nccl_net_ofi_scheduler *scheduler = ep->scheduler;
 	uint16_t rail_id;
-	size_t ctrl_msg_len = nccl_net_ofi_rdma_ctrl_msg_size();
+	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
+	/* Only send the entries that are populated (64 bytes per entry) */
+	size_t ctrl_msg_len = r_comm->ctrl_mailbox[slot].entries[0].num_recvs
+			      * sizeof(nccl_net_ofi_ctrl_msg_entry_t);
 	nccl_net_ofi_schedule_t *schedule = NULL;
 
 	if (ep->num_control_rails > 1) {
@@ -5176,7 +5219,6 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 		rail_id = 0;
 	}
 
-	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr[rail_id].get());
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
