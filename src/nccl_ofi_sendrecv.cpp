@@ -944,8 +944,8 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 		goto error;
 	}
 
-	/* Currently, plugin doesn't support grouped receives */
-	assert(n <= NCCL_OFI_MAX_RECVS);
+	/* Currently, sendrecv plugin doesn't support grouped receives */
+	assert(n == 1);
 	for (int recv_n = 0; recv_n < n; recv_n++) {
 		void *desc = NULL;
 
@@ -1089,8 +1089,8 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 	}
 #endif
 
-	/* Plugin only supports one receive per request */
-	assert(n <= NCCL_OFI_MAX_RECVS);
+	/* Sendrecv plugin only supports one receive per request */
+	assert(n == 1);
 
 	/*
 	 * Find the non-zero request for which we will issue flush.
