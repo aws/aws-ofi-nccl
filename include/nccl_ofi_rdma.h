@@ -336,6 +336,8 @@ typedef struct {
 	size_t buff_len;
 	/* Memory region descriptors associated to `buff' */
 	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
+	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
+	int tag;
 	/* Schedule used to transfer this request. We save the pointer to
 	 * reference it when transferring the request over network. */
 	nccl_net_ofi_schedule_t *schedule;
@@ -620,6 +622,13 @@ public:
 	uint32_t remote_comm_id;
 
 	uint16_t next_msg_seq_num;
+
+	/* For grouped receives: how many sends remain for the current msg_seq_num */
+	uint16_t group_sends_remaining;
+	/* Total num_recvs for the current group (0 = not in a group) */
+	uint16_t group_num_recvs;
+	/* Bitmask of tags used in the current group */
+	uint32_t group_tag_used;
 
 	/* Number of rails */
 	uint16_t num_rails;
