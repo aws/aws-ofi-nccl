@@ -718,12 +718,35 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 
-	send_data->remote_buff_offset = s_comm->ctrl_mailbox[slot].entries[0].buff_offset;
-	send_data->remote_len = s_comm->ctrl_mailbox[slot].entries[0].buff_len;
+	/* Find the ctrl msg entry matching this send's tag */
+	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
+	nccl_net_ofi_ctrl_msg_entry_t *entry = NULL;
+	if (ctrl->entries[0].num_recvs <= 1) {
+		entry = &ctrl->entries[0];
+	} else {
+		for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
+			if (ctrl->entries[i].tag == send_data->tag) {
+				entry = &ctrl->entries[i];
+				break;
+			}
+		}
+	}
+	if (OFI_UNLIKELY(entry == NULL)) {
+		NCCL_OFI_WARN("No ctrl msg entry found for tag %d in slot %u (num_recvs=%u)",
+			       send_data->tag, slot, ctrl->entries[0].num_recvs);
+		return -EINVAL;
+	}
+
+	send_data->remote_buff_offset = entry->buff_offset;
+	send_data->remote_len = entry->buff_len;
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		send_data->remote_mr_key[rail_id] = s_comm->ctrl_mailbox[slot].entries[0].mr_key[rail_id];
+		send_data->remote_mr_key[rail_id] = entry->mr_key[rail_id];
 	}
+
+	/* Invalidate the entry so duplicate tags from step interleaving
+	 * won't match this already-consumed entry */
+	entry->tag = NCCL_OFI_CTRL_MSG_TAG_INVALID;
 
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
 	nccl_net_ofi_mutex_lock(&req->req_lock);
@@ -2284,19 +2307,40 @@ static inline bool has_flush_completed(nccl_net_ofi_rdma_req *req)
  * @brief Check the contents of the control mailbox to check if the
  * control message has arrived or not
  */
-static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num)
+static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num, int tag)
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	return (READ_ONCE(s_comm->ctrl_mailbox[slot].msg_seq_num) == ((uint64_t)seq_num & MSG_SEQ_NUM_MASK));
+	uint16_t expected = (uint16_t)(seq_num & MSG_SEQ_NUM_MASK);
+	if (READ_ONCE(s_comm->ctrl_mailbox[slot].entries[0].msg_seq_num) != expected)
+		return false;
+	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
+	if (ctrl->entries[0].num_recvs <= 1)
+		return true;
+	/* Grouped receive: verify per-entry seq nums and find matching tag */
+	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
+		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected)
+			return false;
+		if (ctrl->entries[i].tag == tag)
+			return true;
+	}
+	return false;
 }
 
 /*
  * @brief Get the buff len of a given msg_seq_num from the control mailbox
  */
-static inline uint32_t get_ctrl_msg_buff_len(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num)
+static inline uint32_t get_ctrl_msg_buff_len(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num, int tag)
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	return (s_comm->ctrl_mailbox[slot].entries[0].buff_len);
+	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
+	if (ctrl->entries[0].num_recvs <= 1)
+		return ctrl->entries[0].buff_len;
+	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
+		if (ctrl->entries[i].tag == tag) {
+			return ctrl->entries[i].buff_len;
+		}
+	}
+	return 0;
 }
 
 /*
@@ -2310,9 +2354,9 @@ static inline int update_send_request(nccl_net_ofi_rdma_send_comm* s_comm, nccl_
 	rdma_req_send_data_t *send_data = get_send_data(req);
 
 	/* Only increment completion if the send has completed */
-	if (send_data->eager && has_ctrl_msg(s_comm, req->msg_seq_num) && req->ncompls > 0) {
+	if (send_data->eager && has_ctrl_msg(s_comm, req->msg_seq_num, send_data->tag) && req->ncompls > 0) {
 
-		send_data->remote_len = get_ctrl_msg_buff_len(s_comm, req->msg_seq_num);
+		send_data->remote_len = get_ctrl_msg_buff_len(s_comm, req->msg_seq_num, send_data->tag);
 		if (send_data->remote_len < send_data->buff_len) {
 			NCCL_OFI_TRACE(NCCL_NET,
 				       "Remote recv buffer (%zu) smaller than send buffer (%zu) in eager send",
@@ -4872,7 +4916,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 					uint16_t msg_seq_num,
 					void *buff, size_t size,
 					nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
-					bool eager,
+					bool eager, int tag,
 					nccl_net_ofi_rdma_req **ret_req)
 {
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
@@ -4897,6 +4941,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 	send_data->buff = buff;
 	send_data->buff_len = size;
 	send_data->buff_mr_handle = buff_mr_handle;
+	send_data->tag = tag;
 
 	/* If this is not an eager send, the schedule is created after knowing the
 	   remote length received in the control message.
@@ -5466,6 +5511,8 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
 	bool have_ctrl = false;
 	bool eager = false;
+	bool in_group = false;
+
 
 	assert(s_comm != NULL);
 
@@ -5521,10 +5568,26 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		mr_handle = domain->flush_buff.mr_handle;
 	}
 
-	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num);
+	in_group = (s_comm->group_sends_remaining > 0);
 
-	/* Determine if this should be sent eagerly. */
-	if (!have_ctrl && (ssize_t)size <= endpoint->eager_send_size && s_comm->num_inflight_writes == 0) {
+	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num, tag);
+
+	/* If ctrl msg indicates a grouped recv, start tracking the group */
+	if (have_ctrl && !in_group) {
+		uint16_t slot = msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
+		uint16_t nr = s_comm->ctrl_mailbox[slot].entries[0].num_recvs;
+		if (nr > 1) {
+			s_comm->group_num_recvs = nr;
+			s_comm->group_sends_remaining = nr;
+			in_group = true;
+		}
+	}
+
+	/* Determine if this should be sent eagerly.
+	 * Disable eager entirely when maxRecvs > 1: the sender must wait for
+	 * the ctrl msg so it can detect grouped receives and reuse msg_seq_num. */
+	if (NCCL_OFI_MAX_RECVS == 1 && !have_ctrl &&
+	    (ssize_t)size <= endpoint->eager_send_size && s_comm->num_inflight_writes == 0) {
 		eager = true;
 	}
 
@@ -5535,15 +5598,14 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 			ret = 0;
 			goto error;
 		}
-	} else {
-		/* Memory synchronization point to ensure that the data in the control msg is not
-		 * read before the sequence number is checked */
+	} else if (!in_group || s_comm->group_sends_remaining == s_comm->group_num_recvs) {
+		/* Memory synchronization point - only on first send of a group or non-grouped */
 		std::atomic_thread_fence(std::memory_order_acquire);
 		s_comm->n_ctrl_received += 1;
 	}
 
 	ret = alloc_rdma_send_req(s_comm, msg_seq_num, data,
-				  size, mr_handle, eager, &req);
+				  size, mr_handle, eager, tag, &req);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
 	}
@@ -5593,8 +5655,16 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 
 	/* Return request to NCCL */
 	*base_req = req;
-	/* Increment next_msg_seq_num for next call */
-	s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+	/* Increment next_msg_seq_num: for grouped sends, only after the last sub-send */
+	if (in_group) {
+		s_comm->group_sends_remaining--;
+		if (s_comm->group_sends_remaining == 0) {
+			s_comm->group_num_recvs = 0;
+			s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+		}
+	} else {
+		s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+	}
 
 	goto exit;
 
@@ -5997,6 +6067,9 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	ret_s_comm->dev_id = dev_id;
 	ret_s_comm->comm_active = true;
 	ret_s_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
+	ret_s_comm->group_sends_remaining = 0;
+	ret_s_comm->group_num_recvs = 0;
+	ret_s_comm->group_tag_used = 0;
 
 	/* The connect() API function acquired the endpoint we are using via
 	   get_ep(). Store shared_ptr in the comm to keep ep alive. */
