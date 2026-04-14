@@ -746,7 +746,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	send_data->wdata =
 		GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num, send_data->schedule->num_xfer_infos);
 
-	if (s_comm->ctrl_mailbox[slot].flags & NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT)
+	if (s_comm->ctrl_mailbox[slot].entries[0].flags & NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT)
 		send_data->no_target_completion = true;
 	return 0;
 }
@@ -2908,7 +2908,7 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	this->ctrl_mailbox[slot].buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
 	this->ctrl_mailbox[slot].buff_len = size;
 	if (recv_completion_optional) {
-		this->ctrl_mailbox[slot].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
+		this->ctrl_mailbox[slot].entries[0].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
 	}
 
 	uint16_t rail_id = 0;
@@ -4015,7 +4015,8 @@ nccl_net_ofi_rdma_recv_comm::nccl_net_ofi_rdma_recv_comm()
 	remote_mailbox_addr = 0;
 	remote_mr_key = {};
 
-	const size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	const size_t ctrl_mailbox_raw_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	const size_t ctrl_mailbox_size = NCCL_OFI_ROUND_UP(ctrl_mailbox_raw_size, system_page_size);
 	ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
 	if (OFI_UNLIKELY(!ctrl_mailbox)) {
 		NCCL_OFI_WARN("Unable to allocate receive communicator control mailbox");
@@ -4278,7 +4279,9 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
-	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, NCCL_PTR_HOST, &mr_handle);
+	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox,
+		NCCL_OFI_ROUND_UP(sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, system_page_size),
+		NCCL_PTR_HOST, &mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to register memory for the control mailbox: %d", ret);
 		goto error;
@@ -5665,7 +5668,8 @@ nccl_net_ofi_rdma_send_comm::nccl_net_ofi_rdma_send_comm()
 	ctrl_mailbox = nullptr;
 	ctrl_mr_handle = nullptr;
 
-	const size_t ctrl_mailbox_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	const size_t ctrl_mailbox_raw_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
+	const size_t ctrl_mailbox_size = NCCL_OFI_ROUND_UP(ctrl_mailbox_raw_size, system_page_size);
 	ctrl_mailbox = (nccl_net_ofi_ctrl_msg_t *)aligned_alloc(system_page_size, ctrl_mailbox_size);
 	if (OFI_UNLIKELY(!ctrl_mailbox)) {
 		NCCL_OFI_WARN("Unable to allocate send communicator control mailbox");
@@ -5978,7 +5982,8 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 							     true);
 
 	/* Allocate control mailbox */
-	ret = domain_ptr->reg_internal_mr(ret_s_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE,
+	ret = domain_ptr->reg_internal_mr(ret_s_comm->ctrl_mailbox,
+					  NCCL_OFI_ROUND_UP(sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, system_page_size),
 						  NCCL_PTR_HOST, &ret_s_comm->ctrl_mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not register memory for control mailbox for dev %d", dev_id);

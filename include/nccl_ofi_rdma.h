@@ -160,15 +160,15 @@ public:
  */
 #define NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT (1 << 0)
 
-/*
- * @brief Control messages
- *
- * The control message contains the destination buffer address, mr keys,
- * message sequence number and padding to align it to cache line size.
- * It is used by the receiver to post the control message to the sender.
- */
-typedef struct nccl_net_ofi_ctrl_msg {
+/* Sentinel tag value indicating a ctrl msg entry has been consumed */
+#define NCCL_OFI_CTRL_MSG_TAG_INVALID ((int16_t)-1)
 
+/*
+ * @brief Control message sub-entry
+ *
+ * Each sub-entry describes one destination buffer within a grouped receive.
+ */
+typedef struct nccl_net_ofi_ctrl_msg_entry {
 	/* Destination buffer offset from base address.
 	 * For virtual address mode, base address is 0, so this is the virtual address.
 	 * For offset mode, this is the offset from the MR base address. */
@@ -182,20 +182,43 @@ typedef struct nccl_net_ofi_ctrl_msg {
 	/* Destination buffer len */
 	uint32_t buff_len;
 
-	/* Flags to indicate if recv completion is optional or not */
-	uint16_t flags;
-
-	/* Control message sequence number. The is also used as the
-	* ready bit to indicate that the control message has been posted.
-	*/
+	/* Tag for matching this sub-entry to the corresponding isend */
+	int16_t tag;
+	/* Per-entry sequence number for RDMA atomicity verification.
+	 * In entries[0], this also serves as the ctrl msg ready bit. */
 	uint16_t msg_seq_num;
+	/* The following fields are only meaningful in entries[0] and carry
+	 * metadata that applies to the entire control message. */
+	uint16_t flags;
+	uint16_t num_recvs;
+	/* Padding to 64-byte cache line boundary */
+	uint8_t pad[10];
+} nccl_net_ofi_ctrl_msg_entry_t;
+static_assert(sizeof(nccl_net_ofi_ctrl_msg_entry_t) == 64,
+		"Wrong size for RDMA Control message entry");
 
-	/* Padding to ensure we are aligned to cache line*/
-	uint8_t cache_line_padding[16];
+/*
+ * @brief Control messages
+ *
+ * The control message is a flat array of up to NCCL_OFI_MAX_RECVS entries,
+ * each describing one destination buffer in a grouped receive. Common metadata
+ * (msg_seq_num, flags, num_recvs) is stored in entries[0]'s pad area.
+ * It is used by the receiver to post the control message to the sender.
+ *
+ * Layout:
+ *   [msg_seq_num | flags | num_recvs | padding]  (header, 8 bytes)
+ *   [entry 0]                                     (48 bytes)
+ *   [entry 1]                                     (48 bytes)
+ *   ...
+ *   [entry N-1]                                   (48 bytes)
+ *   [padding to cache-line alignment]
+ */
+typedef struct nccl_net_ofi_ctrl_msg {
+	/* Flat array of entries. Common metadata (msg_seq_num used as ready
+	 * bit, flags, num_recvs) lives in entries[0].pad area. */
+	nccl_net_ofi_ctrl_msg_entry_t entries[NCCL_OFI_MAX_RECVS];
 } nccl_net_ofi_ctrl_msg_t;
-/* Assert to make sure that the control message on the wire
- * is of cache line size */
-static_assert(sizeof(nccl_net_ofi_ctrl_msg_t) == 64,
+static_assert(sizeof(nccl_net_ofi_ctrl_msg_t) == 64 * NCCL_OFI_MAX_RECVS,
                 "Wrong size for RDMA Control message");
 
 static inline size_t nccl_net_ofi_rdma_ctrl_msg_size()
