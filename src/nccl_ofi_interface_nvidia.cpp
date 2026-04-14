@@ -293,7 +293,8 @@ static ncclResult_t getProperties_v8(int dev_id, ncclNetProperties_v8_t* props)
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	props->maxRecvs = ofi_properties.max_group_receives;
+	/* Grouped receives (maxRecvs > 1) supported from v9 onwards */
+	props->maxRecvs = 1;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 
@@ -322,7 +323,8 @@ static ncclResult_t getProperties_v7(int dev_id, ncclNetProperties_v7_t *props)
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	props->maxRecvs = ofi_properties.max_group_receives;
+	/* Grouped receives (maxRecvs > 1) supported from v9 onwards */
+	props->maxRecvs = 1;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 
@@ -352,7 +354,10 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v6_t *props)
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	props->maxRecvs = ofi_properties.max_group_receives;;
+	/*
+	 * Grouped receives (maxRecvs > 1) supported from v9 onwards.
+	 */
+	props->maxRecvs = 1;
 
 	return ncclSuccess;
 }
