@@ -4,3 +4,4 @@ nccl_message_transfer
 reuse_listen_comm
 ring
 gin
+grouped_recv
