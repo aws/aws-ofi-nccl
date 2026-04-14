@@ -718,11 +718,11 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 
-	send_data->remote_buff_offset = s_comm->ctrl_mailbox[slot].buff_offset;
-	send_data->remote_len = s_comm->ctrl_mailbox[slot].buff_len;
+	send_data->remote_buff_offset = s_comm->ctrl_mailbox[slot].entries[0].buff_offset;
+	send_data->remote_len = s_comm->ctrl_mailbox[slot].entries[0].buff_len;
 
 	for (uint16_t rail_id = 0; rail_id != ep->num_rails; ++rail_id) {
-		send_data->remote_mr_key[rail_id] = s_comm->ctrl_mailbox[slot].mr_key[rail_id];
+		send_data->remote_mr_key[rail_id] = s_comm->ctrl_mailbox[slot].entries[0].mr_key[rail_id];
 	}
 
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
@@ -2296,7 +2296,7 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 static inline uint32_t get_ctrl_msg_buff_len(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num)
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	return (s_comm->ctrl_mailbox[slot].buff_len);
+	return (s_comm->ctrl_mailbox[slot].entries[0].buff_len);
 }
 
 /*
@@ -2845,6 +2845,9 @@ static inline int insert_recv_segms_req(
 
 	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(recv_segms_req);
 	recv_segms_data->recv_req = recv_req;
+	recv_segms_data->total_expected_segms = 0;
+	recv_segms_data->num_senders_registered = 0;
+	recv_segms_data->num_expected_senders = 1;
 
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 	recv_data->recv_segms_req = recv_segms_req;
@@ -2884,9 +2887,14 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	/* In the case of early completion, only expect the completion for control msg itself */
 	recv_data->total_num_compls = recv_completion_optional ? 1 : 2;
 	recv_data->eager_copy_req = NULL;
-	recv_data->dst_buff = buff;
-	recv_data->dst_len = size;
-	recv_data->dest_mr_handle = buff_mr_handle;
+	recv_data->num_recvs = 1;
+	recv_data->recvs[0].dst_buff = buff;
+	recv_data->recvs[0].dst_len = size;
+	recv_data->recvs[0].dest_mr_handle = buff_mr_handle;
+	recv_data->recvs[0].tag = 0;
+	recv_data->recvs[0].recv_size = 0;
+	recv_data->recvs[0].ncompls = 0;
+	recv_data->recvs[0].total_segms = 0;
 
 	ret = insert_recv_segms_req(this, device, dev_id_arg, msg_seq_num, buff, size, req);
 	if (ret) {
@@ -2903,13 +2911,18 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	* been received. Also, since the size of the mailbox is less than MSG_SEQ_NUM_MASK+1
 	* wrap around works fine too */
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	this->ctrl_mailbox[slot].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
-	/* Calculate offset from MR base address. For virtual address mode, base_addr is 0. */
-	this->ctrl_mailbox[slot].buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
-	this->ctrl_mailbox[slot].buff_len = size;
+	/* Zero the slot first, then populate. msg_seq_num is written last as the ready bit. */
+	memset(&this->ctrl_mailbox[slot], 0, sizeof(nccl_net_ofi_ctrl_msg_t));
+	this->ctrl_mailbox[slot].entries[0].num_recvs = 1;
 	if (recv_completion_optional) {
 		this->ctrl_mailbox[slot].entries[0].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
 	}
+
+	/* Populate entry 0 */
+	nccl_net_ofi_ctrl_msg_entry_t *entry = &this->ctrl_mailbox[slot].entries[0];
+	entry->buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
+	entry->buff_len = size;
+	entry->tag = 0;
 
 	uint16_t rail_id = 0;
 	for (; rail_id < this->num_rails; rail_id++) {
@@ -2920,8 +2933,11 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 			return -ENOENT;
 		}
 
-		this->ctrl_mailbox[slot].mr_key[rail_id] = rkey;
+		entry->mr_key[rail_id] = rkey;
 	}
+
+	/* Write msg_seq_num last as the ready bit */
+	this->ctrl_mailbox[slot].entries[0].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 
 	*ret_req = req;
 
@@ -5212,11 +5228,11 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
 	rdma_req_recv_data_t *recv_data = get_recv_data(eager_copy_data->recv_req);
 
-	/* Validate size of data */
-	if (recv_data->dst_len < rx_buff_data->recv_len) {
+	/* Validate size of data (eager only used for single recv, so use recvs[0]) */
+	if (recv_data->recvs[0].dst_len < rx_buff_data->recv_len) {
 		NCCL_OFI_TRACE(NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
-			       recv_data->dst_len, rx_buff_data->recv_len);
-		rx_buff_data->recv_len = recv_data->dst_len;
+			       recv_data->recvs[0].dst_len, rx_buff_data->recv_len);
+		rx_buff_data->recv_len = recv_data->recvs[0].dst_len;
 	}
 
 	// Get communicator rail information to xfer the req
@@ -5229,7 +5245,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 		(freelist_regmr_fn_handle_t *)rx_buff_data->rx_buff_fl_elem->mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *rx_mr_handle = fl_handle->mr_handle;
 
-	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->dest_mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->recvs[0].dest_mr_handle;
 
 	assert(rx_rail_id < dest_mr_handle->num_rails);
 	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id].get());
@@ -5242,7 +5258,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 	}
 
 	uintptr_t buff_offset = (uintptr_t)rx_buff - rx_mr_handle->base_addr;
-	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->dst_buff,
+	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->recvs[0].dst_buff,
 			     rx_buff_data->recv_len, desc, comm_rail->local_addr,
 			     buff_offset,
 			     rx_key, rdma_req_get_ofi_context(req, rx_rail_id));

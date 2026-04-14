@@ -377,26 +377,54 @@ typedef struct {
 } rdma_req_eager_copy_data_t;
 
 /*
- * @brief	Data of request responsible for receiving segements
+ * @brief	Data of request responsible for receiving segments
  */
 typedef struct {
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req *recv_req;
+	/* For grouped receives: running total of expected segments across all senders.
+	 * Updated dynamically as we learn each sender's segment count from immediate data. */
+	int total_expected_segms;
+	/* Number of distinct senders whose segment count we've registered */
+	int num_senders_registered;
+	int num_expected_senders;
 } rdma_req_recv_segms_data_t;
 
 /*
  * @brief	Data of request responsible for receive operation
  */
-typedef struct {
+/*
+ * @brief	Per-sub-receive metadata within a grouped receive
+ */
+typedef struct rdma_req_recv_sub {
 	/* Destination buffer */
 	void *dst_buff;
 	/* Destination length */
 	size_t dst_len;
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
+	/* Tag for matching to corresponding isend */
+	int tag;
+	/* Completed size for this sub-receive */
+	size_t recv_size;
+	/* Number of segments completed for this sub-receive */
+	int ncompls;
+	/* Total expected segments for this sub-receive */
+	int total_segms;
+} rdma_req_recv_sub_t;
+
+/*
+ * @brief	Data of request responsible for receive operation
+ */
+typedef struct {
+	/* Number of sub-receives in this grouped receive */
+	int num_recvs;
+	/* Per-sub-receive metadata */
+	rdma_req_recv_sub_t recvs[NCCL_OFI_MAX_RECVS];
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req *recv_segms_req;
-	/* (Eager messages) pointer to eager local copy request */
+	/* (Eager messages) pointer to eager local copy request.
+	 * Only used when num_recvs == 1 */
 	nccl_net_ofi_rdma_req *eager_copy_req;
 	/* Total number of completions. Expect one send ctrl
 	 * completion and one completion that indicates that all
