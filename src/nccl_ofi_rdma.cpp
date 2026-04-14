@@ -539,6 +539,8 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req *req)
  * @return	0, on success
  *		non-zero, on error
  */
+static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req, size_t size, int total_nsegms);
+
 static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 				     size_t size, int total_ncompls)
 {
@@ -609,7 +611,11 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
 	}
 
 	/* Add completion to parent request */
-	ret = inc_req_completion(recv_req, size, recv_data->total_num_compls);
+	if (recv_data->num_recvs > 1) {
+		ret = inc_recv_seg_completion(recv_data->recv_segms_req, size, 1);
+	} else {
+		ret = inc_req_completion(recv_req, size, recv_data->total_num_compls);
+	}
 
 	return ret;
 }
@@ -673,18 +679,30 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
 	
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
+	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
+
 	/* Sum up segment sizes */
 	req->size += size;
 	/* Sum up number of segments */
 	req->ncompls++;
 
+	/* Register this sender's total_nsegms if we haven't seen enough senders yet.
+	 * For a single recv (num_expected_senders=1), this registers once on the first completion.
+	 * For grouped receives, each fi_writedata completion represents one sender.
+	 * We use the original heuristic for non-grouped, and simple counting for grouped. */
+	if (req->ncompls > recv_segms_data->total_expected_segms) {
+		recv_segms_data->total_expected_segms += total_nsegms;
+		recv_segms_data->num_senders_registered++;
+	}
+
 	/* The arrival of the last segment is treated as a single
 	 * request completion of the parent request */
-	segms_received = req->ncompls == total_nsegms;
+	segms_received = (req->ncompls == recv_segms_data->total_expected_segms) &&
+			   (recv_segms_data->num_senders_registered == recv_segms_data->num_expected_senders);
 	
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
-		rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
+		/* recv_segms_data already available from outer scope */
 		nccl_net_ofi_rdma_req *recv_req = recv_segms_data->recv_req;
 		rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
@@ -914,7 +932,11 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 			NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
 			return ret;
 		}
-		ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
+		if (recv_data->num_recvs > 1) {
+			ret = inc_recv_seg_completion(recv_data->recv_segms_req, 0, 1);
+		} else {
+			ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
+		}
 		return ret;
 	}
 
@@ -2461,7 +2483,21 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 		nccl_net_ofi_mutex_unlock(&this->req_lock);
 
 		if (size_p) {
-			*size_p = req_size;
+			if (this->type == NCCL_OFI_RDMA_RECV) {
+				rdma_req_recv_data_t *local_recv_data = get_recv_data(this);
+				if (local_recv_data->num_recvs > 1) {
+					/* For grouped receives, distribute total received
+					 * size evenly across sub-receives. */
+					size_t per_sub = req_size / local_recv_data->num_recvs;
+					for (int i = 0; i < local_recv_data->num_recvs; i++) {
+						size_p[i] = per_sub;
+					}
+				} else {
+					*size_p = req_size;
+				}
+			} else {
+				*size_p = req_size;
+			}
 		}
 		/* Mark as done */
 		*done = 1;
