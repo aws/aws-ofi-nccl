@@ -458,16 +458,10 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 	props->latency = ofi_nccl_net_latency.get();
 
 	/*
-	 * Maximum number of grouped receives. Currently, we set it to 1 to
-	 * maintain single send/recv semantics (similar to NCCL versions < v2.12).
-	 *
-	 * Grouped receives are useful for alltoall collectives where one
-	 * receiver is expected to receive from multiple remote GPUs using
-	 * PXN(PCIe X NVLINK) feature. Other collectives like allreduce aren't
-	 * impacted with this feature as NCCL doesn't aggregate receives from
-	 * same source.
+	 * Maximum number of grouped receives. We set it to 1 by default
+	 * Will be overwritten depending on libfabric feature
 	 */
-	props->max_group_receives = NCCL_OFI_MAX_RECVS;
+	props->max_group_receives = 1;
 
 	if (support_gdr == GDR_SUPPORTED) {
 		props->hmem_support = true;
@@ -548,6 +542,13 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 			      dev_id);
 		ret = 0;
 		goto exit;
+	}
+
+	/* Only support multi-recv if eager is disabled for now
+	 * Enabling it requires multiple iovs that point to both host and GPU memory
+	 */
+	if (ofi_nccl_eager_max_size() < 0) {
+		props->max_group_receives = NCCL_OFI_MAX_RECVS;
 	}
 
 	/* name is NULL if device is a part of multirail config */
