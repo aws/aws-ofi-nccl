@@ -43,6 +43,8 @@ if !ENABLE_NEURON
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += gdrcopy
   gdrcopy_SOURCES = $(base_sources) gdrcopy.cpp
+  noinst_PROGRAMS += ctrl_msg
+  ctrl_msg_SOURCES = $(base_sources) ctrl_msg.cpp
 if WANT_PLATFORM_AWS
   noinst_PROGRAMS += region_based_tuner
   region_based_tuner_SOURCES = $(base_sources) region_based_tuner.cpp
