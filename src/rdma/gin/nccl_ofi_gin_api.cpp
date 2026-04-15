@@ -318,6 +318,78 @@ static ncclResult_t nccl_ofi_gin_finalize(void *ctx)
 	return ncclSuccess;
 }
 
+static ncclResult_t nccl_ofi_gin_getProperties_v13(int dev, ncclNetProperties_v12_t *props)
+{
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_CUDA;
+	}
+	if (ofi_properties.dmabuf_support) {
+		props->ptrSupport |= NCCL_PTR_DMABUF;
+	}
+
+	props->regIsGlobal = ofi_properties.regIsGlobal;
+	props->forceFlush = 0;
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->latency = ofi_properties.latency;
+	props->maxComms = ofi_properties.max_communicators;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
+	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+	props->vProps.ndevs = 1;
+	props->vProps.devs[0] = dev;
+	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
+	props->maxCollBytes = ofi_properties.max_coll_bytes;
+	props->maxMultiRequestSize = 1;
+	props->railId = -1;
+	props->planeId = -1;
+
+	return ncclSuccess;
+}
+
+static ncclResult_t nccl_ofi_gin_createContext_v13(void *collComm, ncclGinConfig_v13_t *config,
+						   void **ginCtx, ncclNetDeviceHandle_v11_t **devHandle)
+{
+	*ginCtx = collComm;
+	if (devHandle != nullptr)
+		*devHandle = nullptr;
+	return ncclSuccess;
+}
+
+static ncclResult_t nccl_ofi_gin_destroyContext_v13(void *ginCtx)
+{
+	return ncclSuccess;
+}
+
+static ncclResult_t nccl_ofi_gin_iput_v13(void *ginCtx, int context, uint64_t srcOff,
+					  void *srcMhandle, size_t size, uint64_t dstOff,
+					  void *dstMhandle, uint32_t rank, void **request)
+{
+	return nccl_ofi_gin_iput(ginCtx, srcOff, srcMhandle, size,
+				 dstOff, dstMhandle, rank, request);
+}
+
+static ncclResult_t nccl_ofi_gin_iputSignal_v13(void *ginCtx, int context, uint64_t srcOff,
+						void *srcMhandle, size_t size, uint64_t dstOff,
+						void *dstMhandle, uint32_t rank, uint64_t signalOff,
+						void *signalMhandle, uint64_t signalValue,
+						uint32_t signalOp, void **request)
+{
+	return nccl_ofi_gin_iputSignal(ginCtx, srcOff, srcMhandle, size,
+				       dstOff, dstMhandle, rank, signalOff, signalMhandle,
+				       signalValue, signalOp, request);
+}
+
 NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
 	/* Since there is no equivalent of NCCL_NET for GIN, currently we don't
 	   have name fixup depending on env var like nvidia_plugin_name_fixup().
@@ -342,6 +414,31 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
 	.test = nccl_ofi_gin_test,
 	.ginProgress = nccl_ofi_gin_ginProgress,
 	/* Not used by NCCL in proxy mode */
+	.queryLastError = nullptr,
+	.finalize = nccl_ofi_gin_finalize
+};
+
+/* GIN v13 was introduced in NCCL v2.30 */
+NCCL_OFI_EXPORT_SYMBOL ncclGin_v13_t ncclGinPlugin_v13 = {
+	.name = "Libfabric",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getProperties = nccl_ofi_gin_getProperties_v13,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
+	.createContext = nccl_ofi_gin_createContext_v13,
+	.regMrSym = nccl_ofi_gin_regMrSym,
+	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.deregMrSym = nccl_ofi_gin_deregMrSym,
+	.destroyContext = nccl_ofi_gin_destroyContext_v13,
+	.closeColl = nccl_ofi_gin_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.iput = nccl_ofi_gin_iput_v13,
+	.iputSignal = nccl_ofi_gin_iputSignal_v13,
+	.iget = nullptr,
+	.iflush = nullptr,
+	.test = nccl_ofi_gin_test,
+	.ginProgress = nccl_ofi_gin_ginProgress,
 	.queryLastError = nullptr,
 	.finalize = nccl_ofi_gin_finalize
 };
