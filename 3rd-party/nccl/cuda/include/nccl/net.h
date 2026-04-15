@@ -38,6 +38,7 @@ typedef enum {NCCL_INIT=1, NCCL_COLL=2, NCCL_P2P=4, NCCL_SHM=8, NCCL_NET=16, NCC
 typedef void (*ncclDebugLogger_t)(ncclDebugLogLevel level, unsigned long flags, const char *file, int line, const char *fmt, ...);
 typedef ncclResult_t (*ncclProfilerCallback_t)(void** eHandle, int type, void* phandle, int64_t pluginId, void* extData);
 
+#include "net_v12.h"
 #include "net_v11.h"
 #include "net_v10.h"
 #include "net_v9.h"
@@ -48,5 +49,7 @@ typedef ncclResult_t (*ncclProfilerCallback_t)(void** eHandle, int type, void* p
 #include "net_v4.h"
 #include "net_v3.h"
 #include "net_v2.h"
+
+#include "gin_v13.h"
 
 #endif // end include guard
