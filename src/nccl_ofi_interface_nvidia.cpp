@@ -589,6 +589,68 @@ static ncclResult_t finalize_v11(void *ctx)
 }
 
 
+static ncclResult_t init_v12(void **ctx, uint64_t commId, ncclNetCommConfig_v12_t *config,
+			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
+{
+	std::lock_guard lock(netMutex);
+	ncclNetCommConfig_v12_t *net_config = (ncclNetCommConfig_v12_t *)malloc(sizeof(ncclNetCommConfig_v12_t));
+	if (net_config == NULL) return ncclSystemError;
+	net_config->trafficClass = config->trafficClass;
+	*ctx = net_config;
+
+	if (netRefCount++ > 0) return ncclSuccess;
+	return nccl_net_ofi_init(logFunction);
+}
+
+
+static ncclResult_t getProperties_v12(int dev_id, ncclNetProperties_v12_t *props)
+{
+	nccl_ofi_properties_t ofi_properties;
+	ncclResult_t ret = nccl_net_ofi_get_properties(dev_id, &ofi_properties);
+	if (ret != ncclSuccess) {
+		return ret;
+	}
+
+	props->name = ofi_properties.name;
+	props->pciPath = ofi_properties.pci_path;
+	props->guid = ofi_properties.guid;
+	props->ptrSupport = NCCL_PTR_HOST;
+	if (ofi_properties.hmem_support) {
+		props->ptrSupport |= NCCL_PTR_CUDA;
+	}
+	if (ofi_properties.dmabuf_support) {
+		props->ptrSupport |= NCCL_PTR_DMABUF;
+	}
+
+	props->regIsGlobal = ofi_properties.regIsGlobal;
+	props->forceFlush = 0;
+	props->speed = ofi_properties.port_speed;
+	props->port = ofi_properties.port_number;
+	props->latency = ofi_properties.latency;
+	props->maxComms = ofi_properties.max_communicators;
+	props->maxRecvs = ofi_properties.max_group_receives;
+	props->netDeviceType = NCCL_NET_DEVICE_HOST;
+	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+	props->vProps.ndevs = 1;
+	props->vProps.devs[0] = dev_id;
+	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
+	props->maxCollBytes = ofi_properties.max_coll_bytes;
+	props->maxMultiRequestSize = 1;
+	props->railId = -1;
+	props->planeId = -1;
+
+	return ncclSuccess;
+}
+
+
+static ncclResult_t connect_v12(void *ctx, int dev, void *handle,
+				void **sendComm, ncclNetDeviceHandle_v12_t **sendDevComm)
+{
+	ncclNetCommConfig_v12_t *config = (ncclNetCommConfig_v12_t *)ctx;
+	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+}
+
+
 extern "C" {
 
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
@@ -726,6 +788,37 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v11_t ncclNetPlugin_v11 = {
         .setNetAttr = NULL,
 };
 
+/* Net v12 was introduced in NCCL v2.30.
+ * Each function uses the earliest version whose signature is compatible
+ * with v12.  New v12 wrappers are only needed where the NCCL type names
+ * changed (init, getProperties, connect), even though the underlying
+ * layouts are identical to v11.
+ */
+NCCL_OFI_EXPORT_SYMBOL ncclNet_v12_t ncclNetPlugin_v12 = {
+        .name = "Libfabric",
+        .init = init_v12,
+        .devices = devices_v2,
+        .getProperties = getProperties_v12,
+        .listen = listen_v11,
+        .connect = connect_v12,
+        .accept = accept_v9,
+        .regMr = regMr_v8,
+        .regMrDmaBuf = regMrDmaBuf_v6,
+        .deregMr = deregMr_v2,
+        .isend = isend_v10,
+        .irecv = irecv_v10,
+        .iflush = iflush_v5,
+        .test = test_v2,
+        .closeSend = closeSend_v2,
+        .closeRecv = closeRecv_v2,
+        .closeListen = closeListen_v2,
+        .getDeviceMr = NULL,
+        .irecvConsumed = NULL,
+        .makeVDevice = NULL,
+        .finalize = finalize_v11,
+        .setNetAttr = NULL,
+};
+
 } /* extern "C" */
 
 
@@ -747,6 +840,7 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 		ncclNetPlugin_v9.name = "AWS Libfabric";
 		ncclNetPlugin_v10.name = "AWS Libfabric";
 		ncclNetPlugin_v11.name = "AWS Libfabric";
+		ncclNetPlugin_v12.name = "AWS Libfabric";
 	} else if (net_env != NULL && 0 == strcasecmp(net_env, "OFI")) {
 		ncclNetPlugin_v6.name = "OFI";
 		ncclNetPlugin_v7.name = "OFI";
@@ -754,5 +848,6 @@ __attribute__((constructor)) static void nvidia_plugin_name_fixup(void)
 		ncclNetPlugin_v9.name = "OFI";
 		ncclNetPlugin_v10.name = "OFI";
 		ncclNetPlugin_v11.name = "OFI";
+		ncclNetPlugin_v12.name = "OFI";
 	}
 }
