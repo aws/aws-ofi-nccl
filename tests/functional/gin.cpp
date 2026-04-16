@@ -11,7 +11,8 @@
 #include <vector>
 
 static inline ncclResult_t
-poll_request_completion(ncclGin_v11_t *extGin, std::deque<void *> &request_deque, void *collComm)
+poll_request_completion(ncclGin_v13_t *extGin, std::deque<void *> &request_deque, void *collComm,
+		       void *ginCtx)
 {
 	/* Wait for outstanding requests */
 	int done = 0;
@@ -19,18 +20,12 @@ poll_request_completion(ncclGin_v11_t *extGin, std::deque<void *> &request_deque
 	if (done) {
 		request_deque.pop_front();
 	} else {
-		/**
-		 * Note: The NCCL GIN proxy thread will call ginProgress repeatedly
-		 * until the communicator is closed. We emulate that throughout this
-		 * test by ensuring each rank calls `ginProgress` until the barrier
-		 * before verification is reached.
-		 */
-		OFINCCLCHECK(extGin->ginProgress(collComm));
+		OFINCCLCHECK(extGin->ginProgress(ginCtx));
 	}
 	return ncclSuccess;
 }
 
-static inline ncclResult_t alloc_and_reg_buff(ncclGin_v11_t *extGin, void *collComm, size_t size,
+static inline ncclResult_t alloc_and_reg_buff(ncclGin_v13_t *extGin, void *collComm, size_t size,
 					      int buffer_type, int value, void **buff,
 					      void **mr_handle)
 {
@@ -151,7 +146,7 @@ int main(int argc, char *argv[])
 
 	/* Get Properties for the device */
 	for (dev = 0; dev < ndev; dev++) {
-		ncclNetProperties_v11_t props = {};
+		ncclNetProperties_v12_t props = {};
 		OFINCCLCHECK(extGin->getProperties(dev, &props));
 
 		/* Set CUDA support */
@@ -191,6 +186,18 @@ int main(int argc, char *argv[])
 		extGin->connect(ginCtx, handles_ptrs.data(), nranks, rank, listenComm, &collComm));
 	assert(collComm != nullptr);
 
+	/* v13: create a GIN context from the collComm */
+	ncclGinConfig_v13_t ginConfig = {};
+	ginConfig.nSignals = 64;
+	ginConfig.nContexts = 1;
+	ginConfig.queueDepth = 64;
+	ginConfig.trafficClass = -1;
+
+	void *proxyCtx = nullptr;
+	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
+	OFINCCLCHECK(extGin->createContext(collComm, &ginConfig, &proxyCtx, &devHandle));
+	assert(proxyCtx != nullptr);
+
 	/* Allocate, register, and initialize all buffers to zero. */
 	void *put_buff = nullptr;
 	void *put_mhandle = nullptr;
@@ -224,7 +231,7 @@ int main(int argc, char *argv[])
 			/* iput API */
 			for (int i = 0; i < NUM_REQS_PER_PEER; ++i) {
 				void *request = nullptr;
-				OFINCCLCHECK(extGin->iput(collComm, 0, put_mhandle, SEND_SIZE, 0,
+				OFINCCLCHECK(extGin->iput(proxyCtx, 0, 0, put_mhandle, SEND_SIZE, 0,
 							  put_mhandle, dst_rank, &request));
 				assert(request != nullptr);
 				request_deque.push_back(request);
@@ -235,8 +242,9 @@ int main(int argc, char *argv[])
 				/* TODO: Expand the test to cover other signal types, such as
 				 * NCCL_NET_SIGNAL_OP_ADD */
 				void *request = nullptr;
-				OFINCCLCHECK(extGin->iputSignal(collComm, 0, put_signal_mhandle,
-								SEND_SIZE, 0, put_signal_mhandle,
+				OFINCCLCHECK(extGin->iputSignal(proxyCtx, 0, 0,
+								put_signal_mhandle, SEND_SIZE,
+								0, put_signal_mhandle,
 								dst_rank, 0, signal_mhandle, 1,
 								NCCL_NET_SIGNAL_OP_INC, &request));
 				assert(request != nullptr);
@@ -246,13 +254,13 @@ int main(int argc, char *argv[])
 
 		/* Wait for remaining requests */
 		while (!request_deque.empty()) {
-			OFINCCLCHECK(poll_request_completion(extGin, request_deque, collComm));
+			OFINCCLCHECK(poll_request_completion(extGin, request_deque, collComm, proxyCtx));
 		}
 	} else {
 		/* Validate that the signal_buff reaches the designated signal value */
 		uint64_t signal_h = 0;
 		while (signal_h != NUM_REQS_PER_PEER) {
-			OFINCCLCHECK(extGin->ginProgress(collComm));
+			OFINCCLCHECK(extGin->ginProgress(proxyCtx));
 			CUDACHECK(cudaMemcpy(&signal_h, signal_buf, sizeof(uint64_t),
 					     cudaMemcpyDefault));
 		}
@@ -263,7 +271,7 @@ int main(int argc, char *argv[])
 	int barrier_done = 0;
 	while (!barrier_done) {
 		/* Make progress on comm until all ranks reach the barrier */
-		OFINCCLCHECK(extGin->ginProgress(collComm));
+		OFINCCLCHECK(extGin->ginProgress(proxyCtx));
 		MPI_Test(&barrier_req, &barrier_done, MPI_STATUS_IGNORE);
 	}
 
@@ -279,6 +287,9 @@ int main(int argc, char *argv[])
 	put_signal_mhandle = nullptr;
 	OFINCCLCHECK(extGin->deregMrSym(collComm, put_mhandle));
 	put_mhandle = nullptr;
+
+	OFINCCLCHECK(extGin->destroyContext(proxyCtx));
+	proxyCtx = nullptr;
 
 	OFINCCLCHECK(extGin->closeColl(collComm));
 	collComm = nullptr;
