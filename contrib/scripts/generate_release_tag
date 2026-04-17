@@ -5,16 +5,58 @@
 # See LICENSE.txt for license information
 #
 
-if [ $# -ne 2 ]; then
-    echo "Usage: $0 <target reference> <tag name>" 1>&2
+usage() {
+    echo "Usage: $0 --ref <reference> --tag <tag name> [--push <remote>]" 1>&2
+    echo "" 1>&2
+    echo "Options:" 1>&2
+    echo "  --ref <reference>  Target git reference to tag (e.g., HEAD, a commit sha)" 1>&2
+    echo "  --tag <tag name>   Release tag name (e.g., v1.19.0)" 1>&2
+    echo "  --push <remote>    Push the tag to the specified remote after creation" 1>&2
     exit 1
-fi
+}
 
-reference=${1}
-tagname=${2}
+reference=""
+tagname=""
+push_remote=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --ref)
+            [ -z "$2" ] && usage
+            reference="$2"
+            shift 2
+            ;;
+        --tag)
+            [ -z "$2" ] && usage
+            tagname="$2"
+            shift 2
+            ;;
+        --push)
+            [ -z "$2" ] && usage
+            push_remote="$2"
+            shift 2
+            ;;
+        *)
+            echo "Error: unknown option $1" 1>&2
+            usage
+            ;;
+    esac
+done
+
+if [ -z "$reference" ] || [ -z "$tagname" ]; then
+    usage
+fi
 
 echo "reference: ${reference}"
 echo "tag: ${tagname}"
+
+# Verify the remote exists early, before creating the tag
+if [ -n "${push_remote}" ]; then
+    if ! git remote get-url "${push_remote}" > /dev/null 2>&1; then
+        echo "Remote '${push_remote}' does not exist." 1>&2
+        exit 1
+    fi
+fi
 
 # verify that tag looks sanely formatted
 if ! echo ${tagname} | sed -E '/v[0-9]+\.[0-9]+\.[0-9]+.*/!{q1}' > /dev/null; then
@@ -49,8 +91,21 @@ if test $? -ne 0 ; then
     exit 1
 fi
 
-echo "${tagname} tag created at reference ${reference}.  You must manually push upstream with
-a command such as:
+echo "${tagname} tag created at reference ${reference}."
+
+# Push if --push was specified
+if [ -n "${push_remote}" ]; then
+    echo "Pushing ${tagname} to ${push_remote}..."
+    git push "${push_remote}" "${tagname}"
+    if test $? -ne 0 ; then
+        echo "Pushing tag ${tagname} to ${push_remote} failed." 1>&2
+        exit 1
+    fi
+    echo "${tagname} pushed to ${push_remote}."
+else
+    echo "You must manually push upstream with a command such as:
 
     git push origin ${tagname}"
+fi
+
 exit 0
