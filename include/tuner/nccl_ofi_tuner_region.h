@@ -21,6 +21,16 @@ bool is_region_supported(enum nccl_ofi_tuner_platform platform, size_t nRanks, s
 ncclResult_t region_init_internal(nccl_ofi_tuner_context_t *ctx, enum nccl_ofi_tuner_platform platform,
 				  size_t nRanks, size_t nNodes);
 
+ncclResult_t region_get_coll_info_internal_v6(nccl_ofi_tuner_context_t *ctx,
+					      ncclFunc_t collType,
+					      size_t nBytes,
+					      int numPipeOps,
+					      float **collCostTable,
+					      int numAlgo,
+					      int numProto,
+					      int regBuff,
+					      int *nChannels);
+
 ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 					      ncclFunc_t collType,
 					      size_t nBytes,

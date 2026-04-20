@@ -136,6 +136,21 @@ bool is_model_supported(enum nccl_ofi_tuner_platform platform, size_t nRanks, si
 	return false;
 }
 
+ncclResult_t model_get_coll_info_internal_v6(nccl_ofi_tuner_context_t *ctx,
+					     ncclFunc_t collType,
+					     size_t nBytes,
+					     int numPipeOps,
+					     float **collCostTable,
+					     int numAlgo,
+					     int numProto,
+					     int regBuff,
+					     int *nChannels)
+{
+	/* regBuff is not used by the model tuner; delegate to v3 */
+	return model_get_coll_info_internal_v3(ctx, collType, nBytes, numPipeOps,
+					       collCostTable, numAlgo, numProto, nChannels);
+}
+
 ncclResult_t model_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 					     ncclFunc_t collType,
 					     size_t nBytes,
