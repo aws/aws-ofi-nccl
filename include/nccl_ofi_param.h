@@ -374,4 +374,10 @@ OFI_NCCL_PARAM(std::string, platform, "PLATFORM", "");
 OFI_NCCL_PARAM_VALUE_SET(NVTX_TRACE_DIMENSION, (PER_COMM)(PER_DEV))
 OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSION", NVTX_TRACE_DIMENSION::PER_COMM)
 
+/*
+ * Enable GDAKI (GPUDirect Async) mode for the GIN plugin.
+ * Not yet supported — stub implementation only.
+ */
+OFI_NCCL_PARAM(bool, gin_gdaki, "GIN_GDAKI", false);
+
 #endif // End NCCL_OFI_PARAM_H_

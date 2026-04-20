@@ -14,6 +14,7 @@ noinst_HEADERS = \
 	rdma/gin/nccl_ofi_gin_reqs.h \
 	rdma/gin/nccl_ofi_gin_resources.h \
 	rdma/gin/nccl_ofi_gin_types.h \
+	rdma/gin/nccl_ofi_gin_gdaki.h \
 	nccl_ofi_gin_base.h \
 	nccl_ofi.h \
 	nccl_ofi_api.h \

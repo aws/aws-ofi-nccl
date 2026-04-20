@@ -4,11 +4,17 @@
 
 #include "config.h"
 
+#include <cstring>
+
 #include "rdma/gin/nccl_ofi_gin.h"
 #include "rdma/gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
+
+/* Forward declaration — defined at bottom of this file */
+extern ncclGin_v13_t ncclGinPlugin_v13;
 
 /**
  * Structure to hold GIN context data.
@@ -67,6 +73,22 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Failed to allocate GIN context: %s", e.what());
 		return ncclSystemError;
+	}
+
+	/*
+	 * Morph the exported plugin to GDAKI if requested.
+	 *
+	 * Copy shared functions (init, devices, listen, connect) from the
+	 * proxy plugin into the GDAKI plugin, then overwrite the exported
+	 * symbol with the GDAKI plugin.
+	 */
+	if (nccl_ofi_gin_gdaki_enabled()) {
+		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: GDAKI mode enabled (OFI_NCCL_GIN_GDAKI=1)");
+		nccl_ofi_gin_gdaki_plugin.init = ncclGinPlugin_v13.init;
+		nccl_ofi_gin_gdaki_plugin.devices = ncclGinPlugin_v13.devices;
+		nccl_ofi_gin_gdaki_plugin.listen = ncclGinPlugin_v13.listen;
+		nccl_ofi_gin_gdaki_plugin.connect = ncclGinPlugin_v13.connect;
+		memcpy(&ncclGinPlugin_v13, &nccl_ofi_gin_gdaki_plugin, sizeof(ncclGinPlugin_v13));
 	}
 
 	return ncclSuccess;
