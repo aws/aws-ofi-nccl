@@ -2041,6 +2041,21 @@ exit:
 	return ret;
 }
 
+ncclResult_t region_get_coll_info_internal_v6(nccl_ofi_tuner_context_t *ctx,
+					      ncclFunc_t collType,
+					      size_t nBytes,
+					      int numPipeOps,
+					      float **collCostTable,
+					      int numAlgo,
+					      int numProto,
+					      int regBuff,
+					      int *nChannels)
+{
+	/* regBuff is not used by the region tuner; delegate to v3 */
+	return region_get_coll_info_internal_v3(ctx, collType, nBytes, numPipeOps,
+						collCostTable, numAlgo, numProto, nChannels);
+}
+
 ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 					   ncclFunc_t collType,
 					   size_t nBytes,

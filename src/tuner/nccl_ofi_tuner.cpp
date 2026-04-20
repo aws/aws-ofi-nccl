@@ -101,6 +101,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 	if (region_support && !(model_support && constants.should_force_model_tuner())) {
 		ctx->type = TUNER_TYPE::REGION;
 		ctx->init_internal = region_init_internal;
+		ctx->get_coll_info_internal_v6 = region_get_coll_info_internal_v6;
 		ctx->get_coll_info_internal_v3 = region_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = region_get_coll_info_internal_v2;
 		ctx->destroy_internal = region_destroy_internal;
@@ -110,6 +111,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		assert(model_support);
 		ctx->type = TUNER_TYPE::MODEL;
 		ctx->init_internal = model_init_internal;
+		ctx->get_coll_info_internal_v6 = model_get_coll_info_internal_v6;
 		ctx->get_coll_info_internal_v3 = model_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = model_get_coll_info_internal_v2;
 		ctx->destroy_internal = model_destroy_internal;
@@ -179,6 +181,54 @@ extern "C" const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info,
 					   .destroy = nccl_ofi_tuner_destroy};
+
+/* **** V6 **** */
+static ncclResult_t nccl_ofi_tuner_init_v6(void** ctx, uint64_t commId, size_t nRanks, size_t nNodes,
+					    ncclDebugLogger_t logFunction,
+					    ncclNvlDomainInfo_v6_t* nvlDomainInfo,
+					    ncclTunerConstants_v6_t* constants)
+{
+	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "The tuner plugin can not be loaded when "
+				"explicitly choosing an algorithm or protocol "
+				"with NCCL_ALGO/NCCL_PROTO. "
+				"Defaulting to internal tuner.");
+		*ctx = nullptr;
+		return ncclSuccess;
+	}
+	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, ctx);
+}
+
+static ncclResult_t nccl_ofi_tuner_get_coll_info_v6(void *context,
+						     ncclFunc_t collType,
+						     size_t nBytes,
+						     int numPipeOps,
+						     float **collCostTable,
+						     int numAlgo,
+						     int numProto,
+						     int regBuff,
+						     int *nChannels)
+{
+	nccl_ofi_tuner_context_t *ctx = (nccl_ofi_tuner_context_t *)context;
+	if (ctx == nullptr || ctx->get_coll_info_internal_v6 == nullptr) {
+		/* Fall back to NCCL's tuner */
+		return ncclSuccess;
+	}
+
+	return ctx->get_coll_info_internal_v6(ctx, collType, nBytes, numPipeOps,
+					      collCostTable, numAlgo, numProto, regBuff, nChannels);
+}
+
+static ncclResult_t nccl_ofi_tuner_finalize(void *context)
+{
+	return nccl_ofi_tuner_destroy(context);
+}
+
+extern "C" const ncclTuner_v6_t ncclTunerPlugin_v6 = {.name = "nccl_ofi_tuner",
+					   .init = nccl_ofi_tuner_init_v6,
+					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v6,
+					   .finalize = nccl_ofi_tuner_finalize,
+					   .getChunkSize = nullptr};
 
 /* **** V2 **** */
 static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(

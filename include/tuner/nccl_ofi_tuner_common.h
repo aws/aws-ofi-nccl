@@ -37,6 +37,16 @@ struct nccl_ofi_tuner_context {
 				      size_t nRanks,
 				      size_t nNodes);
 
+	ncclResult_t (*get_coll_info_internal_v6)(nccl_ofi_tuner_context_t *ctx,
+						  ncclFunc_t collType,
+						  size_t nBytes,
+					          int numPipeOps,
+					          float **collCostTable,
+					          int numAlgo,
+					          int numProto,
+					          int regBuff,
+					          int *nChannels);
+
 	ncclResult_t (*get_coll_info_internal_v3)(nccl_ofi_tuner_context_t *ctx,
 						  ncclFunc_t collType,
 						  size_t nBytes,
