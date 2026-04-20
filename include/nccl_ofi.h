@@ -7,6 +7,7 @@
 
 #include <unordered_map>
 #include <memory>
+#include <optional>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -464,7 +465,10 @@ public:
 	/*
 	 * Protocol-agnostic MR cache for this device.
 	 */
-	nccl_ofi_mr_cache_t *mr_cache = nullptr;
+	std::optional<nccl_ofi_mr_cache> mr_cache;
+
+	/* Lock protecting mr_cache operations */
+	std::mutex mr_cache_lock;
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;

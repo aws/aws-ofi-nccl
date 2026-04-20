@@ -846,13 +846,8 @@ nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 	assert(this->device != nullptr);
 
 	if (!ofi_nccl_mr_cache_disable()) {
-		this->mr_cache =
-			nccl_ofi_mr_cache_init(NCCL_OFI_MR_CACHE_INIT_SIZE,
-					       system_page_size);
-		if (!this->mr_cache) {
-			NCCL_OFI_WARN("Unable to initialize domain mr cache");
-			throw std::runtime_error("base domain constructor: mr cache init failed");
-		}
+		this->mr_cache.emplace(NCCL_OFI_MR_CACHE_INIT_SIZE,
+				       system_page_size);
 	}
 
 	if (this->device->need_mr_rkey_pool) {
@@ -891,10 +886,6 @@ int nccl_net_ofi_domain_t::release_all_ep()
 
 nccl_net_ofi_domain_t::~nccl_net_ofi_domain_t()
 {
-	if (mr_cache != nullptr) {
-		nccl_ofi_mr_cache_finalize(mr_cache);
-	}
-
 	if (mr_rkey_pool != nullptr) {
 		delete mr_rkey_pool;
 		mr_rkey_pool = nullptr;

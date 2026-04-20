@@ -10,7 +10,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_mr.h"
 
-static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
+static inline bool test_lookup_impl(nccl_ofi_mr_cache *cache, void *addr, size_t size,
 		 void *expected_val)
 {
 	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
@@ -18,9 +18,9 @@ static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 	 * passing nullptr
 	 */
 	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);;
-	void *result = nccl_ofi_mr_cache_lookup_entry(cache, &ckey, false);
+	void *result = cache->lookup_entry(&ckey, false);
 	if (result != expected_val) {
-		NCCL_OFI_WARN("nccl_ofi_mr_cache_lookup_entry returned unexpected result. Expected: %p. Actual: %p",
+		NCCL_OFI_WARN("nccl_ofi_mr_cache::lookup_entry returned unexpected result. Expected: %p. Actual: %p",
 			expected_val, result);
 		return false;
 	}
@@ -32,7 +32,7 @@ static inline bool test_lookup_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 		exit(1);                                          \
 	}
 
-static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size_t size,
+static inline bool test_insert_impl(nccl_ofi_mr_cache *cache, void *addr, size_t size,
 		 void *handle, int expected_ret)
 {
 	/* TODO: To test mr_endpoint feature, pass endpoint object while creating
@@ -40,9 +40,9 @@ static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 	 * passing nullptr
 	 */
 	nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(addr, size, nullptr);
-	int ret = nccl_ofi_mr_cache_insert_entry(cache, &ckey, false, handle);
+	int ret = cache->insert_entry(&ckey, false, handle);
 	if (ret != expected_ret) {
-		NCCL_OFI_WARN("nccl_ofi_mr_cache_insert_entry returned unexpected result. Expected: %d. Actual: %d",
+		NCCL_OFI_WARN("nccl_ofi_mr_cache::insert_entry returned unexpected result. Expected: %d. Actual: %d",
 			expected_ret, ret);
 		return false;
 	}
@@ -54,11 +54,11 @@ static inline bool test_insert_impl(nccl_ofi_mr_cache_t *cache, void *addr, size
 		exit(1);                                                  \
 	}
 
-static inline bool test_delete_impl(nccl_ofi_mr_cache_t *cache, void *handle, int expected_ret)
+static inline bool test_delete_impl(nccl_ofi_mr_cache *cache, void *handle, int expected_ret)
 {
-	int ret = nccl_ofi_mr_cache_del_entry(cache, handle);
+	int ret = cache->del_entry(handle);
 	if (ret != expected_ret) {
-		NCCL_OFI_WARN("nccl_ofi_mr_cache_del_entry returned unexpected result. Expected: %d. Actual: %d",
+		NCCL_OFI_WARN("nccl_ofi_mr_cache::del_entry returned unexpected result. Expected: %d. Actual: %d",
 			expected_ret, ret);
 		return false;
 	}
@@ -103,9 +103,9 @@ int main(int argc, char *argv[])
 
 	unit_test_init();
 
-	nccl_ofi_mr_cache_t *cache = nccl_ofi_mr_cache_init(cache_init_size, fake_page_size);
+	nccl_ofi_mr_cache *cache = new nccl_ofi_mr_cache(cache_init_size, fake_page_size);
 	if (!cache) {
-		NCCL_OFI_WARN("nccl_ofi_mr_cache_init failed");
+		NCCL_OFI_WARN("nccl_ofi_mr_cache constructor failed");
 		exit(1);
 	}
 
@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
 	test_make_aligned_key(fake_page_size - 16, 17, 0, fake_page_size * 2);
 #endif
 
-	nccl_ofi_mr_cache_finalize(cache);
+	delete cache;
 
 	printf("Test completed successfully!\n");
 }
