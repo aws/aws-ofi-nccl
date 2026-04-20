@@ -519,7 +519,7 @@ public:
 	/*
 	 * Protocol-agnostic MR cache for this device.
 	 */
-	nccl_ofi_mr_cache_t *mr_cache = nullptr;
+	nccl_ofi_mr_cache *mr_cache = nullptr;
 
 	/* Memory registration key pool */
 	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;

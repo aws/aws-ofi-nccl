@@ -70,7 +70,7 @@ int nccl_net_ofi_sendrecv_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 
 static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
 					nccl_ofi_idpool_t *key_pool,
-					nccl_ofi_mr_cache_t *mr_cache);
+					nccl_ofi_mr_cache *mr_cache);
 
 
 int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
@@ -710,7 +710,7 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 
 static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
 				       nccl_ofi_idpool_t *key_pool,
-				       nccl_ofi_mr_cache_t *mr_cache)
+				       nccl_ofi_mr_cache *mr_cache)
 {
 	int ret = 0;
 
@@ -726,7 +726,7 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 		 * refcnt, or delete the entry for this handle.
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
-		ret = nccl_ofi_mr_cache_del_entry(mr_cache, (void *)mr_handle);
+		ret = mr_cache->del_entry((void *)mr_handle);
 		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
@@ -774,7 +774,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 	int dev_id = device->dev_id;
 
 	int ret = 0;
-	nccl_ofi_mr_cache_t *mr_cache = domain->mr_cache;
+	nccl_ofi_mr_cache *mr_cache = domain->mr_cache;
 	nccl_net_ofi_sendrecv_mr_handle_t *ret_handle = nullptr;
 
 	if (mr_cache) {
@@ -784,7 +784,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 		 */
 		nccl_net_ofi_mutex_lock(&mr_cache->lock);
 		ret_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(
-			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey, endpoint_mr));
+			mr_cache->lookup_entry(ckey, endpoint_mr));
 
 		if (ret_handle) {
 			/* Cache hit */
@@ -802,7 +802,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 	}
 
 	if (mr_cache) {
-		ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, endpoint_mr, ret_handle);
+		ret = mr_cache->insert_entry(ckey, endpoint_mr, ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.

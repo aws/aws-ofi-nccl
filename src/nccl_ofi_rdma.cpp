@@ -2510,7 +2510,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		int ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
+		int ret = this->mr_cache->del_entry(mr_handle);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -2535,7 +2535,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_no_lock(nccl_net_ofi_rdma_mr_handle_t *
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		int ret = nccl_ofi_mr_cache_del_entry(this->mr_cache, mr_handle);
+		int ret = this->mr_cache->del_entry(mr_handle);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -2627,7 +2627,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		pthread_wrapper mr_cache_lock(&this->mr_cache->lock);
 
 		ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
-			nccl_ofi_mr_cache_lookup_entry(this->mr_cache, ckey, endpoint_mr));
+			this->mr_cache->lookup_entry(ckey, endpoint_mr));
 		if (ret_handle) {
 			/* Cache hit */
 			*mhandle = ret_handle;
@@ -2640,8 +2640,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 
-		ret = nccl_ofi_mr_cache_insert_entry(this->mr_cache,
-						     ckey,
+		ret = this->mr_cache->insert_entry(ckey,
 						     endpoint_mr,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
