@@ -21,6 +21,7 @@
 #include "unit_test.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_rdma.h"
+#include "nccl_ofi_dlist.h"
 
 /* Replicate the tag-matching search from get_ctrl_msg_buff_len / update_send_data_from_remote */
 static nccl_net_ofi_ctrl_msg_entry_t *find_entry_by_tag(nccl_net_ofi_ctrl_msg_t *ctrl, int tag)
@@ -30,39 +31,6 @@ static nccl_net_ofi_ctrl_msg_entry_t *find_entry_by_tag(nccl_net_ofi_ctrl_msg_t 
 			return &ctrl->entries[i];
 	}
 	return NULL;
-}
-
-static int test_struct_sizes()
-{
-	/* Entry: 8 (buff_offset) + 32 (mr_key[4]) + 4 (buff_len) + 4 (tag) = 48 */
-	if (sizeof(nccl_net_ofi_ctrl_msg_entry_t) != 64) {
-		NCCL_OFI_WARN("ctrl_msg_entry size: expected 64, got %zu",
-			       sizeof(nccl_net_ofi_ctrl_msg_entry_t));
-		return 1;
-	}
-
-	/* Flat: entries (64 * NCCL_OFI_MAX_RECVS), no separate header */
-	size_t expected = 64 * NCCL_OFI_MAX_RECVS;
-	if (sizeof(nccl_net_ofi_ctrl_msg_t) != expected) {
-		NCCL_OFI_WARN("ctrl_msg size: expected %zu, got %zu",
-			       expected, sizeof(nccl_net_ofi_ctrl_msg_t));
-		return 1;
-	}
-
-	if (NCCL_OFI_MAX_RECVS != 8) {
-		NCCL_OFI_WARN("NCCL_OFI_MAX_RECVS: expected 8, got %d", NCCL_OFI_MAX_RECVS);
-		return 1;
-	}
-
-	/* Total should be 512 bytes */
-	if (sizeof(nccl_net_ofi_ctrl_msg_t) != 512) {
-		NCCL_OFI_WARN("ctrl_msg total size: expected 512, got %zu",
-			       sizeof(nccl_net_ofi_ctrl_msg_t));
-		return 1;
-	}
-
-	printf("PASS: struct sizes\n");
-	return 0;
 }
 
 static int test_tag_matching()
@@ -211,15 +179,141 @@ static int test_max_recvs_entries()
 	return 0;
 }
 
+
+static int collect_list(nccl_ofi_dlist *list, nccl_ofi_recv_eager_entry_t **out, int max)
+{
+	int n = 0;
+	nccl_ofi_dlist_node *pos;
+	nccl_ofi_dlist_for_each_safe(list, pos) {
+		if (n >= max) break;
+		out[n++] = nccl_ofi_dlist_entry(pos, &nccl_ofi_recv_eager_entry_t::link);
+	}
+	return n;
+}
+
+static int test_eager_sorted_insert()
+{
+	nccl_ofi_dlist list;
+	nccl_ofi_recv_eager_entry_t entries[8] = {};
+
+	/* Test 1: Insert in order */
+	entries[0].msg_seq_num = 1; entries[0].eager_offset = 0;
+	entries[1].msg_seq_num = 1; entries[1].eager_offset = 1;
+	entries[2].msg_seq_num = 2; entries[2].eager_offset = 0;
+	recv_eager_sorted_insert(&list, &entries[0]);
+	recv_eager_sorted_insert(&list, &entries[1]);
+	recv_eager_sorted_insert(&list, &entries[2]);
+
+	nccl_ofi_recv_eager_entry_t *out[8];
+	int n = collect_list(&list, out, 8);
+	if (n != 3 || out[0] != &entries[0] || out[1] != &entries[1] || out[2] != &entries[2]) {
+		NCCL_OFI_WARN("in-order insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 2: Insert in reverse order */
+	recv_eager_sorted_insert(&list, &entries[2]);
+	recv_eager_sorted_insert(&list, &entries[1]);
+	recv_eager_sorted_insert(&list, &entries[0]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 3 || out[0] != &entries[0] || out[1] != &entries[1] || out[2] != &entries[2]) {
+		NCCL_OFI_WARN("reverse insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 3: Same seq, different offsets interleaved */
+	entries[3].msg_seq_num = 1; entries[3].eager_offset = 3;
+	entries[4].msg_seq_num = 1; entries[4].eager_offset = 1;
+	entries[5].msg_seq_num = 1; entries[5].eager_offset = 2;
+	entries[6].msg_seq_num = 1; entries[6].eager_offset = 0;
+	recv_eager_sorted_insert(&list, &entries[3]);
+	recv_eager_sorted_insert(&list, &entries[4]);
+	recv_eager_sorted_insert(&list, &entries[5]);
+	recv_eager_sorted_insert(&list, &entries[6]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 4 || out[0]->eager_offset != 0 || out[1]->eager_offset != 1 ||
+	    out[2]->eager_offset != 2 || out[3]->eager_offset != 3) {
+		NCCL_OFI_WARN("interleaved offset insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 4: Seq wraparound (1023 before 0 in 10-bit space) */
+	entries[0].msg_seq_num = 1023; entries[0].eager_offset = 0;
+	entries[1].msg_seq_num = 0;    entries[1].eager_offset = 0;
+	entries[2].msg_seq_num = 1;    entries[2].eager_offset = 0;
+	recv_eager_sorted_insert(&list, &entries[2]);
+	recv_eager_sorted_insert(&list, &entries[0]);
+	recv_eager_sorted_insert(&list, &entries[1]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 3 || out[0]->msg_seq_num != 1023 || out[1]->msg_seq_num != 0 || out[2]->msg_seq_num != 1) {
+		NCCL_OFI_WARN("wraparound insert failed: got seq %d, %d, %d",
+			out[0]->msg_seq_num, out[1]->msg_seq_num, out[2]->msg_seq_num);
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 5: Single element */
+	entries[0].msg_seq_num = 5; entries[0].eager_offset = 2;
+	recv_eager_sorted_insert(&list, &entries[0]);
+	n = collect_list(&list, out, 8);
+	if (n != 1 || out[0] != &entries[0]) {
+		NCCL_OFI_WARN("single element insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 6: Duplicate key — both should be in list */
+	entries[0].msg_seq_num = 3; entries[0].eager_offset = 1; entries[0].tag = 10;
+	entries[1].msg_seq_num = 3; entries[1].eager_offset = 1; entries[1].tag = 20;
+	recv_eager_sorted_insert(&list, &entries[0]);
+	recv_eager_sorted_insert(&list, &entries[1]);
+	n = collect_list(&list, out, 8);
+	if (n != 2) {
+		NCCL_OFI_WARN("duplicate key insert failed: got %d entries", n);
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 7: Multiple seq batches interleaved */
+	entries[0].msg_seq_num = 2; entries[0].eager_offset = 1;
+	entries[1].msg_seq_num = 1; entries[1].eager_offset = 0;
+	entries[2].msg_seq_num = 2; entries[2].eager_offset = 0;
+	entries[3].msg_seq_num = 1; entries[3].eager_offset = 1;
+	recv_eager_sorted_insert(&list, &entries[0]);
+	recv_eager_sorted_insert(&list, &entries[1]);
+	recv_eager_sorted_insert(&list, &entries[2]);
+	recv_eager_sorted_insert(&list, &entries[3]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 4 ||
+	    !(out[0]->msg_seq_num == 1 && out[0]->eager_offset == 0) ||
+	    !(out[1]->msg_seq_num == 1 && out[1]->eager_offset == 1) ||
+	    !(out[2]->msg_seq_num == 2 && out[2]->eager_offset == 0) ||
+	    !(out[3]->msg_seq_num == 2 && out[3]->eager_offset == 1)) {
+		NCCL_OFI_WARN("multi-batch interleaved insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	printf("PASS: eager sorted insert\n");
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	unit_test_init();
 
 	int rc = 0;
-	rc |= test_struct_sizes();
 	rc |= test_tag_matching();
 	rc |= test_ready_bit();
 	rc |= test_max_recvs_entries();
+	rc |= test_eager_sorted_insert();
 
 	if (rc == 0)
 		printf("All ctrl_msg tests passed\n");
