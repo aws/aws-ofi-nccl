@@ -7,3 +7,4 @@ gin
 grouped_recv
 gin_put_gdaki
 gin_gdaki_misconfig_probe
+eager_multirecv
