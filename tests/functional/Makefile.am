@@ -33,7 +33,7 @@ CXXLINK = OMPI_CXX="$(CXX)" MPICH_CXX="$(CXX)" \
 if ENABLE_FUNC_TESTS
 noinst_HEADERS = functional_test.h
 
-bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin grouped_recv
+bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin grouped_recv eager_multirecv
 
 base_sources = functional_test.cpp
 
@@ -45,3 +45,4 @@ reuse_listen_comm_SOURCES = $(base_sources) reuse_listen_comm.cpp
 gin_SOURCES = $(base_sources) gin.cpp
 grouped_recv_SOURCES = $(base_sources) grouped_recv.cpp
 endif
+eager_multirecv_SOURCES = $(base_sources) eager_multirecv.cpp

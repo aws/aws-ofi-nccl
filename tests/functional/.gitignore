@@ -5,3 +5,4 @@ reuse_listen_comm
 ring
 gin
 grouped_recv
+eager_multirecv
