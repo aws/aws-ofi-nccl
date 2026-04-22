@@ -56,7 +56,6 @@ noinst_HEADERS = \
 	stats/histogram_binner.h \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
-	tuner/nccl_ofi_tuner.h \
 	tuner/nccl_ofi_tuner_common.h \
 	tuner/nccl_ofi_tuner_process_config.h \
 	tuner/nccl_ofi_tuner_region.h \

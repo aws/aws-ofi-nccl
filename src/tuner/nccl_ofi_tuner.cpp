@@ -23,7 +23,6 @@
 
 #include "tuner/nccl_ofi_tuner_region.h"
 #include "tuner/nccl_ofi_tuner_model.h"
-#include "tuner/nccl_ofi_tuner.h"
 #include "tuner/nccl_ofi_tuner_process_config.h"
 
 pthread_mutex_t nccl_ofi_tuner_ctx_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -177,7 +176,8 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info(void *context,
 	return ret;
 }
 
-extern "C" const ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
+/* Tuner v3 was introduced in NCCL 2.22.3 */
+NCCL_OFI_EXPORT_SYMBOL ncclTuner_v3_t ncclTunerPlugin_v3 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info,
 					   .destroy = nccl_ofi_tuner_destroy};
@@ -224,7 +224,8 @@ static ncclResult_t nccl_ofi_tuner_finalize(void *context)
 	return nccl_ofi_tuner_destroy(context);
 }
 
-extern "C" const ncclTuner_v6_t ncclTunerPlugin_v6 = {.name = "nccl_ofi_tuner",
+/* Tuner v6 was introduced in NCCL 2.30.3 */
+NCCL_OFI_EXPORT_SYMBOL ncclTuner_v6_t ncclTunerPlugin_v6 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init_v6,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v6,
 					   .finalize = nccl_ofi_tuner_finalize,
@@ -255,7 +256,8 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
 	return ret;
 }
 
-extern "C" const ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
+/* Tuner v2 was introduced in NCCL 2.21.5 */
+NCCL_OFI_EXPORT_SYMBOL ncclTuner_v2_t ncclTunerPlugin_v2 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init_v2,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v2,
 					   .destroy = nccl_ofi_tuner_destroy};
@@ -324,7 +326,8 @@ static ncclResult_t nccl_ofi_tuner_get_coll_info_v1(
 					    nChannels);
 }
 
-extern "C" const ncclTuner_v1_t ncclTunerPlugin_v1 = {.name = "nccl_ofi_tuner",
+/* Tuner v1 was introduced in NCCL 2.19.1 */
+NCCL_OFI_EXPORT_SYMBOL ncclTuner_v1_t ncclTunerPlugin_v1 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init_v1,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v1,
 					   .destroy = nccl_ofi_tuner_destroy_v1};
