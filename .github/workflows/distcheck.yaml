@@ -8,12 +8,6 @@ on:
       - main
       - v*
   pull_request:
-env:
-  # note, related to issue around actions/checkout@v4, linked below. This
-  # environment variable is also now needed, as of july 2024.
-  # ref: https://github.com/actions/runner/issues/2906#issuecomment-2208546951
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: 'true'
-
 concurrency:
   group: ${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
@@ -56,7 +50,7 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-al2023:${{ matrix.sdk }}-efa${{ matrix.efainstaller }}
     name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/${{ matrix.build-type }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -118,7 +112,7 @@ jobs:
     name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}/${{ matrix.build-type }}
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -190,7 +184,7 @@ jobs:
     name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/${{matrix.tracing}}/${{ matrix.build-type }}
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -260,7 +254,7 @@ jobs:
     name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/Thread Safety Analysis
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -312,7 +306,7 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-codechecker:${{ matrix.sdk }}-latest
     name: CodeChecker - ${{ matrix.sdk }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

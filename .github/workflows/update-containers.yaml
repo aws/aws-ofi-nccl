@@ -15,7 +15,7 @@ jobs:
       ubuntu2404: ${{ steps.set-matrix.outputs.ubuntu2404 }}
       codechecker: ${{ steps.set-matrix.outputs.codechecker }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       - id: set-matrix
         run: |
           echo "amazonlinux=$(jq -c '.matrix_config.amazonlinux' .github/matrix-config.json)" >> $GITHUB_OUTPUT
@@ -32,20 +32,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Build and push amazonlinux containers
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: docker/base
           file: docker/base/Dockerfile.al2023
@@ -68,20 +68,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Build and push ubuntu containers
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: docker/base
           file: docker/base/Dockerfile.ubuntu
@@ -106,20 +106,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Ubuntu 24.04 containers
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: docker/base
           file: docker/base/Dockerfile.ubuntu2404
@@ -142,20 +142,20 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v6
       
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
           
       - name: Build and push CodeChecker containers
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v6
         with:
           context: docker/base
           file: docker/base/Dockerfile.codechecker
