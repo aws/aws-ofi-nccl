@@ -1,10 +1,11 @@
 /*
  * Copyright (c) 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
- * GDAKI stub implementations for the GIN plugin API.
- * These provide the full ncclGin_v13_t plugin for GDAKI mode.
- *
- * Task: GDAKI stub implementation
+ * GDAKI plugin for the GIN API. Shared APIs (init, devices, listen, connect,
+ * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, ginProgress, finalize)
+ * are reused from the proxy-side implementations in nccl_ofi_gin_api.cpp.
+ * Only the GDAKI-specific stubs (createContext/destroyContext/get_properties/
+ * regMr*-return-error/queryLastError) live here until they are implemented.
  */
 
 #include "config.h"
@@ -73,86 +74,37 @@ static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size_t size, int type,
-						 uint64_t mrFlags, void **mhandle, void **ginHandle)
-{
-	NCCL_OFI_WARN("gin GDAKI: regMrSym not yet implemented");
-	return ncclInternalError;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data, size_t size,
-						       int type, uint64_t offset, int fd,
-						       uint64_t mrFlags, void **mhandle,
-						       void **ginHandle)
-{
-	NCCL_OFI_WARN("gin GDAKI: regMrSymDmaBuf not yet implemented");
-	return ncclInternalError;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_deregMrSym(void *collComm, void *mhandle)
-{
-	NCCL_OFI_WARN("gin GDAKI: deregMrSym not yet implemented");
-	return ncclSuccess;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_closeColl(void *collComm)
-{
-	NCCL_OFI_WARN("gin GDAKI: closeColl not yet implemented");
-	return ncclSuccess;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_closeListen(void *listenComm)
-{
-	NCCL_OFI_WARN("gin GDAKI: closeListen not yet implemented");
-	return ncclSuccess;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_ginProgress(void *ginCtx)
-{
-	NCCL_OFI_WARN("gin GDAKI: ginProgress not yet implemented");
-	return ncclSuccess;
-}
-
 static ncclResult_t nccl_ofi_gin_gdaki_queryLastError(void *ginCtx, bool *hasError)
 {
-	NCCL_OFI_WARN("gin GDAKI: queryLastError not yet implemented");
 	*hasError = false;
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_gdaki_finalize(void *ctx)
-{
-	NCCL_OFI_WARN("gin GDAKI: finalize not yet implemented");
-	return ncclSuccess;
-}
-
 /*
- * GDAKI plugin. Function pointers for the ncclGin_v13_t interface:
- * - iput, iputSignal, iget, iflush, test are nullptr (no CPU involvement
- *   in GDAKI mode)
- * - init, devices, listen, connect are copied from the proxy plugin at
- *   init time.
+ * GDAKI plugin. Shared APIs are wired directly from nccl_ofi_gin_api.cpp;
+ * GDAKI-specific ones above. iput/iputSignal/iget/iflush/test are nullptr —
+ * no CPU involvement in GDAKI mode.
  */
 ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.name = "Libfabric_GDAKI",
-	.init = nullptr,	/* Copied from proxy plugin at init time */
-	.devices = nullptr,	/* Copied from proxy plugin at init time */
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
 	.getProperties = nccl_ofi_gin_gdaki_get_properties,
-	.listen = nullptr,	/* Copied from proxy plugin at init time */
-	.connect = nullptr,	/* Copied from proxy plugin at init time */
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
 	.createContext = nccl_ofi_gin_gdaki_createContext,
-	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
-	.regMrSymDmaBuf = nccl_ofi_gin_gdaki_regMrSymDmaBuf,
-	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
+	.regMrSym = nccl_ofi_gin_regMrSym,
+	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.deregMrSym = nccl_ofi_gin_deregMrSym,
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
-	.closeColl = nccl_ofi_gin_gdaki_closeColl,
-	.closeListen = nccl_ofi_gin_gdaki_closeListen,
-	.iput = nullptr,	/* No CPU involvement in GDAKI mode */
-	.iputSignal = nullptr,	/* No CPU involvement in GDAKI mode */
-	.iget = nullptr,	/* No CPU involvement in GDAKI mode */
-	.iflush = nullptr,	/* No CPU involvement in GDAKI mode */
-	.test = nullptr,	/* No CPU involvement in GDAKI mode */
-	.ginProgress = nccl_ofi_gin_gdaki_ginProgress,
+	.closeColl = nccl_ofi_gin_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.iput = nullptr,
+	.iputSignal = nullptr,
+	.iget = nullptr,
+	.iflush = nullptr,
+	.test = nullptr,
+	.ginProgress = nccl_ofi_gin_ginProgress,
 	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
-	.finalize = nccl_ofi_gin_gdaki_finalize
+	.finalize = nccl_ofi_gin_finalize
 };
