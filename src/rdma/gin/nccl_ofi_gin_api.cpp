@@ -30,7 +30,7 @@ struct nccl_ofi_gin_context {
 	explicit nccl_ofi_gin_context(uint64_t id) : comm_id(id) {}
 };
 
-static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
+ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
 {
 	if (ofi_log_function == nullptr) {
 		ofi_log_function = logFunction;
@@ -76,25 +76,19 @@ static ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogg
 	}
 
 	/*
-	 * Morph the exported plugin to GDAKI if requested.
-	 *
-	 * Copy shared functions (init, devices, listen, connect) from the
-	 * proxy plugin into the GDAKI plugin, then overwrite the exported
-	 * symbol with the GDAKI plugin.
+	 * Morph the exported plugin to GDAKI if requested. Shared plugin APIs
+	 * are wired into nccl_ofi_gin_gdaki_plugin at compile time, so we just
+	 * overwrite the exported symbol.
 	 */
 	if (nccl_ofi_gin_gdaki_enabled()) {
 		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: GDAKI mode enabled (OFI_NCCL_GIN_GDAKI=1)");
-		nccl_ofi_gin_gdaki_plugin.init = ncclGinPlugin_v13.init;
-		nccl_ofi_gin_gdaki_plugin.devices = ncclGinPlugin_v13.devices;
-		nccl_ofi_gin_gdaki_plugin.listen = ncclGinPlugin_v13.listen;
-		nccl_ofi_gin_gdaki_plugin.connect = ncclGinPlugin_v13.connect;
 		memcpy(&ncclGinPlugin_v13, &nccl_ofi_gin_gdaki_plugin, sizeof(ncclGinPlugin_v13));
 	}
 
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_devices(int *ndev)
+ncclResult_t nccl_ofi_gin_devices(int *ndev)
 {
 	return nccl_net_ofi_devices(ndev);
 }
@@ -135,7 +129,7 @@ static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t 
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listenComm)
+ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listenComm)
 {
 	/* Extract communicator ID from GIN context */
 	nccl_ofi_gin_context *context = static_cast<nccl_ofi_gin_context *>(ctx);
@@ -195,7 +189,7 @@ static ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void *
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
+ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
 					 void *listenComm, void **collComm)
 {
 	auto *gin_handles = reinterpret_cast<nccl_net_ofi_conn_handle_t **>(handles);
@@ -214,7 +208,7 @@ static ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks,
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-static ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
 						uint64_t offset, int fd, uint64_t mrFlags,
 						void **mhandle, void **ginHandle)
 {
@@ -243,14 +237,14 @@ static ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int type,
+ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int type,
 					  uint64_t mrFlags, void **mhandle, void **ginHandle)
 {
 	return nccl_ofi_gin_regMrSymDmaBuf(collComm, data, size, type, 0, -1, mrFlags, mhandle,
 					   ginHandle);
 }
 
-static ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
+ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
 {
 	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	auto *mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(mhandle);
@@ -263,7 +257,7 @@ static ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
 	return ncclSuccess;
 }
 
-static ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
+ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	int ret = gin_comm->get_resources().progress();
@@ -275,7 +269,7 @@ static ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-static ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
+ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 
@@ -286,7 +280,7 @@ static ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-static ncclResult_t nccl_ofi_gin_closeListen(void *listenComm)
+ncclResult_t nccl_ofi_gin_closeListen(void *listenComm)
 {
 	delete static_cast<nccl_ofi_rdma_gin_listen_comm *>(listenComm);
 	return ncclSuccess;
@@ -330,7 +324,7 @@ static ncclResult_t nccl_ofi_gin_iput(void *collComm, uint64_t srcOff, void *src
 				       0, nullptr, 0, 0, request);
 }
 
-static ncclResult_t nccl_ofi_gin_finalize(void *ctx)
+ncclResult_t nccl_ofi_gin_finalize(void *ctx)
 {
 	/* Clean up the GIN context structure.
 	   If ctx is NULL, init() was never called or failed, so there's
