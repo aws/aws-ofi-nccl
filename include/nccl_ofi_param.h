@@ -380,4 +380,23 @@ OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSIO
  */
 OFI_NCCL_PARAM(bool, gin_gdaki, "GIN_GDAKI", false);
 
+/*
+ * Maximum number of outstanding put-signal requests per peer for the GIN
+ * plugin. Controls the size of the per-peer request ring used to track
+ * in-flight putSignal sequence numbers before an ACK is received. Must be
+ * a power of two. Default 128 preserves the historical compile-time limit.
+ *
+ * Applications that issue many concurrent putSignal operations per peer
+ * (for example, DeepEP V2 on AWS EFA with QP >= 5) may overrun the
+ * 128-slot ring and trigger "Next sequence number is in use" asserts. In
+ * such cases this can be raised to 256, 512, or 1024 at the cost of a
+ * small increase in per-peer memory (1 byte per slot per peer).
+ *
+ * The upper bound is GIN_IMM_SEQ_MASK + 1 (defined in
+ * rdma/gin/nccl_ofi_gin_types.h), which is 2048 by default, but must
+ * also leave at least 2 * GIN_ACK_INTERVAL (64) slots of headroom so
+ * that merged-ack ranges fit inside the window.
+ */
+OFI_NCCL_PARAM(size_t, gin_max_requests, "GIN_MAX_REQUESTS", 128);
+
 #endif // End NCCL_OFI_PARAM_H_
