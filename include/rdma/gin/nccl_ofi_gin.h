@@ -93,7 +93,7 @@ struct nccl_ofi_gin_peer_rank_info {
 	   This allows the remote rank to enforce ordering of signal delivery
 
 	   A 16-bit integer is large enough to store all outstanding requests, because the
-	   plugin and NCCL limit max inflight requests. (See NCCL_OFI_MAX_REQUESTS.) */
+	   plugin and NCCL limit max inflight requests. (See OFI_NCCL_GIN_MAX_REQUESTS.) */
 	uint16_t next_target_seq_num = 0;
 
 	/**
@@ -103,12 +103,16 @@ struct nccl_ofi_gin_peer_rank_info {
 	uint16_t next_delivered_signal_seq_num = 0;
 
 	/* Flag, stored at initiator, indicating the given sequence number (mod
-	   max_requests) is in use at initiator side. This allows initiator to
+	   gin_max_requests_) is in use at initiator side. This allows initiator to
 	   track in-use sequence numbers to avoid overflow and only mark
 	   iputSignal complete when it has received the ack from the target,
 	   which has delivered the signal atomic.
+
+	   Sized at comm construction time to the runtime value of
+	   OFI_NCCL_GIN_MAX_REQUESTS. Using uint8_t rather than bool for
+	   stable layout and to avoid std::vector<bool> proxy semantics.
 	   */
-	bool active_put_signal[NCCL_OFI_MAX_REQUESTS];
+	std::vector<uint8_t> active_put_signal;
 	
 	/* Counter for consecutive PUT-only messages without ACK.
 	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
@@ -213,12 +217,12 @@ public:
 
 	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num) const
 	{
-		return rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS];
+		return rank_comms[peer_rank].active_put_signal[msg_seq_num % gin_max_requests_] != 0;
 	}
 
 	void clear_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
 	{
-		rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = false;
+		rank_comms[peer_rank].active_put_signal[msg_seq_num % gin_max_requests_] = 0;
 	}
 
 	void clear_ack_range(uint32_t peer_rank, uint16_t ack_seq_num, uint16_t ack_count)
@@ -301,6 +305,11 @@ public:
 	int handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
 				  const gin_ack_msg_t *ack_msg);
 
+	/* Return the effective per-peer request ring size that was established
+	   for this communicator (from OFI_NCCL_GIN_MAX_REQUESTS, or the
+	   default of 128). */
+	size_t get_max_requests() const { return gin_max_requests_; }
+
 private:
 	nccl_ofi_gin_resources &resources;
 	nccl_ofi_gin_resource_releaser resource_releaser;
@@ -310,6 +319,10 @@ private:
 	int rank;
 	int nranks;
 	int dev;
+
+	/* Per-peer request ring size (power of two). Read once from
+	   OFI_NCCL_GIN_MAX_REQUESTS at comm construction. */
+	size_t gin_max_requests_ = 128;
 
 	/* AllGather ring for metadata exchange */
 	nccl_ofi_gin_allgather_comm ag_comm;

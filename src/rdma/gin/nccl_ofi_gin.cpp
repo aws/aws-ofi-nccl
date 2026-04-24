@@ -8,8 +8,10 @@
 
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_gdrcopy.h"
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_tracepoint.h"
+#include "rdma/gin/nccl_ofi_gin_types.h"
 
 struct gin_connect_handle {
 	/* Number of rails */
@@ -25,6 +27,52 @@ struct gin_connect_handle {
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
 };
 
+/**
+ * Compute the effective per-peer request ring size for the GIN plugin.
+ *
+ * Reads OFI_NCCL_GIN_MAX_REQUESTS, rounds down to a power of two, and
+ * clamps to [1, GIN_IMM_SEQ_MASK + 1 - 2*GIN_ACK_INTERVAL]. The upper
+ * bound keeps at least 2*GIN_ACK_INTERVAL slots of headroom inside the
+ * sequence-number window so merged ACK ranges fit.
+ *
+ * Returns the default value (128) on any invalid input.
+ */
+static size_t gin_resolve_max_requests()
+{
+	constexpr size_t default_val = 128;
+	constexpr size_t seq_space = GIN_IMM_SEQ_MASK + 1;
+	/* Keep headroom so ACK merged ranges never wrap past the seq window. */
+	constexpr size_t hi_bound = seq_space - 2 * GIN_ACK_INTERVAL;
+
+	size_t v = ofi_nccl_gin_max_requests();
+	if (v == 0) {
+		NCCL_OFI_WARN("OFI_NCCL_GIN_MAX_REQUESTS=0 is invalid, using default %zu",
+			      default_val);
+		return default_val;
+	}
+
+	/* Round down to the nearest power of two. */
+	size_t pow2 = 1;
+	while ((pow2 << 1) <= v) {
+		pow2 <<= 1;
+	}
+	if (pow2 != v) {
+		NCCL_OFI_WARN("OFI_NCCL_GIN_MAX_REQUESTS=%zu is not a power of two,"
+			      " rounding down to %zu", v, pow2);
+		v = pow2;
+	}
+
+	if (v > hi_bound) {
+		NCCL_OFI_WARN("OFI_NCCL_GIN_MAX_REQUESTS=%zu exceeds max %zu"
+			      " (GIN_IMM_SEQ_MASK+1 minus ACK headroom), clamping",
+			      v, hi_bound);
+		v = 1;
+		while ((v << 1) <= hi_bound) v <<= 1;
+	}
+
+	return v;
+}
+
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
 				     nccl_net_ofi_recv_comm *r_comm_)
@@ -32,6 +80,8 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
       dev(s_comm_->dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
       metadata_fl(nullptr, &freelist_deleter)
 {
+	gin_max_requests_ = gin_resolve_max_requests();
+
 	auto &ep = resources.get_ep();
 
 	std::lock_guard scoped_ep_lock(ep.ep_lock);
@@ -171,6 +221,10 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	}
 
 	gin_comm->rank_comms.resize(nranks);
+	/* Size each peer's request-ring tracking vector to the runtime max. */
+	for (auto &rc : gin_comm->rank_comms) {
+		rc.active_put_signal.assign(gin_comm->gin_max_requests_, 0);
+	}
 
 	/**
 	 * Exchange connection metadata with all ranks using bootstrap ring
@@ -424,8 +478,11 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	uint16_t rail_id = resources.get_next_rail();
 	auto scheduler = gin_ep.get_scheduler();
 
-	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS])) {
-		NCCL_OFI_WARN("Next sequence number is in use");
+	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % gin_max_requests_] != 0)) {
+		NCCL_OFI_WARN("Next sequence number is in use (gin_max_requests=%zu)."
+			      " Raise OFI_NCCL_GIN_MAX_REQUESTS if your workload"
+			      " issues many concurrent putSignals per peer.",
+			      gin_max_requests_);
 		assert(false);
 		return -EBUSY;
 	}
@@ -585,7 +642,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	/* Update umbrella request with send_req */
 	req->send_req = send_req;
 
-	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = is_ack_requested;
+	rank_comm.active_put_signal[msg_seq_num % gin_max_requests_] = is_ack_requested ? 1 : 0;
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
 
 	*request = req;
