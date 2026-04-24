@@ -49,7 +49,7 @@ const char *pcie_gen[] = {"2.5", "5.0", "8.0", "16.0", "32.0", "64.0"};
 /*
  * @brief Create vector of nccl_ofi_topo_data_t structs
  *
- * Allocate vector and initalize elements.
+ * Allocate vector and initialize elements.
  *
  * @param	size
  *		Size of the vector
@@ -1196,7 +1196,7 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
  *		The array has to be allocated by the caller of this function.
  *		There must be space for at least `MAX_DEV_PROPERTY_LENGTH` 
  *		characters in addition to the delimiting `\0`.
- * @return	0, on sucess
+ * @return	0, on success
  *		non-zero, on error
  */
 static int get_device_property(unsigned domain, unsigned bus,
@@ -1271,7 +1271,7 @@ static int get_device_property(unsigned domain, unsigned bus,
  *		True if device is a libfabric NIC
  * @return	Link speed index into `pcie_gen`, on success.
  * @return	Link width, on success.
- * @return	0, on sucess
+ * @return	0, on success
  *		non-zero, on error
  */
 static int get_pci_device_speed(hwloc_obj_t node, bool is_nic,

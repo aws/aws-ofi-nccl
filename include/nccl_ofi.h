@@ -253,7 +253,7 @@ typedef struct nccl_ofi_properties {
 	unsigned int max_group_receives;
 	/** regMr is global if is not tied to a particular comm **/
 	int regIsGlobal;
-	/** Maximum size of buffer supported to be transfered via
+	/** Maximum size of buffer supported to be transferred via
 	 * RMA write inline operation **/
 	size_t max_write_inline_size;
 	/** Maximum size of the memory region remote access key in bytes **/
