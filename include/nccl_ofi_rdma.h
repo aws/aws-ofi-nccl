@@ -1059,7 +1059,7 @@ public:
 	 * for the connect response message, and (e) calls finish_connect.
 	 *
 	 * The `finish_connect' method completes the initialization of the remaining
-	 * communicator rails using the received connect responce message.
+	 * communicator rails using the received connect response message.
 	 */
 	int connect(nccl_net_ofi_conn_handle_t *handle,
 		    nccl_net_ofi_send_comm **send_comm,
@@ -1232,7 +1232,7 @@ public:
 	/**
 	 * @brief	Creates send communication for a peer
 	 *
-	 * Allocate and Initalize send communicator and its resources; Only
+	 * Allocate and Initialize send communicator and its resources; Only
 	 * the first communicator control rail is initialized. Use function
 	 * init_send_comm_rails() to initialize the remaining communicator
 	 * rails.

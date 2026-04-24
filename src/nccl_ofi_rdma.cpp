@@ -2178,7 +2178,7 @@ static int init_send_comm_rails(nccl_net_ofi_rdma_send_comm *s_comm,
  * @brief	Execute second part of the connect functionality from listen/connect/accept
  *		connection establishment
  *
- * Initalize communicator rails `1..num_rails-1'. set communicator
+ * Initialize communicator rails `1..num_rails-1'. set communicator
  * connection state to true.
  *
  * This method is to be called after the connect response message

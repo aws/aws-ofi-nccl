@@ -52,7 +52,7 @@ static_assert(offsetof(struct nccl_ofi_mr_ckey, fi_mr_dmabuf) == 0,
               "Cache keys must be safe to cast to 'struct fi_mr_dmabuf'");
 #endif
 
-/* Alignement of MR cache and key creation */
+/* Alignment of MR cache and key creation */
 extern size_t mr_cache_alignment;
 
 static inline const char *nccl_ofi_mr_ckey_type_str(nccl_ofi_mr_ckey_ref ckey)

@@ -347,7 +347,7 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 
 /*
  * validate that EFA is using RDMA write natively and not in an
- * emulated fasion.
+ * emulated fashion.
  */
 int PlatformAWS::validate_rdma_write(struct fid_ep *ep)
 {
