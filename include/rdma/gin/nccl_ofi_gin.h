@@ -14,6 +14,8 @@
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_tracepoint.h"
 
+#include <bitset>
+
 /**
  * Get singleton instance of the device copy context shared across all GIN communicators.
  */
@@ -103,13 +105,18 @@ struct nccl_ofi_gin_peer_rank_info {
 	uint16_t next_delivered_signal_seq_num = 0;
 
 	/* Flag, stored at initiator, indicating the given sequence number (mod
-	   max_requests) is in use at initiator side. This allows initiator to
-	   track in-use sequence numbers to avoid overflow and only mark
+	   the sequence space) is in use at initiator side. This allows initiator
+	   to track in-use sequence numbers to avoid overflow and only mark
 	   iputSignal complete when it has received the ack from the target,
 	   which has delivered the signal atomic.
-	   */
-	bool active_put_signal[NCCL_OFI_MAX_REQUESTS];
 	
+	   Sized to the full sequence number space so that every in-flight
+	   seq number maps to a unique slot, regardless of how many contexts
+	   are active. */
+	std::bitset<GIN_IMM_SEQ_MASK + 1> active_put_signal;
+	static_assert(GIN_IMM_SEQ_MASK + 1 <= UINT16_MAX,
+		      "active_put_signal must fit within the 16-bit seq_num range");
+
 	/* Counter for consecutive PUT-only messages without ACK.
 	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
 	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
@@ -213,12 +220,12 @@ public:
 
 	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num) const
 	{
-		return rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS];
+		return rank_comms[peer_rank].active_put_signal.test(msg_seq_num & GIN_IMM_SEQ_MASK);
 	}
 
 	void clear_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
 	{
-		rank_comms[peer_rank].active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = false;
+		rank_comms[peer_rank].active_put_signal.reset(msg_seq_num & GIN_IMM_SEQ_MASK);
 	}
 
 	void clear_ack_range(uint32_t peer_rank, uint16_t ack_seq_num, uint16_t ack_count)
