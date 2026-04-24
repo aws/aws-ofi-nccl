@@ -43,6 +43,7 @@ noinst_HEADERS = \
 	nccl_ofi_platform.h \
 	nccl_ofi_pthread.h \
 	nccl_ofi_rdma.h \
+	nccl_ofi_rocm.h \
 	nccl_ofi_scheduler.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_spinlock.h \
