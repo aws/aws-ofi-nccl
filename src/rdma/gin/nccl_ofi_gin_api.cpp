@@ -384,6 +384,16 @@ static ncclResult_t nccl_ofi_gin_getProperties_v13(int dev, ncclNetProperties_v1
 static ncclResult_t nccl_ofi_gin_createContext_v13(void *collComm, ncclGinConfig_v13_t *config,
 						   void **ginCtx, ncclNetDeviceHandle_v11_t **devHandle)
 {
+	int max_contexts = (GIN_IMM_SEQ_MASK + 1) / NCCL_NET_MAX_REQUESTS;
+	if (config->nContexts > max_contexts) {
+		NCCL_OFI_INFO(NCCL_INIT, "GIN: requested %d contexts exceeds max %d "
+			      "(seq space %d / max_requests %d)",
+			      config->nContexts,
+			      max_contexts,
+			      GIN_IMM_SEQ_MASK + 1,
+			      NCCL_NET_MAX_REQUESTS);
+	}
+
 	*ginCtx = collComm;
 	if (devHandle != nullptr)
 		*devHandle = nullptr;

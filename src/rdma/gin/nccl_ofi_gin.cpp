@@ -424,7 +424,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	uint16_t rail_id = resources.get_next_rail();
 	auto scheduler = gin_ep.get_scheduler();
 
-	if (OFI_UNLIKELY(rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS])) {
+	if (OFI_UNLIKELY(rank_comm.active_put_signal.test(msg_seq_num & GIN_IMM_SEQ_MASK))) {
 		NCCL_OFI_WARN("Next sequence number is in use");
 		assert(false);
 		return -EBUSY;
@@ -585,7 +585,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	/* Update umbrella request with send_req */
 	req->send_req = send_req;
 
-	rank_comm.active_put_signal[msg_seq_num % NCCL_OFI_MAX_REQUESTS] = is_ack_requested;
+	rank_comm.active_put_signal.set(msg_seq_num & GIN_IMM_SEQ_MASK, is_ack_requested);
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
 
 	*request = req;
