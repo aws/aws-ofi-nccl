@@ -2549,8 +2549,32 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_no_lock(nccl_net_ofi_rdma_mr_handle_t *
 }
 
 
+int nccl_net_ofi_rdma_domain_t::mr_bind_and_enable(struct fid_mr *mr,
+						   struct fid_ep *ofi_ep,
+						   uint16_t rail_id,
+						   const char *rail_type)
+{
+	int ret = fi_mr_bind(mr, &ofi_ep->fid, 0);
+	if (ret != 0) {
+		NCCL_OFI_WARN("fi_mr_bind (%s rail %u) failed: rc=%d, error=%s",
+			      rail_type, rail_id, ret, fi_strerror(-ret));
+		return ret;
+	}
+
+	ret = fi_mr_enable(mr);
+	if (ret != 0) {
+		NCCL_OFI_WARN("fi_mr_enable failed on %s rail %u with rc=%d, error=%s",
+			      rail_type, rail_id, ret, fi_strerror(-ret));
+		return ret;
+	}
+
+	return 0;
+}
+
+
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
+						 nccl_net_ofi_rdma_ep_t *ep,
 						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
@@ -2560,8 +2584,19 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 
 	*mhandle = NULL;
 
-	/* Allocate rdma memory registration handle */
-	auto *ret_handle = new nccl_net_ofi_rdma_mr_handle_t(num_rails);
+	/* Allocate rdma memory registration handle.
+	 *
+	 * In FI_MR_ENDPOINT mode (ep != nullptr) a separate fid_mr is registered
+	 * for each ctrl ep rail, so nctrl = ep->num_control_rails.
+	 *
+	 * In non-endpoint-MR mode (ep == nullptr) a single domain-level fid_mr is
+	 * shared across all rails.  We still size mr_ctrl[] to num_rails and alias
+	 * each entry to the corresponding mr_data[] entry so that IO-path callers
+	 * can always use mr_ctrl[rail_id] unconditionally, without checking
+	 * whether the vector is populated. */
+	uint16_t nctrl = ep ? ep->num_control_rails
+	                    : static_cast<uint16_t>(num_rails);
+	auto *ret_handle = new nccl_net_ofi_rdma_mr_handle_t(num_rails, nctrl);
 
 	if (key_pool->get_size() != 0) {
 		auto key = key_pool->allocate_id();
@@ -2581,7 +2616,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 		goto error;
 	}
 
-	/* Register memory on each rail */
+	/* Register and bind memory on each data rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
@@ -2589,12 +2624,53 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 							      &mr_attr,
 							      regattr_flags);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
-			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu",
+			NCCL_OFI_WARN("Could not register memory on data rail %u with flag %lu",
 				      rail_id, regattr_flags);
 			ret = mr_result.error_code;
 			goto error;
 		}
-		ret_handle->mr[rail_id] = std::move(mr_result.resource);
+		ret_handle->mr_data[rail_id] = std::move(mr_result.resource);
+
+		if (ep != nullptr) {
+			nccl_net_ofi_rdma_ep_rail_t *ep_rail = ep->rdma_endpoint_get_rail(rail_id);
+			struct fid_ep *ofi_ep = ep_rail->ofi_ep.get();
+			ret = mr_bind_and_enable(ret_handle->mr_data[rail_id].get(), ofi_ep,
+						 rail_id, "data");
+			if (ret != 0) goto error;
+		}
+	}
+
+	if (ep != nullptr) {
+		/* FI_MR_ENDPOINT: register a separate fid_mr per ctrl rail, bind it
+		 * to the ctrl ep, and point mr_ctrl[] at the owned objects. */
+		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
+			nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
+
+			auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
+								      &mr_attr,
+								      regattr_flags);
+			if (OFI_UNLIKELY(mr_result.is_failure())) {
+				NCCL_OFI_WARN("Could not register memory on ctrl rail %u with flag %lu",
+					      rail_id, regattr_flags);
+				ret = mr_result.error_code;
+				goto error;
+			}
+			ret_handle->mr_ctrl_owned[rail_id] = std::move(mr_result.resource);
+
+			nccl_net_ofi_rdma_ep_rail_t *ctrl_rail = ep->rdma_endpoint_get_control_rail(rail_id);
+			struct fid_ep *ctrl_ofi_ep = ctrl_rail->ofi_ep.get();
+			ret = mr_bind_and_enable(ret_handle->mr_ctrl_owned[rail_id].get(), ctrl_ofi_ep,
+						 rail_id, "ctrl");
+			if (ret != 0) goto error;
+
+			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_ctrl_owned[rail_id].get();
+		}
+	} else {
+		/* Non-endpoint-MR: the domain-level fid_mr is valid for all rails.
+		 * Alias mr_ctrl[i] to mr_data[i] so IO-path callers need no conditional. */
+		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
+			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_data[rail_id].get();
+		}
 	}
 
 	/* Store base address of registered memory region for offset calculations.
@@ -2613,6 +2689,7 @@ error:
 
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
+				       nccl_net_ofi_rdma_ep_t *ep,
 				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	int ret = 0;
@@ -2635,7 +2712,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		}
 		/* Cache miss */
 
-		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -2651,7 +2728,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
-		ret = this->reg_mr_on_device(ckey, type, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -2663,35 +2740,29 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 
 
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
-						size_t size, int type,
-						nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					size_t size, int type,
+					nccl_net_ofi_rdma_ep_t *ep,
+					nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	assert(system_page_size > 0);
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	/* TODO: When the endpoint mr feature is supported for RDMA plugin
-	 * pass the endpoint during the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
-	return this->reg_mr(&ckey, type, mhandle);
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
+	return this->reg_mr(&ckey, type, ep, mhandle);
 }
 
 #if HAVE_DECL_FI_MR_DMABUF
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
-						int fd, uint64_t offset, size_t size, int type,
-						nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					int fd, uint64_t offset, size_t size, int type,
+					nccl_net_ofi_rdma_ep_t *ep,
+					nccl_net_ofi_rdma_mr_handle_t **mhandle)
 {
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
-	/* TODO: When the endpoint mr feature is supported for RDMA plugin
-	 * pass the endpoint during the mr key create below. For now, we are
-	 * passing nullptr
-	 */
-	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, nullptr);
-	return this->reg_mr(&ckey, type, mhandle);
+	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, ep);
+	return this->reg_mr(&ckey, type, ep, mhandle);
 }
 #endif
 
@@ -2706,11 +2777,12 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	return domain->reg_mr(ckey,
 			      type_param,
+			      endpoint_mr ? endpoint : nullptr,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
-								       int type_param, void **mhandle)
+							       int type_param, void **mhandle)
 {
 	nccl_net_ofi_rdma_ep_t *endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	nccl_net_ofi_rdma_domain_t *domain = endpoint->rdma_endpoint_get_domain();
@@ -2720,6 +2792,7 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	return domain->reg_mr(ckey,
 			      type_param,
+			      endpoint_mr ? endpoint : nullptr,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
@@ -2729,58 +2802,80 @@ typedef struct {
 } freelist_regmr_fn_handle_t;
 
 /**
- * Register host memory for use with the given communicator
- *
- * This interface is suitable for use with freelist_init_mr.
- *
- * @param	data
- *		Pointer to memory region. Must be aligned to page size.
- * @param	size
- *		Size of memory region. Must be a multiple of page size.
+ * C++ class encapsulating the MR registration and deregistration callbacks
+ * for freelists.  An instance is heap-allocated per communicator or endpoint
+ * and passed as the opaque context pointer to the freelist.  The static
+ * shims regmr_fn / deregmr_fn cast back to this type, eliminating bare
+ * void * opaque usage at call sites.
  */
-static int freelist_regmr_host_fn(void *domain_void_ptr, void *data, size_t size, void **handle)
-{
-	nccl_net_ofi_rdma_domain_t *domain = (nccl_net_ofi_rdma_domain_t *)domain_void_ptr;
+class freelist_regmr_ep_ctx_t {
+public:
+	freelist_regmr_ep_ctx_t(nccl_net_ofi_rdma_domain_t *domain_arg,
+				nccl_net_ofi_rdma_ep_t *ep_arg)
+		: domain(domain_arg), ep(ep_arg) {}
 
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
+	/**
+	 * Register host memory via the domain MR path.
+	 *
+	 * @param data    Pointer to page-aligned memory region.
+	 * @param size    Size of memory region (page-multiple).
+	 * @param handle  Receives a heap-allocated freelist_regmr_fn_handle_t *.
+	 */
+	int regmr(void *data, size_t size, void **handle)
+	{
+		nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
-	freelist_regmr_fn_handle_t *freelist_handle =
-		(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
-	if (!freelist_handle) {
-		NCCL_OFI_WARN("Failed to allocate memory for freelist handle");
-		return -ENOMEM;
+		freelist_regmr_fn_handle_t *freelist_handle =
+			(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
+		if (!freelist_handle) {
+			NCCL_OFI_WARN("Failed to allocate memory for freelist handle");
+			return -ENOMEM;
+		}
+
+		int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
+			free(freelist_handle);
+			return -EIO;
+		}
+
+		freelist_handle->mr_handle = mr_handle;
+		freelist_handle->domain = domain;
+		*handle = static_cast<void *>(freelist_handle);
+		return 0;
 	}
 
-        int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, &mr_handle);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
+	/** Deregister memory that was registered via regmr(). */
+	static int deregmr(void *handle)
+	{
+		freelist_regmr_fn_handle_t *freelist_handle =
+			static_cast<freelist_regmr_fn_handle_t *>(handle);
+		assert(freelist_handle);
+		int ret = freelist_handle->domain->dereg_mr(freelist_handle->mr_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed call to dereg_mr");
+			return -EIO;
+		}
 		free(freelist_handle);
-		return -EIO;
+		return 0;
 	}
 
-	freelist_handle->mr_handle = mr_handle;
-	freelist_handle->domain = domain;
-	*handle = (void *)freelist_handle;
-	return 0;
-}
-
-/**
- * Deregister host memory registered with freelist_regmr_host_fn
- *
- * This interface is suitable for use with a freelist.
- */
-static int freelist_deregmr_host_fn(void *handle)
-{
-	freelist_regmr_fn_handle_t *freelist_handle = (freelist_regmr_fn_handle_t *)handle;
-	assert(freelist_handle);
-	int ret = freelist_handle->domain->dereg_mr(freelist_handle->mr_handle);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Failed call to dereg_mr");
-		return -EIO;
+	/** C-style shim matching nccl_ofi_freelist_regmr_fn; pass to freelist constructors. */
+	static int regmr_fn(void *opaque, void *data, size_t size, void **handle)
+	{
+		return static_cast<freelist_regmr_ep_ctx_t *>(opaque)->regmr(data, size, handle);
 	}
-	free(freelist_handle);
-	return 0;
-}
+
+	/** C-style shim matching nccl_ofi_freelist_deregmr_fn; pass to freelist constructors. */
+	static int deregmr_fn(void *handle)
+	{
+		return deregmr(handle);
+	}
+
+private:
+	nccl_net_ofi_rdma_domain_t *domain;
+	nccl_net_ofi_rdma_ep_t    *ep;      /* nullptr when no ep binding needed */
+};
 
 int nccl_net_ofi_rdma_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
@@ -2913,7 +3008,7 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 
 	uint16_t rail_id = 0;
 	for (; rail_id < this->num_rails; rail_id++) {
-		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id].get());
+		uint64_t rkey = fi_mr_key(buff_mr_handle->mr_data[rail_id].get());
 
 		if (rkey == FI_KEY_NOTAVAIL) {
 			NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
@@ -3001,7 +3096,6 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	nccl_net_ofi_rdma_req *req = NULL;
 	rdma_req_recv_data_t *recv_data = NULL;
 	nccl_net_ofi_rdma_ep_t *endpoint = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_device_t *device = NULL;
 	int device_id = 0;
 	nccl_net_ofi_rdma_mr_handle_t **mr_handles = (nccl_net_ofi_rdma_mr_handle_t **)mhandles;
@@ -3035,9 +3129,6 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 
 	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
-
-	domain = endpoint->rdma_endpoint_get_domain();
-	assert(domain != NULL);
 
 	device = endpoint->rdma_endpoint_get_device();
 	assert(device != NULL);
@@ -3110,8 +3201,8 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	 */
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
-			buffers[i] = domain->flush_buff.buffer;
-			mr_handles[i] = domain->flush_buff.mr_handle;
+			buffers[i] = endpoint->flush_buff.buffer;
+			mr_handles[i] = endpoint->flush_buff_mr_handle;
 		}
 	}
 
@@ -3195,163 +3286,143 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	return ret;
 }
 
-int nccl_net_ofi_rdma_domain_t::dealloc_and_dereg_flush_buff()
-{
-	int ret = 0;
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle = this->flush_buff.mr_handle;
-	if (mr_handle) {
-		ret = this->dereg_mr(mr_handle);
-	}
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to deregister flush buffer");
-		goto exit;
-	}
-
-	/*
-	 * Clean up the flush buffer only if it was mapped correctly
-	 */
-	if (this->flush_buff.buffer != MAP_FAILED) {
-#if HAVE_GPU
-		ret = nccl_net_ofi_gpu_mem_free(this->flush_buff.buffer_base);
-#endif
-#if HAVE_NEURON
-		ret = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
-						system_page_size);
-#endif
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", ret);
-			goto exit;
-		}
-		this->flush_buff.buffer = MAP_FAILED;
-	}
-
- exit:
-	return ret;
-}
-
 /*
- * @brief	Allocated and registers GPU buffer to flush RDMA operations. On
- * 		Success, receive domain holds reference to flush buffer
- * 		and associated memory handle.
+ * @brief	Allocate and register a buffer used to flush RDMA operations.
  *
- * @param	dev_id
- *		Device ID
- *
- * @return	0, on success
- * 		error, on others
+ * See header for full documentation.
  */
-int nccl_net_ofi_rdma_domain_t::alloc_and_reg_flush_buff(int dev_id)
+int nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff(int dev_id,
+						      nccl_net_ofi_rdma_flush_buffer_t &fb,
+						      nccl_net_ofi_rdma_mr_handle_t *&mr_out)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = NULL;
+	nccl_net_ofi_rdma_domain_t *rdma_domain = this->rdma_endpoint_get_domain();
+
+#if HAVE_NEURON || HAVE_GPU
+	nccl_net_ofi_rdma_ep_t *bind_ep = endpoint_mr ? this : nullptr;
+#endif
 
 #if HAVE_NEURON
 	int rc;
 	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer for flush operations");
 
-	this->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
+	fb.size = NCCL_OFI_FLUSH_SIZE;
 	assert(NCCL_OFI_FLUSH_SIZE <= system_page_size);
-	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(this->flush_buff.buffer));
+	ret = nccl_net_ofi_alloc_mr_buffer(system_page_size, &(fb.buffer));
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 		return ret;
 	}
 
 	/* make sure flush destination address does not overflow beyond host buffer */
-	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + this->flush_buff.size) <= system_page_size);
+	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + fb.size) <= system_page_size);
 
-	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size,
-				NCCL_PTR_HOST, &mr_handle);
+	ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
+				NCCL_PTR_HOST, bind_ep, &mr_handle);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
                              dev_id);
-		rc = nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer,
+		rc = nccl_net_ofi_dealloc_mr_buffer(fb.buffer,
 						system_page_size);
 		if (rc != 0) {
 			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
 		}
-		this->flush_buff.buffer = MAP_FAILED;
+		fb.buffer = MAP_FAILED;
 	}
 #endif
 
 #if HAVE_GPU
-	int rc;
-	NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
-
-	/*
-	* We allocate twice the system page size since GPU memory allocation
-	* does not guarantee that the allocated memory will be system page aligned.
-	* Post allocation, we calculate the page aligned ptr and perform
-	* memory registrations on it.
-	*/
-	this->flush_buff.size = 2 * system_page_size;
-	ret = nccl_net_ofi_gpu_mem_alloc(&(this->flush_buff.buffer_base), this->flush_buff.size);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
-		return ret;
-	}
-
-	/*
-	* Calculate the ptr aligned to system page size
-	*/
-	this->flush_buff.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)this->flush_buff.buffer_base, system_page_size);
-
-	/* Copy flush sentinel value into aligned ptr of gpu buffer */
-	ret =  nccl_net_ofi_gpu_mem_copy_host_to_device(this->flush_buff.buffer, flush_sentinel,
-							NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
-		return ret;
-	}
-
-#if HAVE_DECL_FI_MR_DMABUF
-	/*
-        * If dma buf is viable and supported then register flush dummy buffer
-        * using dma buf for provider access
-        */
-	nccl_net_ofi_rdma_device_t *dev = this->rdma_domain_get_device();
-	struct fi_info *nic_prov = dev->get_ofi_info_for_cm();
-
-	if (nccl_ofi_dmabuf_viable_and_supported(nic_prov)) {
-		size_t offset = 0;
-		int fd;
+	{
+		int rc;
+		NCCL_OFI_TRACE(NCCL_NET, "Registering buffer in GPU for flush operations");
 
 		/*
-		* Retrieve the fd and offset and the aligned ptr used for dma buf
-		*/
-		ret = nccl_net_ofi_gpu_get_dma_buf_fd(this->flush_buff.buffer, system_page_size, &fd, &offset);
+		 * We allocate twice the system page size since GPU memory
+		 * allocation does not guarantee page alignment.  Post
+		 * allocation we calculate the page-aligned ptr and perform
+		 * memory registration on it.
+		 */
+		fb.size = 2 * system_page_size;
+		ret = nccl_net_ofi_gpu_mem_alloc(&(fb.buffer_base), fb.size);
 		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
+			NCCL_OFI_WARN("Unable to allocate flush buffer (%d)", ret);
 			return ret;
 		}
 
-		NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
+		/* Calculate the ptr aligned to system page size */
+		fb.buffer = (void *)NCCL_OFI_ROUND_UP((uintptr_t)fb.buffer_base,
+							system_page_size);
 
-		ret = this->reg_internal_mr_dma_buf(this->flush_buff.buffer, fd, offset, system_page_size,
-						NCCL_PTR_CUDA, &mr_handle);
-		close(fd);
-	} else {
-		ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
-	}
-
-#else
-	ret = this->reg_internal_mr(this->flush_buff.buffer, system_page_size, NCCL_PTR_CUDA, &mr_handle);
-#endif
-
-	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
-			      dev_id);
-
-		rc = nccl_net_ofi_gpu_mem_free(&this->flush_buff.buffer_base);
-		if (rc != 0) {
-			NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)",
-				      rc);
+		/* Copy flush sentinel value into aligned ptr of gpu buffer */
+		ret = nccl_net_ofi_gpu_mem_copy_host_to_device(fb.buffer, flush_sentinel,
+							       NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to copy sentinel value to gpu flush buffer (%d)", ret);
+			rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+			if (rc != 0) {
+				NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+			}
+			fb.buffer_base = nullptr;
+			return ret;
 		}
-		this->flush_buff.buffer = MAP_FAILED;
+
+#if HAVE_DECL_FI_MR_DMABUF
+		/*
+		 * If dma buf is viable and supported then register the flush
+		 * dummy buffer using dma buf for provider access.
+		 */
+		{
+			nccl_net_ofi_rdma_device_t *dev = rdma_domain->rdma_domain_get_device();
+			struct fi_info *nic_prov = dev->get_ofi_info_for_cm();
+
+			if (nccl_ofi_dmabuf_viable_and_supported(nic_prov)) {
+				size_t offset = 0;
+				int fd;
+
+				ret = nccl_net_ofi_gpu_get_dma_buf_fd(fb.buffer,
+								      system_page_size,
+								      &fd, &offset);
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);
+					rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+					if (rc != 0) {
+						NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+					}
+					fb.buffer_base = nullptr;
+					return ret;
+				}
+
+				NCCL_OFI_TRACE(NCCL_NET, "Registering flush buffer using DMA BUF fd: %d offset: %ld", fd, offset);
+
+				ret = rdma_domain->reg_internal_mr_dma_buf(fb.buffer, fd, offset,
+								    system_page_size,
+								    NCCL_PTR_CUDA,
+								    bind_ep, &mr_handle);
+				close(fd);
+			} else {
+				ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
+							    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+			}
+		}
+#else
+		ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
+					    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+#endif
+
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d", dev_id);
+			rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+			if (rc != 0) {
+				NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+			}
+			fb.buffer_base = nullptr;
+			fb.buffer      = MAP_FAILED;
+		}
 	}
 #endif
-	this->flush_buff.mr_handle = mr_handle;
 
+	mr_out = mr_handle;
 	return ret;
 }
 
@@ -3398,6 +3469,8 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 
 	delete r_comm->ctrl_buff_fl;
 	delete r_comm->flush_buff_fl;
+	delete r_comm->comm_buff_regmr_ctx;
+	r_comm->comm_buff_regmr_ctx = nullptr;
 	delete r_comm->nccl_ofi_reqs_fl;
 
 	delete r_comm->msgbuff;
@@ -4056,7 +4129,7 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm *r_comm,
 			       nccl_net_ofi_rdma_req **ret_req)
 {
 	uint64_t flags = 0;
-	struct fid_mr *rail_mr_handle = buff_mr_handle->mr[0].get();
+	struct fid_mr *rail_mr_handle = buff_mr_handle->mr_data[0].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 	*ret_req = NULL;
 
@@ -4221,6 +4294,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	size_t comm_id = 0;
 	nccl_net_ofi_rdma_recv_comm *r_comm = NULL;
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
+	freelist_regmr_ep_ctx_t *comm_ctx = nullptr;
 	nccl_net_ofi_rdma_device_t *device = domain->rdma_domain_get_device();
 	int dev_id = device->dev_id;
 	int num_rails = l_comm_ep->num_rails;
@@ -4274,7 +4348,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
-	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, NCCL_PTR_HOST, &mr_handle);
+	ret = domain->reg_internal_mr(r_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE, NCCL_PTR_HOST, endpoint_mr ? l_comm_ep : nullptr, &mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to register memory for the control mailbox: %d", ret);
 		goto error;
@@ -4372,18 +4446,26 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 		return NULL;
 	}
 
+	/* Allocate a freelist registration context for ctrl_buff_fl and flush_buff_fl.
+	 * In FI_MR_ENDPOINT mode the ep pointer is set so that each registered MR is
+	 * bound and enabled against this endpoint.  In non-endpoint-MR mode ep is nullptr
+	 * so the bind/enable step is skipped.
+	 * Must outlive both freelists; freed in recv_comm_destroy(). */
+	comm_ctx = new freelist_regmr_ep_ctx_t{domain, endpoint_mr ? ep : nullptr};
+	r_comm->comm_buff_regmr_ctx = comm_ctx;
+
 	r_comm->ctrl_buff_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_close_msg_t),
 						     8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
-						     freelist_regmr_host_fn,
-						     freelist_deregmr_host_fn, domain, 1,
+						     freelist_regmr_ep_ctx_t::regmr_fn,
+						     freelist_regmr_ep_ctx_t::deregmr_fn, comm_ctx, 1,
 						     "Ctrl Buffer",
 						     true);
 
 	/* Allocate flush buffer freelist */
 	r_comm->flush_buff_fl = new nccl_ofi_freelist(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * MAX_NUM_RAILS,
 						      8, 8, NCCL_OFI_MAX_REQUESTS, NULL, NULL,
-						      freelist_regmr_host_fn,
-						      freelist_deregmr_host_fn, domain,
+						      freelist_regmr_ep_ctx_t::regmr_fn,
+						      freelist_regmr_ep_ctx_t::deregmr_fn, comm_ctx,
 						      NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE,
 						      "Flush Buffer", true);
 
@@ -4914,7 +4996,7 @@ static int post_rdma_write(nccl_net_ofi_rdma_req *req,
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	uint16_t rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id].get();
+	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr_data[rail_id].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 
 	ssize_t rc;
@@ -4951,7 +5033,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req *req,
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	uint16_t rail_id = xfer_info->rail_id;
-	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id].get();
+	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr_data[rail_id].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 
 	ssize_t rc;
@@ -4976,7 +5058,12 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem = rx_buff_data->rx_buff_fl_elem;
 	freelist_regmr_fn_handle_t *fl_mr_handle =
 		(freelist_regmr_fn_handle_t *)rx_buff_fl_elem->mr_handle;
-	void *desc = fi_mr_desc(fl_mr_handle->mr_handle->mr[rx_buff_data->rail->rail_id].get());
+	nccl_net_ofi_rdma_mr_handle_t *mr_h = fl_mr_handle->mr_handle;
+	uint16_t rid = rx_buff_data->rail->rail_id;
+	struct fid_mr *raw_mr = ep_rail->is_ctrl
+		? mr_h->mr_ctrl[rid]
+		: mr_h->mr_data[rid].get();
+	void *desc = fi_mr_desc(raw_mr);
 	struct iovec iov;
 	struct fi_msg msg;
 	uint64_t flags = 0;
@@ -5104,8 +5191,8 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm *r_comm,
 
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
-	assert(rail_id < mr_handle->num_rails);
-	void *desc = fi_mr_desc(mr_handle->mr[rail_id].get());
+	assert(rail_id < mr_handle->num_ctrl_rails);
+	void *desc = fi_mr_desc(mr_handle->mr_ctrl[rail_id]);
 
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
@@ -5150,7 +5237,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 	}
 
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr[rail_id].get());
+	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr_ctrl[rail_id]);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
 	ssize_t rc = fi_write(comm_rail->local_ep, &r_comm->ctrl_mailbox[slot],
@@ -5221,10 +5308,10 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->dest_mr_handle;
 
 	assert(rx_rail_id < dest_mr_handle->num_rails);
-	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id].get());
+	void *desc = fi_mr_desc(dest_mr_handle->mr_data[rx_rail_id].get());
 
 	void *rx_buff = rx_buff_data->rx_buff_fl_elem->ptr;
-	uint64_t rx_key = fi_mr_key(rx_mr_handle->mr[rx_rail_id].get());
+	uint64_t rx_key = fi_mr_key(rx_mr_handle->mr_data[rx_rail_id].get());
 	if (rx_key == FI_KEY_NOTAVAIL) {
 		NCCL_OFI_WARN("Failed to get rx_key");
 		return -EIO;
@@ -5249,7 +5336,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
  	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -5259,8 +5345,8 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 		comm_rail = r_comm->get_data_rail(rail_id);
 		struct fid_mr *mr_handle = NULL;
 
-		void *desc = fi_mr_desc(domain->flush_buff.mr_handle->mr[rail_id].get());
-		mr_handle = flush_data->mr_handle->mr[rail_id].get();
+		void *desc = fi_mr_desc(ep->flush_buff_mr_handle->mr_data[rail_id].get());
+		mr_handle = flush_data->mr_handle->mr_data[rail_id].get();
 
 
 		uint64_t cuda_key = 0ULL;
@@ -5275,7 +5361,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 			}
 		}
 
-		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &domain->flush_buff;
+		nccl_net_ofi_rdma_flush_buffer_t *f_buff = &ep->flush_buff;
 		uintptr_t host_buff_addr = (uintptr_t)f_buff->buffer + (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
 		uintptr_t buff_offset = (uintptr_t)flush_data->data - flush_data->mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
@@ -5299,7 +5385,6 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 {
 	nccl_net_ofi_rdma_recv_comm *r_comm = (nccl_net_ofi_rdma_recv_comm *)req->comm;
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
-	nccl_net_ofi_rdma_domain_t *domain = ep->rdma_endpoint_get_domain();
 	rdma_req_flush_data_t *flush_data = get_flush_data(req);
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail;
 	ssize_t rc = 0;
@@ -5311,8 +5396,8 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 
 		freelist_regmr_fn_handle_t *fl_handle =
 			(freelist_regmr_fn_handle_t *)flush_data->flush_fl_elem->mr_handle;
-		void *desc = fi_mr_desc(fl_handle->mr_handle->mr[rail_id].get());
-		mr_handle = domain->flush_buff.mr_handle->mr[rail_id].get();
+		void *desc = fi_mr_desc(fl_handle->mr_handle->mr_data[rail_id].get());
+		mr_handle = ep->flush_buff_mr_handle->mr_data[rail_id].get();
 		uint64_t cuda_key = 0ULL;
 
 		if (mr_handle != NULL) {
@@ -5326,7 +5411,7 @@ static int post_flush_req(nccl_net_ofi_rdma_req *req)
 		}
 
 		uint64_t *host_buff_addr = get_flush_buffer_for_rail(flush_data->flush_fl_elem->ptr, rail_id);
-		uintptr_t buff_offset = (uintptr_t)domain->flush_buff.buffer - domain->flush_buff.mr_handle->base_addr;
+		uintptr_t buff_offset = (uintptr_t)ep->flush_buff.buffer - ep->flush_buff_mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
 			(void *)host_buff_addr,
 			NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
@@ -5401,7 +5486,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
     nccl_net_ofi_rdma_send_comm *s_comm = this;
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	nccl_net_ofi_rdma_ep_t *endpoint = NULL;
-	nccl_net_ofi_rdma_domain_t *domain = NULL;
 	nccl_net_ofi_rdma_req *req = NULL;
 	uint16_t msg_seq_num = s_comm->next_msg_seq_num;
 	bool have_ctrl = false;
@@ -5425,9 +5509,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 
 	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(endpoint != NULL);
-
-	domain = endpoint->rdma_endpoint_get_domain();
-	assert(domain != NULL);
 
 	std::lock_guard eplock(endpoint->ep_lock);
 
@@ -5457,8 +5538,8 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	 * pointer and MR
 	 */
 	if (size == 0) {
-		data = domain->flush_buff.buffer;
-		mr_handle = domain->flush_buff.mr_handle;
+		data = endpoint->flush_buff.buffer;
+		mr_handle = endpoint->flush_buff_mr_handle;
 	}
 
 	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num);
@@ -5601,10 +5682,14 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 	/* Send s_comm's control mailbox offset to receiver */
 	conn_msg->ctrl_addr = (uintptr_t)ctrl_msg - ctrl_msg_mr_handle->base_addr;
 
-	/* Send s_comm's control mailbox mr_key */
-	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
-		uint64_t rkey = fi_mr_key(ctrl_msg_mr_handle->mr[rail_id].get());
-		conn_msg->ctrl_mr_key[rail_id] = rkey;
+	/* Send the MR key for each ctrl ep rail so the receiver can fi_write
+	 * into our ctrl mailbox.  The receiver will issue fi_write operations
+	 * through our ctrl ep rails, so in FI_MR_ENDPOINT mode the rkey must
+	 * come from an fid_mr bound to a ctrl ep (mr_ctrl[]).  In
+	 * non-endpoint-MR mode mr_ctrl[i] is the same object as mr_data[i]
+	 * because a single domain-level MR is valid for all endpoints. */
+	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
+		conn_msg->ctrl_mr_key[rail_id] = fi_mr_key(ctrl_msg_mr_handle->mr_ctrl[rail_id]);
 	}
 
 	/* Set number of rails to be sent back to remote for verification */
@@ -5686,20 +5771,30 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 						      "Rx Buffer Requests",
 						      enable_freelist_leak_detection);
 
+	/* Allocate a context for freelist MR registration callbacks.
+	 * In FI_MR_ENDPOINT mode ep is set so newly registered MRs are
+	 * bound and enabled against this endpoint; otherwise ep is nullptr.
+	 * Must outlive the freelists; freed in fini_rx_buffers(). */
+	freelist_regmr_ep_ctx_t *rx_ctx = new freelist_regmr_ep_ctx_t{domain_ptr, endpoint_mr ? this : nullptr};
+	this->rx_buff_regmr_ctx = rx_ctx;
+
+	/* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the unified
+	 * MR handle binds to both data and ctrl ep rails so rx_ctx works for both. */
 	this->ctrl_rx_buff_fl = new nccl_ofi_freelist(this->ctrl_rx_buff_size,
 						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 						      NULL, NULL,
-						      freelist_regmr_host_fn, freelist_deregmr_host_fn,
-						      domain_ptr, 1,
+						      freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+						      rx_ctx, 1,
 						      "Ctrl Rx Buffer",
 						      enable_freelist_leak_detection);
 
 	if (this->eager_rx_buff_size > 0) {
+		/* Eager rx buffers are posted on data ep rails; use rx_ctx. */
 		this->eager_rx_buff_fl = new nccl_ofi_freelist(this->eager_rx_buff_size,
 							       ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
 							       NULL, NULL,
-							       freelist_regmr_host_fn, freelist_deregmr_host_fn,
-							       domain_ptr, EAGER_RX_BUFFER_ALIGNMENT,
+							       freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+							       rx_ctx, EAGER_RX_BUFFER_ALIGNMENT,
 							       "Eager Rx Buffer",
 							       enable_freelist_leak_detection);
 	} else {
@@ -5723,6 +5818,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = ctrl_rx_buff_req_alloc;
+		rail->is_ctrl = true;
 	}
 
 	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
@@ -5741,7 +5837,20 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->num_rx_buff_posted = 0;
 		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = eager_rx_buff_req_alloc;
+		rail->is_ctrl = false;
 	}
+
+#if HAVE_GPU || HAVE_NEURON
+	{
+		nccl_net_ofi_rdma_device_t *dev = domain_ptr->rdma_domain_get_device();
+		ret = this->alloc_and_reg_flush_buff(dev->dev_id,
+						     this->flush_buff,
+						     this->flush_buff_mr_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	}
+#endif /* HAVE_GPU / HAVE_NEURON */
 
 	return ret;
 }
@@ -5760,6 +5869,30 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 
 	delete this->rx_buff_reqs_fl;
 
+	/* Deregister the flush buffer MR (always owned by this endpoint). */
+	if (this->flush_buff_mr_handle != nullptr) {
+		nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
+		domain_ptr->dereg_mr(this->flush_buff_mr_handle);
+		this->flush_buff_mr_handle = nullptr;
+	}
+
+#if HAVE_GPU
+	/* Free the per-endpoint flush buffer GPU allocation. */
+	if (this->flush_buff.buffer_base != nullptr) {
+		nccl_net_ofi_gpu_mem_free(this->flush_buff.buffer_base);
+		this->flush_buff.buffer_base = nullptr;
+		this->flush_buff.buffer      = MAP_FAILED;
+	}
+#endif /* HAVE_GPU */
+
+#if HAVE_NEURON
+	/* Free the per-endpoint host flush buffer. */
+	if (this->flush_buff.buffer != MAP_FAILED && this->flush_buff.buffer != nullptr) {
+		nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer, system_page_size);
+		this->flush_buff.buffer = MAP_FAILED;
+	}
+#endif /* HAVE_NEURON */
+
 	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
 		rail = this->rdma_endpoint_get_rail(rail_id);
 		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
@@ -5777,8 +5910,8 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 int nccl_net_ofi_rdma_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 {
 	int ret = 0;
-	assert(!this->mr.empty());
-	uint64_t key = fi_mr_key(this->mr[0].get());
+	assert(num_rails > 0);
+	uint64_t key = fi_mr_key(this->mr_data[0].get());
 	if (OFI_UNLIKELY(key == FI_KEY_NOTAVAIL)) {
 		ret = -ENOENT;
 		NCCL_OFI_WARN("Error retrieving MR key, leaking key");
@@ -5884,7 +6017,7 @@ int nccl_net_ofi_rdma_send_comm::write(void* src, size_t size, void* mhandle,
                      				   uint64_t dest, uint64_t mr_key, nccl_net_ofi_req ** base_req)
 {
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
-	struct fid_mr *rail_mr_handle = mr_handle->mr[0].get();
+	struct fid_mr *rail_mr_handle = mr_handle->mr_data[0].get();
 	void *desc = fi_mr_desc(rail_mr_handle);
 	uint64_t flags = 0;
 	return rma_write_impl(this, src, size, desc, dest, mr_key, flags, base_req);
@@ -5966,7 +6099,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 
 	/* Allocate control mailbox */
 	ret = domain_ptr->reg_internal_mr(ret_s_comm->ctrl_mailbox, sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE,
-						  NCCL_PTR_HOST, &ret_s_comm->ctrl_mr_handle);
+					  NCCL_PTR_HOST, endpoint_mr ? this : nullptr, &ret_s_comm->ctrl_mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not register memory for control mailbox for dev %d", dev_id);
 		ret = -ENOMEM;
@@ -6280,12 +6413,29 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 	}
 
 	/* Ideally we would "un-post" the rx buffers, but this
-	 * should be accomplished by closing the endpoint. */
-	this->release_rdma_ep_resources(device->dev_id);
+	 * should be accomplished by closing the endpoint.
+	 *
+	 * In FI_MR_ENDPOINT mode the libfabric spec requires that MRs bound to
+	 * an endpoint are closed before the endpoint itself.  fini_rx_buffers()
+	 * deregisters per-endpoint MRs, so it must run before
+	 * release_rdma_ep_resources() in that mode.  For non-endpoint-MR
+	 * providers the original order is preserved.
+	 */
+	int err_code;
+	if (endpoint_mr) {
+		err_code = this->fini_rx_buffers();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
+		}
 
-	int err_code = this->fini_rx_buffers();
-	if (err_code != 0) {
-		NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
+		this->release_rdma_ep_resources(device->dev_id);
+	} else {
+		this->release_rdma_ep_resources(device->dev_id);
+
+		err_code = this->fini_rx_buffers();
+		if (err_code != 0) {
+			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
+		}
 	}
 
 	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
@@ -6368,12 +6518,8 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 		this->num_control_rails = 1;
 	}
 
-	/* Zero-initialize the rails and control_rails vector elements */
-	this->rails.resize(this->num_rails);
-
-	this->control_rails.resize(this->num_control_rails);
-
-	this->cq_rails.resize(this->num_rails);
+	/* Zero-initialize the rails and control_rails array elements
+	 * via the = {} initializers on the member declarations. */
 
 	ret = nccl_net_ofi_mutex_init(&this->pending_reqs_lock, NULL);
 	if (ret != 0) {
@@ -6412,11 +6558,6 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 
 nccl_net_ofi_rdma_domain_t::~nccl_net_ofi_rdma_domain_t()
 {
-	int err_code = this->dealloc_and_dereg_flush_buff();
-	if (err_code != 0) {
-		NCCL_OFI_WARN("Failed to deregister flush buffer pool");
-	}
-
 	/* Check for leaked endpoints. With weak_ptr entries, expired
 	 * entries are harmless (stale cache). But a live weak_ptr
 	 * means a comm still holds a shared_ptr to an ep, which
@@ -6436,7 +6577,6 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 						       unsigned int domain_key_arg)
 	: nccl_net_ofi_domain_t(device_arg, domain_key_arg)
 {
-	int ret = 0;
 	if (OFI_UNLIKELY(device_arg == nullptr)) {
 		NCCL_OFI_WARN("Invalid device provided");
 		throw std::runtime_error("RDMA domain constructor: invalid device provided");
@@ -6457,14 +6597,6 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 			throw std::runtime_error("RDMA domain constructor: ofi domain creation failed");
 		}
 		domain_rail->domain = std::move(domain_result.resource);
-	}
-
-	/*
-	 * Setup flush resources.
-	 */
-	ret = this->alloc_and_reg_flush_buff(device_arg->dev_id);
-	if (OFI_UNLIKELY(ret != 0)) {
-		throw std::runtime_error("RDMA domain constructor: flush buffer alloc/reg failed");
 	}
 }
 
@@ -6704,7 +6836,7 @@ static void get_hints(struct fi_info *hints)
 	hints->ep_attr->type = FI_EP_RDM;
 
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
-		FI_MR_ALLOCATED | FI_MR_PROV_KEY;
+		FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
 	hints->domain_attr->threading = FI_THREAD_COMPLETION;
 
@@ -6889,11 +7021,6 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	if (ret != 0) {
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
 		return ret;
-	}
-
-	if (endpoint_mr) {
-		NCCL_OFI_WARN("RDMA protocol does not support endpoint memory registration.");
-		return -ENOTSUP;
 	}
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
