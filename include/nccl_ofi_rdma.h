@@ -160,15 +160,15 @@ public:
  */
 #define NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT (1 << 0)
 
-/*
- * @brief Control messages
- *
- * The control message contains the destination buffer address, mr keys,
- * message sequence number and padding to align it to cache line size.
- * It is used by the receiver to post the control message to the sender.
- */
-typedef struct nccl_net_ofi_ctrl_msg {
+/* Sentinel tag value indicating a ctrl msg entry has been consumed */
+#define NCCL_OFI_CTRL_MSG_TAG_INVALID ((int16_t)-1)
 
+/*
+ * @brief Control message sub-entry
+ *
+ * Each sub-entry describes one destination buffer within a grouped receive.
+ */
+typedef struct nccl_net_ofi_ctrl_msg_entry {
 	/* Destination buffer offset from base address.
 	 * For virtual address mode, base address is 0, so this is the virtual address.
 	 * For offset mode, this is the offset from the MR base address. */
@@ -182,20 +182,43 @@ typedef struct nccl_net_ofi_ctrl_msg {
 	/* Destination buffer len */
 	uint32_t buff_len;
 
-	/* Flags to indicate if recv completion is optional or not */
-	uint16_t flags;
-
-	/* Control message sequence number. The is also used as the
-	* ready bit to indicate that the control message has been posted.
-	*/
+	/* Tag for matching this sub-entry to the corresponding isend */
+	int16_t tag;
+	/* Per-entry sequence number for RDMA atomicity verification.
+	 * In entries[0], this also serves as the ctrl msg ready bit. */
 	uint16_t msg_seq_num;
+	/* The following fields are only meaningful in entries[0] and carry
+	 * metadata that applies to the entire control message. */
+	uint16_t flags;
+	uint16_t num_recvs;
+	/* Padding to 64-byte cache line boundary */
+	uint8_t pad[10];
+} nccl_net_ofi_ctrl_msg_entry_t;
+static_assert(sizeof(nccl_net_ofi_ctrl_msg_entry_t) == 64,
+		"Wrong size for RDMA Control message entry");
 
-	/* Padding to ensure we are aligned to cache line*/
-	uint8_t cache_line_padding[16];
+/*
+ * @brief Control messages
+ *
+ * The control message is a flat array of up to NCCL_OFI_MAX_RECVS entries,
+ * each describing one destination buffer in a grouped receive. Common metadata
+ * (msg_seq_num, flags, num_recvs) is stored in entries[0]'s pad area.
+ * It is used by the receiver to post the control message to the sender.
+ *
+ * Layout:
+ *   [msg_seq_num | flags | num_recvs | padding]  (header, 8 bytes)
+ *   [entry 0]                                     (48 bytes)
+ *   [entry 1]                                     (48 bytes)
+ *   ...
+ *   [entry N-1]                                   (48 bytes)
+ *   [padding to cache-line alignment]
+ */
+typedef struct nccl_net_ofi_ctrl_msg {
+	/* Flat array of entries. Common metadata (msg_seq_num used as ready
+	 * bit, flags, num_recvs) lives in entries[0].pad area. */
+	nccl_net_ofi_ctrl_msg_entry_t entries[NCCL_OFI_MAX_RECVS];
 } nccl_net_ofi_ctrl_msg_t;
-/* Assert to make sure that the control message on the wire
- * is of cache line size */
-static_assert(sizeof(nccl_net_ofi_ctrl_msg_t) == 64,
+static_assert(sizeof(nccl_net_ofi_ctrl_msg_t) == 64 * NCCL_OFI_MAX_RECVS,
                 "Wrong size for RDMA Control message");
 
 static inline size_t nccl_net_ofi_rdma_ctrl_msg_size()
@@ -313,6 +336,8 @@ typedef struct {
 	size_t buff_len;
 	/* Memory region descriptors associated to `buff' */
 	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
+	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
+	int tag;
 	/* Schedule used to transfer this request. We save the pointer to
 	 * reference it when transferring the request over network. */
 	nccl_net_ofi_schedule_t *schedule;
@@ -354,26 +379,54 @@ typedef struct {
 } rdma_req_eager_copy_data_t;
 
 /*
- * @brief	Data of request responsible for receiving segements
+ * @brief	Data of request responsible for receiving segments
  */
 typedef struct {
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req *recv_req;
+	/* For grouped receives: running total of expected segments across all senders.
+	 * Updated dynamically as we learn each sender's segment count from immediate data. */
+	int total_expected_segms;
+	/* Number of distinct senders whose segment count we've registered */
+	int num_senders_registered;
+	int num_expected_senders;
 } rdma_req_recv_segms_data_t;
 
 /*
  * @brief	Data of request responsible for receive operation
  */
-typedef struct {
+/*
+ * @brief	Per-sub-receive metadata within a grouped receive
+ */
+typedef struct rdma_req_recv_sub {
 	/* Destination buffer */
 	void *dst_buff;
 	/* Destination length */
 	size_t dst_len;
 	/* Mr handle for destination buffer */
 	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle;
+	/* Tag for matching to corresponding isend */
+	int tag;
+	/* Completed size for this sub-receive */
+	size_t recv_size;
+	/* Number of segments completed for this sub-receive */
+	int ncompls;
+	/* Total expected segments for this sub-receive */
+	int total_segms;
+} rdma_req_recv_sub_t;
+
+/*
+ * @brief	Data of request responsible for receive operation
+ */
+typedef struct {
+	/* Number of sub-receives in this grouped receive */
+	int num_recvs;
+	/* Per-sub-receive metadata */
+	rdma_req_recv_sub_t recvs[NCCL_OFI_MAX_RECVS];
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req *recv_segms_req;
-	/* (Eager messages) pointer to eager local copy request */
+	/* (Eager messages) pointer to eager local copy request.
+	 * Only used when num_recvs == 1 */
 	nccl_net_ofi_rdma_req *eager_copy_req;
 	/* Total number of completions. Expect one send ctrl
 	 * completion and one completion that indicates that all
@@ -569,6 +622,13 @@ public:
 	uint32_t remote_comm_id;
 
 	uint16_t next_msg_seq_num;
+
+	/* For grouped receives: how many sends remain for the current msg_seq_num */
+	uint16_t group_sends_remaining;
+	/* Total num_recvs for the current group (0 = not in a group) */
+	uint16_t group_num_recvs;
+	/* Bitmask of tags used in the current group */
+	uint32_t group_tag_used;
 
 	/* Number of rails */
 	uint16_t num_rails;

@@ -494,12 +494,6 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n, void** data,
 		return check_return(ncclInternalError);
 	}
 
-	if (OFI_UNLIKELY(n > NCCL_OFI_MAX_RECVS)) {
-		NCCL_OFI_WARN("Request for group recv size of %d, greater than maximum of %d",
-			      n, NCCL_OFI_MAX_RECVS);
-		return check_return(ncclInternalError);
-	}
-
 	if (OFI_UNLIKELY(handles == NULL)) {
 		NCCL_OFI_WARN("Invalid memory handle provided");
 		return check_return(ncclInternalError);
