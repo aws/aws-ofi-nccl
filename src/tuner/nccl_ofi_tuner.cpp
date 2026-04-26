@@ -103,6 +103,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		ctx->get_coll_info_internal_v6 = region_get_coll_info_internal_v6;
 		ctx->get_coll_info_internal_v3 = region_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = region_get_coll_info_internal_v2;
+		ctx->get_chunk_size_internal = region_get_chunk_size_internal;
 		ctx->destroy_internal = region_destroy_internal;
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Region base Tuner is chosen for platform: %s",
 			constants.get_platform_type());
@@ -113,6 +114,7 @@ static ncclResult_t nccl_ofi_tuner_init(size_t nRanks, size_t nNodes, ncclDebugL
 		ctx->get_coll_info_internal_v6 = model_get_coll_info_internal_v6;
 		ctx->get_coll_info_internal_v3 = model_get_coll_info_internal_v3;
 		ctx->get_coll_info_internal_v2 = model_get_coll_info_internal_v2;
+		ctx->get_chunk_size_internal = nullptr;
 		ctx->destroy_internal = model_destroy_internal;
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "Model base Tuner is chosen for platform: %s",
 			constants.get_platform_type());
@@ -219,12 +221,29 @@ static ncclResult_t nccl_ofi_tuner_finalize(void *context)
 	return nccl_ofi_tuner_destroy(context);
 }
 
+static ncclResult_t nccl_ofi_tuner_get_chunk_size(void *context,
+						  ncclFunc_t collType,
+						  size_t nBytes,
+						  int algo,
+						  int proto,
+						  int nChannels,
+						  size_t *chunkSize)
+{
+	nccl_ofi_tuner_context_t *ctx = (nccl_ofi_tuner_context_t *)context;
+	if (ctx == nullptr || ctx->get_chunk_size_internal == nullptr) {
+		/* Fall back to NCCL's chunk size */
+		return ncclSuccess;
+	}
+
+	return ctx->get_chunk_size_internal(ctx, collType, nBytes, algo, proto, nChannels, chunkSize);
+}
+
 /* Tuner v6 was introduced in NCCL 2.30.3 */
 NCCL_OFI_EXPORT_SYMBOL ncclTuner_v6_t ncclTunerPlugin_v6 = {.name = "nccl_ofi_tuner",
 					   .init = nccl_ofi_tuner_init_v6,
 					   .getCollInfo = nccl_ofi_tuner_get_coll_info_v6,
 					   .finalize = nccl_ofi_tuner_finalize,
-					   .getChunkSize = nullptr};
+					   .getChunkSize = nccl_ofi_tuner_get_chunk_size};
 
 /* **** V2 **** */
 static ncclResult_t nccl_ofi_tuner_get_coll_info_v2(
