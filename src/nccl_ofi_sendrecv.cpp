@@ -69,8 +69,8 @@ int nccl_net_ofi_sendrecv_mr_handle_t::get_mr_key(uint64_t *mr_key_ptr)
 
 
 static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
-					nccl_ofi_idpool_t *key_pool,
-					nccl_ofi_mr_cache_t *mr_cache);
+				       nccl_ofi_idpool_t *key_pool,
+				       nccl_net_ofi_domain_t *domain);
 
 
 int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
@@ -710,7 +710,7 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 
 static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_handle,
 				       nccl_ofi_idpool_t *key_pool,
-				       nccl_ofi_mr_cache_t *mr_cache)
+				       nccl_net_ofi_domain_t *domain)
 {
 	int ret = 0;
 
@@ -719,15 +719,16 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 		return;
 	}
 
-	if (mr_cache) {
+	if (domain && domain->mr_cache) {
 		/*
 		 * Depending on the number of references on this handle and the
 		 * cache itself, this call would either just decrement the
 		 * refcnt, or delete the entry for this handle.
 		 */
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
-		ret = nccl_ofi_mr_cache_del_entry(mr_cache, (void *)mr_handle);
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+		{
+			std::lock_guard guard(domain->mr_cache_lock);
+			ret = domain->mr_cache->del_entry((void *)mr_handle);
+		}
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -774,48 +775,51 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 	int dev_id = device->dev_id;
 
 	int ret = 0;
-	nccl_ofi_mr_cache_t *mr_cache = domain->mr_cache;
 	nccl_net_ofi_sendrecv_mr_handle_t *ret_handle = nullptr;
+	bool has_cache = domain->mr_cache.has_value();
 
-	if (mr_cache) {
+	if (has_cache) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
-		 * insert a missing entry
+		 * insert a missing entry.
 		 */
-		nccl_net_ofi_mutex_lock(&mr_cache->lock);
+		std::lock_guard cache_guard(domain->mr_cache_lock);
+
 		ret_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(
-			nccl_ofi_mr_cache_lookup_entry(mr_cache, ckey, endpoint_mr));
+			domain->mr_cache->lookup_entry(ckey, endpoint_mr));
 
 		if (ret_handle) {
 			/* Cache hit */
-			goto unlock;
+			*mr_handle = ret_handle;
+			return ret;
 		}
 		/* Cache miss */
-	}
 
-	key_pool = domain->mr_rkey_pool;
-	ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-					dev_id, ckey, type, &ret_handle);
-	if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
-		ret_handle = NULL;
-		goto unlock;
-	}
+		key_pool = domain->mr_rkey_pool;
+		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
+						dev_id, ckey, type, &ret_handle);
+		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
+			*mr_handle = nullptr;
+			return ret;
+		}
 
-	if (mr_cache) {
-		ret = nccl_ofi_mr_cache_insert_entry(mr_cache, ckey, endpoint_mr, ret_handle);
+		ret = domain->mr_cache->insert_entry(ckey, endpoint_mr, ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.
 			 */
-			sendrecv_comm_mr_base_dereg(ret_handle, key_pool, NULL);
-			ret_handle = NULL;
-			goto unlock;
+			sendrecv_comm_mr_base_dereg(ret_handle, key_pool, nullptr);
+			*mr_handle = nullptr;
+			return ret;
 		}
-	}
-
-unlock:
-	if (mr_cache) {
-		nccl_net_ofi_mutex_unlock(&mr_cache->lock);
+	} else {
+		key_pool = domain->mr_rkey_pool;
+		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
+						dev_id, ckey, type, &ret_handle);
+		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
+			*mr_handle = nullptr;
+			return ret;
+		}
 	}
 
 	*mr_handle = ret_handle;
@@ -853,7 +857,7 @@ int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain->mr_cache);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
 	return 0;
 }
 
@@ -1682,7 +1686,7 @@ int nccl_net_ofi_sendrecv_send_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain->mr_cache);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
 	return 0;
 }
 
