@@ -50,6 +50,14 @@ ncclResult_t region_get_coll_info_internal_v2(nccl_ofi_tuner_context_t *ctx,
 					      int *protocol,
 					      int *nChannels);
 
+ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
+					    ncclFunc_t collType,
+					    size_t nBytes,
+					    int algo,
+					    int proto,
+					    int nChannels,
+					    size_t *chunkSize);
+
 ncclResult_t region_destroy_internal(nccl_ofi_tuner_context_t *ctx);
 
 /* Maximum number of vertices per region */

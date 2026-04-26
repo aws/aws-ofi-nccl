@@ -66,6 +66,14 @@ struct nccl_ofi_tuner_context {
 						  int *protocol,
 						  int* nChannels);
 
+	ncclResult_t (*get_chunk_size_internal)(nccl_ofi_tuner_context_t *ctx,
+					       ncclFunc_t collType,
+					       size_t nBytes,
+					       int algo,
+					       int proto,
+					       int nChannels,
+					       size_t *chunkSize);
+
 	ncclResult_t (*destroy_internal)(nccl_ofi_tuner_context_t *ctx);
 };
 
