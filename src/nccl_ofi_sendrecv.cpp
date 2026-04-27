@@ -2274,7 +2274,8 @@ int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 
 
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
-			       nccl_net_ofi_plugin_t **plugin_p)
+			       nccl_net_ofi_plugin_t **plugin_p,
+			       nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	struct fi_info *provider_list = NULL;
@@ -2455,7 +2456,7 @@ found:
 		return ret;
 	}
 
-	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list);
+	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list, topo);
 
 	*plugin_p = plugin;
 

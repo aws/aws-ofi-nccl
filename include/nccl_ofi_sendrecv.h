@@ -324,10 +324,13 @@ public:
 	 * @brief	Default SENDRECV plugin constructor
 	 */
 	nccl_net_ofi_sendrecv_plugin_t(size_t num_devices,
-				       struct fi_info *provider_list_arg)
+				       struct fi_info *provider_list_arg,
+				       nccl_ofi_topo_t *topo_arg)
 		: nccl_net_ofi_plugin_t(num_devices),
 		  provider_list(provider_list_arg)
-	{}
+	{
+		this->topo = topo_arg;
+	}
 
 	/**
 	 * @brief	Default SENDRECV plugin destructor
@@ -462,6 +465,7 @@ public:
  * @brief	Initialize plugin with sendrecv protocol structures
  */
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
-			       nccl_net_ofi_plugin_t **plugin_p);
+			       nccl_net_ofi_plugin_t **plugin_p,
+			       nccl_ofi_topo_t *topo);
 
 #endif // End NCCL_OFI_SENDRECV_H_
