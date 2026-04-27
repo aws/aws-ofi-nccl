@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstring>
 #include <math.h>
@@ -566,10 +567,12 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 			const nccl_ofi_tuner_region_t regions[] = {
 				{.algorithm = NCCL_ALGO_PAT,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 10,
+				 .num_vertices = 12,
 				 .vertices = {{0, 2},
 							  {65536, 2},
 							  {1048576, 2},
+							  {8388608, 8},
+							  {16777216, 16},
 							  {16777216, 32},
 							  {50331648, 64},
 							  {117440512, 128},
@@ -579,11 +582,13 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 							  {0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL128,
-				 .num_vertices = 9,
+				 .num_vertices = 11,
 				 .vertices = {extended_pat_simple,
 							  {117440512, 128},
 							  {50331648, 64},
 							  {16777216, 32},
+							  {16777217, 16},
+							  {8388609, 8},
 							  {1048576, 2},
 							  {4194304, 2},
 							  {50331648, 16},
@@ -2151,6 +2156,58 @@ exit:
 	return ret;
 }
 
+static size_t chunkSizeTuningAllGatherPatSimpleP5en(size_t nBytes, size_t nNodes)
+{
+	/*
+	 * Steps DOWN a power-of-2 ladder from a per-cluster ceiling, choosing the
+	 * largest chunk that still yields at least T chunks for the current zone.
+	 * nNodes < 16: 1048576 -> 524288 -> 262144 -> 131072 -> 65536 -> 32768
+	 * nNodes >= 16:           524288 -> 262144 -> 131072 -> 65536 -> 32768
+	 * NCCL later grains these to the sizes it actually uses.
+	 *
+	 * Why chunk count matters for PAT: PAT's time is ~ log2(nNodes)*RTT (latency)
+	 * + serialization, and the latency term is paid per phase -- PAT pipelines
+	 * within a phase but not across phases. Phase count is set by how the per-
+	 * channel data fragments against PAT's inflight budget (NCCL_STEPS = 8 per
+	 * channel): if nchunks fits the 8-steps buffer, the collective runs as one
+	 * pipelined phase; if nchunks exceeds it, the channel must drain/refill mid-
+	 * collective, splitting into multiple non-pipelined phases and paying the
+	 * latency term again. So fewer chunks (larger size) keep it single-phase
+	 * (helps mid/large messages); more chunks (smaller size) fill the recursive
+	 * doubling pipeline faster (helps latency-bound small messages). */
+
+	/*
+	 * Ceiling: small clusters can use a larger single-phase chunk on big messages.
+	 * Larger clusters partition data across more ranks and top out a lower saturation
+	 * chunk size. */
+	size_t satChunkSize = nNodes >= 16 ? 524288 : 1048576;
+
+	/* Per-zone minimum chunk counts */
+	size_t T1 = nNodes >= 16 ? 32 : std::min(nNodes, (size_t)8) + 1; /* cap zone */
+	size_t T2 = std::min(nNodes, (size_t)16);                        /* mid zone */
+	size_t T3 = std::min(nNodes, (size_t)8);                         /* low zone */
+
+	size_t tunedChunkSize = satChunkSize;
+
+	/*
+	 * Step 1 (cap): one conditional halve off the ceiling. Let big messages use
+	 * larger chunk size to force it single-phase. */
+	while (nBytes / tunedChunkSize < T1 && tunedChunkSize > satChunkSize / 2)
+		tunedChunkSize /= 2;
+
+	/* Step 2 (mid): walk the mid chunks down to 64K chunk */
+	while (nBytes / tunedChunkSize < T2 && tunedChunkSize > 65536)
+		tunedChunkSize /= 2;
+
+	/*
+	 * Step 3 (low): final 64K->32K. At these sizes, the single-phase gain is
+	 * gone and only pipeline fill masters, so the threshold is the lowest. */
+	while (nBytes / tunedChunkSize < T3 && tunedChunkSize > 32768)
+		tunedChunkSize /= 2;
+
+	return tunedChunkSize;
+}
+
 static size_t chunkSizeTuningTreeLL128P5en(size_t nBytes, int log2_nnodes)
 {
 	/*
@@ -2235,6 +2292,12 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 		    proto == NCCL_PROTO_LL128) {
 			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
 				*chunkSize = chunkSizeTuningTreeLL128P5en(nBytes, region_ctx->log2_nnodes);
+			}
+		}
+		if (collType == ncclFuncAllGather && algo == NCCL_ALGO_PAT &&
+		    proto == NCCL_PROTO_SIMPLE) {
+			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
+				*chunkSize = chunkSizeTuningAllGatherPatSimpleP5en(nBytes, region_ctx->dims.num_nodes);
 			}
 		}
 	}
