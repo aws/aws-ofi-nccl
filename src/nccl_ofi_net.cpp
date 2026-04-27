@@ -148,6 +148,28 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
 	return ret;
 }
 
+/*
+ * Module-level hardware topology.
+ *
+ * Lifecycle:
+ *   - Created in nccl_net_ofi_create_plugin() via nccl_ofi_topo_create().
+ *   - Used during plugin construction (RDMA calls topo_populate/topo_group)
+ *     and after construction (complete_init, get_properties) via the
+ *     non-owning plugin->topo pointer.
+ *   - Freed automatically by the unique_ptr custom deleter, either on
+ *     initialization failure (unique_ptr goes out of scope or is reset)
+ *     or at process exit.
+ *
+ * Ownership:
+ *   This unique_ptr is the sole owner.  Plugin constructors receive a
+ *   raw pointer (via topo.get()) and must not free it.  The winning
+ *   plugin stores a non-owning copy in its base-class topo member for
+ *   later use by complete_init() and get_properties().
+ */
+struct topo_deleter {
+	void operator()(nccl_ofi_topo_t *t) { nccl_ofi_topo_free(t); }
+};
+static std::unique_ptr<nccl_ofi_topo_t, topo_deleter> topo;
 
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 {
@@ -157,7 +179,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	nccl_net_ofi_device_t *device = NULL;
 	nccl_ofi_properties_t properties;
-	nccl_ofi_topo_t *topo = nullptr;
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Initializing " PACKAGE_STRING);
 
@@ -194,14 +215,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	topo = nccl_ofi_topo_create();
+	topo.reset(nccl_ofi_topo_create());
 	if (!topo) {
 		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
 		ret = -ENODEV;
 		goto exit;
 	}
 
-	PlatformManager::register_all_platforms(topo);
+	PlatformManager::register_all_platforms(topo.get());
 
 	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Plugin selected platform: %s",
 	       PlatformManager::get_global().get_platform().get_name());
@@ -247,7 +268,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			}
 			break;
 		case PROTOCOL::RDMA:
-			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy, topo);
+			ret = nccl_net_ofi_rdma_init(provider_filter, &plugin, &dummy, topo.get());
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize rdma protocol");
 				goto exit;
@@ -260,7 +281,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 		try {
 			ret = nccl_net_ofi_rdma_init(provider_filter, &rdma_plugin,
-						     &have_multiple_rails, topo);
+						     &have_multiple_rails, topo.get());
 		}
 		catch (const std::exception &e) {
 			NCCL_OFI_WARN("Caught exception in rdma_init: %s", e.what());
@@ -312,6 +333,10 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
 			      ofi_nccl_protocol.get_string());
 	}
+
+	/* Set non-owning topo pointer on the winning plugin so that
+	 * complete_init and get_properties can access it. */
+	plugin->topo = topo.get();
 
 	ret = plugin->complete_init();
 	if (ret != 0) {
@@ -388,12 +413,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
  exit:
 	if (ret != 0) {
-		if (topo) {
-			nccl_ofi_topo_free(topo);
-		}
 		NCCL_OFI_WARN(PACKAGE_NAME " initialization failed");
 	}
-	// On success, topology ownership is transferred to plugin
 	return ret;
 }
 

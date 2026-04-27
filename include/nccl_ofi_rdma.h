@@ -1448,8 +1448,6 @@ public:
 	~nccl_net_ofi_rdma_plugin_t() override;
 
 	int complete_init() override;
-
-	nccl_ofi_topo_t *topo;
 };
 
 

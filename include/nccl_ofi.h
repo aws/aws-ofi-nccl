@@ -810,6 +810,20 @@ public:
 protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
+
+public:
+	/*
+	 * Hardware topology (non-owning pointer).
+	 *
+	 * The topology object is created and owned by a file-scope
+	 * static unique_ptr in nccl_ofi_net.cpp (see global comment
+	 * above nccl_net_ofi_create_plugin).  After protocol selection,
+	 * the winning plugin receives a non-owning raw pointer here so
+	 * that complete_init() and get_properties() can read topology
+	 * data.  Plugins must not free this pointer; the static
+	 * unique_ptr handles cleanup automatically.
+	 */
+	nccl_ofi_topo_t *topo = nullptr;
 };
 
 

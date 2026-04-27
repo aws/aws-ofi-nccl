@@ -6889,11 +6889,6 @@ static void get_hints(struct fi_info *hints)
 
 nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 {
-	if (this->topo != nullptr) {
-		nccl_ofi_topo_free(this->topo);
-		this->topo = nullptr;
-	}
-
 	if (r_comm_cleanup_list != nullptr) {
 		delete r_comm_cleanup_list;
 		r_comm_cleanup_list = nullptr;
@@ -6962,28 +6957,28 @@ nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_
 	int ret = 0;
 	int num_devices = 0;
 
-	/* Use shared topology and populate with filtered providers */
-	this->topo = global_topo;
+	/* Use topology parameter directly; the caller sets plugin->topo
+	 * to a non-owning pointer after construction. */
 
-	ret = nccl_ofi_topo_populate(this->topo, provider_list);
+	ret = nccl_ofi_topo_populate(global_topo, provider_list);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to populate topology");
 		throw std::runtime_error("rdma plugin constructor: topology population failed");
 	}
 
-	ret = nccl_ofi_topo_group(this->topo);
+	ret = nccl_ofi_topo_group(global_topo);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to group NICs");
 		throw std::runtime_error("rdma plugin constructor: NIC grouping failed");
 	}
 
-	if (this->topo->max_group_size < 1 || this->topo->max_group_size > MAX_NUM_RAILS) {
+	if (global_topo->max_group_size < 1 || global_topo->max_group_size > MAX_NUM_RAILS) {
 		NCCL_OFI_WARN("Unexpected topo group size of %d (minimum 1, maximum %d)",
-			      this->topo->max_group_size, MAX_NUM_RAILS);
+			      global_topo->max_group_size, MAX_NUM_RAILS);
 		throw std::runtime_error("rdma plugin constructor: invalid topo group size");
 	}
 
-	ret = nccl_ofi_topo_num_info_lists(this->topo, &num_devices);
+	ret = nccl_ofi_topo_num_info_lists(global_topo, &num_devices);
 	if (ret != 0) {
 		throw std::runtime_error("rdma plugin constructor: failed to get num info lists");
 	} else if (num_devices <= 0)  {
@@ -7129,7 +7124,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	 * link speed reported to NCCL to account for the other rails. This
 	 * requires generating a topology file that will be passed to NCCL.
 	 */
-	if (plugin->topo->max_group_size > 1) {
+	if (topo->max_group_size > 1) {
 		*found_multiple_rails = true;
 	}
 
