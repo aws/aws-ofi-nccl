@@ -29,12 +29,16 @@ static void no_change_check()
 	envmgr.update_environment(&env);
 	assert_always(env == orig_envp);
 	assert_always(env[0] == val0);
+
+	free(val0);
+	free(env);
 }
 
 
 static void addition_check()
 {
 	char **env = (char **)malloc(2 * sizeof(char *));
+	char **orig_env = env;
 	char *val0 = strdup("hello=bye");
 	env[0] = val0;
 	env[1] = NULL;
@@ -47,6 +51,11 @@ static void addition_check()
 	assert_always(&env == orig_envp);
 	assert_always(env[0] == val0);
 	assert_always(0 == strcmp(env[1], "womp=womp"));
+
+	free(val0);
+	free(env[1]);
+	free(orig_env);
+	free(env);
 }
 
 
@@ -65,12 +74,15 @@ static void late_check()
 		raised = true;
 	}
 	assert_always(raised);
+
+	free(env);
 }
 
 
 static void replace_check()
 {
 	char **env = (char **)malloc(5 * sizeof(char *));
+	char **orig_env = env;
 	char *val0 = strdup("one=1");
 	char *val1 = strdup("two=4");
 	char *val2 = strdup("three=3");
@@ -95,6 +107,19 @@ static void replace_check()
 	assert_always(env[3] == val3);
 	assert_always(0 == strcmp(env[4], "five=5"));
 	assert_always(env[5] == NULL);
+
+	/* val1 was replaced by update_environment */
+	free(val1);
+	/* Free entries allocated by create_new_entry */
+	free(env[1]);
+	free(env[4]);
+	/* Free original strings still referenced */
+	free(val0);
+	free(val2);
+	free(val3);
+	/* Free both env arrays */
+	free(orig_env);
+	free(env);
 }
 
 

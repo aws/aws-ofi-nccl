@@ -370,3 +370,42 @@ jobs:
           name: CodeChecker Bug Reports for ${{ matrix.sdk }}
           path: |
             codechecker_Results_HTML/*.html
+
+  asan:
+    runs-on: ubuntu-latest
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:cuda-gcc-13-none-efalattest
+    name: U2404/cuda/gcc-13/asan
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Fix Git Configuration
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+      - name: Build with ASAN
+        run: |
+          export CC=gcc-13
+          export CXX=g++-13
+          ./autogen.sh
+          ./configure --with-mpi=/opt/amazon/openmpi \
+                      --with-libfabric=/opt/amazon/efa \
+                      --enable-tests=yes \
+                      --enable-picky-compiler=yes \
+                      --enable-platform-aws \
+                      --with-cuda=/usr/local/cuda \
+                      --enable-asan \
+                      --enable-debug
+          make -j$(nproc) V=1
+
+      - name: Run unit tests with ASAN leak detection
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          LSAN_OPTIONS: exitcode=1
+        run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: asan-test-suite-log
+          path: tests/unit/test-suite.log
+          if-no-files-found: ignore
