@@ -6723,11 +6723,6 @@ static void get_hints(struct fi_info *hints)
 
 nccl_net_ofi_rdma_plugin_t::~nccl_net_ofi_rdma_plugin_t()
 {
-	if (this->topo != nullptr) {
-		nccl_ofi_topo_free(this->topo);
-		this->topo = nullptr;
-	}
-
 	if (r_comm_cleanup_list != nullptr) {
 		delete r_comm_cleanup_list;
 		r_comm_cleanup_list = nullptr;

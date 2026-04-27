@@ -806,6 +806,11 @@ public:
 protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
+
+public:
+	/* Hardware topology. Owned by the plugin and freed in the
+	 * base class destructor. */
+	nccl_ofi_topo_t *topo = nullptr;
 };
 
 

@@ -240,7 +240,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 		switch (ofi_nccl_protocol.get()) {
 		case PROTOCOL::SENDRECV:
-			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
+			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin, topo);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 				goto exit;
@@ -276,7 +276,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		if (!have_multiple_rails || rdma_plugin == NULL) {
 			try {
 				ret = nccl_net_ofi_sendrecv_init(provider_filter,
-								 &sendrecv_plugin);
+								 &sendrecv_plugin,
+								 topo);
 			}
 			catch (const std::exception &e) {
 				NCCL_OFI_WARN("Caught exception in sendrecv_init: %s", e.what());
@@ -293,12 +294,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 			ofi_nccl_protocol.set(PROTOCOL::RDMA);
 			plugin = rdma_plugin;
 			if (sendrecv_plugin != NULL) {
+				sendrecv_plugin->topo = nullptr;
 				delete sendrecv_plugin;
 			}
 		} else {
 			ofi_nccl_protocol.set(PROTOCOL::SENDRECV);
 			plugin = sendrecv_plugin;
 			if (rdma_plugin != NULL) {
+				rdma_plugin->topo = nullptr;
 				delete rdma_plugin;
 			}
 		}
@@ -658,6 +661,10 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 
 nccl_net_ofi_plugin_t::~nccl_net_ofi_plugin_t()
 {
+	if (this->topo != nullptr) {
+		nccl_ofi_topo_free(this->topo);
+		this->topo = nullptr;
+	}
 	for (size_t i = 0 ; i < this->get_num_devices() ; i++) {
 		delete this->p_devs[i];
 	}
