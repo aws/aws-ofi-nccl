@@ -68,12 +68,15 @@ jobs:
                       --enable-picky-compiler=yes \
                       --${{ matrix.platform-aws }}-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace' || '' }}
+                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace --enable-asan' || '' }}
 
       - name: Call `make`
         run: make V=1
 
       - name: Call `make check`
+        env:
+          ASAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'detect_leaks=1:halt_on_error=1' || '' }}
+          LSAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'exitcode=1' || '' }}
         run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
 
       - name: Call `make install`
@@ -140,13 +143,16 @@ jobs:
                       --enable-picky-compiler=yes \
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
+                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-asan' || '' }} \
                       ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
 
       - name: Call `make`
         run: make V=1
 
       - name: Call `make check`
+        env:
+          ASAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'detect_leaks=1:halt_on_error=1' || '' }}
+          LSAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'exitcode=1' || '' }}
         run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
 
       - name: Call `make install`
@@ -214,13 +220,16 @@ jobs:
                       --enable-picky-compiler=yes \
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
-                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace'  || '' }} \
+                      ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace --enable-asan'  || '' }} \
                       ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
 
       - name: Call `make`
         run: make V=1
 
       - name: Call `make check`
+        env:
+          ASAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'detect_leaks=1:halt_on_error=1' || '' }}
+          LSAN_OPTIONS: ${{ matrix.build-type == 'debug' && 'exitcode=1' || '' }}
         run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
 
       - name: Call `make install`
@@ -370,3 +379,4 @@ jobs:
           name: CodeChecker Bug Reports for ${{ matrix.sdk }}
           path: |
             codechecker_Results_HTML/*.html
+
