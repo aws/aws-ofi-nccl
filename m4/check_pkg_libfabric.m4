@@ -50,6 +50,9 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 	[AC_CHECK_HEADERS([rdma/fi_ext.h])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
+	[AC_CHECK_HEADERS([rdma/fi_ext_efa.h])])
+
+  AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_CHECK_DECLS([FI_OPT_CUDA_API_PERMITTED,
                   FI_OPT_EFA_USE_DEVICE_RDMA,
                   FI_OPT_EFA_EMULATED_WRITE,
@@ -58,11 +61,15 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
                   FI_OPT_MAX_MSG_SIZE,
                   FI_OPT_SHARED_MEMORY_PERMITTED,
                   FI_MR_DMABUF,
-		  FI_OPT_INJECT_RMA_SIZE],
+		      FI_OPT_INJECT_RMA_SIZE,
+                  FI_EFA_FEATURE_OPS],
                   [], [], [AC_INCLUDES_DEFAULT
 [#include <rdma/fi_endpoint.h>
 #ifdef HAVE_RDMA_FI_EXT_H
 #include <rdma/fi_ext.h>
+#endif
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
 #endif]])])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
