@@ -5528,7 +5528,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	bool eager = false;
 	bool in_group = false;
 
-
 	assert(s_comm != NULL);
 
 	if (s_comm->comm_active == false) {

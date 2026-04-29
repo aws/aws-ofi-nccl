@@ -144,7 +144,7 @@ static int test_ready_bit()
 
 	/* Zero msg_seq_num should NOT match seq_num=1 */
 	ctrl.entries[0].msg_seq_num = 0;
-	if ((ctrl.entries[0].msg_seq_num == (1 & MASK))) {
+	if (ctrl.entries[0].msg_seq_num == (1 & MASK)) {
 		NCCL_OFI_WARN("false positive: seq 0 matched seq 1");
 		return 1;
 	}
