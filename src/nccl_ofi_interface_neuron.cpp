@@ -107,7 +107,7 @@ static ncclResult_t getProperties_v5(int dev_id, ncclNetProperties_v5_t* props)
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	/* Neuron uses sendrecv protocol which does not support grouped receives */
+	/* No support for multi-recv in Neuron as of now */
 	props->maxRecvs = 1;
 
 	props->max_write_inline_size = ofi_properties.max_write_inline_size;
