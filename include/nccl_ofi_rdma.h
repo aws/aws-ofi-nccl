@@ -398,9 +398,6 @@ typedef struct {
 } rdma_req_recv_segms_data_t;
 
 /*
- * @brief	Data of request responsible for receive operation
- */
-/*
  * @brief	Per-sub-receive metadata within a grouped receive
  */
 typedef struct rdma_req_recv_sub {
@@ -718,9 +715,9 @@ public:
     nccl_net_ofi_rdma_recv_comm_rail_t *get_data_rail(uint16_t rail_id);
     nccl_net_ofi_rdma_recv_comm_rail_t *get_control_rail(uint16_t rail_id);
     int allocate_recv_req(nccl_net_ofi_rdma_device_t *device,
-			  int dev_id_arg, uint16_t msg_seq_num, void *buff,
-			  size_t size,
-			  nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
+			  int dev_id_arg, uint16_t msg_seq_num, int num_recvs,
+			  void **buffs, size_t *sizes, int *tags,
+			  nccl_net_ofi_rdma_mr_handle_t **buff_mr_handles,
 			  nccl_net_ofi_rdma_req **ret_req,
 			  bool recv_completion_optional);
 

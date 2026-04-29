@@ -698,10 +698,13 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
 	/* Sum up number of segments */
 	req->ncompls++;
 
-	/* Register this sender's total_nsegms if we haven't seen enough senders yet.
-	 * For a single recv (num_expected_senders=1), this registers once on the first completion.
-	 * For grouped receives, each fi_writedata completion represents one sender.
-	 * We use the original heuristic for non-grouped, and simple counting for grouped. */
+	/* Detect when a completion belongs to a new sender we haven't
+	 * registered yet. Each sender's first segment pushes ncompls past
+	 * the sum of all previously registered senders' segment counts.
+	 * When that happens, we register this sender's total_nsegms.
+	 * For single recv (1 sender), this fires once on the first completion.
+	 * For grouped recv (N senders), this fires N times as each sender's
+	 * first completion crosses the running total. */
 	if (req->ncompls > recv_segms_data->total_expected_segms) {
 		recv_segms_data->total_expected_segms += total_nsegms;
 		recv_segms_data->num_senders_registered++;
@@ -2351,17 +2354,21 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	uint16_t expected = (uint16_t)(seq_num & MSG_SEQ_NUM_MASK);
-	if (READ_ONCE(s_comm->ctrl_mailbox[slot].entries[0].msg_seq_num) != expected)
+	if (READ_ONCE(s_comm->ctrl_mailbox[slot].entries[0].msg_seq_num) != expected) {
 		return false;
+	}
 	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
-	if (ctrl->entries[0].num_recvs <= 1)
+	if (ctrl->entries[0].num_recvs <= 1) {
 		return true;
+	}
 	/* Grouped receive: verify per-entry seq nums and find matching tag */
 	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
-		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected)
+		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected) {
 			return false;
-		if (ctrl->entries[i].tag == tag)
+		}
+		if (ctrl->entries[i].tag == tag) {
 			return true;
+		}
 	}
 	return false;
 }
@@ -2373,8 +2380,9 @@ static inline uint32_t get_ctrl_msg_buff_len(nccl_net_ofi_rdma_send_comm* s_comm
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
-	if (ctrl->entries[0].num_recvs <= 1)
+	if (ctrl->entries[0].num_recvs <= 1) {
 		return ctrl->entries[0].buff_len;
+	}
 	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
 		if (ctrl->entries[i].tag == tag) {
 			return ctrl->entries[i].buff_len;
@@ -2919,8 +2927,7 @@ static inline nccl_net_ofi_rdma_req *allocate_req(nccl_ofi_freelist *fl)
 static inline int insert_recv_segms_req(
 				nccl_net_ofi_rdma_recv_comm *r_comm,
 				nccl_net_ofi_rdma_device_t *device,
-				int dev_id, uint16_t msg_seq_num, void *buff,
-				size_t size,
+				int dev_id, uint16_t msg_seq_num, int num_recvs,
 				nccl_net_ofi_rdma_req *recv_req)
 {
 	/* Allocate recv segms request */
@@ -2941,7 +2948,7 @@ static inline int insert_recv_segms_req(
 	recv_segms_data->recv_req = recv_req;
 	recv_segms_data->total_expected_segms = 0;
 	recv_segms_data->num_senders_registered = 0;
-	recv_segms_data->num_expected_senders = 1;
+	recv_segms_data->num_expected_senders = num_recvs;
 
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 	recv_data->recv_segms_req = recv_segms_req;
@@ -2954,13 +2961,14 @@ static inline int insert_recv_segms_req(
  */
 int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 				nccl_net_ofi_rdma_device_t *device,
-				int dev_id_arg, uint16_t msg_seq_num, void *buff,
-				size_t size,
-				nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle,
+				int dev_id_arg, uint16_t msg_seq_num, int num_recvs,
+				void **buffs, size_t *sizes, int *tags,
+				nccl_net_ofi_rdma_mr_handle_t **buff_mr_handles,
 				nccl_net_ofi_rdma_req **ret_req,
 				bool recv_completion_optional)
 {
 	int ret = 0;
+	int i;
 	rdma_req_recv_data_t *recv_data;
 
 	/* Allocate receive request */
@@ -2981,58 +2989,49 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	/* In the case of early completion, only expect the completion for control msg itself */
 	recv_data->total_num_compls = recv_completion_optional ? 1 : 2;
 	recv_data->eager_copy_req = NULL;
-	recv_data->num_recvs = 1;
-	recv_data->recvs[0].dst_buff = buff;
-	recv_data->recvs[0].dst_len = size;
-	recv_data->recvs[0].dest_mr_handle = buff_mr_handle;
-	recv_data->recvs[0].tag = 0;
-	recv_data->recvs[0].recv_size = 0;
-	recv_data->recvs[0].ncompls = 0;
-	recv_data->recvs[0].total_segms = 0;
+	recv_data->num_recvs = num_recvs;
+	for (i = 0; i < num_recvs; i++) {
+		recv_data->recvs[i].dst_buff = buffs[i];
+		recv_data->recvs[i].dst_len = sizes[i];
+		recv_data->recvs[i].dest_mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)buff_mr_handles[i];
+		recv_data->recvs[i].tag = tags[i];
+		recv_data->recvs[i].recv_size = 0;
+		recv_data->recvs[i].ncompls = 0;
+		recv_data->recvs[i].total_segms = 0;
+	}
 
-	ret = insert_recv_segms_req(this, device, dev_id_arg, msg_seq_num, buff, size, req);
+	ret = insert_recv_segms_req(this, device, dev_id_arg, msg_seq_num, num_recvs, req);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to insert receive segments request into recv request");
 		return ret;
 	}
 
-	/* Update receiver's control mailbox slot
-	* The receiver updates a slot in its control mailbox with the sequence number of the recv request.
-	* The contents of this slot are then written to the sender's mailbox. The sender checks the slot
-	* corresponding to the send request's sequence number to identify whether the control message
-	* for this message is available or not. Since we start with sequence number of 1(as opposed to 0),
-	* we do not run into the case where the sender mistakenly thinks that the control message has
-	* been received. Also, since the size of the mailbox is less than MSG_SEQ_NUM_MASK+1
-	* wrap around works fine too */
+	/* Update receiver's control mailbox slot */
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-	/* Zero the slot first, then populate. msg_seq_num is written last as the ready bit. */
 	memset(&this->ctrl_mailbox[slot], 0, sizeof(nccl_net_ofi_ctrl_msg_t));
-	this->ctrl_mailbox[slot].entries[0].num_recvs = 1;
+	this->ctrl_mailbox[slot].entries[0].num_recvs = num_recvs;
 	if (recv_completion_optional) {
 		this->ctrl_mailbox[slot].entries[0].flags |= NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT;
 	}
 
-	/* Populate entry 0 */
-	nccl_net_ofi_ctrl_msg_entry_t *entry = &this->ctrl_mailbox[slot].entries[0];
-	entry->buff_offset = (uintptr_t)buff - buff_mr_handle->base_addr;
-	entry->buff_len = size;
-	entry->tag = 0;
-	entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
-
-	uint16_t rail_id = 0;
-	for (; rail_id < this->num_rails; rail_id++) {
-		uint64_t rkey = fi_mr_key(buff_mr_handle->mr[rail_id].get());
-
-		if (rkey == FI_KEY_NOTAVAIL) {
-			NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
-			return -ENOENT;
+	/* Populate all entries */
+	for (i = 0; i < num_recvs; i++) {
+		nccl_net_ofi_ctrl_msg_entry_t *entry = &this->ctrl_mailbox[slot].entries[i];
+		nccl_net_ofi_rdma_mr_handle_t *mr_h = (nccl_net_ofi_rdma_mr_handle_t *)buff_mr_handles[i];
+		entry->buff_offset = (uintptr_t)buffs[i] - mr_h->base_addr;
+		entry->buff_len = sizes[i];
+		entry->tag = tags[i];
+		entry->recv_idx = i;
+		entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
+		for (uint16_t rail_id = 0; rail_id < this->num_rails; rail_id++) {
+			uint64_t rkey = fi_mr_key(mr_h->mr[rail_id].get());
+			if (rkey == FI_KEY_NOTAVAIL) {
+				NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
+				return -ENOENT;
+			}
+			entry->mr_key[rail_id] = rkey;
 		}
-
-		entry->mr_key[rail_id] = rkey;
 	}
-
-	/* Write msg_seq_num last as the ready bit */
-	this->ctrl_mailbox[slot].entries[0].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 
 	*ret_req = req;
 
@@ -3211,7 +3210,18 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 		eager = false;
 	}
 
-	/* Handle 0-byte messages: use flush buffer for valid SGE */
+	/* NCCL versions prior to 2.24 require special handling for 0 byte
+	 * messages when using user buffer registration.  NCCL passes the base
+	 * pointer from the user buffer, but passes the registration from the
+	 * channel buffer, to avoid an MR cache lookup.  This is fine with
+	 * InfiniBand, where the spec says the SGE is not used for a 0 byte
+	 * message, but is a problem for EFA, which validates the pointer / MR
+	 * even for a 0 byte transfer.
+	 *
+	 * To handle this case, we use the flush buffer (note we still move 0
+	 * bytes of data, we just need a valid SGE) instead of the provided base
+	 * pointer and MR
+	 */
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
 			buffers[i] = domain->flush_buff.buffer;
@@ -3220,61 +3230,13 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	}
 
 	ret = this->allocate_recv_req(device, device_id, msg_seq_num,
-					buffers[0], sizes[0],
-					mr_handles[0], &req, recv_completion_optional);
+					n, buffers, sizes, tags,
+					mr_handles, &req, recv_completion_optional);
 	if (ret != 0) {
 		goto error;
 	}
 
 	recv_data = get_recv_data(req);
-
-	/* Populate per-sub-receive metadata for all n buffers */
-	recv_data->num_recvs = n;
-	/* Update recv_segms to expect n senders for grouped receives */
-	if (n > 1) {
-		rdma_req_recv_segms_data_t *segms_data = get_recv_segms_data(recv_data->recv_segms_req);
-		segms_data->num_expected_senders = n;
-	}
-	for (i = 0; i < n; i++) {
-		recv_data->recvs[i].dst_buff = buffers[i];
-		recv_data->recvs[i].dst_len = sizes[i];
-		recv_data->recvs[i].dest_mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mr_handles[i];
-		recv_data->recvs[i].tag = tags[i];
-		recv_data->recvs[i].recv_size = 0;
-		recv_data->recvs[i].ncompls = 0;
-		recv_data->recvs[i].total_segms = 0;
-	}
-
-	/* Update the ctrl mailbox slot with all n sub-entries.
-	 * allocate_recv_req already populated entries[0] and the header.
-	 * Now update num_recvs and populate entries[1..n-1]. */
-	{
-		uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
-		this->ctrl_mailbox[slot].entries[0].num_recvs = n;
-		/* Entry 0 was already populated by allocate_recv_req, but update its tag */
-		this->ctrl_mailbox[slot].entries[0].tag = tags[0];
-		this->ctrl_mailbox[slot].entries[0].recv_idx = 0;
-		this->ctrl_mailbox[slot].entries[0].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
-
-		for (i = 1; i < n; i++) {
-			nccl_net_ofi_ctrl_msg_entry_t *entry = &this->ctrl_mailbox[slot].entries[i];
-			nccl_net_ofi_rdma_mr_handle_t *mr_h = (nccl_net_ofi_rdma_mr_handle_t *)mr_handles[i];
-			entry->buff_offset = (uintptr_t)buffers[i] - mr_h->base_addr;
-			entry->buff_len = sizes[i];
-			entry->tag = tags[i];
-			entry->recv_idx = i;
-			entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
-			for (uint16_t rail_id = 0; rail_id < this->num_rails; rail_id++) {
-				uint64_t rkey = fi_mr_key(mr_h->mr[rail_id].get());
-				if (rkey == FI_KEY_NOTAVAIL) {
-					NCCL_OFI_WARN("RDMA write buffers should be pre-registered");
-					ret = -ENOENT;
-					goto error;
-				}
-				entry->mr_key[rail_id] = rkey;
-			}
-		}
-	}
 
 	if (eager) {
 		nccl_net_ofi_rdma_req *rx_buff_req = (nccl_net_ofi_rdma_req *)elem;
