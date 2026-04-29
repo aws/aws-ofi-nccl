@@ -43,7 +43,8 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
 /*
  * @brief      Number of bits used for the communicator ID
  */
-#define NCCL_OFI_RDMA_COMM_ID_BITS (18)
+#define NCCL_OFI_RDMA_COMM_ID_BITS (15)
+#define NCCL_OFI_RDMA_RECV_IDX_BITS (3)
 
 /* Maximum number of comms open simultaneously. Eventually this will be
    runtime-expandable */
@@ -191,8 +192,10 @@ typedef struct nccl_net_ofi_ctrl_msg_entry {
 	 * metadata that applies to the entire control message. */
 	uint16_t flags;
 	uint16_t num_recvs;
+	/* Index of this entry within the grouped receive (0..N-1) */
+	uint8_t recv_idx;
 	/* Padding to 64-byte cache line boundary */
-	uint8_t pad[10];
+	uint8_t pad[9];
 } nccl_net_ofi_ctrl_msg_entry_t;
 static_assert(sizeof(nccl_net_ofi_ctrl_msg_entry_t) == 64,
 		"Wrong size for RDMA Control message entry");
@@ -338,6 +341,8 @@ typedef struct {
 	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
 	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
 	int tag;
+	/* Sub-receive index within a grouped receive (encoded in immediate data) */
+	uint8_t recv_idx;
 	/* Schedule used to transfer this request. We save the pointer to
 	 * reference it when transferring the request over network. */
 	nccl_net_ofi_schedule_t *schedule;

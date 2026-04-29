@@ -65,6 +65,11 @@
 #define MSG_NUM_SEG_MASK (((uint64_t)1 << NUM_NUM_SEG_BITS) - 1)
 
 /*
+ * @brief	Sub-receive index bitmask for immediate data
+ */
+#define MSG_RECV_IDX_MASK (((uint64_t)1 << NCCL_OFI_RDMA_RECV_IDX_BITS) - 1)
+
+/*
  * @brief	Extract communicator ID from write completion immediate data
  *
  * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
@@ -83,7 +88,12 @@
  *
  * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
-#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_NUM_SEG_MASK)
+#define GET_NUM_SEG_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS + NCCL_OFI_RDMA_RECV_IDX_BITS)) & MSG_NUM_SEG_MASK)
+
+/*
+ * @brief	Extract sub-receive index from write completion immediate data
+ */
+#define GET_RECV_IDX_FROM_IMM(data) (((data) >> (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) & MSG_RECV_IDX_MASK)
 
 /*
  * @brief	Build write completion immediate data from comm ID, message seq
@@ -91,8 +101,10 @@
  *
  * The immediate data bit format is documented in the definition of NCCL_OFI_RDMA_SEQ_BITS
  */
-#define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, nseg) \
-	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)))
+#define GET_RDMA_WRITE_IMM_DATA(comm_id, seq, recv_idx, nseg) \
+	((seq) | ((comm_id) << NCCL_OFI_RDMA_SEQ_BITS) | \
+	 ((recv_idx) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS)) | \
+	 ((nseg) << (NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS + NCCL_OFI_RDMA_RECV_IDX_BITS)))
 
 /*
  * Return value from some functions indicating that the communicator is
@@ -741,10 +753,12 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	nccl_net_ofi_ctrl_msg_entry_t *entry = NULL;
 	if (ctrl->entries[0].num_recvs <= 1) {
 		entry = &ctrl->entries[0];
+		send_data->recv_idx = 0;
 	} else {
 		for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
 			if (ctrl->entries[i].tag == send_data->tag) {
 				entry = &ctrl->entries[i];
+				send_data->recv_idx = entry->recv_idx;
 				break;
 			}
 		}
@@ -785,7 +799,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	send_data->total_num_compls = send_data->schedule->num_xfer_infos;
 
 	send_data->wdata =
-		GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num, send_data->schedule->num_xfer_infos);
+		GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num, send_data->recv_idx, send_data->schedule->num_xfer_infos);
 
 	if (s_comm->ctrl_mailbox[slot].entries[0].flags & NCCL_OFI_RDMA_FLAG_RECV_COMPLETION_OPT)
 		send_data->no_target_completion = true;
@@ -1124,6 +1138,10 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	nccl_net_ofi_rdma_req *recv_segms_req = recv_data->recv_segms_req;
 
 	uint64_t total_segms = GET_NUM_SEG_FROM_IMM(cq_entry->data);
+	uint8_t recv_idx = GET_RECV_IDX_FROM_IMM(cq_entry->data);
+
+	/* Accumulate per-sub-receive size for grouped receives */
+	recv_data->recvs[recv_idx].recv_size += cq_entry->len;
 
 	ret = inc_recv_seg_completion(recv_segms_req, cq_entry->len, total_segms);
 	if (OFI_UNLIKELY(ret != 0)) {
@@ -2486,11 +2504,8 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 			if (this->type == NCCL_OFI_RDMA_RECV) {
 				rdma_req_recv_data_t *local_recv_data = get_recv_data(this);
 				if (local_recv_data->num_recvs > 1) {
-					/* For grouped receives, distribute total received
-					 * size evenly across sub-receives. */
-					size_t per_sub = req_size / local_recv_data->num_recvs;
 					for (int i = 0; i < local_recv_data->num_recvs; i++) {
-						size_p[i] = per_sub;
+						size_p[i] = local_recv_data->recvs[i].recv_size;
 					}
 				} else {
 					*size_p = req_size;
@@ -3238,6 +3253,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 		this->ctrl_mailbox[slot].entries[0].num_recvs = n;
 		/* Entry 0 was already populated by allocate_recv_req, but update its tag */
 		this->ctrl_mailbox[slot].entries[0].tag = tags[0];
+		this->ctrl_mailbox[slot].entries[0].recv_idx = 0;
 		this->ctrl_mailbox[slot].entries[0].msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 
 		for (i = 1; i < n; i++) {
@@ -3246,6 +3262,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 			entry->buff_offset = (uintptr_t)buffers[i] - mr_h->base_addr;
 			entry->buff_len = sizes[i];
 			entry->tag = tags[i];
+			entry->recv_idx = i;
 			entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 			for (uint16_t rail_id = 0; rail_id < this->num_rails; rail_id++) {
 				uint64_t rkey = fi_mr_key(mr_h->mr[rail_id].get());
@@ -4992,7 +5009,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 		   has not arrived, so we expect one extra completion for the ctrl msg recv. */
 		send_data->total_num_compls = send_data->schedule->num_xfer_infos + 1;
 		send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num,
-							   send_data->schedule->num_xfer_infos);
+							   send_data->recv_idx, send_data->schedule->num_xfer_infos);
 	}
 
 	send_data->eager = eager;
