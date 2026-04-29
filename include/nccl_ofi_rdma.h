@@ -695,6 +695,8 @@ public:
 	/* Freelist of eager header buffers */
 	nccl_ofi_freelist *eager_hdr_fl;
 	nccl_net_ofi_rdma_mr_handle_t *eager_hdr_mr_handle;
+	/* Whether eager sends prepend an 8-byte header for multi-recv routing */
+	bool use_eager_header;
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -838,6 +840,8 @@ public:
 	nccl_ofi_dlist recv_eager_list;
 	nccl_ofi_recv_eager_entry_t recv_eager_pool[NCCL_OFI_CTRL_MAILBOX_SIZE];
 	nccl_ofi_dlist recv_eager_free;
+	/* Whether eager recvs carry an 8-byte header for multi-recv routing */
+	bool use_eager_header;
 	/* Last processed eager entry's coordinates */
 	uint16_t last_eager_msg_seq_num;
 	uint8_t last_eager_offset;
@@ -1662,6 +1666,10 @@ public:
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
+
+	/* Whether the provider supports mixed host/device iovecs,
+	 * enabling the eager header for multi-recv routing. */
+	bool supports_eager_header = false;
 
 	/* ID pool */
 	nccl_ofi_idpool_t comm_idpool;
