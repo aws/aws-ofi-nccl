@@ -5598,9 +5598,11 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	}
 
 	/* Determine if this should be sent eagerly.
-	 * Disable eager entirely when maxRecvs > 1: the sender must wait for
-	 * the ctrl msg so it can detect grouped receives and reuse msg_seq_num. */
-	if (NCCL_OFI_MAX_RECVS == 1 && !have_ctrl &&
+	 * Eager is disabled when multi-recv requires the sender to wait for
+	 * the ctrl msg to detect grouped receives. Currently multi-recv is
+	 * only supported with eager_send_size == -1, so the size check
+	 * is sufficient to disable eager for multi-recv. */
+	if (!have_ctrl &&
 	    (ssize_t)size <= endpoint->eager_send_size && s_comm->num_inflight_writes == 0) {
 		eager = true;
 	}
