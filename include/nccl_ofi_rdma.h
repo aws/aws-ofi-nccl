@@ -8,8 +8,11 @@
 
 #include <rdma/fabric.h>
 
+#include <algorithm>
 #include <array>
+#include <cassert>
 #include <deque>
+#include <mutex>
 
 #include "nccl_ofi.h"
 #include "cm/nccl_ofi_cm.h"
@@ -309,6 +312,8 @@ class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
 
 class nccl_net_ofi_rdma_req;
+class nccl_net_ofi_rdma_send_comm;
+class nccl_net_ofi_rdma_recv_comm;
 
 typedef struct {
 	/* Rx buffer freelist item */
@@ -505,6 +510,7 @@ public:
 class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
 public:
 	nccl_net_ofi_rdma_req();
+	virtual ~nccl_net_ofi_rdma_req() = default;
 	
 	int test(int *done, int *size_p) override;
 
@@ -540,7 +546,7 @@ public:
 	 * Protect updating critical fields such as size and ncompls when
 	 * network xfer happened over multiple rails
 	 */
-	pthread_mutex_t req_lock;
+	std::mutex req_lock;
 
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
@@ -555,9 +561,94 @@ public:
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	int free(bool dec_inflight_reqs);
+	virtual int free(bool dec_inflight_reqs);
 
 };
+
+/*
+ * RDMA request subclasses, one per request type.
+ *
+ * Type-specific data still lives in the anonymous union in the base
+ * class and is accessed via the get_*_data() helpers.  The
+ * subclasses only carry the fields that other parts of the
+ * allocation and post paths need to consult directly: the direction
+ * enum for WRITE vs READ and the kind enum for CTRL vs EAGER rx
+ * buffers.
+ *
+ * TODO: Once the base class union is removed and per-type accessors
+ * are retired, each subclass will take ownership of its type-specific
+ * data struct as a named member.
+ */
+
+class rdma_send_req : public nccl_net_ofi_rdma_req {
+public:
+	/* Typed accessor for the associated send_comm.  Concentrates the
+	 * downcast from the base nccl_net_ofi_comm * here so the rest of
+	 * the subclass stays type-clean.  Asserted in debug builds. */
+	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+};
+
+class rdma_recv_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+class rdma_flush_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
+public:
+	enum class direction { WRITE, READ };
+	direction dir;
+	/* RMA write requests use a send_comm; reads use a recv_comm.
+	 * Callers pick the appropriate accessor based on dir. */
+	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
+public:
+	enum class kind { CTRL, EAGER };
+	kind rx_kind;
+};
+
+class rdma_send_close_req : public nccl_net_ofi_rdma_req {
+public:
+	/* The receive side originates the close handshake (sends a
+	 * close control message to the sender), so this request is
+	 * associated with a recv_comm. */
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+};
+
+/* Maximum size across all request subclasses.  Used as the freelist
+ * element size so that any subclass can be placement-new'd into any
+ * slot.  While the base class still carries the anonymous union, each
+ * subclass is the same size as the base (plus at most a small enum
+ * field), so this resolves to sizeof(base) in practice.  Once the
+ * union is removed and subclasses hold their own data, this constant
+ * becomes the actual max-of-subclass-sizes. */
+static constexpr size_t rdma_req_max_subclass_size = std::max({
+	sizeof(rdma_send_req),
+	sizeof(rdma_recv_req),
+	sizeof(rdma_flush_req),
+	sizeof(rdma_rma_op_req),
+	sizeof(rdma_rx_buff_req),
+	sizeof(rdma_send_close_req),
+	sizeof(rdma_eager_copy_req),
+	sizeof(rdma_recv_segms_req)
+});
 
 /*
  * Rdma endpoint name
@@ -810,6 +901,47 @@ public:
 	uint64_t remote_mailbox_addr;
 	std::array<uint64_t, MAX_NUM_RAILS> remote_mr_key;
 };
+
+
+inline nccl_net_ofi_rdma_send_comm *rdma_send_req::get_send_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
+	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_recv_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_flush_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_send_comm *rdma_rma_op_req::get_send_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
+	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_rma_op_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_send_close_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_eager_copy_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_recv_segms_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
 
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
