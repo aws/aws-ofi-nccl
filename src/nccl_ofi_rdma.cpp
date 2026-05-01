@@ -556,7 +556,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 {
 	int ret = 0;
 	int ncompls;
-	nccl_net_ofi_mutex_lock(&req->req_lock);
+	std::lock_guard<std::mutex> lock(req->req_lock);
 
 	req->size += size;
 	ncompls = ++(req->ncompls);
@@ -570,8 +570,6 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 		/* Trace this completion */
 		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->type, req, req);
 	}
-
-	nccl_net_ofi_mutex_unlock(&req->req_lock);
 
 	return -ret;
 }
@@ -601,13 +599,13 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
 	nccl_net_ofi_rdma_req *recv_req = eager_copy_data->recv_req;
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
-	nccl_net_ofi_mutex_lock(&req->req_lock);
+	req->req_lock.lock();
 
 	/* Set send ctrl request completed */
 	req->ncompls = 1;
 	req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
-	nccl_net_ofi_mutex_unlock(&req->req_lock);
+	req->req_lock.unlock();
 
 	/* Get size of received data */
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
@@ -688,7 +686,7 @@ static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data,
 	nccl_net_ofi_rdma_req *req = recv_data->recv_segms_req;
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 
-	nccl_net_ofi_mutex_lock(&req->req_lock);
+	req->req_lock.lock();
 
 	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
 
@@ -713,12 +711,12 @@ static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data,
 		 * receive request is set to completed to avoid
 		 * unlocking receive segment request after it has been
 		 * freed in `test()` */
-		nccl_net_ofi_mutex_unlock(&req->req_lock);
+		req->req_lock.unlock();
 		
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
 	} else {
-		nccl_net_ofi_mutex_unlock(&req->req_lock);
+		req->req_lock.unlock();
 	}
 
 	return ret;
@@ -769,14 +767,14 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	entry->tag = NCCL_OFI_CTRL_MSG_TAG_INVALID;
 
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
-	nccl_net_ofi_mutex_lock(&req->req_lock);
+	req->req_lock.lock();
 	if (send_data->remote_len < send_data->buff_len) {
 		NCCL_OFI_TRACE(NCCL_NET, "Remote recv buffer (%zu) smaller than send buffer (%zu)",
 			       send_data->remote_len, send_data->buff_len);
 		req->size = send_data->remote_len;
 		send_data->buff_len = send_data->remote_len;
 	}
-	nccl_net_ofi_mutex_unlock(&req->req_lock);
+	req->req_lock.unlock();
 
 	send_data->schedule = scheduler->get_schedule(send_data->buff_len, device->num_rails);
 	if (OFI_UNLIKELY(send_data->schedule == NULL)) {
@@ -2508,11 +2506,11 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	if (OFI_LIKELY(this->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
 
 		size_t req_size;
-		nccl_net_ofi_mutex_lock(&this->req_lock);
+		this->req_lock.lock();
 
 		req_size = this->size;
 
-		nccl_net_ofi_mutex_unlock(&this->req_lock);
+		this->req_lock.unlock();
 
 		if (size_p) {
 			if (this->type == NCCL_OFI_RDMA_RECV) {
@@ -3726,9 +3724,9 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	} else /* (r_comm->send_close_req != NULL) */ {
 
 		/* Waiting for close message delivery */
-		nccl_net_ofi_mutex_lock(&r_comm->send_close_req->req_lock);
+		r_comm->send_close_req->req_lock.lock();
 		nccl_net_ofi_rdma_req_state_t state = r_comm->send_close_req->state;
-		nccl_net_ofi_mutex_unlock(&r_comm->send_close_req->req_lock);
+		r_comm->send_close_req->req_lock.unlock();
 
 		if (state == NCCL_OFI_RDMA_REQ_ERROR) {
 			NCCL_OFI_WARN("Send close message complete with error");
@@ -4364,14 +4362,7 @@ static int rdma_fl_req_entry_init(void *entry)
 	assert(req);
 	zero_nccl_ofi_req(req);
 
-	/* Initialize mutex for request access */
-	int ret = nccl_net_ofi_mutex_init(&req->req_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Unable to initialize mutex");
-		return ret;
-	}
-
-	return ret;
+	return 0;
 }
 
 
@@ -4381,9 +4372,7 @@ static int rdma_fl_req_entry_init(void *entry)
  */
 static void rdma_fl_req_entry_fini(void *entry)
 {
-	nccl_net_ofi_rdma_req *req = static_cast<nccl_net_ofi_rdma_req *>(entry);
-	assert(req);
-	nccl_net_ofi_mutex_destroy(&req->req_lock);
+	(void)entry;
 }
 
 
@@ -4550,7 +4539,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	/* Allocate request freelist */
 	/* Maximum freelist entries is 4*NCCL_OFI_MAX_REQUESTS because each receive request
 	   can have associated reqs for send_ctrl, recv_segms, and eager_copy */
-	r_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_req), 16, 16,
+	r_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size, 16, 16,
 							 4 * NCCL_OFI_MAX_REQUESTS,
 							 rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 							 "Recv Communicator Requests",
@@ -5931,7 +5920,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 	const bool enable_freelist_leak_detection = false;
 
 	/* We maintain this for only connection close messages */
-	this->rx_buff_reqs_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_req),
+	this->rx_buff_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size,
 						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
 						      rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 						      "Rx Buffer Requests",
@@ -6260,7 +6249,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	ret_s_comm->num_control_rails = num_control_rails;
 
 	/* Allocate request free list */
-	ret_s_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_req), 16, 16,
+	ret_s_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size, 16, 16,
 							     NCCL_OFI_MAX_SEND_REQUESTS,
 							     rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 							     "Send Communicator Requests",
