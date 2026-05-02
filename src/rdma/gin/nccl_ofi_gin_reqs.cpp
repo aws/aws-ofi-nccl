@@ -96,7 +96,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 			auto &gin_comm = resources.get_comm(ack_msg->ack_comm_id);
 
 			ret = gin_comm.handle_ack_completion(ack_msg, src_addr, rail_id_arg);
-			if (ret != 0) {
+			if (OFI_UNLIKELY(ret != 0)) {
 				NCCL_OFI_WARN("handle_ack_completion failure");
 				return ret;
 			}

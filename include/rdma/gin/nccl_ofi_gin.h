@@ -73,9 +73,9 @@ struct nccl_ofi_gin_resource_releaser {
 struct nccl_ofi_gin_pending_ack_info {
 	nccl_ofi_dlist_node node;
 	uint32_t peer_rank = 0;
+	uint32_t start = 0;
 	uint16_t seq_num = 0;
 	uint16_t ack_count = 0;
-	uint32_t start = 0;
 };
 
 /**
@@ -88,8 +88,10 @@ struct nccl_ofi_gin_peer_rank_info {
 	/* Remote comm id */
 	uint32_t comm_id;
 
-	/* Rail addresses */
-	fi_addr_t address[MAX_NUM_RAILS];
+	/* Counter for consecutive PUT-only messages without ACK.
+	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
+	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
+	uint32_t consecutive_puts_without_ack = 0;
 
 	/* A sequence number, stored at initiator, exclusively for this (target) peer rank.
 	   This allows the remote rank to enforce ordering of signal delivery
@@ -104,6 +106,11 @@ struct nccl_ofi_gin_peer_rank_info {
 	 */
 	uint16_t next_delivered_signal_seq_num = 0;
 
+	nccl_ofi_gin_pending_ack_info pending_ack;
+
+	/* Rail addresses */
+	fi_addr_t address[MAX_NUM_RAILS];
+
 	/* Flag, stored at initiator, indicating the given sequence number (mod
 	   the sequence space) is in use at initiator side. This allows initiator
 	   to track in-use sequence numbers to avoid overflow and only mark
@@ -116,13 +123,6 @@ struct nccl_ofi_gin_peer_rank_info {
 	std::bitset<GIN_IMM_SEQ_MASK + 1> active_put_signal;
 	static_assert(GIN_IMM_SEQ_MASK + 1 <= UINT16_MAX,
 		      "active_put_signal must fit within the 16-bit seq_num range");
-
-	/* Counter for consecutive PUT-only messages without ACK.
-	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
-	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
-	size_t consecutive_puts_without_ack = 0;
-
-	nccl_ofi_gin_pending_ack_info pending_ack;
 };
 
 /**
@@ -361,8 +361,10 @@ private:
 	 *     for the weak-mode early-deliver paths. */
 	bool strong_signal_ordering_enabled;
 
-	/* For each rail, map of fi_addr => peer comm rank */
-	std::unordered_map<fi_addr_t, uint32_t> rank_map[MAX_NUM_RAILS];
+	/* For each rail, direct-indexed table of fi_addr => peer comm rank.
+	 * Requires FI_AV_TABLE so that fi_addr_t values are dense 0-based
+	 * indices. Unused slots are set to UINT32_MAX as a sentinel. */
+	std::vector<uint32_t> rank_map[MAX_NUM_RAILS];
 
 	/* Map of <rank, msg_seq_num> => recv_req
 	 *
