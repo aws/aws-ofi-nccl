@@ -427,10 +427,11 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 }
 
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
-    : ep_holder(ep_arg.shared_from_this()), gin_comms(), comm_id_pool(NCCL_GIN_MAX_COMMS), gin_ep(ep_arg.get_domain()),
+    : ep_holder(ep_arg.shared_from_this()), gin_ep(ep_arg.get_domain()),
       req_fl(nullptr, &freelist_deleter),
       rx_buff_fl(nullptr, &freelist_deleter),
-      ack_send_fl(nullptr, &freelist_deleter)
+      ack_send_fl(nullptr, &freelist_deleter),
+      comm_id_pool(NCCL_GIN_MAX_COMMS)
 {
 	auto num_rails = gin_ep.get_num_rails();
 

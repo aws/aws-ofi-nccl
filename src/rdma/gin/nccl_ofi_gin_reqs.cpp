@@ -80,7 +80,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 
 	if (cq_entry->flags & FI_REMOTE_WRITE) {
 		/* RDMA write-immediate completion */
-		uint32_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
+		uint16_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
 		auto &gin_comm = resources.get_comm(comm_id);
 
 		ret = gin_comm.handle_signal_write_completion(cq_entry, src_addr, rail_id_arg);
