@@ -171,7 +171,7 @@ public:
 #define NCCL_OFI_CTRL_MSG_TAG_INVALID ((int16_t)-1)
 
 /* Maximum number of outstanding eager messages in the sender queue */
-#define NCCL_OFI_MAX_EAGER_PENDING 8
+#define NCCL_OFI_MAX_EAGER_PENDING NCCL_NET_MAX_REQUESTS
 
 /* Size of the eager message header prepended to bounce buffer data */
 #define NCCL_OFI_EAGER_HEADER_SIZE 8
