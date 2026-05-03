@@ -594,17 +594,17 @@ public:
  * Test 13: Eager queue full (8 messages)
  * ================================================================ */
 /*
- * T13: 8 eager messages (queue full)
- * Rank 0 sends 8 small messages with tag=1, all at once.
- * Rank 1 waits 50ms, then posts 8 single recvs sequentially.
+ * T13: 32 eager messages (queue full)
+ * Rank 0 sends 32 small messages with tag=1, all at once.
+ * Rank 1 waits 50ms, then posts 32 single recvs sequentially.
  * Each message has distinct data pattern ('0'+i).
- * Tests: sender eager queue at max capacity, drain across 8 ctrl msgs.
+ * Tests: sender eager queue at max capacity, drain across 32 ctrl msgs.
  */
 class Test13_QueueFull : public TestScenario {
 public:
-	Test13_QueueFull() : TestScenario("T13: 8 eager messages (queue full)") {}
+	Test13_QueueFull() : TestScenario("T13: 32 eager messages (queue full)") {}
 	void run(ThreadContext &ctx) override {
-		constexpr int N = 8;
+		constexpr int N = 32;
 		for (size_t d = 0; d < ctx.lcomms.size(); d++) {
 			void *sComm = ctx.scomms[d], *rComm = ctx.rcomms[d];
 			int btype = NCCL_PTR_HOST;
@@ -802,7 +802,7 @@ public:
 /*
  * T16: 4x grouped(n=2) same tags, verify in-order delivery per tag
  * Tags [70,71] repeated across 4 grouped recvs.
- * Rank 0 sends 8 small messages alternating tag 70, 71 with distinct patterns.
+ * Rank 0 sends 32 small messages alternating tag 70, 71 with distinct patterns.
  * Rank 1 posts 4 grouped recvs (n=2, tags=[70,71]).
  * Validates patterns arrive in correct order within each tag across groups.
  * Tests: ordering guarantee when same tags repeat across multiple grouped recvs.
@@ -1261,6 +1261,159 @@ public:
 	}
 };
 
+/* ================================================================
+ * T23: Eager spanning multiple grouped recvs
+ * Rank 0 sends 12 small messages: tags [1,2,3,4, 10,11,12,13, 20,21,22,23].
+ * Rank 1 waits 50ms, then posts 3 grouped recvs (n=4 each):
+ *   group 1: tags [1,2,3,4]
+ *   group 2: tags [10,11,12,13]
+ *   group 3: tags [20,21,22,23]
+ * Tests: eager batch spanning across 3 grouped receives with 4 sub-recvs each.
+ * ================================================================ */
+class Test23_EagerSpanMultiGroups : public TestScenario {
+public:
+	Test23_EagerSpanMultiGroups()
+		: TestScenario("T23: Eager spanning 3 grouped recvs (n=4)") {}
+	void run(ThreadContext &ctx) override {
+		test_nccl_properties_t props = {};
+		OFINCCLTHROW(ext_net->getProperties(0, &props));
+		if (props.maxRecvs < 4) return;
+
+		for (size_t d = 0; d < ctx.lcomms.size(); d++) {
+			void *sComm = ctx.scomms[d], *rComm = ctx.rcomms[d];
+			int btype = NCCL_PTR_HOST;
+			constexpr int NGROUPS = 3, NSUB = 4;
+			constexpr int TOTAL = NGROUPS * NSUB;
+			int stags[TOTAL] = {1,2,3,4, 10,11,12,13, 20,21,22,23};
+
+			if (ctx.rank == 0) {
+				void *reqs[TOTAL] = {};
+				void *bufs[TOTAL] = {}, *mhs[TOTAL] = {};
+				for (int i = 0; i < TOTAL; i++) {
+					OFINCCLTHROW(allocate_buff(&bufs[i], EAGER_SIZE, btype));
+					OFINCCLTHROW(initialize_buff(bufs[i], EAGER_SIZE, btype, 'A' + i));
+					OFINCCLTHROW(ext_net->regMr(sComm, bufs[i], EAGER_SIZE, btype, &mhs[i]));
+					post_send(ext_net, sComm, bufs[i], EAGER_SIZE, stags[i], mhs[i], &reqs[i]);
+				}
+				poll_sends(ext_net, reqs, TOTAL);
+				for (int i = 0; i < TOTAL; i++) {
+					ext_net->deregMr(sComm, mhs[i]);
+					deallocate_buffer(bufs[i], btype);
+				}
+			} else {
+				usleep(50000);
+				for (int g = 0; g < NGROUPS; g++) {
+					void *rbufs[NSUB] = {}, *rmh[NSUB] = {};
+					size_t sizes[NSUB]; int tags[NSUB];
+					for (int i = 0; i < NSUB; i++) {
+						sizes[i] = EAGER_SIZE;
+						tags[i] = stags[g * NSUB + i];
+						OFINCCLTHROW(allocate_buff(&rbufs[i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], EAGER_SIZE, btype, &rmh[i]));
+					}
+					void *req = nullptr;
+					post_recv(ext_net, rComm, NSUB, rbufs, sizes, tags, rmh, &req);
+					int rsizes[NSUB] = {};
+					poll_recv(ext_net, req, rsizes, NSUB);
+					for (int i = 0; i < NSUB; i++) {
+						if (rsizes[i] != (int)EAGER_SIZE)
+							throw std::runtime_error("T23: wrong size group " + std::to_string(g) + " sub " + std::to_string(i));
+						char *exp = nullptr;
+						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, 'A' + g * NSUB + i));
+						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, EAGER_SIZE, btype));
+						deallocate_buffer(exp, btype);
+						ext_net->deregMr(rComm, rmh[i]);
+						deallocate_buffer(rbufs[i], btype);
+					}
+				}
+			}
+		}
+	}
+};
+
+/* ================================================================
+ * T24: Eager spanning single + grouped + single recvs
+ * Rank 0 sends 6 small messages: tags [1, 50,51, 1, 60,61].
+ * Rank 1 waits 50ms, then posts:
+ *   single recv (tag=1)
+ *   grouped recv (n=2, tags=[50,51])
+ *   single recv (tag=1)
+ *   grouped recv (n=2, tags=[60,61])
+ * Tests: eager batch spanning alternating single and grouped recvs.
+ * ================================================================ */
+class Test24_EagerAlternatingSingleGrouped : public TestScenario {
+public:
+	Test24_EagerAlternatingSingleGrouped()
+		: TestScenario("T24: Eager alternating single+grouped recvs") {}
+	void run(ThreadContext &ctx) override {
+		test_nccl_properties_t props = {};
+		OFINCCLTHROW(ext_net->getProperties(0, &props));
+		if (props.maxRecvs < 2) return;
+
+		for (size_t d = 0; d < ctx.lcomms.size(); d++) {
+			void *sComm = ctx.scomms[d], *rComm = ctx.rcomms[d];
+			int btype = NCCL_PTR_HOST;
+			constexpr int TOTAL = 6;
+			int stags[TOTAL] = {1, 50, 51, 1, 60, 61};
+
+			if (ctx.rank == 0) {
+				void *reqs[TOTAL] = {};
+				void *bufs[TOTAL] = {}, *mhs[TOTAL] = {};
+				for (int i = 0; i < TOTAL; i++) {
+					OFINCCLTHROW(allocate_buff(&bufs[i], EAGER_SIZE, btype));
+					OFINCCLTHROW(initialize_buff(bufs[i], EAGER_SIZE, btype, 'P' + i));
+					OFINCCLTHROW(ext_net->regMr(sComm, bufs[i], EAGER_SIZE, btype, &mhs[i]));
+					post_send(ext_net, sComm, bufs[i], EAGER_SIZE, stags[i], mhs[i], &reqs[i]);
+				}
+				poll_sends(ext_net, reqs, TOTAL);
+				for (int i = 0; i < TOTAL; i++) {
+					ext_net->deregMr(sComm, mhs[i]);
+					deallocate_buffer(bufs[i], btype);
+				}
+			} else {
+				usleep(50000);
+				/* Pattern: single, grouped(2), single, grouped(2) */
+				struct { int n; int tags[2]; } recvs[4] = {
+					{1, {1, 0}},
+					{2, {50, 51}},
+					{1, {1, 0}},
+					{2, {60, 61}},
+				};
+				int send_idx = 0;
+				for (int r = 0; r < 4; r++) {
+					int n = recvs[r].n;
+					void *rbufs[2] = {}, *rmh[2] = {};
+					size_t sizes[2]; int tags[2];
+					for (int i = 0; i < n; i++) {
+						sizes[i] = EAGER_SIZE;
+						tags[i] = recvs[r].tags[i];
+						OFINCCLTHROW(allocate_buff(&rbufs[i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], EAGER_SIZE, btype, &rmh[i]));
+					}
+					void *req = nullptr;
+					post_recv(ext_net, rComm, n, rbufs, sizes, tags, rmh, &req);
+					int rsizes[2] = {};
+					poll_recv(ext_net, req, rsizes, n);
+					for (int i = 0; i < n; i++) {
+						if (rsizes[i] != (int)EAGER_SIZE)
+							throw std::runtime_error("T24: wrong size recv " + std::to_string(r) + " sub " + std::to_string(i));
+						char *exp = nullptr;
+						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, 'P' + send_idx + i));
+						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, EAGER_SIZE, btype));
+						deallocate_buffer(exp, btype);
+						ext_net->deregMr(rComm, rmh[i]);
+						deallocate_buffer(rbufs[i], btype);
+					}
+					send_idx += n;
+				}
+			}
+		}
+	}
+};
+
+
 int main(int argc, char *argv[])
 {
 	TestSuite suite;
@@ -1302,6 +1455,11 @@ int main(int argc, char *argv[])
 	suite.add(&t19);
 	suite.add(&t21);
 	suite.add(&t22);
+
+	Test23_EagerSpanMultiGroups t23;
+	Test24_EagerAlternatingSingleGrouped t24;
+	suite.add(&t23);
+	suite.add(&t24);
 
 	return suite.run_all();
 }
