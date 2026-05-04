@@ -467,10 +467,9 @@ public:
 				OFINCCLTHROW(ext_net->regMr(rComm, rbuf0, EAGER_SIZE, btype, &rmh0));
 				size_t sz = EAGER_SIZE; int tag = 1;
 				post_recv(ext_net, rComm, 1, &rbuf0, &sz, &tag, &rmh0, &req0);
-				int rsz = 0;
-				poll_one(ext_net, req0, &rsz);
 
-				/* Post grouped recv (n=2, tags 40,41) */
+				/* Post grouped recv (n=2, tags 40,41) before polling first recv
+				 * to avoid deadlock from interleaved eager sends */
 				void *rbufs[2] = {}, *rmh[2] = {};
 				size_t sizes[2]; int tags[2] = {40, 41};
 				for (int i = 0; i < 2; i++) {
@@ -480,6 +479,10 @@ public:
 				}
 				void *req1 = nullptr;
 				post_recv(ext_net, rComm, 2, rbufs, sizes, tags, rmh, &req1);
+
+				/* Now poll both */
+				int rsz = 0;
+				poll_one(ext_net, req0, &rsz);
 				int rsizes[2] = {};
 				poll_recv(ext_net, req1, rsizes, 2);
 
@@ -931,27 +934,31 @@ public:
 					deallocate_buffer(sbufs[i], btype);
 				}
 			} else {
+				/* Post all recvs before polling to avoid deadlock from interleaved eager sends */
+				void *all_rbufs[2][8] = {};
+				void *all_rmh[2][8] = {};
+				void *all_reqs[2] = {};
 				for (int g = 0; g < 2; g++) {
-					void *rbufs[N] = {}, *rmh[N] = {};
-					size_t sizes[N]; int tags[N];
-					for (int i = 0; i < N; i++) {
-						sizes[i] = LARGE_SIZE; tags[i] = i;
-						OFINCCLTHROW(allocate_buff(&rbufs[i], LARGE_SIZE, btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], LARGE_SIZE, btype, &rmh[i]));
+					size_t sizes[8]; int tags[8];
+					for (int i = 0; i < 8; i++) {
+						sizes[i] = SEND_SIZE; tags[i] = i;
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], SEND_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], SEND_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, N, rbufs, sizes, tags, rmh, &req);
-					int rsizes[N] = {};
-					poll_recv(ext_net, req, rsizes, N);
-					for (int i = 0; i < N; i++) {
-						char pattern = 'A' + g * N + i;
+					post_recv(ext_net, rComm, 8, all_rbufs[g], sizes, tags, all_rmh[g], &all_reqs[g]);
+				}
+				for (int g = 0; g < 2; g++) {
+					int rsizes[8] = {};
+					poll_recv(ext_net, all_reqs[g], rsizes, 8);
+					for (int i = 0; i < 8; i++) {
+						char pattern = 'A' + g * 8 + i;
 						char *exp = nullptr;
-						OFINCCLTHROW(allocate_buff((void**)&exp, LARGE_SIZE, btype));
-						OFINCCLTHROW(initialize_buff(exp, LARGE_SIZE, btype, pattern));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, LARGE_SIZE, btype));
+						OFINCCLTHROW(allocate_buff((void**)&exp, SEND_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, SEND_SIZE, btype, pattern));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, SEND_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1004,27 +1011,31 @@ public:
 				}
 			} else {
 				usleep(30000);
+				/* Post all recvs before polling to avoid deadlock from interleaved eager sends */
+				void *all_rbufs[2][8] = {};
+				void *all_rmh[2][8] = {};
+				void *all_reqs[2] = {};
 				for (int g = 0; g < 2; g++) {
-					void *rbufs[N] = {}, *rmh[N] = {};
-					size_t sizes[N]; int tags[N];
-					for (int i = 0; i < N; i++) {
+					size_t sizes[8]; int tags[8];
+					for (int i = 0; i < 8; i++) {
 						sizes[i] = EAGER_SIZE; tags[i] = i;
-						OFINCCLTHROW(allocate_buff(&rbufs[i], EAGER_SIZE, btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], EAGER_SIZE, btype, &rmh[i]));
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], EAGER_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, N, rbufs, sizes, tags, rmh, &req);
-					int rsizes[N] = {};
-					poll_recv(ext_net, req, rsizes, N);
-					for (int i = 0; i < N; i++) {
-						char pattern = 'a' + g * N + i;
+					post_recv(ext_net, rComm, 8, all_rbufs[g], sizes, tags, all_rmh[g], &all_reqs[g]);
+				}
+				for (int g = 0; g < 2; g++) {
+					int rsizes[8] = {};
+					poll_recv(ext_net, all_reqs[g], rsizes, 8);
+					for (int i = 0; i < 8; i++) {
+						char pattern = 'a' + g * 8 + i;
 						char *exp = nullptr;
 						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
 						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, pattern));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, EAGER_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1082,31 +1093,31 @@ public:
 					deallocate_buffer(sbufs[i], btype);
 				}
 			} else {
+				/* Post all recvs before polling to avoid deadlock from interleaved eager sends */
+				void *all_rbufs[2][8] = {};
+				void *all_rmh[2][8] = {};
+				void *all_reqs[2] = {};
 				for (int g = 0; g < 2; g++) {
-					void *rbufs[N] = {}, *rmh[N] = {};
-					size_t sizes[N]; int tags[N];
-					for (int i = 0; i < N; i++) {
-						sizes[i] = is_eager[i] ? EAGER_SIZE : LARGE_SIZE;
-						tags[i] = i;
-						OFINCCLTHROW(allocate_buff(&rbufs[i], sizes[i], btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], sizes[i], btype, &rmh[i]));
+					size_t sizes[4]; int tags[4];
+					for (int i = 0; i < 4; i++) {
+						sizes[i] = EAGER_SIZE; tags[i] = i;
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], EAGER_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, N, rbufs, sizes, tags, rmh, &req);
-					int rsizes[N] = {};
-					poll_recv(ext_net, req, rsizes, N);
-					for (int i = 0; i < N; i++) {
-						size_t expected_sz = is_eager[i] ? EAGER_SIZE : LARGE_SIZE;
-						if (rsizes[i] != (int)expected_sz)
-							throw std::runtime_error("T19: wrong size g=" + std::to_string(g) + " i=" + std::to_string(i));
-						char pattern = 'A' + g * N + i;
+					post_recv(ext_net, rComm, 4, all_rbufs[g], sizes, tags, all_rmh[g], &all_reqs[g]);
+				}
+				for (int g = 0; g < 2; g++) {
+					int rsizes[4] = {};
+					poll_recv(ext_net, all_reqs[g], rsizes, 4);
+					for (int i = 0; i < 4; i++) {
+						char pattern = 'A' + g * 4 + i;
 						char *exp = nullptr;
-						OFINCCLTHROW(allocate_buff((void**)&exp, expected_sz, btype));
-						OFINCCLTHROW(initialize_buff(exp, expected_sz, btype, pattern));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, expected_sz, btype));
+						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, pattern));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, EAGER_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1161,27 +1172,31 @@ public:
 					deallocate_buffer(sbufs[i], btype);
 				}
 			} else {
+				/* Post all recvs before polling to avoid deadlock from interleaved eager sends */
+				void *all_rbufs[3][8] = {};
+				void *all_rmh[3][8] = {};
+				void *all_reqs[3] = {};
 				for (int g = 0; g < 3; g++) {
-					void *rbufs[2] = {}, *rmh[2] = {};
-					size_t sizes[2]; int tags[2] = {0, 1};
+					size_t sizes[2]; int tags[2];
 					for (int i = 0; i < 2; i++) {
-						sizes[i] = group_sizes[g];
-						OFINCCLTHROW(allocate_buff(&rbufs[i], sizes[i], btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], sizes[i], btype, &rmh[i]));
+						sizes[i] = EAGER_SIZE; tags[i] = i;
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], EAGER_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, 2, rbufs, sizes, tags, rmh, &req);
+					post_recv(ext_net, rComm, 2, all_rbufs[g], sizes, tags, all_rmh[g], &all_reqs[g]);
+				}
+				for (int g = 0; g < 3; g++) {
 					int rsizes[2] = {};
-					poll_recv(ext_net, req, rsizes, 2);
+					poll_recv(ext_net, all_reqs[g], rsizes, 2);
 					for (int i = 0; i < 2; i++) {
 						char pattern = 'A' + g * 2 + i;
 						char *exp = nullptr;
-						OFINCCLTHROW(allocate_buff((void**)&exp, group_sizes[g], btype));
-						OFINCCLTHROW(initialize_buff(exp, group_sizes[g], btype, pattern));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, group_sizes[g], btype));
+						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, pattern));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, EAGER_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1233,27 +1248,31 @@ public:
 					deallocate_buffer(sbufs[i], btype);
 				}
 			} else {
+				/* Post all recvs before polling to avoid deadlock from interleaved eager sends */
+				void *all_rbufs[2][8] = {};
+				void *all_rmh[2][8] = {};
+				void *all_reqs[2] = {};
 				for (int g = 0; g < 2; g++) {
-					void *rbufs[N] = {}, *rmh[N] = {};
-					size_t sizes[N]; int tags[N];
-					for (int i = 0; i < N; i++) {
-						sizes[i] = LARGE_SIZE; tags[i] = i;
-						OFINCCLTHROW(allocate_buff(&rbufs[i], LARGE_SIZE, btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], LARGE_SIZE, btype, &rmh[i]));
+					size_t sizes[8]; int tags[8];
+					for (int i = 0; i < 8; i++) {
+						sizes[i] = SEND_SIZE; tags[i] = i;
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], SEND_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], SEND_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, N, rbufs, sizes, tags, rmh, &req);
-					int rsizes[N] = {};
-					poll_recv(ext_net, req, rsizes, N);
-					for (int i = 0; i < N; i++) {
-						char pattern = 'A' + g * N + i;
+					post_recv(ext_net, rComm, 8, all_rbufs[g], sizes, tags, all_rmh[g], &all_reqs[g]);
+				}
+				for (int g = 0; g < 2; g++) {
+					int rsizes[8] = {};
+					poll_recv(ext_net, all_reqs[g], rsizes, 8);
+					for (int i = 0; i < 8; i++) {
+						char pattern = 'A' + g * 8 + i;
 						char *exp = nullptr;
-						OFINCCLTHROW(allocate_buff((void**)&exp, LARGE_SIZE, btype));
-						OFINCCLTHROW(initialize_buff(exp, LARGE_SIZE, btype, pattern));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, LARGE_SIZE, btype));
+						OFINCCLTHROW(allocate_buff((void**)&exp, SEND_SIZE, btype));
+						OFINCCLTHROW(initialize_buff(exp, SEND_SIZE, btype, pattern));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, SEND_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1302,29 +1321,35 @@ public:
 				}
 			} else {
 				usleep(50000);
+				/* Post all grouped recvs before polling to avoid deadlock
+				 * from interleaved eager sends */
+				void *all_rbufs[NGROUPS][NSUB] = {};
+				void *all_rmh[NGROUPS][NSUB] = {};
+				void *reqs[NGROUPS] = {};
 				for (int g = 0; g < NGROUPS; g++) {
-					void *rbufs[NSUB] = {}, *rmh[NSUB] = {};
 					size_t sizes[NSUB]; int tags[NSUB];
 					for (int i = 0; i < NSUB; i++) {
 						sizes[i] = EAGER_SIZE;
 						tags[i] = stags[g * NSUB + i];
-						OFINCCLTHROW(allocate_buff(&rbufs[i], EAGER_SIZE, btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], EAGER_SIZE, btype, &rmh[i]));
+						OFINCCLTHROW(allocate_buff(&all_rbufs[g][i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[g][i], EAGER_SIZE, btype, &all_rmh[g][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, NSUB, rbufs, sizes, tags, rmh, &req);
+					post_recv(ext_net, rComm, NSUB, all_rbufs[g], sizes, tags, all_rmh[g], &reqs[g]);
+				}
+				/* Now poll and validate all */
+				for (int g = 0; g < NGROUPS; g++) {
 					int rsizes[NSUB] = {};
-					poll_recv(ext_net, req, rsizes, NSUB);
+					poll_recv(ext_net, reqs[g], rsizes, NSUB);
 					for (int i = 0; i < NSUB; i++) {
 						if (rsizes[i] != (int)EAGER_SIZE)
 							throw std::runtime_error("T23: wrong size group " + std::to_string(g) + " sub " + std::to_string(i));
 						char *exp = nullptr;
 						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
 						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, 'A' + g * NSUB + i));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[g][i], exp, EAGER_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[g][i]);
+						deallocate_buffer(all_rbufs[g][i], btype);
 					}
 				}
 			}
@@ -1380,31 +1405,38 @@ public:
 					{1, {1, 0}},
 					{2, {60, 61}},
 				};
-				int send_idx = 0;
+				/* Post all recvs before polling to avoid deadlock
+				 * from interleaved eager sends */
+				void *all_rbufs[4][2] = {};
+				void *all_rmh[4][2] = {};
+				void *all_reqs[4] = {};
 				for (int r = 0; r < 4; r++) {
 					int n = recvs[r].n;
-					void *rbufs[2] = {}, *rmh[2] = {};
 					size_t sizes[2]; int tags[2];
 					for (int i = 0; i < n; i++) {
 						sizes[i] = EAGER_SIZE;
 						tags[i] = recvs[r].tags[i];
-						OFINCCLTHROW(allocate_buff(&rbufs[i], EAGER_SIZE, btype));
-						OFINCCLTHROW(ext_net->regMr(rComm, rbufs[i], EAGER_SIZE, btype, &rmh[i]));
+						OFINCCLTHROW(allocate_buff(&all_rbufs[r][i], EAGER_SIZE, btype));
+						OFINCCLTHROW(ext_net->regMr(rComm, all_rbufs[r][i], EAGER_SIZE, btype, &all_rmh[r][i]));
 					}
-					void *req = nullptr;
-					post_recv(ext_net, rComm, n, rbufs, sizes, tags, rmh, &req);
+					post_recv(ext_net, rComm, n, all_rbufs[r], sizes, tags, all_rmh[r], &all_reqs[r]);
+				}
+				/* Now poll and validate all */
+				int send_idx = 0;
+				for (int r = 0; r < 4; r++) {
+					int n = recvs[r].n;
 					int rsizes[2] = {};
-					poll_recv(ext_net, req, rsizes, n);
+					poll_recv(ext_net, all_reqs[r], rsizes, n);
 					for (int i = 0; i < n; i++) {
 						if (rsizes[i] != (int)EAGER_SIZE)
 							throw std::runtime_error("T24: wrong size recv " + std::to_string(r) + " sub " + std::to_string(i));
 						char *exp = nullptr;
 						OFINCCLTHROW(allocate_buff((void**)&exp, EAGER_SIZE, btype));
 						OFINCCLTHROW(initialize_buff(exp, EAGER_SIZE, btype, 'P' + send_idx + i));
-						OFINCCLTHROW(validate_data((char*)rbufs[i], exp, EAGER_SIZE, btype));
+						OFINCCLTHROW(validate_data((char*)all_rbufs[r][i], exp, EAGER_SIZE, btype));
 						deallocate_buffer(exp, btype);
-						ext_net->deregMr(rComm, rmh[i]);
-						deallocate_buffer(rbufs[i], btype);
+						ext_net->deregMr(rComm, all_rmh[r][i]);
+						deallocate_buffer(all_rbufs[r][i], btype);
 					}
 					send_idx += n;
 				}
