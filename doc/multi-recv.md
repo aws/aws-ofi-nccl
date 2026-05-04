@@ -238,6 +238,14 @@ requests when multiple sub-recvs in a grouped receive are handled by eager.
   ncclNet v9 and later, where `irecv` uses `size_t` sizes. Earlier versions
   and the Neuron/sendrecv protocol report `maxRecvs = 1`.
 
+- **Interleaved eager sends across groups**: When NCCL interleaves `send()`
+  calls across what will become different grouped receives, the receiver's
+  eager drain processes entries in strict offset order and cannot skip past
+  an unresolved entry. If the receiver serializes recv posting (waiting for
+  recv N to complete before posting recv N+1), this can deadlock. This is
+  not an issue in practice because NCCL's proxy thread posts recvs
+  independently without waiting for prior completions.
+
 - **Eager size overhead**: The 8-byte header reduces the effective eager payload
   by 8 bytes. The eager decision accounts for this:
   `size + NCCL_OFI_EAGER_HEADER_SIZE ≤ eager_send_size`.
