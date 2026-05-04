@@ -11,7 +11,6 @@
 #include <queue>
 #include <set>
 
-static constexpr int MAX_RECVS = 8;
 /* Small size guaranteed to go eager (well under 8KB default) */
 static constexpr size_t EAGER_SIZE = 1024;
 /* Large size guaranteed to NOT go eager (over 8KB + header) */
