@@ -4957,6 +4957,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 	send_data->buff_len = size;
 	send_data->buff_mr_handle = buff_mr_handle;
 	send_data->tag = tag;
+	send_data->no_target_completion = false;
 
 	/* If this is not an eager send, the schedule is created after knowing the
 	   remote length received in the control message.
