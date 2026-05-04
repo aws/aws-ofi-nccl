@@ -172,6 +172,28 @@ pipeline {
         REGION="us-west-2"
     }
     stages {
+        stage('Authorize PR Author') {
+            when { changeRequest() }
+            steps {
+                script {
+                    def AWS_ACCOUNT_ID = get_account_id()
+                    sh "aws s3 cp s3://aws-ofi-nccl-github-approved-authors-${AWS_ACCOUNT_ID}/ofi_nccl_approved_author_list/approved_authors.txt /tmp/approved_authors.txt"
+                }
+                withCredentials([string(credentialsId: 'github-pat-read-org', variable: 'GH_TOKEN')]) {
+                    sh '''
+                        PERM_JSON=$(curl -s -H "Authorization: token $GH_TOKEN" \
+                            "https://api.github.com/repos/aws/aws-ofi-nccl/collaborators/${CHANGE_AUTHOR}/permission")
+                        PERM=$(echo "$PERM_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('permission','none'))" 2>/dev/null || echo "none")
+                        if grep -qx "${CHANGE_AUTHOR}" /tmp/approved_authors.txt; then
+                            echo "✅ ${CHANGE_AUTHOR} is on the approved authors list"
+                            exit 0
+                        fi
+                        echo "❌ ${CHANGE_AUTHOR} is not authorized to run CI"
+                        exit 1
+                    '''
+                }
+            }
+        }
         stage("Download and extract PortaFiducia") {
             steps {
                 script {
