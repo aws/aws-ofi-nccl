@@ -175,7 +175,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_mark_domain(handle, "Recv_segment_complete", 0xff0000); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
-		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(request->comm->ep)->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
+		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(request->comm->ep.get())->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
 		nvtx_mark_domain(handle, "Recv_segment_complete", 0xff0000); \
 	} \
 } while(0)
