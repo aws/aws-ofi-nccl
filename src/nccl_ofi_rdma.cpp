@@ -447,7 +447,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 static inline rdma_req_rx_buff_data_t *get_rx_buff_data(nccl_net_ofi_rdma_req *req) {
 	assert((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) ||
 	       (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF));
-	return &req->rx_buff_data;
+	return &static_cast<rdma_rx_buff_req *>(req)->rx_buff_data;
 }
 
 /*
@@ -456,7 +456,7 @@ static inline rdma_req_rx_buff_data_t *get_rx_buff_data(nccl_net_ofi_rdma_req *r
 static inline rdma_req_rma_op_data_t *req_get_rma_op_data(nccl_net_ofi_rdma_req *req,
 	nccl_net_ofi_rdma_req_type_t type) {
 	assert(req->type == type);
-	return &req->rma_op_data;
+	return &static_cast<rdma_rma_op_req *>(req)->rma_op_data;
 }
 
 /*
@@ -464,7 +464,7 @@ static inline rdma_req_rma_op_data_t *req_get_rma_op_data(nccl_net_ofi_rdma_req 
  */
 static inline rdma_req_send_data_t *get_send_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_SEND);
-	return &req->send_data;
+	return &static_cast<rdma_send_req *>(req)->send_data;
 }
 
 /*
@@ -472,7 +472,7 @@ static inline rdma_req_send_data_t *get_send_data(nccl_net_ofi_rdma_req *req) {
  */
 static inline rdma_req_recv_data_t *get_recv_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_RECV);
-	return &req->recv_data;
+	return &static_cast<rdma_recv_req *>(req)->recv_data;
 }
 
 /*
@@ -480,7 +480,7 @@ static inline rdma_req_recv_data_t *get_recv_data(nccl_net_ofi_rdma_req *req) {
  */
 static inline rdma_req_send_close_data_t *req_get_send_close_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
-	return &req->send_close_data;
+	return &static_cast<rdma_send_close_req *>(req)->send_close_data;
 }
 
 /*
@@ -488,7 +488,7 @@ static inline rdma_req_send_close_data_t *req_get_send_close_data(nccl_net_ofi_r
  */
 static inline rdma_req_eager_copy_data_t *get_eager_copy_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
-	return &req->eager_copy_data;
+	return &static_cast<rdma_eager_copy_req *>(req)->eager_copy_data;
 }
 
 /*
@@ -496,7 +496,7 @@ static inline rdma_req_eager_copy_data_t *get_eager_copy_data(nccl_net_ofi_rdma_
  */
 static inline rdma_req_recv_segms_data_t *get_recv_segms_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
-	return &req->recv_segms_data;
+	return &static_cast<rdma_recv_segms_req *>(req)->recv_segms_data;
 }
 
 /*
@@ -504,7 +504,7 @@ static inline rdma_req_recv_segms_data_t *get_recv_segms_data(nccl_net_ofi_rdma_
  */
 static inline rdma_req_flush_data_t *get_flush_data(nccl_net_ofi_rdma_req *req) {
 	assert(req->type == NCCL_OFI_RDMA_FLUSH);
-	return &req->flush_data;
+	return &static_cast<rdma_flush_req *>(req)->flush_data;
 }
 
 /*
