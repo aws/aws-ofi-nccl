@@ -606,6 +606,14 @@ public:
 	 * indicate a programming error). */
 	virtual int handle_completion(uint64_t comp_flags, uint16_t rail_id);
 
+	/*
+	 * test() extension points.  test() runs the common state-machine
+	 * steps (lock the endpoint, process the CQ once, check the final
+	 * state, free on completion) and calls the hooks below at the
+	 * points where a request type may need to inject type-specific
+	 * behavior.  Subclasses override only the hooks they need.
+	 */
+
 };
 
 /*
@@ -640,6 +648,7 @@ public:
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+	void write_completion_size(int *size_p);
 };
 
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
@@ -648,6 +657,7 @@ public:
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+	bool check_if_already_complete(int *size_p);
 };
 
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
