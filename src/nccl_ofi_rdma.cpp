@@ -1601,6 +1601,10 @@ int rdma_send_req::free(bool dec_inflight_reqs)
 	nccl_net_ofi_rdma_send_comm *s_comm = this->get_send_comm();
 	rdma_req_send_data_t *data = get_send_data(this);
 
+	if (dec_inflight_reqs) {
+		NCCL_OFI_TRACE_SEND_END(this->dev_id, this->comm, this);
+	}
+
 	if (!data->eager && dec_inflight_reqs) {
 		/* free is going to be called inside of test(), which will
 		   happen in a time when NCCL guarantees no other thread will
@@ -1634,6 +1638,18 @@ int rdma_recv_req::free(bool dec_inflight_reqs)
 	rdma_req_recv_data_t *data = get_recv_data(this);
 	nccl_net_ofi_rdma_req *recv_segms_req = data->recv_segms_req;
 	nccl_net_ofi_rdma_req *eager_copy_req = data->eager_copy_req;
+
+	if (dec_inflight_reqs) {
+		nccl_ofi_msgbuff_status_t stat;
+		nccl_ofi_msgbuff_result_t mb_res =
+			r_comm->msgbuff->complete(this->msg_seq_num, &stat);
+		if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
+			NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu",
+				      this->msg_seq_num);
+			return -EINVAL;
+		}
+		NCCL_OFI_TRACE_RECV_END(this->dev_id, this->comm, this);
+	}
 
 	if (recv_segms_req) {
 		ret = recv_segms_req->free(false);
@@ -2158,11 +2174,6 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 {
 	int ret = 0;
 	*done = 0;
-	assert(this->type == NCCL_OFI_RDMA_WRITE ||
-	       this->type == NCCL_OFI_RDMA_READ ||
-	       this->type == NCCL_OFI_RDMA_SEND ||
-	       this->type == NCCL_OFI_RDMA_RECV ||
-	       this->type == NCCL_OFI_RDMA_FLUSH);
 
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm *base_comm = this->comm;
@@ -2176,38 +2187,18 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 
 	CHECK_ENDPOINT_ACTIVE(ep, "test");
 
-	/* If the current request is not complete and not errored out,
-	* check if it is a flush(only if cuda) and the corresponding read is complete
-	* If not, process more completions since they could result in the
-	* request getting completed.
-	*/
+	/* If the request is not already complete and not errored out, let
+	 * the subclass try to short-circuit completion (e.g. GPU flush),
+	 * then drain the CQ to advance this and other in-flight requests,
+	 * then give the subclass a chance to react to events the CQ scan
+	 * may have produced. */
 	if (this->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(this->state != NCCL_OFI_RDMA_REQ_ERROR)) {
-#if HAVE_GPU
-		if (this->type == NCCL_OFI_RDMA_FLUSH) {
-			/*
-			 * Check if the flush is complete and mark it as complete
-			 * if the host buffers have been populated with the sentinel value.
-			 * Increment num_pending_flush_comps to indicate we are still waiting,
-			 * on the request's completion event. The request will be freed once
-			 * all completions are processed.
-			 */
-			if (has_flush_completed(this))
-			{
-				this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
-				size_t req_size = this->size;
-
-				if (size_p) {
-					*size_p = req_size;
-				}
-
-				auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
-				r_comm->num_pending_flush_comps++;
-				*done = 1;
-				goto exit;
-			}
+		if (this->check_if_already_complete(size_p)) {
+			*done = 1;
+			goto exit;
 		}
-#endif
+
 		ret = ep->ofi_process_cq([this]() -> bool {
 			return (this->state == NCCL_OFI_RDMA_REQ_COMPLETED);
 		});
@@ -2215,15 +2206,12 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 			goto exit;
 		}
 
-		/* In case of eager sends if the control message has not arrived
-		 * when the message was being sent, we do not increase the
-		 * number of completions. To ensure that the request is marked
-		 * complete, we check for the control message being received
-		 * here and increase the number of completions if it has.
-		 * Also update the message size if required
-		*/
+		/* For eager sends, the ctrl message may arrive during the CQ
+		 * scan.  Observe that arrival and update completion state. */
 		if (this->type == NCCL_OFI_RDMA_SEND) {
-			ret = update_send_request((nccl_net_ofi_rdma_send_comm *)base_comm, this);
+			ret = update_send_request(
+				static_cast<rdma_send_req *>(this)->get_send_comm(),
+				static_cast<rdma_send_req *>(this));
 			if (ret != 0) {
 				goto exit;
 			}
@@ -2233,49 +2221,11 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 
 	/* Determine whether the request has finished without error and free if done */
 	if (OFI_LIKELY(this->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
-
-		size_t req_size;
-		this->req_lock.lock();
-
-		req_size = this->size;
-
-		this->req_lock.unlock();
-
 		if (size_p) {
-			if (this->type == NCCL_OFI_RDMA_RECV) {
-				rdma_req_recv_data_t *local_recv_data = get_recv_data(this);
-				if (local_recv_data->num_recvs > 1) {
-					for (int i = 0; i < local_recv_data->num_recvs; i++) {
-						size_p[i] = local_recv_data->recvs[i].recv_size;
-					}
-				} else {
-					*size_p = req_size;
-				}
-			} else {
-				*size_p = req_size;
-			}
+			this->write_completion_size(size_p);
 		}
 		/* Mark as done */
 		*done = 1;
-
-		if (this->type == NCCL_OFI_RDMA_RECV) {
-			/* Mark as complete in message buffer */
-			nccl_ofi_msgbuff *msgbuff = ((nccl_net_ofi_rdma_recv_comm *)base_comm)->msgbuff;
-
-			nccl_ofi_msgbuff_status_t stat;
-			nccl_ofi_msgbuff_result_t mb_res = msgbuff->complete(this->msg_seq_num, &stat);
-			if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
-				NCCL_OFI_WARN("Invalid result of msgbuff_complete for msg %hu", this->msg_seq_num);
-				ret = -EINVAL;
-				goto exit;
-			}
-		}
-
-		if (this->type == NCCL_OFI_RDMA_SEND) {
-			NCCL_OFI_TRACE_SEND_END(this->dev_id, base_comm, this);
-		} else if (this->type == NCCL_OFI_RDMA_RECV) {
-			NCCL_OFI_TRACE_RECV_END(this->dev_id, base_comm, this);
-		}
 
 		this->free(true);
 	} else if (OFI_UNLIKELY(this->state == NCCL_OFI_RDMA_REQ_ERROR)) {
@@ -2287,6 +2237,69 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	return ret;
 }
 
+/*
+ * test() hook defaults.  Subclasses override these only when the
+ * request type needs to inject type-specific behavior at the
+ * corresponding extension point.
+ */
+
+bool nccl_net_ofi_rdma_req::check_if_already_complete(int *size_p)
+{
+	(void)size_p;
+	return false;
+}
+
+void nccl_net_ofi_rdma_req::write_completion_size(int *size_p)
+{
+	/* Report the completed request size.  Lock around the read so
+	 * it observes the fully-updated value regardless of which
+	 * thread populated it. */
+	this->req_lock.lock();
+	size_t req_size = this->size;
+	this->req_lock.unlock();
+	*size_p = req_size;
+}
+
+/* FLUSH: check whether the host flush buffer has been populated with
+ * the sentinel value.  If so, mark the request completed and bump
+ * num_pending_flush_comps so the later completion event can be
+ * reconciled.  Only the GPU path has this shortcut; the Neuron path
+ * relies on the normal CQ-driven completion flow. */
+bool rdma_flush_req::check_if_already_complete(int *size_p)
+{
+#if HAVE_GPU
+	if (has_flush_completed(this)) {
+		this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+		if (size_p) {
+			*size_p = this->size;
+		}
+		auto *r_comm = this->get_recv_comm();
+		r_comm->num_pending_flush_comps++;
+		return true;
+	}
+#else
+	(void)size_p;
+#endif
+	return false;
+}
+
+/* RECV: grouped receives (n > 1) report per-sub sizes into size_p[i];
+ * single receives report the total size into *size_p. */
+void rdma_recv_req::write_completion_size(int *size_p)
+{
+	this->req_lock.lock();
+	size_t req_size = this->size;
+	this->req_lock.unlock();
+
+	rdma_req_recv_data_t *data = get_recv_data(this);
+	if (data->num_recvs > 1) {
+		for (int i = 0; i < data->num_recvs; i++) {
+			size_p[i] = data->recvs[i].recv_size;
+		}
+	} else {
+		*size_p = req_size;
+	}
+}
 
 int rdma_recv_segms_req::post()
 {
