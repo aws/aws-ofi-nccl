@@ -5869,9 +5869,6 @@ static bool drain_sender_eager_queue(nccl_net_ofi_rdma_send_comm *s_comm)
 			s_comm->group_sends_remaining = num_recvs;
 		}
 
-		/* Grouped recv: rotate queue once, matching tags */
-		uint16_t matched = 0;
-
 		/* Search for matching tag in ctrl entries */
 		bool found = false;
 		for (uint16_t e = 0; e < num_recvs; e++) {
@@ -5879,7 +5876,6 @@ static bool drain_sender_eager_queue(nccl_net_ofi_rdma_send_comm *s_comm)
 				send_data->eager_ctrl_msg_received = true;
 				ctrl->entries[e].entry_used = 1;
 				s_comm->group_sends_remaining--;
-				matched++;
 				found = true;
 				break;
 			}
