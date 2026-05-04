@@ -960,6 +960,15 @@ ncclResult_t TestSuite::run_all()
 	test_nccl_net_config_t config = { .trafficClass = -1 };
 	OFINCCLCHECK(ext_net->init(&net_ctx, 0, &config, functional_test_logger, nullptr));
 
+	/* Call getProperties on all devices to initialize device-level flags
+	 * (e.g., supports_eager_header) before creating communicators. */
+	int ndev;
+	OFINCCLCHECK(ext_net->devices(&ndev));
+	for (int dev = 0; dev < ndev; dev++) {
+		test_nccl_properties_t props = {};
+		OFINCCLCHECK(ext_net->getProperties(dev, &props));
+	}
+
 	int passed = 0;
 	for (const auto &test : tests) {
 		test->set_ext_net(ext_net, net_ctx);
