@@ -184,7 +184,7 @@ pipeline {
                         PERM_JSON=$(curl -s -H "Authorization: token $GH_TOKEN" \
                             "https://api.github.com/repos/aws/aws-ofi-nccl/collaborators/${CHANGE_AUTHOR}/permission")
                         PERM=$(echo "$PERM_JSON" | python3 -c "import sys,json; print(json.load(sys.stdin).get('permission','none'))" 2>/dev/null || echo "none")
-                        if grep -qx "${CHANGE_AUTHOR}" /tmp/approved_authors.txt; then
+                        if awk '{print $1}' /tmp/approved_authors.txt | grep -qx "${CHANGE_AUTHOR}"; then
                             echo "✅ ${CHANGE_AUTHOR} is on the approved authors list"
                             exit 0
                         fi
