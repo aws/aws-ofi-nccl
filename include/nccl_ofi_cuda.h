@@ -51,6 +51,29 @@ int nccl_net_ofi_gpu_mem_free(void *ptr);
 int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
 
 /*
+ * @brief wraps cuMemHostRegister() with CU_MEMHOSTREGISTER_IOMEMORY | CU_MEMHOSTREGISTER_DEVICEMAP.
+ *        Registers a host MMIO region for GPU access.
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_gpu_host_register_iomem(void *ptr, size_t size);
+
+/*
+ * @brief wraps cuMemHostUnregister()
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_gpu_host_unregister(void *ptr);
+
+/*
+ * @brief wraps cuMemHostGetDevicePointer(). Returns the device-mapped pointer
+ *        for a host pointer previously registered with nccl_net_ofi_gpu_host_register_iomem.
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr);
+
+/*
  * @brief Uses cuMemGetHandleForAddressRange() to obtain
  * the fd and offset for a dma buf. In case CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE
  * is not supported we retry with flags set to 0.
