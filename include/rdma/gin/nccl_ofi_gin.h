@@ -164,6 +164,13 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 
 	/* Remote MR information for each peer rank */
 	std::vector<gin_remote_mr> remote_mr;
+
+	/* Optional device-visible handle owned by the GDAKI plugin wrapper
+	 * (nccl_ofi_gin_gdaki_mr_handle *). Stored here so deregMrSym can
+	 * free it with only the mhandle in hand — NCCL's ncclGinDeregister
+	 * does not pass ginHandle to deregMrSym. Plain heap memory, no
+	 * libfabric resources. Null when the proxy path is used. */
+	void *gin_device_handle = nullptr;
 };
 
 /**
