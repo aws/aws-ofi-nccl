@@ -4,8 +4,8 @@
  * GDAKI plugin for the GIN API. Shared APIs (init, devices, listen, connect,
  * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, ginProgress, finalize)
  * are reused from the proxy-side implementations in nccl_ofi_gin_api.cpp.
- * Only the GDAKI-specific stubs (createContext/destroyContext/get_properties/
- * regMr*-return-error/queryLastError) live here until they are implemented.
+ * Only the GDAKI-specific APIs (createContext/destroyContext/get_properties/
+ * queryLastError) live here.
  */
 
 #include "config.h"
@@ -13,7 +13,12 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#include "nccl_ofi_cuda.h"
 #include "nccl_ofi_param.h"
+
+#include "rdma/gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin_gdaki_ctx.h"
+#include "rdma/gin/nccl_ofi_gin_gdaki_dev.h"
 
 bool nccl_ofi_gin_gdaki_enabled()
 {
@@ -46,7 +51,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
 	props->maxRecvs = ofi_properties.max_group_receives;
-	props->netDeviceType = NCCL_NET_DEVICE_GIN_GDAKI;
+	props->netDeviceType = NCCL_NET_DEVICE_GIN_EFA_GDA;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 	props->vProps.ndevs = 1;
 	props->vProps.devs[0] = dev;
@@ -59,18 +64,95 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 	return ncclSuccess;
 }
 
+/*
+ * Stub createContext: allocate a GPU-resident device handle populated with
+ * only the rank / nranks identifiers. The real libfabric endpoint, QP / CQ
+ * structs, and per-peer addressing arrays are added by subsequent patches.
+ *
+ * Publishing the device-handle layout now lets the kernel-side Put /
+ * PutValue implementation code against a stable contract, and lets a
+ * plugin-API smoke test exercise the full createContext / destroyContext
+ * call path.
+ */
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
 						     void **ginCtx,
 						     ncclNetDeviceHandle_v11_t **devHandle)
 {
-	NCCL_OFI_WARN("gin GDAKI: createContext not yet implemented (nSignals=%d, nCounters=%d)",
-		      config->nSignals, config->nCounters);
-	return ncclInternalError;
+	if (collComm == nullptr || config == nullptr || ginCtx == nullptr || devHandle == nullptr) {
+		NCCL_OFI_WARN("gin GDAKI: createContext received NULL argument");
+		return ncclInvalidArgument;
+	}
+
+	auto *put_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
+
+	auto *ctx = new (std::nothrow) nccl_ofi_gin_gdaki_context();
+	if (ctx == nullptr) {
+		NCCL_OFI_WARN("gin GDAKI: createContext failed to allocate context");
+		return ncclSystemError;
+	}
+	ctx->nranks = put_comm->get_nranks();
+	ctx->rank = put_comm->get_rank();
+	ctx->d_handle = nullptr;
+
+	nccl_ofi_gin_gdaki_dev_handle h_handle = {};
+	h_handle.nranks = ctx->nranks;
+	h_handle.rank = ctx->rank;
+
+	if (nccl_net_ofi_gpu_mem_alloc(reinterpret_cast<void **>(&ctx->d_handle),
+				       sizeof(nccl_ofi_gin_gdaki_dev_handle)) != 0) {
+		NCCL_OFI_WARN("gin GDAKI: gpu_mem_alloc for device handle failed");
+		delete ctx;
+		return ncclSystemError;
+	}
+	if (nccl_net_ofi_gpu_mem_copy_host_to_device(ctx->d_handle, &h_handle,
+						     sizeof(h_handle)) != 0) {
+		NCCL_OFI_WARN("gin GDAKI: gpu_mem_copy_host_to_device of device handle failed");
+		nccl_net_ofi_gpu_mem_free(ctx->d_handle);
+		delete ctx;
+		return ncclSystemError;
+	}
+
+	auto *dev_handle = static_cast<ncclNetDeviceHandle_v11_t *>(
+		calloc(1, sizeof(ncclNetDeviceHandle_v11_t)));
+	if (dev_handle == nullptr) {
+		NCCL_OFI_WARN("gin GDAKI: failed to allocate ncclNetDeviceHandle");
+		nccl_net_ofi_gpu_mem_free(ctx->d_handle);
+		delete ctx;
+		return ncclSystemError;
+	}
+	dev_handle->netDeviceType = NCCL_NET_DEVICE_GIN_EFA_GDA;
+	dev_handle->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
+	dev_handle->handle = ctx->d_handle;
+	dev_handle->size = sizeof(nccl_ofi_gin_gdaki_dev_handle);
+	/*
+	 * On EFA, FI_EFA_GDA_OPS exposes MMIO-mappable SQ / CQ /
+	 * doorbell regions (query_qp_wqs, query_cq), so the GPU kernel
+	 * posts WQEs, rings the doorbell, and polls the CQ directly.
+	 * CQ polling is exclusively GPU-side; ginProgress has no CQ to
+	 * drain, so NCCL should not call it on this context.
+	 */
+	dev_handle->needsProxyProgress = 0;
+
+	*ginCtx = ctx;
+	*devHandle = dev_handle;
+
+	NCCL_OFI_INFO(NCCL_NET,
+		      "gin GDAKI: createContext stub (nranks=%d rank=%d)",
+		      ctx->nranks, ctx->rank);
+
+	return ncclSuccess;
 }
 
 static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
 {
-	NCCL_OFI_WARN("gin GDAKI: destroyContext not yet implemented");
+	if (ginCtx == nullptr) {
+		return ncclSuccess;
+	}
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+	if (ctx->d_handle != nullptr) {
+		nccl_net_ofi_gpu_mem_free(ctx->d_handle);
+	}
+	delete ctx;
 	return ncclSuccess;
 }
 
