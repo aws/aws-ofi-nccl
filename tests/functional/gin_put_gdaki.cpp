@@ -21,6 +21,7 @@
 #include "config.h"
 
 #include "functional_test.h"
+#include "rdma/gin/nccl_ofi_gin_gdaki_dev.h"
 
 #include <string.h>
 #include <vector>
@@ -120,6 +121,59 @@ int main(int argc, char **argv)
 	}
 	NCCL_OFI_INFO(NCCL_NET, "Rank %d: createContext done (devHandle->type=%d)",
 		      rank, devHandle->netDeviceType);
+
+	/* regMrSym smoke — exercises the full customer-visible registration
+	 * path. Keys live on the same libfabric domain as the GDAKI endpoint,
+	 * so they are usable for RDMA by any path in this context. */
+	const size_t BUF_SIZE = 1 << 20; /* 1 MiB */
+	void *buf = nullptr;
+	OFINCCLCHECK(allocate_buff(&buf, BUF_SIZE, NCCL_PTR_HOST));
+
+	void *mhandle = nullptr;
+	void *ginHandle = nullptr;
+	OFINCCLCHECK(extGin->regMrSym(collComm, buf, BUF_SIZE, NCCL_PTR_HOST, 0,
+				      &mhandle, &ginHandle));
+	if (mhandle == nullptr) {
+		NCCL_OFI_WARN("regMrSym returned null mhandle");
+		MPI_Finalize();
+		return 1;
+	}
+	if (ginHandle == nullptr) {
+		NCCL_OFI_WARN("regMrSym returned null ginHandle");
+		MPI_Finalize();
+		return 1;
+	}
+
+	/* ginHandle is an nccl_ofi_gin_gdaki_mr_handle populated by the
+	 * plugin: GPU-visible lkey for local SGEs and per-peer rkeys for
+	 * remote RDMA writes. Validate the populated fields. */
+	auto *gin_mr = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(ginHandle);
+	if (gin_mr->nranks != nranks) {
+		NCCL_OFI_WARN("ginHandle->nranks=%d expected %d",
+			      gin_mr->nranks, nranks);
+		MPI_Finalize();
+		return 1;
+	}
+	if (gin_mr->lkey == 0) {
+		NCCL_OFI_WARN("ginHandle->lkey is zero");
+		MPI_Finalize();
+		return 1;
+	}
+	for (int i = 0; i < nranks; i++) {
+		if (gin_mr->rkeys[i] == 0) {
+			NCCL_OFI_WARN("ginHandle->rkeys[%d] is zero", i);
+			MPI_Finalize();
+			return 1;
+		}
+	}
+	NCCL_OFI_INFO(NCCL_NET,
+		      "Rank %d: regMrSym done (mhandle=%p ginHandle=%p lkey=0x%x rkeys[self]=0x%x)",
+		      rank, mhandle, ginHandle, gin_mr->lkey, gin_mr->rkeys[rank]);
+
+	OFINCCLCHECK(extGin->deregMrSym(collComm, mhandle));
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d: deregMrSym done", rank);
+
+	OFINCCLCHECK(deallocate_buffer(buf, NCCL_PTR_HOST));
 
 	/* Teardown */
 	OFINCCLCHECK(extGin->destroyContext(proxyCtx));

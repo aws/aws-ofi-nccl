@@ -24,6 +24,20 @@
 extern "C" {
 #endif
 
+/* Size of the inline-data slot reserved in each SQ WQE. */
+#define NCCL_OFI_GDAKI_SQ_INLINE_DATA_BYTES 32
+
+/* Number of SGEs the SQ WQE layout accommodates per RDMA_WRITE. */
+#define NCCL_OFI_GDAKI_SQ_RDMA_SGES 2
+
+/*
+ * Phase-bit initial values for the EFA ownership-bit protocol:
+ * WQEs start at 0, CQEs and RQ entries start at 1.
+ */
+#define NCCL_OFI_GDAKI_SQ_INITIAL_PHASE 0
+#define NCCL_OFI_GDAKI_RQ_INITIAL_PHASE 1
+#define NCCL_OFI_GDAKI_CQ_INITIAL_PHASE 1
+
 /**
  * GDAKI memory registration handle returned via ginHandle from regMrSym.
  *

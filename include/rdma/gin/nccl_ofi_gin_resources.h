@@ -73,6 +73,19 @@ public:
 		return rails[rail_id];
 	}
 
+	/**
+	 * @brief Accessor to the net transport domain backing this GIN EP.
+	 *
+	 * Exposed so GDAKI createContext can reuse the same libfabric domain
+	 * as the proxy path. Same fid_domain → same PD → memory registered
+	 * via extGin->regMrSym produces keys (lkey/rkey) that are valid on
+	 * the GDAKI endpoint opened in createContext.
+	 */
+	nccl_net_ofi_domain_t &get_domain()
+	{
+		return domain;
+	}
+
 	nccl_net_ofi_scheduler *get_scheduler()
 	{
 		return scheduler;

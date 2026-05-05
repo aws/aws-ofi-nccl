@@ -57,7 +57,8 @@ sources += \
 	rdma/gin/nccl_ofi_gin_api.cpp \
 	rdma/gin/nccl_ofi_gin_reqs.cpp \
 	rdma/gin/nccl_ofi_gin_resources.cpp \
-	rdma/gin/nccl_ofi_gin_gdaki.cpp
+	rdma/gin/nccl_ofi_gin_gdaki.cpp \
+	rdma/gin/nccl_ofi_gin_gdaki_resources.cpp
 endif
 
 # add the tuner sources into the library
