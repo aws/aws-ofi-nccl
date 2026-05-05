@@ -85,6 +85,9 @@ DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
 DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
+DECLARE_CUDA_FUNCTION(cuMemHostRegister, 6050);
+DECLARE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
+DECLARE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -155,6 +158,9 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemcpy, 4000);
+	RESOLVE_CUDA_FUNCTION(cuMemHostRegister, 6050);
+	RESOLVE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
 
 	cu_ret = pfn_cuDriverGetVersion(&driverVersion);
 	if (cu_ret != CUDA_SUCCESS) {
@@ -216,6 +222,30 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 {
 	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_gpu_host_register_iomem(void *ptr, size_t size)
+{
+	CUresult ret = pfn_cuMemHostRegister(ptr, size,
+					     CU_MEMHOSTREGISTER_IOMEMORY | CU_MEMHOSTREGISTER_DEVICEMAP);
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_gpu_host_unregister(void *ptr)
+{
+	CUresult ret = pfn_cuMemHostUnregister(ptr);
+	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr)
+{
+	CUdeviceptr d_ptr;
+	CUresult ret = pfn_cuMemHostGetDevicePointer(&d_ptr, host_ptr, 0);
+	if (ret != CUDA_SUCCESS) {
+		return -EINVAL;
+	}
+	*dev_ptr = (void *)d_ptr;
+	return 0;
 }
 
 int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
