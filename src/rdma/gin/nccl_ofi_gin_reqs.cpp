@@ -98,12 +98,10 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 		}
 	} else {
 		/* Dispatch by msg_type — at offset 0 in both message structs. */
-		auto msg_type = static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr)->msg_type;
+		auto *ack_msg = static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
+		auto msg_type = static_cast<gin_msg_type_t>(ack_msg->msg_type);
 		if (msg_type == GIN_MSG_TYPE_ACK) {
-			auto *ack_msg =
-				static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
-
-			auto &gin_comm = resources.get_comm(ack_msg->ack.comm_id);
+			auto &gin_comm = resources.get_comm(ack_msg->ack_comm_id);
 
 			ret = gin_comm.handle_ack_completion(src_addr, rail_id_arg,
 							     ack_msg);
@@ -115,7 +113,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 			auto *msg = static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(
 				rx_buff_elem->ptr);
 
-			auto &gin_comm = resources.get_comm(msg->remote_comm_id);
+			auto &gin_comm = resources.get_comm(msg->header.remote_comm_id);
 
 			ret = gin_comm.handle_signal_metadata_completion(src_addr,
 									 rail_id_arg, msg);

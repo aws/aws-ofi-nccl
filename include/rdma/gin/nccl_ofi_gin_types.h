@@ -22,6 +22,7 @@ struct nccl_ofi_gin_ep_rail_t;
 enum gin_msg_type_t : uint8_t {
 	GIN_MSG_TYPE_METADATA = 0,
 	GIN_MSG_TYPE_ACK = 1,
+	GIN_MSG_TYPE_MAX = GIN_MSG_TYPE_ACK,
 };
 
 /**
@@ -40,8 +41,8 @@ enum gin_msg_type_t : uint8_t {
  * ACKs are no longer sent via immediate data — they use fi_send with
  * gin_ack_msg_t.  The immediate data is used only for data signals:
  *
- *  31        27  26  25      22 21             11 10            1  0
- *  [  unused  ] [ar] [seg_cnt ] [  msg_seq_num  ] [   comm_id   ] [0]
+ *  31      29  28  27      24 23             11 10            1  0
+ *  [unused:3] [ar] [seg_cnt ] [  msg_seq_num  ] [   comm_id   ] [0]
  *
  * Bit 0 is reserved (always 0 for data signals).
  *
@@ -53,7 +54,9 @@ enum gin_msg_type_t : uint8_t {
 /* Common fields (same position in both formats) */
 #define GIN_IMM_TYPE_BITS      1
 #define GIN_IMM_COMM_BITS      10
-#define GIN_IMM_SEQ_BITS       11
+#define GIN_IMM_SEQ_BITS       13  /* can expand up to 15 without further
+                                      changes to uint16_t seq vars or the
+                                      32-bit immediate data layout */
 #define GIN_IMM_COMM_SHIFT     GIN_IMM_TYPE_BITS
 #define GIN_IMM_SEQ_SHIFT      (GIN_IMM_COMM_SHIFT + GIN_IMM_COMM_BITS)
 #define GIN_IMM_SEQ_MASK       ((1 << GIN_IMM_SEQ_BITS) - 1)
@@ -75,63 +78,109 @@ enum gin_msg_type_t : uint8_t {
 	(((ack_req) << GIN_IMM_ACK_REQ_SHIFT) | ((nseg) << GIN_IMM_SEG_CNT_SHIFT) |               \
 	 ((seq) << GIN_IMM_SEQ_SHIFT) | ((comm_id) << GIN_IMM_COMM_SHIFT))
 
-/* Packed sequence number + segment count (16 bits). */
-struct nccl_net_ofi_gin_metadata_seq_t {
-	uint16_t seq_num:GIN_IMM_SEQ_BITS;
-	uint16_t num_segments:GIN_IMM_SEG_CNT_BITS;
-};
+/* msg_type in message headers (2 values currently. Reserving one more bit for now) */
+#define GIN_MSG_TYPE_BITS      2
+static_assert(((1 << GIN_MSG_TYPE_BITS) - 1) >= GIN_MSG_TYPE_MAX,
+	      "GIN_MSG_TYPE_BITS must be wide enough to hold all message types");
 
-/* Bundled ack payload (32 bits). ack_count == 0 means no ack. */
+/* Bundled/standalone ack count. ack_count == 0 means no ack. */
 #define GIN_ACK_COUNT_BITS    10
 #define GIN_ACK_COUNT_MASK    ((1 << GIN_ACK_COUNT_BITS) - 1)
-struct nccl_net_ofi_gin_ack_t {
-	uint32_t ack_seq_num:GIN_IMM_SEQ_BITS;
-	uint32_t comm_id:GIN_IMM_COMM_BITS;
-	uint32_t ack_count:GIN_ACK_COUNT_BITS;
-};
-
 
 /* Maximum number of GIN comms */
 #define NCCL_GIN_MAX_COMMS    (1 << GIN_IMM_COMM_BITS)
 
-struct nccl_net_ofi_gin_signal_metadata_msg_t {
-	/* Message type identifier — must be GIN_MSG_TYPE_METADATA */
-	gin_msg_type_t msg_type;
+/* Reserved bit computation for Metadata message header */
+#define GIN_MSG_HEADER_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
+                                      - GIN_IMM_SEQ_BITS - GIN_ACK_COUNT_BITS    \
+                                      - GIN_IMM_SEQ_BITS - GIN_IMM_SEG_CNT_BITS)
 
+/**
+ * Metadata message header (64 bits).
+ *
+ * Both nccl_net_ofi_gin_msg_header_t and gin_ack_msg_t share a common
+ * prefix in bits [0:34]: msg_type(2) + comm_id(10) + ack_seq_num(13) +
+ * ack_count(10) = 35 bits.  This allows dispatch and ACK processing to
+ * read from the same offsets regardless of message type.
+ */
+struct nccl_net_ofi_gin_msg_header_t {
+	/* Message type identifier */
+	uint64_t msg_type        : GIN_MSG_TYPE_BITS;
 	/* Comm identifier on the receiver side */
-	uint8_t remote_comm_id;
+	uint64_t remote_comm_id  : GIN_IMM_COMM_BITS;
+	/* Bundled ack sequence number (ack_count == 0 when absent) */
+	uint64_t ack_seq_num     : GIN_IMM_SEQ_BITS;
+	/* Bundled ack count */
+	uint64_t ack_count       : GIN_ACK_COUNT_BITS;
+	/* Message sequence number and count */
+	uint64_t seq_num         : GIN_IMM_SEQ_BITS;
+	uint64_t seq_seg_cnt     : GIN_IMM_SEG_CNT_BITS;
+	/* Reserved for future use */
+	uint64_t reserved        : GIN_MSG_HEADER_RESERVED_BITS;
+};
+static_assert(sizeof(nccl_net_ofi_gin_msg_header_t) <= 8,
+	      "nccl_net_ofi_gin_msg_header_t fields must fit in 64 bits");
 
-	/* Message sequence number and segment count */
-	nccl_net_ofi_gin_metadata_seq_t seq;
-
-	/* Bundled ack (ack_count == 0 when absent) */
-	nccl_net_ofi_gin_ack_t ack;
+/**
+ * Metadata message (32 bytes for inline send).
+ */
+struct nccl_net_ofi_gin_signal_metadata_msg_t {
+	nccl_net_ofi_gin_msg_header_t header;
 
 	/* Signal information (if applicable) */
 	uint64_t signal_base_address;
 	uint64_t signal_offset;
 	uint64_t signal_value;
 };
-
-static_assert(sizeof(struct nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
+static_assert(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
 	     "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
 
+#define GIN_ACK_MSG_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
+                                   - GIN_IMM_SEQ_BITS - GIN_ACK_COUNT_BITS)
+
 /**
- * ACK message sent via fi_send from receiver to sender.
+ * Standalone ACK message sent via fi_send from receiver to sender (8 bytes).
+ *
+ * Shares the common prefix layout with nccl_net_ofi_gin_msg_header_t
+ * so msg_type-based dispatch works at the same bit position.
  */
 struct gin_ack_msg_t {
-	/* Message type identifier — must be set explicitly (freelist memory) */
-	gin_msg_type_t msg_type;
-	uint8_t reserved;
-	/* Ack payload — same format as bundled ack in metadata */
-	nccl_net_ofi_gin_ack_t ack;
+	/* Message type identifier */
+	uint64_t msg_type        : GIN_MSG_TYPE_BITS;
+	/* Comm identifier on the original sender side */
+	uint64_t ack_comm_id     : GIN_IMM_COMM_BITS;
+	/* ACK sequence number */
+	uint64_t ack_seq_num     : GIN_IMM_SEQ_BITS;
+	/* ACK count */
+	uint64_t ack_count       : GIN_ACK_COUNT_BITS;
+	/* Reserved for future use */
+	uint64_t reserved        : GIN_ACK_MSG_RESERVED_BITS;
 };
+static_assert(sizeof(gin_ack_msg_t) <= 8,
+	      "gin_ack_msg_t must be exactly 8 bytes for inline send");
 
-static_assert(sizeof(gin_ack_msg_t) == 8, "gin_ack_msg_t must be exactly 8 bytes for inline send");
-static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, msg_type) == 0,
-	     "msg_type must be at offset 0 for type-based dispatch");
-static_assert(offsetof(gin_ack_msg_t, msg_type) == 0,
-	     "msg_type must be at offset 0 for type-based dispatch");
+/* Above layout assume little-endian byte order, as well as following static
+   assert checks. All message structs must have msg_type at the lowest bits
+   so that type-based dispatch can read the first bits without knowing the
+   concrete type. */
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+	      "GIN message struct layout assumes little-endian byte order");
+static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, header) == 0,
+	      "header must be at offset 0 for type-based dispatch");
+/* Verify msg_type is at the LSB of each struct. Clang does not yet support
+   constexpr bit_cast on bitfield structs, so only check on GCC. */
+#if !defined(__clang__) && defined(__GNUC__) && (__GNUC__ >= 9)
+static_assert(
+	__builtin_bit_cast(uint64_t,
+		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0})
+		== (uint64_t)GIN_MSG_TYPE_MAX,
+	"msg_type must be at LSB of nccl_net_ofi_gin_msg_header_t");
+static_assert(
+	__builtin_bit_cast(uint64_t,
+		gin_ack_msg_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0})
+		== (uint64_t)GIN_MSG_TYPE_MAX,
+	"msg_type must be at LSB of gin_ack_msg_t");
+#endif
 
 /* ACK interval for PUT-only messages. Send an ACK every N consecutive PUTs
    to prevent sequence number wraparound. */

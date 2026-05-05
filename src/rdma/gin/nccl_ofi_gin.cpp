@@ -228,11 +228,11 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 	}
 
 	auto *ack_msg = static_cast<gin_ack_msg_t *>(ack_elem->ptr);
+	*ack_msg = {};
 	ack_msg->msg_type = GIN_MSG_TYPE_ACK;
-	ack_msg->reserved = 0;
-	ack_msg->ack.comm_id = static_cast<uint16_t>(peer_comm_id);
-	ack_msg->ack.ack_seq_num = static_cast<uint16_t>(ack_seq_num);
-	ack_msg->ack.ack_count = static_cast<uint16_t>(count);
+	ack_msg->ack_comm_id = static_cast<uint16_t>(peer_comm_id);
+	ack_msg->ack_seq_num = static_cast<uint16_t>(ack_seq_num);
+	ack_msg->ack_count = static_cast<uint16_t>(count);
 
 	auto *ofi_ep = ep.get_rail(rail_id).ofi_ep.get();
 
@@ -537,10 +537,10 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		auto *metadata_send =
 			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(metadata_elem->ptr);
 
-		metadata_send->seq.seq_num = msg_seq_num;
-		metadata_send->seq.num_segments = nseg;
-		metadata_send->remote_comm_id = remote_comm_id;
-		metadata_send->msg_type = GIN_MSG_TYPE_METADATA;
+		metadata_send->header.msg_type = GIN_MSG_TYPE_METADATA;
+		metadata_send->header.remote_comm_id = remote_comm_id;
+		metadata_send->header.seq_num = msg_seq_num;
+		metadata_send->header.seq_seg_cnt = nseg;
 		metadata_send->signal_base_address =
 			(sig_mr ? sig_mr->remote_mr[dst_rank].address : 0);
 		metadata_send->signal_offset = signalOff;
@@ -554,13 +554,11 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 
 		/* Bundle pending ack for this peer */
 		if (rank_comm.pending_ack.ack_count > 0) {
-			metadata_send->ack.ack_seq_num = rank_comm.pending_ack.seq_num;
-			/* comm_id is only used for standalone ACKs, setting it here for struct completeness */
-			metadata_send->ack.comm_id = rank_comm.comm_id;
-			metadata_send->ack.ack_count = rank_comm.pending_ack.ack_count;
+			metadata_send->header.ack_seq_num = rank_comm.pending_ack.seq_num;
+			metadata_send->header.ack_count = rank_comm.pending_ack.ack_count;
 			rank_comm.pending_ack.ack_count = 0;
 		} else {
-			metadata_send->ack.ack_count = 0;
+			metadata_send->header.ack_count = 0;
 		}
 
 		send_req = resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
@@ -671,14 +669,14 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_ra
 	int ret = 0;
 
 	NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on target",
-		       req->metadata.seq.seq_num);
+		       req->metadata.header.seq_num);
 
 	if (req->metadata_received) {
 		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN(dev, this, peer_rank,
-							 req->metadata.seq.seq_num, req);
+							 req->metadata.header.seq_num, req);
 		ret = do_gin_signal(req->metadata);
 		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank,
-						       req->metadata.seq.seq_num, req);
+						       req->metadata.header.seq_num, req);
 	}
 
 	if (ret != 0) {
@@ -810,16 +808,16 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 {
 	int ret = 0;
 
-	uint16_t msg_seq_num = metadata_msg->seq.seq_num;
-	uint16_t num_segments = metadata_msg->seq.num_segments;
+	uint16_t msg_seq_num = metadata_msg->header.seq_num;
+	uint16_t num_segments = metadata_msg->header.seq_seg_cnt;
 
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
 
 	/* Process bundled ack if present */
-	if (metadata_msg->ack.ack_count > 0) {
+	if (metadata_msg->header.ack_count > 0) {
 		clear_ack_range(peer_rank,
-				metadata_msg->ack.ack_seq_num,
-				metadata_msg->ack.ack_count);
+				metadata_msg->header.ack_seq_num,
+				metadata_msg->header.ack_count);
 	}
 
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
@@ -852,8 +850,8 @@ int nccl_ofi_rdma_gin_put_comm::handle_ack_completion(fi_addr_t src_addr, uint16
 					     const gin_ack_msg_t *ack_msg)
 {
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
-	uint16_t ack_seq_num = ack_msg->ack.ack_seq_num;
-	uint16_t count = ack_msg->ack.ack_count;
+	uint16_t ack_seq_num = ack_msg->ack_seq_num;
+	uint16_t count = ack_msg->ack_count;
 	assert(count > 0);
 
 	NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, this, peer_rank, ack_seq_num);
@@ -897,9 +895,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(fi_addr_t src_add
 
 	if (req->num_seg_completions == req->total_segments) {
 		/* Fill in the fields related to metadata */
-		req->metadata.seq.seq_num = msg_seq_num;
-		req->metadata.seq.num_segments = req->total_segments;
-		req->metadata.msg_type = GIN_MSG_TYPE_METADATA;
+		req->metadata.header.seq_num = msg_seq_num;
+		req->metadata.header.seq_seg_cnt = req->total_segments;
+		req->metadata.header.msg_type = GIN_MSG_TYPE_METADATA;
 	}
 
 	ret = iput_signal_deliver_all(peer_rank);
