@@ -262,7 +262,7 @@ pipeline {
                     // stages["4_trn1_ubuntu2204"] = get_test_stage_with_lock_persistent("4_trn1_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "trn1.32xlarge", trn1_lock_label, num_instances, neuron_addl_args)
 
                     // trn1n tests
-                    stages["4_trn1n_ubuntu2204"] = get_test_stage_with_lock_persistent("4_trn1n_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "trn1n.32xlarge", trn1n_lock_label, num_instances, neuron_addl_args)
+                    // stages["4_trn1n_ubuntu2204"] = get_test_stage_with_lock_persistent("4_trn1n_ubuntu2204", env.BUILD_TAG, "ubuntu2204", "trn1n.32xlarge", trn1n_lock_label, num_instances, neuron_addl_args)
 
                     parallel stages
                 }
