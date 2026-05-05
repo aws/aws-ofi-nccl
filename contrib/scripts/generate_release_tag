@@ -1,0 +1,111 @@
+#!/bin/bash
+#
+# Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+
+usage() {
+    echo "Usage: $0 --ref <reference> --tag <tag name> [--push <remote>]" 1>&2
+    echo "" 1>&2
+    echo "Options:" 1>&2
+    echo "  --ref <reference>  Target git reference to tag (e.g., HEAD, a commit sha)" 1>&2
+    echo "  --tag <tag name>   Release tag name (e.g., v1.19.0)" 1>&2
+    echo "  --push <remote>    Push the tag to the specified remote after creation" 1>&2
+    exit 1
+}
+
+reference=""
+tagname=""
+push_remote=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --ref)
+            [ -z "$2" ] && usage
+            reference="$2"
+            shift 2
+            ;;
+        --tag)
+            [ -z "$2" ] && usage
+            tagname="$2"
+            shift 2
+            ;;
+        --push)
+            [ -z "$2" ] && usage
+            push_remote="$2"
+            shift 2
+            ;;
+        *)
+            echo "Error: unknown option $1" 1>&2
+            usage
+            ;;
+    esac
+done
+
+if [ -z "$reference" ] || [ -z "$tagname" ]; then
+    usage
+fi
+
+echo "reference: ${reference}"
+echo "tag: ${tagname}"
+
+# Verify the remote exists early, before creating the tag
+if [ -n "${push_remote}" ]; then
+    if ! git remote get-url "${push_remote}" > /dev/null 2>&1; then
+        echo "Remote '${push_remote}' does not exist." 1>&2
+        exit 1
+    fi
+fi
+
+# verify that tag looks sanely formatted
+if ! echo ${tagname} | sed -E '/v[0-9]+\.[0-9]+\.[0-9]+.*/!{q1}' > /dev/null; then
+    echo "Tag ${tagname} does not look like a release tag."
+    exit 1
+fi
+
+# verify that the ref we're tagging is in a branch that looks like a reasonable
+# release branch for the tag we're creating
+expected_release_branch=`echo ${tagname} | sed -E 's/(v[0-9]+\.[0-9]+)\..*/\1.x/'`
+branches=`git branch --contains ${reference} --format="    %(refname:short)"`
+if ! echo "${branches}"  | grep -q ${expected_release_branch} ; then
+    echo "None of the branches containing ${reference} look like a release branch for ${tagname}.
+Found branches include:
+$branches" 1>&2
+    exit 1
+fi
+
+# Verify RELEASENOTES.md is sane
+case `git show ${reference}:RELEASENOTES.md | sed 15q` in
+    *"${tagname}"*) : ;;
+    *)
+	echo "RELEASENOTES.md not updated; not tagging." 1>&2
+	exit 1
+	;;
+esac
+
+# Make the tag
+git tag -s -a -m "Create ${tagname} release tag" "${tagname}" "${reference}"
+if test $? -ne 0 ; then
+    echo "Creating tag ${tagname} on reference ${reference} failed".
+    exit 1
+fi
+
+echo "${tagname} tag created at reference ${reference}."
+
+# Push if --push was specified
+if [ -n "${push_remote}" ]; then
+    echo "Pushing ${tagname} to ${push_remote}..."
+    git push "${push_remote}" "${tagname}"
+    if test $? -ne 0 ; then
+        echo "Pushing tag ${tagname} to ${push_remote} failed." 1>&2
+        exit 1
+    fi
+    echo "${tagname} pushed to ${push_remote}."
+else
+    echo "You must manually push upstream with a command such as:
+
+    git push origin ${tagname}"
+fi
+
+exit 0

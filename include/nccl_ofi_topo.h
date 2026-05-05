@@ -5,11 +5,6 @@
 #ifndef NCCL_NET_OFI_TOPO_H_
 #define NCCL_NET_OFI_TOPO_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include <stdbool.h>
 #include <hwloc.h>
 #include <rdma/fabric.h>
 
@@ -58,6 +53,13 @@ typedef struct nccl_ofi_topo_data {
 
 	/* Backward pointer to corresponding topology node */
 	hwloc_obj_t node;
+
+	/* Indicates whether the HWLOC node resides on the path 
+	 * from a NIC or GPU to the root, marked by `set_userdata_to_root()`. */
+	bool is_along_nic_or_gpu_to_root;
+
+	/* Backward pointer to the closest NUMA node marked via `mark_nccl_cpuid()`. */
+	hwloc_obj_t closest_numa_node;
 } nccl_ofi_topo_data_t;
 
 /*
@@ -252,16 +254,24 @@ int nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
  * @brief	Allocate and initialize nccl_ofi_topo_t struct
  *
  * Create a nccl_ofi_topo_t struct that stores the hardware topology
- * of the machine and add libfabric NIC info structs to their
- * corresponding topology nodes. Note that this function duplicates
- * the info structs.
+ * of the machine.
  *
- * @param	info_list
- *		List of libfabric NIC info structs
  * @return	NCCL OFI hardware topology, on success
  *		NULL, on others
  */
-nccl_ofi_topo_t *nccl_ofi_topo_create(struct fi_info *info_list);
+nccl_ofi_topo_t *nccl_ofi_topo_create();
+
+/*
+ * @brief	Populate topology with provider data
+ *
+ * @param	ofi_topo
+ *		NCCL OFI topology created with nccl_ofi_topo_create()
+ * @param	info_list
+ *		List of libfabric NIC info structs
+ * @return	0, on success
+ *		non-zero, on others
+ */
+int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list);
 
 /*
  * @brief	Write NCCL topology file based on NCCL OFI topology
@@ -315,8 +325,14 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
  */
 int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
 
-#ifdef __cplusplus
-}
-#endif
+/*
+ * @brief	Check if topology has EFA/ENA devices
+ *
+ * @param	topo
+ * 		The topology
+ * @return	true, if EFA or ENA device detected
+ *		false, topo is null or EFA/ENA device not detected.
+ */
+bool nccl_ofi_topo_has_efa_ena_devices(nccl_ofi_topo_t* topo);
 
 #endif // End NCCL_NET_OFI_TOPO_H_

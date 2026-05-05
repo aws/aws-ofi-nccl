@@ -5,17 +5,13 @@
 #ifndef NCCL_OFI_MEMCHECK_H
 #define NCCL_OFI_MEMCHECK_H
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include "nccl_ofi_math.h"
 
 /**
  * Memory access tracing requires memory areas to be 8-byte aligned
  * because ASAN shadow-memory granularity is 8 bytes.
  */
-#define MEMCHECK_GRANULARITY (8)
+#define MEMCHECK_GRANULARITY (8UL)
 
 #if ENABLE_VALGRIND
 #include "nccl_ofi_memcheck_valgrind.h"
@@ -138,7 +134,7 @@ static inline void nccl_net_ofi_mem_create_mempool(void *handle, void *data, siz
 static inline void nccl_net_ofi_mem_destroy_mempool(void *handle);
 
 /**
- * Indicate that an allocation has occured from a memory allocator.
+ * Indicate that an allocation has occurred from a memory allocator.
  * The memory area returned with have undefined semantics after this
  * call.
  *
@@ -153,7 +149,7 @@ static inline void nccl_net_ofi_mem_destroy_mempool(void *handle);
 static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size_t size);
 
 /**
- * Indicate that a deallocate has occured to a memory allocator.  The
+ * Indicate that a deallocate has occurred to a memory allocator.  The
  * memory area will have noaccess semantics after this call.  If
  * book-keeping structures need to be stored in this area, the
  * specific area should be first marked as undefined via
@@ -168,9 +164,5 @@ static inline void nccl_net_ofi_mem_mempool_alloc(void *handle, void *data, size
  *   The size of the memory area.
  */
 static inline void nccl_net_ofi_mem_mempool_free(void *handle, void *data, size_t size);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_MEMCHECK_H

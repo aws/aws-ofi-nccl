@@ -5,15 +5,18 @@
 #ifndef NCCL_OFI_SENDRECV_H_
 #define NCCL_OFI_SENDRECV_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <rdma/fabric.h>
 
+#include "cm/nccl_ofi_cm.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_log.h"
+#include "ofi/resource_wrapper.h"
+
+/* This is the initial value of mr_key. At key deregisteration time,
+ * it is used to validate if a key was generated and needed to be freed or not.
+ */
+#define MR_KEY_INIT_VALUE FI_KEY_NOTAVAIL
 
 typedef enum nccl_net_ofi_sendrecv_req_state {
 	NCCL_OFI_SENDRECV_REQ_CREATED = 0,
@@ -28,55 +31,124 @@ typedef enum nccl_net_ofi_sendrecv_req_direction {
 	NCCL_OFI_SENDRECV_RECV,
 } nccl_net_ofi_sendrecv_req_direction_t;
 
-typedef struct nccl_net_ofi_sendrecv_listen_comm {
-	/* This base listen communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_listen_comm_t base;
+class nccl_net_ofi_sendrecv_mr_handle_t : public nccl_net_ofi_mr_handle_t {
+public:
+	/**
+	 * @brief	Default constructor
+	 */
+	nccl_net_ofi_sendrecv_mr_handle_t(uint64_t mr_key_arg)
+		: nccl_net_ofi_mr_handle_t(mr_key_arg)
+	{}
 
-	uint64_t tag;
+	/**
+	 * @brief	Get MR key for SENDRECV handle
+	 * 
+	 * 		Return MR key associated with mr
+	 */
+	int get_mr_key(uint64_t *mr_key_ptr) override;
+	
+	ofi_mr_ptr mr;
+};
+
+/* Forward declarations needed for comm factory methods */
+class nccl_net_ofi_sendrecv_device_t;
+class nccl_net_ofi_sendrecv_domain_t;
+class nccl_net_ofi_sendrecv_ep_t;
+
+class nccl_net_ofi_sendrecv_listen_comm : public nccl_net_ofi_listen_comm {
+public:
+	int accept(nccl_net_ofi_recv_comm **recv_comm) override;
+	int close() override;
+
 	struct fid_ep *local_ep;
 	fi_addr_t local_ep_addr;
-	bool accepted;
 	/* Saves temporary state when creating receive communicator object */
 	save_comm_state_t state;
-	/* Saves peer address information */
-	nccl_ofi_connection_info_t *conn_info;
-} nccl_net_ofi_sendrecv_listen_comm_t;
 
-typedef struct nccl_net_ofi_sendrecv_send_comm {
-	/* This base send communicator must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_send_comm_t base;
+	nccl_ofi_cm_listener *listener;
+};
+
+
+class nccl_net_ofi_sendrecv_req;
+
+class nccl_net_ofi_sendrecv_send_comm : public nccl_net_ofi_send_comm {
+public:
+	nccl_net_ofi_sendrecv_send_comm();
+
+	/* Factory method to allocate and setup send communicator for a peer */
+	static int create(nccl_net_ofi_conn_handle_t *handle,
+			  nccl_net_ofi_sendrecv_ep_t *ep_arg,
+			  nccl_ofi_connection_info_t *conn_info,
+			  nccl_net_ofi_sendrecv_send_comm **s_comm);
+
+	int process_conn_resp(nccl_net_ofi_sendrecv_ep_t *ep_arg,
+			      const nccl_ofi_connection_info_t &conn_resp_msg);
+
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) override;
+    int close() override;
+    
+    // RMA operations not supported for SendRecv protocol
+    int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) override {
+        NCCL_OFI_WARN("RMA write operations are not supported for SendRecv protocol");
+        return -ENOTSUP;
+    }
+    
+    int write_inline(void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) override {
+        NCCL_OFI_WARN("RMA write_inline operations are not supported for SendRecv protocol");
+        return -ENOTSUP;
+    }
+
+	int free_req(int dev_id_arg, nccl_net_ofi_sendrecv_req *req, bool dec_inflight_reqs);
 
 	uint64_t num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
 	fi_addr_t local_ep_addr;
 	struct fid_ep *local_ep;
 
-	nccl_ofi_connection_info_t *conn_info;
-} nccl_net_ofi_sendrecv_send_comm_t;
+	nccl_ofi_cm_send_connector *connector;
+};
+
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_sendrecv_flush_buffer {
 	void *host_buffer;
 	size_t size;
 	/* Memory registration handle of the local buffer */
-	struct fid_mr *mr_handle;
+	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
-typedef struct nccl_net_ofi_sendrecv_recv_comm {
-	/* This base receive communicator must be the first member of
-	 * this struct. This allows casting between pointers of this
-	 * struct and its base struct. */
-	nccl_net_ofi_recv_comm_t base;
+class nccl_net_ofi_sendrecv_recv_comm : public nccl_net_ofi_recv_comm {
+public:
+	nccl_net_ofi_sendrecv_recv_comm();
+
+	/* Factory method to allocate and setup receive communicator for a peer */
+	static nccl_net_ofi_sendrecv_recv_comm *create(nccl_net_ofi_sendrecv_listen_comm *l_comm,
+						       nccl_net_ofi_sendrecv_device_t *device,
+						       nccl_net_ofi_sendrecv_domain_t *domain,
+						       nccl_net_ofi_sendrecv_ep_t *ep_arg,
+						       const char *remote_ep_addr);
+
+    int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) override;
+    int deregMr(nccl_net_ofi_mr_handle_t *mhandle) override;
+    int recv(int n, void **data, size_t *sizes, int *tags, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int flush(int n, void **data, int *sizes, nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) override;
+    int close() override;
+    
+    // RMA operations not supported for SendRecv protocol
+    int read(void* dest, size_t size, void* dest_mhandle, uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) override {
+        NCCL_OFI_WARN("RMA read operations are not supported for SendRecv protocol");
+        return -ENOTSUP;
+    }
+
+	int free_req(int dev_id_arg, nccl_net_ofi_sendrecv_req *req, bool dec_inflight_reqs);
 
 	uint64_t num_inflight_reqs;
-	nccl_ofi_freelist_t *nccl_ofi_reqs_fl;
+	nccl_ofi_freelist *nccl_ofi_reqs_fl;
 
 	uint64_t tag;
 	fi_addr_t remote_ep;
@@ -84,7 +156,62 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
 	struct fid_ep *local_ep;
 
 	nccl_net_ofi_sendrecv_flush_buffer_t flush_buff;
-} nccl_net_ofi_sendrecv_recv_comm_t;
+
+	nccl_ofi_cm_receiver *receiver;
+
+private:
+	int alloc_and_reg_flush_buff(nccl_net_ofi_sendrecv_domain_t *domain_arg,
+				     nccl_net_ofi_sendrecv_ep_t *ep_arg,
+				     nccl_ofi_idpool_t *key_pool);
+};
+
+
+/*
+ * Domain - container for the libfabric domain, which is the threading
+ * boundary for most Libfabric providers, given how the util cq
+ * implementation works.
+ */
+class nccl_net_ofi_sendrecv_domain_t : public nccl_net_ofi_domain_t {
+public:
+	nccl_net_ofi_sendrecv_domain_t(nccl_net_ofi_sendrecv_device_t *device_arg,
+				       unsigned int domain_key = 0);
+	
+	inline ofi_domain_ptr *get_ofi_domain_for_cm() override
+	{
+		return &domain;
+	}
+
+	inline ofi_domain_ptr &get_ofi_domain(uint16_t rail_id = 0) override
+	{
+		assert(rail_id == 0);
+		return domain;
+	}
+
+	inline uint16_t get_ofi_num_rails() override
+	{
+		return 1;
+	}
+	
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device);
+	}
+
+	/* Caller must hold the device lock */
+	std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() override;
+
+	/* Access Domain handle */
+	ofi_domain_ptr domain;
+
+protected:
+	/**
+	 * @brief	SENDRECV domain destructor.
+	 *
+	 * Cleans up SENDRECV domain resources (ep_table).
+	 */	
+	~nccl_net_ofi_sendrecv_domain_t();
+};
+
 
 /**
  * @brief	Sendrecv Endpoint
@@ -93,33 +220,125 @@ typedef struct nccl_net_ofi_sendrecv_recv_comm {
  * for the sendrecv protocol that uses libfabric's fi_tsend and
  * fi_trecv for communication.
  */
-typedef struct nccl_net_ofi_sendrecv_ep {
-	/* This base endpoint interface struct provides access to the
-	 * sendrecv endpoint's functions such as sendrecv_listen() and
-	 * sendrecv_connect(). At construction time of this endpoint,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_ep_t endpoint 'base'.
+class nccl_net_ofi_sendrecv_ep_t : public nccl_net_ofi_ep_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Calls base endpoint class constructor, sets up freelist and endpoint resources.   
+	 */
+	nccl_net_ofi_sendrecv_ep_t(std::shared_ptr<nccl_net_ofi_sendrecv_domain_t> domain_arg);
+
+	int listen(nccl_net_ofi_conn_handle_t *handle,
+		   nccl_net_ofi_listen_comm **listen_comm) override;
+
+	int connect(nccl_net_ofi_conn_handle_t *handle,
+		    nccl_net_ofi_send_comm **send_comm,
+		    int trafficClass) override;
+
+	/* Returns a raw pointer for downcasting to the transport-specific
+	 * domain type. Safe because the ep holds shared_ptr<domain>,
+	 * so the domain is alive as long as the ep exists. */
+	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
+	{
+		return static_cast<nccl_net_ofi_sendrecv_domain_t *>(domain.get());
+	}
+
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
+	{
+		return sendrecv_endpoint_get_domain()->sendrecv_domain_get_device();
+	}
+
+	/**
+	 * @brief	Returns the domain, dependent on the platform.
 	 *
-	 * This base endpoint must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_ep_t base;
+	 * @return	fid_domain for the device (P-series) or endpoint (Neuron).
+	 */
+	inline ofi_domain_ptr &sendrecv_endpoint_get_ofi_domain()
+	{
+		return sendrecv_endpoint_get_domain()->domain;
+	}
+
+	/**
+	 * @brief Return completion queue associated with this endpoint for CM to use.
+	 */
+	inline ofi_cq_ptr &get_ofi_cq_for_cm() override
+	{
+		return cq;
+	}
+
+	/**
+	 * Abort an endpoint when a communicator using it still has inflight requests
+	 *
+	 * This function will
+	 * 1. Close the OFI resources (ep, av) associated with the endpoint
+	 * 2. Mark the associated domain as inactive to prevent further use of domain
+	 *    resources, such as completion queue
+	 *
+	 * After this function returns, the endpoint will still have non-OFI resources
+	 * allocated (freelists, rx requests, etc.), but will not be usable. The
+	 * endpoint is destroyed when the last shared_ptr to it is dropped.
+	 */
+	void sendrecv_endpoint_abort();
 
 	/* Current available tag ID */
 	uint64_t tag;
 
-	/* Endpoint handle to communicate to */
-	struct fid_ep *ofi_ep;
-
-	/* Access Domain handle */
-	struct fid_domain *domain;
+	/* copy of device's max_tag to reading device information */
+	uint64_t max_tag;
 
 	/* Address vector handle */
-	struct fid_av *av;
+	ofi_av_ptr av;
+
+	/* Endpoint handle to communicate to */
+	ofi_ep_ptr ofi_ep;
 
 	/* Completion Queue handle */
-	struct fid_cq *cq;
-} nccl_net_ofi_sendrecv_ep_t;
+	ofi_cq_ptr cq;
+
+	/**
+	 * Connection manager for this domain
+	 *
+	 * TODO: make cm a direct member once nccl_ofi_connection_manager can
+	 * safely be initialized in the endpoint constructor. Currently cm can't
+	 * be initialized in the endpoint constructor initializer list since it
+	 * expects the endpoint passed in as an argument to have already
+	 * initialized Libfabric and ID pool resources. As well, cm can't be
+	 * initialized at the end of the endpoint constructor since
+	 * nccl_ofi_connection_manager doesn't have a default constructor.
+	 */
+	nccl_ofi_connection_manager *cm = nullptr;
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Cleans up SENDRECV endpoint resources (OFI endpoint, AV, CM).
+	 */
+	~nccl_net_ofi_sendrecv_ep_t() override;
+};
+
+
+class nccl_net_ofi_sendrecv_plugin_t : public nccl_net_ofi_plugin_t {
+public:
+	/**
+	 * @brief	Default SENDRECV plugin constructor
+	 */
+	nccl_net_ofi_sendrecv_plugin_t(size_t num_devices,
+				       struct fi_info *provider_list_arg)
+		: nccl_net_ofi_plugin_t(num_devices),
+		  provider_list(provider_list_arg)
+	{}
+
+	/**
+	 * @brief	Default SENDRECV plugin destructor
+	 */
+	~nccl_net_ofi_sendrecv_plugin_t() override;
+
+	int complete_init() override;
+
+	struct fi_info *provider_list;
+};
+
 
 /**
  * @brief	Sendrecv Device
@@ -134,48 +353,90 @@ typedef struct nccl_net_ofi_sendrecv_ep {
  * locks and the lifetime of resouces is maintained with a reference
  * counter.
  */
-typedef struct nccl_net_ofi_sendrecv_device {
-	/* This base device interface struct provides access to the
-	 * sendrecv endpoint's functions such as
-	 * sendrecv_get_properties(), sendrecv_get_ep(), and
-	 * sendrecv_release_ep(). At construction time of this device,
-	 * the constructor assigns these functions to the member
-	 * functions of abstract nccl_net_ofi_device_t device
-	 * 'device'.
-	 *
-	 * This base device must be the first member of this
-	 * struct. This allows casting between pointers of this struct
-	 * and its base struct. */
-	nccl_net_ofi_device_t base;
+class nccl_net_ofi_sendrecv_device_t : public nccl_net_ofi_device_t {
+public:
+	/**
+	 * @brief	Default SENDRECV transport constructor.
+	 * 
+	 * Calls base device class constructor, sets up SENDRECV device resources
+	 * like the Libfabric fabric.
+	 */
+	nccl_net_ofi_sendrecv_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+				       int device_id,
+				       struct fi_info *info_arg);
+
+	int get_properties(nccl_ofi_properties_t *props) override;
+
+	inline struct fi_info *get_ofi_info_for_cm() override
+	{
+		return info;
+	}
+
+	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) override
+	{
+		assert(rail_id == 0);
+		return info;
+	}
+
+	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
+	{
+		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+	}
 
 	/* Device provider */
-	struct fi_info *info;
+	struct fi_info *info = nullptr;
 
 	/* Maximum supported tag ID */
 	uint64_t max_tag;
 
 	/* Provider name. Device did not obtain ownership. */
-	char *prov_name;
+	char *prov_name = nullptr;
 
 	// TODO: So far, devices resources are not released and device
 	// memory is not freed. These actions should include closing
 	// fabirc, domain, and cq as well as freeing prov_name.
 
 	/* Fabric handle */
-	struct fid_fabric *fabric;
+	ofi_fabric_ptr fabric;
 
-	/* Access Domain handle */
-	struct fid_domain *domain;
-} nccl_net_ofi_sendrecv_device_t;
+protected:
+	/**
+	 * @brief	SENDRECV device destructor.
+	 *
+	 * Cleans up SENDRECV device resources (domains, fi_info).
+	 */
+	~nccl_net_ofi_sendrecv_device_t() override;
+
+	nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) override;
+
+	/**
+	 * @brief	Allocates and initialises various libfabric resources like
+	 *		fabric and domain to make sendrecv device ready for endpoint creation.
+	 */
+	int sendrecv_device_prepare_for_connection();
+};
+
+/**
+ * @brief	SendRecv context - handles CQ completions for SendRecv protocol requests
+ */
+class nccl_net_ofi_sendrecv_context : public nccl_net_ofi_context {
+public:
+	int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) override;
+	int handle_error_entry(struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			       uint16_t rail_id) override;
+};
+
+class nccl_net_ofi_sendrecv_req : public nccl_net_ofi_req {
+public:
+	nccl_net_ofi_sendrecv_req();
 	
-typedef struct nccl_net_ofi_sendrecv_req {
-	nccl_net_ofi_req_t base;
+	int test(int *done, int *size_p) override;
 
 	/* Associated Comm object */
-	nccl_net_ofi_comm_t *comm;
+	nccl_net_ofi_comm *comm;
 
-	/* Associated OFI Context */
-	struct fi_context ctx[2];
+	/* Associated context */
+	nccl_net_ofi_sendrecv_context ctx;
 
 	/* Associated Device ID */
 	int dev_id;
@@ -191,15 +452,10 @@ typedef struct nccl_net_ofi_sendrecv_req {
 
 	/* Direction of request */
 	nccl_net_ofi_sendrecv_req_direction_t direction;
-} nccl_net_ofi_sendrecv_req_t;
 
-
-struct nccl_net_ofi_sendrecv_plugin {
-	nccl_net_ofi_plugin_t base;
-
-	struct fi_info *provider_list;
+	/* Backpointer to freelist elem (for cleanup) */
+	nccl_ofi_freelist::fl_entry *elem;
 };
-typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
 
 
 /*
@@ -207,9 +463,5 @@ typedef struct nccl_net_ofi_sendrecv_plugin nccl_net_ofi_sendrecv_plugin_t;
  */
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p);
-
-#ifdef __cplusplus
-} // End extern "C"
-#endif
 
 #endif // End NCCL_OFI_SENDRECV_H_

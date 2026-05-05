@@ -1,0 +1,4 @@
+opt/amazon/ofi-nccl/lib/libnccl-net-ofi.so
+opt/amazon/ofi-nccl/lib/libnccl-tuner-ofi.so
+opt/amazon/ofi-nccl/share/aws-ofi-nccl/xml/*.xml
+

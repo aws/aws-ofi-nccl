@@ -1,0 +1,43 @@
+FROM public.ecr.aws/amazonlinux/amazonlinux:2023
+
+# Accept build argument
+ARG ENABLE_CUDA=false
+ARG EFA_INSTALLER_VERSION=latest
+
+# Install ALL required base packages and development tools
+RUN yum -y update && \
+    yum -y install --allowerasing \
+    git \
+    tar \
+    util-linux \
+    findutils \
+    yum-utils \
+    hwloc-devel \
+    autoconf \
+    automake \
+    libtool \
+    gcc \
+    gcc-c++ \
+    make \
+    curl \
+    && yum clean all
+
+# Install CUDA if enabled
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        dnf config-manager --add-repo \
+        http://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo \
+        --save && \
+        yum -y clean expire-cache && \
+        yum -y install cuda-cudart-devel-12-6 cuda-crt-12-6 && \
+        yum clean all; \
+    fi
+
+# Install EFA
+RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-*.tar.gz && \
+    cd aws-efa-installer/RPMS/ALINUX2023/x86_64 && \
+    find . | grep rpm$ | xargs yum -y localinstall && \
+    cd ../../../.. && \
+    rm -rf aws-efa-installer*
+
+WORKDIR /workspace

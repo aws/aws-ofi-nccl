@@ -4,6 +4,9 @@ AWS OFI NCCL is a plug-in which enables EC2 developers to use
 [libfabric](https://github.com/ofiwg/libfabric) as a network provider while
 running [NVIDIA's NCCL](https://github.com/NVIDIA/nccl) based applications.
 
+This plug-in also has support for libfabric as a network provider while
+running [AMD's RCCL](https://github.com/ROCm/rccl) based applications.
+
 ## Overview
 
 Machine learning frameworks running on top of NVIDIA GPUs use a library called
@@ -36,17 +39,18 @@ reports if that is the case.
 
 The plugin is regularly tested on the following operating systems:
 
-* Amazon Linux 2
-* Ubuntu 20.04 LTS and 22.04 LTS
+* Amazon Linux 2 and Amazon Linux 2023
+* Ubuntu 22.04 LTS and 24.04 LTS.
 
-Other operating systems are likely to work; there is very little
-distribution-specific code in the plugin.
+Other operating systems are likely to work, but are not included in our regular
+regression testing. If you find an issue unique to another operating system,
+GitHub issues or (better yet) patches are appreciated.
 
 To build the plugin, you need to have
 [Libfabric](http://github.com/ofiwg/libfabric/) and
 [HWLOC](https://www.open-mpi.org/projects/hwloc/) installed prior to
-building the plugin., If you want to run the included multi-node
-tests, you also need  an MPI Implementation installed.  Each release of the
+building the plugin. If you want to run the included multi-node
+tests, you also need an MPI Implementation installed.  Each release of the
 plugin has a list of dependency versions in the top-level README.md
 file.
 

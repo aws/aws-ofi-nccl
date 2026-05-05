@@ -6,24 +6,20 @@
 #ifndef NCCL_OFI_CUDA_H_
 #define NCCL_OFI_CUDA_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-int nccl_net_ofi_cuda_init(void);
+int nccl_net_ofi_gpu_init(void);
 
 /*
- * @brief	Gets the CUDA device associated with the buffer
+ * @brief	Gets the GPU device associated with the buffer
  *
  * @param	data
- *		Pointer to CUDA buffer.
+ *		Pointer to GPU buffer.
  *
- * @return	Valid CUDA device ID on success
+ * @return	Valid GPU device ID on success
  *		-1 on error
  * @return	0 on success
  *		-EINVAL on error
  */
-int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
+int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
  * @brief	wraps cudaFlushGPUDirectRDMAWrites() with default args.
@@ -31,24 +27,38 @@ int nccl_net_ofi_get_cuda_device_for_addr(void *data, int *dev_id);
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_flush_gpudirect_rdma_writes(void);
+int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void);
 
 /*
- * @brief	wraps cudaGetDevice()
-
+ * @brief wraps cuMemAlloc()
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_get_num_devices(void);
+int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size);
 
 /*
- * @brief	wraps cudaGetDeviceCount()
-
+ * @brief wraps cuMemFree()
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_cuda_get_active_device_idx(void);
 
+int nccl_net_ofi_gpu_mem_free(void *ptr);
+/*
+ * @brief wraps cuMemcpy() from host to device
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
+
+/*
+ * @brief Uses cuMemGetHandleForAddressRange() to obtain
+ * the fd and offset for a dma buf. In case CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE
+ * is not supported we retry with flags set to 0.
+ * The ptr and size provided as input must be aligned to page size
+ * @return	0 on success
+ *		-1 on error
+ */
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
@@ -56,7 +66,7 @@ int nccl_net_ofi_cuda_get_active_device_idx(void);
  * @return	true if attr is fetched successfully and true.
  *		    false otherwise.
  */
-bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
+bool nccl_net_ofi_gpu_have_dma_buf_attr(void);
 
 /*
  * @brief	query CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_SUPPORTED
@@ -64,10 +74,6 @@ bool nccl_net_ofi_cuda_have_dma_buf_attr(void);
  * @return	true if attr is fetched successfully and true.
  *		    false otherwise
  */
-bool nccl_net_ofi_cuda_have_gdr_support_attr(void);
+bool nccl_net_ofi_gpu_have_gdr_support_attr(void);
 
-#ifdef __cplusplus
-}  // End extern "C"
-#endif
-
-#endif  // End NCCL_OFI_H_
+#endif  // End NCCL_OFI_CUDA_H_

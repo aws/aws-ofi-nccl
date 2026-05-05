@@ -1,0 +1,111 @@
+FROM ubuntu:22.04
+
+# Implementation of https://github.com/whisperity/codechecker-action
+# This Dockerfile provides a pre-built environment for running CodeChecker analysis
+# with the same functionality as the GitHub Action
+
+ARG CODECHECKER_VERSION=v6.23.1
+ARG CC_VERSION=18
+ARG EFA_INSTALLER_VERSION=latest
+ARG ENABLE_CUDA=false
+
+# Install base packages
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    software-properties-common && \
+    add-apt-repository universe && \
+    add-apt-repository multiverse && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    curl \
+    wget \
+    git \
+    build-essential \
+    gcc-multilib \
+    libhwloc-dev \
+    lsb-release \
+    pciutils \
+    environment-modules \
+    tcl \
+    udev \
+    dmidecode \
+    ethtool \
+    iproute2 \
+    libevent-core-2.1-7 \
+    libevent-pthreads-2.1-7 \
+    libnl-3-200 \
+    libnl-3-dev \
+    libnl-route-3-200 \
+    libnl-route-3-dev \
+    python3-dev \
+    python3-pip \
+    python3-setuptools \
+    python3-venv \
+    cppcheck && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install LLVM/Clang - matches the version used in whisperity/codechecker-action
+RUN wget https://apt.llvm.org/llvm.sh && \
+    chmod +x llvm.sh && \
+    ./llvm.sh ${CC_VERSION} && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    clang-tidy-${CC_VERSION} \
+    clang-${CC_VERSION} \
+    clang-tools-${CC_VERSION} \
+    libclang-common-${CC_VERSION}-dev \
+    libclang-${CC_VERSION}-dev \
+    libllvm${CC_VERSION} \
+    llvm-${CC_VERSION} \
+    llvm-${CC_VERSION}-dev \
+    llvm-${CC_VERSION}-runtime && \
+    # Set up clang alternatives
+    update-alternatives --install /usr/bin/clang clang /usr/bin/clang-${CC_VERSION} 100 && \
+    update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-${CC_VERSION} 100 && \
+    # Set up PATH and compiler environment
+    ln -s /usr/lib/llvm-${CC_VERSION}/bin/* /usr/local/bin/ && \
+    # Verify symbolic links
+    ls -la /usr/local/bin/clang* && \
+    ls -la /usr/local/bin/llvm* && \
+    # Make environment settings permanent
+    echo "export PATH=/usr/lib/llvm-${CC_VERSION}/bin:\${PATH}" >> /etc/bash.bashrc && \
+    echo "export CC=clang-${CC_VERSION}" >> /etc/bash.bashrc && \
+    echo "export CXX=clang++-${CC_VERSION}" >> /etc/bash.bashrc && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install Node.js and Python dependencies
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y nodejs && \
+    rm -rf /var/lib/apt/lists/* && \
+    pip3 install portalocker multiprocess psutil sarif-tools
+
+# Install CodeChecker - same version as whisperity/codechecker-action
+RUN git clone --depth 1 --branch ${CODECHECKER_VERSION} https://github.com/Ericsson/CodeChecker.git && \
+    cd CodeChecker && \
+    make venv && \
+    . venv/bin/activate && \
+    BUILD_LOGGER_64_BIT_ONLY=YES make package && \
+    cp -r build/CodeChecker /opt/ && \
+    ln -s /opt/CodeChecker/bin/CodeChecker /usr/local/bin/CodeChecker && \
+    # Verify CodeChecker installation
+    CodeChecker version && \
+    cd .. && \
+    rm -rf CodeChecker
+
+# Install EFA
+RUN curl -O https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz && \
+    tar -xf aws-efa-installer-*.tar.gz && \
+    cd aws-efa-installer && \
+    ./efa_installer.sh -y --skip-kmod && \
+    cd .. && \
+    rm -rf aws-efa-installer*
+
+# Install CUDA if enabled
+RUN if [ "$ENABLE_CUDA" = "true" ]; then \
+        repo="ubuntu$(lsb_release -r | cut -d':' -f2 | xargs | sed 's/[.]//g')" && \
+        wget https://developer.download.nvidia.com/compute/cuda/repos/${repo}/$(uname -m)/cuda-keyring_1.1-1_all.deb && \
+        dpkg -i cuda-keyring_1.1-1_all.deb && \
+        apt-get update && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-cudart-dev-12-6 cuda-crt-12-6 && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+WORKDIR /workspace

@@ -60,6 +60,26 @@
 #define NCCL_OFI_TUNER_NCCL_LL128_ELEMS_PER_THREAD  (120ULL)
 
 /**
+ * @brief Number of elements per thread for NCCL_PROTO_LL128 shared memory.
+ */
+#define NCCL_OFI_TUNER_NCCL_LL128_SHMEM_ELEMS_PER_THREAD (8ULL)
+
+/**
+ * @brief Size of NCCL_PROTO_LL128 communication line.
+ */
+#define NCCL_OFI_TUNER_NCCL_LL128_LINESIZE (128ULL)
+
+/** 
+ * @brief Number of 64-bit elements per line (16 elements).
+ */
+#define NCCL_OFI_TUNER_NCCL_LL128_LINEELEMS (NCCL_OFI_TUNER_NCCL_LL128_LINESIZE / sizeof(uint64_t))
+
+/**
+ * @brief Number of data elements per line (15 elements, with 1 reserved for flags).
+ */
+#define NCCL_OFI_TUNER_NCCL_LL128_DATAELEMS (NCCL_OFI_TUNER_NCCL_LL128_LINEELEMS - 1)
+
+/**
  * @brief Expected data type size.
  */
 #define NCCL_OFI_TUNER_EXPECTED_DTYPE_SIZE          (4ULL)
@@ -68,5 +88,22 @@
  * @brief Buffer size for NCCL_PROTO_SIMPLE protocol.
  */
 #define NCCL_OFI_TUNER_NCCL_BUFFSIZE                (1 << 22)
+
+/** 
+ * @brief Round down log2 of an integer.
+ */
+inline int log2Down(int x) {
+	if (x <= 0) {
+		return -1;
+	} 
+	const int w = 8 * sizeof(unsigned int); /* Total bits */
+	const int n = __builtin_clz((unsigned int)x); /* Count leading zeros */
+	
+	return w - 1 - n;
+}
+
+inline int log2i(int x) {
+	return log2Down(x);
+}
 
 #endif  // NCCL_DEFAULTS_H_

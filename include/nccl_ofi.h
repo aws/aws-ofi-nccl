@@ -1,17 +1,13 @@
 /*
- * Copyright (c) 2018-2024 Amazon.com, Inc. or its affiliates. All rights reserved.
+ * Copyright (c) 2018-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  */
 
 #ifndef NCCL_OFI_H_
 #define NCCL_OFI_H_
 
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-#include <stdbool.h>
-
+#include <unordered_map>
+#include <memory>
+#include <optional>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -20,19 +16,20 @@ extern "C" {
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
 #include <nccl/net.h>
-#include <uthash/uthash.h>
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
+#include "nccl_ofi_spinlock.h"
+#include "ofi/resource_wrapper.h"
 
 /*
  * NCCL_NET_HANDLE_MAXSIZE is a limited resource (and defined in NCCL).
  * An endpoint address buffer of 56 bytes *should* be large enough to hold
  * all libfabric providers. In case the requirement changes, NCCL v2.12
  * provides enough room to increase this size but we would need to maintain
- * backwards compatiblity with all NCCL versions.
+ * backwards compatibility with all NCCL versions.
  *
  * We also store tags and communicator stage information in remaining
  * part of the handle.
@@ -53,7 +50,7 @@ extern "C" {
 #define MIN_TAG_BITS_FOR_RING_ID	(32 + 1)
 
 /* Maximum number of grouped receives */
-#define NCCL_OFI_MAX_RECVS	1
+#define NCCL_OFI_MAX_RECVS	8
 
 /*
  * This defines a higher value than maximum inflight requests supported by NCCL
@@ -91,20 +88,11 @@ extern enum gdr_support_level_t support_gdr;
  * platforms and should be disabled by default */
 extern bool cuda_flush;
 
-/* number of duplicate providers to create for each discovered
- * provider, including renaming to cause NCCL to create additional
- * rings to use the connections
- */
-extern int nic_dup_conns;
-
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be
    const), but will not change during execution.  Therefore, it may be
    read in the polling loop without protection of a lock. */
 extern size_t cq_read_count;
-
-/* Indicates if memory registration of local buffers is required */
-extern bool local_mr;
 
 /* Indicates if endpoint memory registration is required */
 extern bool endpoint_mr;
@@ -112,43 +100,21 @@ extern bool endpoint_mr;
 /* Indicates if remote virtual addressing is used */
 extern bool virt_addr_mr;
 
-/* Selected communication protocol.
- *
- * Until the protocol environment variable is checked in init(), this
- * is the protocol that the plugin will try to initialize; it can be
- * overridden by platform_init().  After init(), this is the protocol
- * that was selected.
- *
- * Valid values are SENDRECV and RDMA; default is SENDRECV (set by the
- * param OFI_NCCL_PROTOCOL)
- */
-extern const char *nccl_ofi_selected_protocol;
-
-/* Internode network latency reported to NCCL. */
-extern float net_latency;
+/* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
+extern bool data_progress_auto;
 
 /* Size of system memory pages */
 extern size_t system_page_size;
 
-struct nccl_net_ofi_plugin;
-struct nccl_net_ofi_device;
-struct nccl_net_ofi_ep;
-struct nccl_net_ofi_req;
-struct nccl_net_ofi_mr_handle;
-struct nccl_net_ofi_comm;
-struct nccl_net_ofi_listen_comm;
-struct nccl_net_ofi_send_comm;
-struct nccl_net_ofi_recv_comm;
+class nccl_net_ofi_device_t;
+class nccl_net_ofi_domain_t;
+class nccl_net_ofi_ep_t;
+class nccl_net_ofi_plugin_t;
 
-typedef struct nccl_net_ofi_plugin nccl_net_ofi_plugin_t;
-typedef struct nccl_net_ofi_device nccl_net_ofi_device_t;
-typedef struct nccl_net_ofi_ep nccl_net_ofi_ep_t;
-typedef struct nccl_net_ofi_req nccl_net_ofi_req_t;
-typedef struct nccl_net_ofi_mr_handle nccl_net_ofi_mr_handle_t;
-typedef struct nccl_net_ofi_comm nccl_net_ofi_comm_t;
-typedef struct nccl_net_ofi_listen_comm nccl_net_ofi_listen_comm_t;
-typedef struct nccl_net_ofi_send_comm nccl_net_ofi_send_comm_t;
-typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
+class nccl_net_ofi_comm;
+class nccl_net_ofi_listen_comm;
+class nccl_net_ofi_send_comm;
+class nccl_net_ofi_recv_comm;
 
 /**
  * Request - handle for an outstanding non-blocking communication
@@ -158,41 +124,110 @@ typedef struct nccl_net_ofi_recv_comm nccl_net_ofi_recv_comm_t;
  * or flush, and will be freed by the callee of test when the request
  * is complete.
  */
-struct nccl_net_ofi_req {
-	int (*test)(nccl_net_ofi_req_t *req, int *done, int *size);
+class nccl_net_ofi_req {
+public:
+	virtual int test(int *done, int *size_p) = 0;
+};
+
+class nccl_net_ofi_mr_handle_t {
+public:
+	/**
+	 * @brief	Default constructor
+	 */
+	nccl_net_ofi_mr_handle_t(uint64_t mr_key_arg)
+		: mr_key(mr_key_arg)
+	{}
+
+	virtual ~nccl_net_ofi_mr_handle_t() = default;
+
+	/**
+	 * @brief	Get MR key from an MR handle
+	 * 
+	 * 		Pure virtual function for getting an MR key from an MR handle,
+	 * 		must be implemented by derived MR handle structs.
+	 * 
+	 * @param	mr_key_ptr, set to the mr_key
+	 * @return	0 on success, non-0 on failure
+	 */
+	virtual int get_mr_key(uint64_t *mr_key_ptr) = 0;
+	
+	uint64_t mr_key;
+};
+
+/**
+ * Base class enclosing the context parameter we pass to every Libfabric
+ * operation. Derived classes implement the completion callbacks for each
+ * protocol (RDMA, SendRecv, CM).
+ */
+class nccl_net_ofi_context {
+public:
+	virtual ~nccl_net_ofi_context() = default;
+
+	/**
+	 * Callback to be invoked upon completion of the request
+	 *
+	 * @param cq_entry: cq entry from Libfabric
+	 * @param rail_id: the rail on which the cq entry arrived.
+	 * 		   Ignored in SENDRECV protocol
+	 */
+	virtual int handle_cq_entry(struct fi_cq_entry *cq_entry, uint16_t rail_id) = 0;
+
+	/**
+	 * Callback to be invoked upon completion-with-error of the request
+	 *
+	 * @param cq: Libfabric completion queue
+	 * @param err_entry: err entry from Libfabric
+	 * @param rail_id: the rail on which the cq err entry arrived.
+	 * 		   Ignored in SENDRECV protocol
+	 */
+	virtual int handle_error_entry(struct fid_cq *cq,
+				       struct fi_cq_err_entry *err_entry,
+				       uint16_t rail_id) = 0;
+
+	/**
+	 * Libfabric context object. A pointer to this context is passed to all
+	 * Libfabric operations
+	 */
+	struct fi_context2 ofi_ctx;
 };
 
 /* Various stages of connection establishment */
 typedef enum nccl_ofi_comm_stage {
 	COMM_CREATE_START = 0,
-	COMM_SEND_CONN,
-	COMM_RECV_CONN,
 	COMM_CONN_REQ_PENDING,
 	COMM_CONN_RESP_REQ_PENDING,
 	COMM_CONNECTED,
 } nccl_ofi_comm_stage_t;
 
 typedef struct save_comm_state {
-	nccl_net_ofi_comm_t *comm;
-	nccl_net_ofi_req_t *req;
+	nccl_net_ofi_comm *comm;
 	nccl_ofi_comm_stage_t stage;
 } save_comm_state_t;
 
 typedef struct nccl_ofi_connection_info {
 	char ep_name[MAX_EP_ADDR];
 	uint64_t ep_namelen;
-	uint64_t connect_to_self;
-	nccl_net_ofi_req_t* req;
+	uint64_t tag;
 } nccl_ofi_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
-static_assert(sizeof(nccl_ofi_connection_info_t) == 80, "Wrong size for SENDRECV connect message");
+static_assert(sizeof(nccl_ofi_connection_info_t) == 72, "Wrong size for SENDRECV connect message");
 
 typedef struct nccl_net_ofi_conn_handle {
 	char ep_name[MAX_EP_ADDR];
-	uint32_t comm_id;
+	uint64_t comm_id;
 	/* Save temporary communicator state when creating send communicator */
 	save_comm_state_t state;
 } nccl_net_ofi_conn_handle_t;
+
+
+/**
+ * A pair of a Libfabric address (buffer of size MAX_EP_ADDR) and actual
+ * address size. This is used in various parts of the code.
+ */
+struct nccl_ofi_addr {
+	char addr[MAX_EP_ADDR];
+	size_t addr_len;
+};
 
 /**
  * Properties structure
@@ -219,46 +254,98 @@ typedef struct nccl_ofi_properties {
 	unsigned int max_group_receives;
 	/** regMr is global if is not tied to a particular comm **/
 	int regIsGlobal;
-	/** Maximum size of buffer supported to be transfered via
+	/** Maximum size of buffer supported to be transferred via
 	 * RMA write inline operation **/
 	size_t max_write_inline_size;
 	/** Maximum size of the memory region remote access key in bytes **/
 	size_t max_mr_key_size;
 	/** Indicator whether RMA operations of NCCL Net API are supported **/
 	int rma_supported;
+	/** Max transfer size for point-to-point operations **/
+	size_t max_p2p_bytes;
+	/** Max transfer size for collective operations **/
+	size_t max_coll_bytes;
 } nccl_ofi_properties_t;
 
 /**
  * Device Data
  *
  * A device is roughly a NIC (or a port on a NIC) or a multi-rail
- * group.  While a multi-threaded app may create multiple endpoints
- * per device, the device data should be shared across multiple
- * threads in the same process.  Sharable structures such as address
- * vectors, fabrics, and domains should be associated with a device
- * instead of an endpoint.
+ * group.  The device is the unit of bandwidth sharing and general NIC
+ * propoeries, and accessing domains (ie, groups of NIC resources).
  */
-struct nccl_net_ofi_device {
-	struct nccl_net_ofi_plugin *plugin;
+class nccl_net_ofi_device_t {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the device base class.
+	 * Expectation is that this will be called by a transport's device
+	 * constructor 
+	 */
+	nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+			      int device_index,
+			      struct fi_info *info);
+
+	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
+
+	/**
+	 * Retrieve an fi_info object associated with this device to be used for connection
+	 * management. There may be more than one info per device, depending on the 
+	 * transport; in that case, this will be the info object associated with the 
+	 * "leader NIC"
+	 */
+	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+
+	/**
+	 * Retrieve fi_info object associated with this device with rail index.
+	 * There may be more than one info per device, depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin. While we should
+	 * be able to just pass the fabric/domain objects and call fi_getinfo()
+	 * instead, currently this doesn't work with EFA provider. Once that
+	 * works, that is the preferred approach.
+	 */
+	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) = 0;
+
+	/* Retrieve a domain associated with this device.  There may
+	 * be more than one domain per device, depending on a number
+	 * of performance tradeoffs (be sure to read the domain
+	 * description below).
+	 */
+	std::shared_ptr<nccl_net_ofi_domain_t> get_domain(unsigned int domain_key = 0);
+
+	/* Retrieve an endpoint associated with this device under the requested
+	 * domain scope.
+	 *
+	 * @param domain_key Key for domain selection
+	 * @param endpoint_key Key for endpoint caching within the domain.
+	 *                     Caller must provide an explicit key (e.g., TID or comm_id).
+	 */
+	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(unsigned int domain_key, long endpoint_key);
+
+	/**
+	 * @brief	Erase all domain_table elements matching the provided domain
+	 */
+	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
+
+	nccl_net_ofi_plugin_t *plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
+
+	/*
+	 * Globally unique identifier for the device. An opaque identifier
+	 * returned to NCCL without assumptions about individual platforms.
+	 */
+	uint64_t guid;
 
 	/*
 	 * name of the device - should include the provider name, but may be
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
 	 */
-	char *name;
-
-	/*
-	 * Protocol-agnostic MR cache for this device. Note that Registrations
-	 * are tied to domains in libfabric, but we do not have a
-	 * domain-specific object today, so stashing it in the device itself.
-	 * This should change if we were to break up nccl_net_ofi_device into
-	 * separate device and domain objects.
-	 */
-	nccl_ofi_mr_cache_t *mr_cache;
+	char *name = nullptr;
 
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
@@ -266,51 +353,165 @@ struct nccl_net_ofi_device {
 	 */
 	bool need_mr_rkey_pool;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t mr_rkey_pool;
+	/* Lock for concurrency since domains can be shared by
+	 * multiple entities. */
+	std::mutex device_lock;
 
-	int (*get_properties)(nccl_net_ofi_device_t *base_dev,
-			      nccl_ofi_properties_t *props);
+	/**
+	 * @brief	Base device destructor
+	 * 
+	 * Releases resources associated with base device.
+	 */
+	virtual ~nccl_net_ofi_device_t();
+
+protected:
 
 	/*
-	 * @brief	Get nccl_ofi_ep for given
-	 * 		nccl_ofi_device.  Create if it does not exist. Store
-	 * 		in pthread key. Increase reference counter. Must be
-	 * 		protected by lock stored in device.
+	 * create a new domain.  This funcion is a private pure
+	 * virtual function, which is called from the base
+	 * implementation of get_domain() and should not be called
+	 * from the more general case.
+	 */
+	virtual nccl_net_ofi_domain_t *create_domain(unsigned int domain_key = 0) = 0;
+
+	/**
+	 * release all domains and endpoints. This function is a private
+	 * function, which is called only during cleanup_resources() to free allocated
+	 * domains and endpoints.
+	 */
+	int release_all_domain_and_ep();
+
+	/**
+	 * Non-owning cache of domains, indexed by domain key.
+	 * Uses weak_ptr so the table does not keep domains alive.
+	 * Comms own endpoints (shared_ptr), endpoints own domains
+	 * (shared_ptr). When the last comm releases its endpoint,
+	 * the domain is destroyed and the weak_ptr expires. Stale
+	 * entries are purged lazily on the next get_domain() miss.
+	 */
+	std::unordered_map<unsigned int, std::weak_ptr<nccl_net_ofi_domain_t>> domain_table;
+
+};
+
+
+/**
+ * Domain Object - Represents a protection and thread safety domain
+ *
+ * A domain is a weird combination of a Libfabric domain (and related
+ * resources like an AV and CQ) as well as a general thread boundary.
+ * Transports are free to implement fine grained threads, but
+ * generally it is expected that calls into resources that share the
+ * same domain will share the same lock.
+ */
+class nccl_net_ofi_domain_t : public std::enable_shared_from_this<nccl_net_ofi_domain_t> {
+public:
+	/**
+	 * @brief	Default constructor.
 	 *
-	 * 		During the plugin initialization, this function will be
-	 * 		called once per process using one of the instantiated device structs
-	 * 		to create and configure the endpoint of the initializing thread.
+	 * Initialize resources associated with the domain base class.
+	 * Expectation is that this will be called by a transport's domain
+	 * constructor
 	 */
-	int (*get_ep)(nccl_net_ofi_device_t *base_dev,
-		      nccl_net_ofi_ep_t **ep);
-
-	int (*get_mr_key)(nccl_net_ofi_device_t *base_dev, void* mhandle,
-			  uint64_t* mr_key);
+	nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg, unsigned int domain_key);
 
 	/**
-	 * destructor - releases resources associated with device
+	 * Retrieve an fid_domain object associated with this domain to be used for 
+	 * connection management. There may be more than one fid_domain per domain,
+	 * depending on the transport; in that case, this will be the domain object
+	 * associated with the "leader NIC".
 	 */
-	int (*release)(nccl_net_ofi_device_t *device);
+	virtual ofi_domain_ptr *get_ofi_domain_for_cm() = 0;
 
-	/* Lock for concurrency since endpoints can be shared by
-	 * multiple entities. */
-	pthread_mutex_t device_lock;
-
-/* private */
 	/**
-	 * Create a new endpoint
+	 * Retrieve the fid_domain object associated with this plugin domain
+	 * with rail index. There may be more than one fid_domain per domain,
+	 * depending on the transport.
+	 *
+	 * Note: this is particularly needed for the GIN plugin currently. We will
+	 * have the transport implement the GIN API which will be addressed in
+	 * follow-up PRs.
+	 */
+	virtual ofi_domain_ptr &get_ofi_domain(uint16_t rail_id) = 0;
+
+	/**
+	 * @brief       Returns number of rails.
+	 */
+	virtual uint16_t get_ofi_num_rails() = 0;
+
+	/* Create a new endpoint
 	 *
 	 * Pure virtual function to allocate a new endpoint structure
 	 */
-	int (*create_endpoint)(nccl_net_ofi_device_t *device,
-			       nccl_net_ofi_ep_t **ep);
+	virtual std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() = 0;
 
-	/* hash table of active endpoints.  We reuse endpoints based
-	 * on the thread that calls get_ep().
+	/**
+	 * @brief	Returns the base domain's device back-pointer.
 	 */
-	nccl_net_ofi_ep_t *endpoint_table;
+	inline nccl_net_ofi_device_t *get_device()
+	{
+		return device;
+	}
+
+	/*
+	 * Retrieve an endpoint for this domain.  If a suitable
+	 * endpoint does not exist, call create_endpoint() to create
+	 * one and return that endpoint.
+	 *
+	 * @param endpoint_key Key for endpoint caching.
+	 * Caller must provide an explicit key (e.g., TID or comm_id).
+	 */
+	std::shared_ptr<nccl_net_ofi_ep_t> get_ep(long endpoint_key);
+
+	/*
+	 * Protocol-agnostic MR cache for this device.
+	 */
+	std::optional<nccl_ofi_mr_cache> mr_cache;
+
+	/* Lock protecting mr_cache operations */
+	std::mutex mr_cache_lock;
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
+
+	std::mutex domain_lock;
+
+	/**
+	 * @brief       Erase all ep_table elements matching the provided ep
+	 */
+	void remove_ep_from_map(nccl_net_ofi_ep_t *ep);
+
+	/**
+	 * @brief	Destructor.
+	 * 
+	 * Cleans up base domain resources.
+	 */
+	virtual ~nccl_net_ofi_domain_t();
+
+protected:
+
+	/* Backpointer to the device associated with this domain. */
+	nccl_net_ofi_device_t *const device = nullptr;
+
+	/* The Domain index or a key in the device domain table */
+	const unsigned int domain_key;
+
+	/**
+	 * Release all endpoints by clearing the ep_table.
+	 */
+	int release_all_ep();
+
+	/**
+	 * Non-owning cache of endpoints, indexed by endpoint key
+	 * (thread ID or comm_id for GIN). Uses weak_ptr so the
+	 * table does not keep endpoints alive. Comms own endpoints
+	 * via shared_ptr (ep). When the last comm releases
+	 * its endpoint, the ep is destroyed and the weak_ptr
+	 * expires. Stale entries are purged lazily on the next
+	 * get_ep() miss.
+	 */
+	std::unordered_map<long, std::weak_ptr<nccl_net_ofi_ep_t>> ep_table;
 };
+
 
 /**
  * Endpoint - A per-Proxy Thread device abstraction
@@ -327,9 +528,16 @@ struct nccl_net_ofi_device {
  * call to get_ep() or during initialization is left to the
  * implementation.
  */
-struct nccl_net_ofi_ep {
-	/* Backpointer to the device associated with this ep. */
-	nccl_net_ofi_device_t *device;
+class nccl_net_ofi_ep_t : public std::enable_shared_from_this<nccl_net_ofi_ep_t> {
+public:
+	/**
+	 * @brief	Default constructor.
+	 * 
+	 * Initialize resources associated with the endpoint base class.
+	 * Expectation is that this will be called by a transport's endpoint
+	 * constructor 
+	 */
+	nccl_net_ofi_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain);
 
 	/* Create a receiving object and provide a handle to it.
 	 *
@@ -341,9 +549,8 @@ struct nccl_net_ofi_ep {
 	 * The callee has to guarantee that the state stage of the
 	 * handle is set to COMM_CREATE_START.
 	 */
-	int (*listen)(nccl_net_ofi_ep_t *ep,
-			       nccl_net_ofi_conn_handle_t *handle,
-			       nccl_net_ofi_listen_comm_t **listen_comm);
+	virtual int listen(nccl_net_ofi_conn_handle_t *handle,
+			   nccl_net_ofi_listen_comm **listen_comm) = 0;
 
 	/* Create a connection to a process that has called
 	 * listen().
@@ -360,42 +567,59 @@ struct nccl_net_ofi_ep {
 	 *
 	 * The callee must allocate memory for send_comm.
 	 */
-	int (*connect)(nccl_net_ofi_ep_t *ep,
-				nccl_net_ofi_conn_handle_t *handle,
-				nccl_net_ofi_send_comm_t **send_comm);
+	virtual int connect(nccl_net_ofi_conn_handle_t *handle,
+			    nccl_net_ofi_send_comm **send_comm,
+			    int trafficClass) = 0;
+
+	/**
+	 * Retrieve an fid_cq object associated with this endpoint to be used for
+	 * connection management. There may be more than one fid_cq, depending
+	 * on the transport; in that case, this will be the cq object associated with the
+	 * "leader NIC".
+	 */
+	virtual ofi_cq_ptr &get_ofi_cq_for_cm() = 0;
+
+	nccl_ofi_spinlock ep_lock;
 
 	/*
-	 * @brief	Release nccl_ofi_ep.
+	 * Boolean flag indicating whether the endpoint is still valid and usable
 	 *
-	 * Decrease reference counter. Release resources and free
-	 * endpoint if reference counter becomes zero. Must be
-	 * protected by lock stored in base_dev.
+	 * When a communicator is closed with inflight requests, the endpoint is
+	 * marked inactive, preventing further use of communicators on the
+	 * endpoint. Transports should check the ep_active flag before using
+	 * OFI resources associated with the endpoint (CQs, endpoints, AVs)
+	 *
+	 * This flag is protected by ep_lock
 	 */
-	int (*release_ep)(nccl_net_ofi_ep_t *ep);
+	bool ep_active;
 
-/* private */
-	/* pure virtual function called when resources associated with
-	 * the ep should be destroyed.  Device lock will be held when
-	 * this function is called.
+	/**
+	 * Invalidate endpoint. Marks the endpoint as inactive and removes it from the
+	 * thread->ep map, so future communicators do not use this endpoint.
+	 *
+	 * Caller is assumed to hold ep_lock
 	 */
-	int (*free_ep)(nccl_net_ofi_ep_t *ep);
+	virtual void invalidate();
 
-	/* thread id of the thread that called get_ep().  Used as the
-	   hash key for the endpoint hash */
-	long creating_thread_id;
+	/**
+	 * Get reference to the back-pointed net domain object associated with
+	 * this endpoint
+	 */
+	inline nccl_net_ofi_domain_t &get_domain()
+	{
+		return *domain;
+	}
 
-	/* hash table handle */
-	UT_hash_handle hh;
+	/**
+	 * @brief	Virtual destructor.
+	 */
+	virtual ~nccl_net_ofi_ep_t() = default;
 
-	/* Endpoint reference counter for resource management.
-	 * sendrecv_get_ep()/sendrecv_release_ep() must be called in
-	 * pair when an object is acquired to use and
-	 * released. sendrecv_get_ep() allocates a new object when it
-	 * is called for the first time. sendrecv_get_ep() creates the
-	 * endpoint libfabric resources if the reference counter was
-	 * zero. sendrecv_release_ep() releases the resources if the
-	 * reference counter is decreased down to zero. */
-	int ref_cnt;
+protected:
+	/* Backpointer to the domain associated with this ep.
+	 * Holds a shared_ptr to keep the domain alive as long as
+	 * this endpoint exists. */
+	std::shared_ptr<nccl_net_ofi_domain_t> domain;
 };
 
 enum nccl_net_ofi_comm_type_t {
@@ -413,25 +637,31 @@ enum nccl_net_ofi_comm_type_t {
  * but instead underlying transports should extend the listen, send,
  * and recv communicators.
  */
-struct nccl_net_ofi_comm {
+class nccl_net_ofi_comm {
+public:
+	virtual ~nccl_net_ofi_comm() = default;
+
 	enum nccl_net_ofi_comm_type_t type;
-	nccl_net_ofi_ep_t *ep;
+	/* Shared ownership of the endpoint. Keeps ep alive as long
+	 * as this comm exists. */
+	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	int dev_id;
 };
 
 /**
  * Listen Communicator - Communicator for a listen/accept pairing
  */
-struct nccl_net_ofi_listen_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_listen_comm : public nccl_net_ofi_comm {
+public:
+	virtual ~nccl_net_ofi_listen_comm() = default;
 
-	int (*accept)(nccl_net_ofi_listen_comm_t *listen_comm,
-			       nccl_net_ofi_recv_comm_t **recv_comm);
-	int (*close)(nccl_net_ofi_listen_comm_t *listen_comm);
+	virtual int accept(nccl_net_ofi_recv_comm **recv_comm) = 0;
+	virtual int close() = 0;
 };
 
-struct nccl_net_ofi_send_comm {
-	nccl_net_ofi_comm_t base;
+class nccl_net_ofi_send_comm : public nccl_net_ofi_comm {
+public:
+	// TODO: Potentially store this here: int trafficClass;
 
 	/*
 	 * @brief	Register memory region on send communicator (both Host and CUDA)
@@ -440,8 +670,7 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
+	virtual int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) = 0;
 
 	/*
 	 * @brief	Deregister memory region on send communicator (both Host and CUDA)
@@ -450,22 +679,16 @@ struct nccl_net_ofi_send_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*deregMr)(nccl_net_ofi_send_comm_t *send_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	virtual int deregMr(nccl_net_ofi_mr_handle_t *mhandle) = 0;
 
-	int (*send)(nccl_net_ofi_send_comm_t *send_comm, void *data, int size, int tag,
-			     nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req_t **req);
-
-	int (*close)(nccl_net_ofi_send_comm_t *send_comm);
-
-	int (*write)(nccl_net_ofi_send_comm_t *send_comm, void* src, size_t size, void* src_mhandle,
-		     uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **req);
-	int (*write_inline)(nccl_net_ofi_send_comm_t *, void* src, size_t size,
-			    uint64_t dest, uint64_t mr_key, nccl_net_ofi_req_t **request);
+	virtual int send(void *data, size_t size, int tag, nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **req) = 0;
+	virtual int close() = 0;
+	virtual int write(void* src, size_t size, void* src_mhandle, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **req) = 0;
+	virtual int write_inline( void* src, size_t size, uint64_t dest, uint64_t mr_key, nccl_net_ofi_req **request) = 0;
 };
 
-struct nccl_net_ofi_recv_comm {
-	nccl_net_ofi_comm_t base;
-
+class nccl_net_ofi_recv_comm : public nccl_net_ofi_comm {
+public:
 	/*
 	 * @brief	Register memory region on recv communicator (both Host and CUDA)
 	 *
@@ -473,8 +696,7 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*regMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_ofi_mr_ckey_ref ckey, int type,
-				 void **mhandle);
+	virtual int regMr(nccl_ofi_mr_ckey_ref ckey, int type, void **mhandle) = 0;
 
 	/*
 	 * @brief	Deregister memory region on recv communicator (both Host and CUDA)
@@ -483,18 +705,18 @@ struct nccl_net_ofi_recv_comm {
 	 * @return	0 on success
 	 *		non-zero on error
 	 */
-	int (*deregMr)(nccl_net_ofi_recv_comm_t *recv_comm, nccl_net_ofi_mr_handle_t *mhandle);
+	virtual int deregMr(nccl_net_ofi_mr_handle_t *mhandle) = 0;
 
-	int (*recv)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes, int *tags,
-			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
+	virtual int recv(int n, void **data, size_t *sizes, int *tags,
+			     nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) = 0;
 
-	int (*flush)(nccl_net_ofi_recv_comm_t *recv_comm, int n, void **data, int *sizes,
-			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req_t **req);
+	virtual int flush(int n, void **data, int *sizes,
+			      nccl_net_ofi_mr_handle_t **mhandles, nccl_net_ofi_req **req) = 0;
 
-	int (*close)(nccl_net_ofi_recv_comm_t *recv_comm);
+	virtual int close() = 0;
 
-	int (*read)(nccl_net_ofi_recv_comm_t *recv_comm, void* dest, size_t size, void* dest_mhandle,
-		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req_t **req);
+	virtual int read(void* dest, size_t size, void* dest_mhandle,
+		    uint64_t src, uint64_t mr_key, nccl_net_ofi_req **req) = 0;
 };
 
 /**
@@ -506,8 +728,40 @@ struct nccl_net_ofi_recv_comm {
  * named nccl_net_ofi_plugin, which is valid after NCCL calls init()
  * on the plugin.
  */
-struct nccl_net_ofi_plugin {
-/* public */
+class nccl_net_ofi_plugin_t {
+public:
+	/**
+	 * @brief	Default constructor for the nccl_net_ofi_plugin class
+	 *
+	 * Construct a nccl_net_ofi_plugin object with an empty p_devs device vector.  This is
+	 * expected to be called from the transport-specific RDMA plugin creation function, which
+	 * is called from nccl_net_ofi_create_plugin() and should properly resize the p_devs vector
+	 * to the number of devices derived from the created topology.
+	 */
+	nccl_net_ofi_plugin_t()
+	{}
+
+	/**
+	 * @brief	Size constructor for the nccl_net_ofi_plugin class
+	 *
+	 * Construct a nccl_net_ofi_plugin object with a p_devs vector with size num_devices.
+	 * This is expected to be called from the transport-specific SENDRECV plugin creation
+	 * function, which is called from nccl_net_ofi_create_plugin().
+	 */
+	nccl_net_ofi_plugin_t(size_t num_devices)
+		: p_devs(num_devices, nullptr)
+	{
+		/* Validate that at least one Libfabric NIC was found */
+		assert(!p_devs.empty());
+	}
+
+	/**
+	 * @brief	Destructor for the nccl_net_ofi_plugin class
+	 *
+	 * Destruct a nccl_net_ofi_plugin object.  This is expected to be
+	 * called from the transport-specific plugin destructor.
+	 */
+	virtual ~nccl_net_ofi_plugin_t();
 
 	/**
 	 * Complete initialization of plugin
@@ -519,32 +773,43 @@ struct nccl_net_ofi_plugin {
 	 * at which point devices and network resources can be
 	 * created.
 	 */
-	int (*complete_init)(nccl_net_ofi_plugin_t *plugin);
+	virtual int complete_init() = 0;
 
-	int (*assign_device)(nccl_net_ofi_plugin_t *plugin,
-			     size_t device_index, nccl_net_ofi_device_t *device);
+	inline int assign_device(size_t device_index, nccl_net_ofi_device_t *device)
+	{
+		if (device_index >= get_num_devices()) {
+			return -ENOSPC;
+		}
+		p_devs[device_index] = device;
+		return 0;
+	}
 
-	nccl_net_ofi_device_t *(*get_device)(nccl_net_ofi_plugin_t *plugin,
-					     size_t device_index);
+	inline nccl_net_ofi_device_t *get_device(size_t device_index)
+	{
+		if (device_index >= get_num_devices()) {
+			NCCL_OFI_WARN("Invalid device index %zu", device_index);
+			return nullptr;
+		}
+		return p_devs[device_index];
+	}
 
-	size_t (*get_num_devices)(nccl_net_ofi_plugin_t *plugin);
+	inline size_t get_num_devices()
+	{
+		return p_devs.size();
+	}
 
-	int (*release_plugin)(nccl_net_ofi_plugin_t *plugin);
-
-	/*
-	 * Determine whether to allocate the domain per process or per
-	 * thread.
-	 * false: allocate domain per process
-	 * true: allocate domain per thread
+	/**
+	 * @brief	Set properties obtained from libfabric NIC Info.
+	 *
+	 * @return	Populated props structure
 	 */
-	bool domain_per_thread;
-
-/* private */
+	int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
+					 int dev_id,
+					 int num_devices,
+					 nccl_ofi_properties_t *props);
+protected:
 	/* Array of devices */
-	nccl_net_ofi_device_t **p_devs;
-
-	/* Number of devices in devs array */
-	size_t p_num_devs;
+	std::vector<nccl_net_ofi_device_t *> p_devs;
 };
 
 
@@ -557,48 +822,6 @@ struct nccl_net_ofi_plugin {
  * create the plugin (which is a little hacky, but it works).
  */
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
-
-int nccl_net_ofi_endpoint_release(nccl_net_ofi_ep_t *ep);
-
-int nccl_net_ofi_endpoint_init(nccl_net_ofi_device_t *device, nccl_net_ofi_ep_t *ep);
-
-int nccl_net_ofi_endpoint_fini(nccl_net_ofi_ep_t *ep);
-
-/**
- * Constructor for a device object
- */
-int nccl_net_ofi_device_init(nccl_net_ofi_device_t *device, nccl_net_ofi_plugin_t *plugin,
-			     int device_index, struct fi_info *ofi_info);
-
-/**
- * Destructor for a device object
- */
-int nccl_net_ofi_device_fini(nccl_net_ofi_device_t *device);
-
-/*
- * Constructor for the nccl_net_ofi_plugin class
- *
- * Construct a nccl_net_ofi_plugin object.  This is expected to be
- * called from the transport-specific plugin creation function, which
- * is called from nccl_net_ofi_create_plugin().
- */
-int nccl_net_ofi_plugin_init(nccl_net_ofi_plugin_t *plugin, size_t num_devices);
-
-/*
- * Destructor for the nccl_net_ofi_plugin class
- *
- * Destruct a nccl_net_ofi_plugin object.  This is expected to be
- * called from the transport-specific plugin destructor.
- */
-int nccl_net_ofi_plugin_fini(nccl_net_ofi_plugin_t *plugin);
-
-/*
- * @brief	Set properties obtained from libfabric NIC Info.
- *
- * @return	Populated props structure
- */
-int nccl_net_ofi_info_properties(nccl_net_ofi_plugin_t *plugin, struct fi_info *nic_prov,
-				 int dev_id, int num_devices, nccl_ofi_properties_t *props);
 
 /*
  * @brief	Allocate memory region for memory registration
@@ -637,7 +860,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size);
  * @return      0 (Success)
  *
  * Set required behavior flags (and print debugging information) for
- * local_mr, virt_addr_mr, and endpoint_mr.
+ * virt_addr_mr, endpoint_mr and data_progress_auto.
  */
 int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_provider,
 					     unsigned int num_providers);
@@ -658,8 +881,22 @@ int get_inject_rma_size_opt(struct fid_ep *ofi_ep,
  */
 long nccl_net_ofi_gettid(void);
 
-#ifdef __cplusplus
-} // End extern "C"
-#endif
+ /*
+ * @brief   Configures NCCL_PROTO environment variable to "simple".
+ *
+ * @details If NCCL_PROTO is not set, configures it to "simple" protocol.
+ *          If NCCL_PROTO is already set, skip the configuration.
+ *
+ * @input   log reason string
+ *
+ * @return  0 on success or when warning is issued
+ *          -errno in case of any failure
+ */
+int nccl_net_ofi_configure_nccl_proto_simple(const char *log_reason);
+
+/*
+ * generate host hash for topology file
+ */
+uint64_t getHostHash(void);
 
 #endif // End NCCL_OFI_H_

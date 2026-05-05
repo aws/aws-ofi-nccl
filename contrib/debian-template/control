@@ -1,0 +1,44 @@
+Source: aws-ofi-nccl
+Homepage: https://github.com/aws/aws-ofi-nccl
+Vcs-Browser: https://github.com/aws/aws-ofi-nccl
+Vcs-Git: https://github.com/aws/aws-ofi-nccl.git [contrib/debian-template]
+Section: contrib/devel
+Priority: optional
+Maintainer: AWS OFI NCCL Team <aws-ofi-nccl-team@amazon.com>
+Build-Depends: debhelper-compat (= 10), libhwloc-dev
+Standards-Version: 4.5.0
+Rules-Requires-Root: no
+
+Package: libnccl-ofi
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin
+ AWS OFI NCCL is a plug-in which enables EC2 developers to use libfabric as a
+ network provider while running NVIDIA's NCCL based applications. Machine
+ learning frameworks running on top of NVIDIA GPUs use a library called NCCL
+ which provides standard collective communication routines for an arbitrary
+ number of GPUs installed across single or multiple nodes. This project
+ implements a plug-in which maps NCCLs connection-oriented transport APIs to
+ libfabric's connection-less reliable interface. This allows NCCL applications
+ to take benefit of libfabric's transport layer services like reliable message
+ support and operating system bypass.
+
+Package: libnccl-ofi-ngc-v1
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for NGC containers for old NGC containers
+
+Package: libnccl-ofi-ngc-v2
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for NGC containers for newer NGC containers
+
+Package: libnccl-ofi-ngc-v3
+Section: contrib/libs
+Architecture: any
+Depends: ${misc:Depends}, ${shlib:Depends}
+Description: NCCL libfabric plugin variant for future NGC containers
+

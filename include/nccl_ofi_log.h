@@ -6,10 +6,6 @@
 #ifndef NCCL_OFI_LOG_H_
 #define NCCL_OFI_LOG_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 #include <nccl/net.h>
 
 // GCC is happy with this hint to identify printf string code
@@ -34,12 +30,15 @@ extern nccl_ofi_logger_t ofi_log_function;
 	(*ofi_log_function)(NCCL_LOG_TRACE, flags,		\
 	__PRETTY_FUNCTION__, __LINE__, "NET/OFI " fmt,		\
 	##__VA_ARGS__)
+#define NCCL_OFI_TRACE_WHEN(criteria, flags, fmt, ...)			\
+	do {								\
+		if (OFI_UNLIKELY(criteria)) {				\
+			NCCL_OFI_TRACE(flags, fmt, ##__VA_ARGS__);	\
+		}							\
+	} while (0)
 #else
 #define NCCL_OFI_TRACE(flags, fmt, ...)
-#endif
-
-#ifdef __cplusplus
-} // End extern "C"
+#define NCCL_OFI_TRACE_WHEN(criteria, flags, fmt, ...)
 #endif
 
 #endif // End NCCL_OFI_LOG_H_

@@ -15,10 +15,10 @@ AC_DEFUN([CHECK_PKG_LTTNG], [
   AC_ARG_WITH([lttng],
      [AS_HELP_STRING([--with-lttng=DIR], [Enable tracing capability with LTTNG @<:@default=no@:>@])])
 
-  AS_IF([test -z "${with_lttng}" -o "${with_lttng}" = "yes"],
-        [],
-        [test "${with_lttng}" = "no"],
+  AS_IF([test -z "${with_lttng}" -o "${with_lttng}" = "no"],
         [check_pkg_found=no],
+        [test "${with_lttng}" = "yes"],
+        [],
         [AS_IF([test -d ${with_lttng}/lib64], [check_pkg_libdir="lib64"], [check_pkg_libdir="lib"])
          CPPFLAGS="-isystem ${with_lttng}/include ${CPPFLAGS}"
          LDFLAGS="-L${with_lttng}/${check_pkg_libdir} ${LDFLAGS}"])

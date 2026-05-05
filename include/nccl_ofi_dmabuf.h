@@ -5,14 +5,8 @@
 #ifndef NCCL_OFI_DMABUF_H_
 #define NCCL_OFI_DMABUF_H_
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
 int nccl_ofi_dmabuf_viable(void);
 
-#ifdef __cplusplus
-}  // End extern "C"
-#endif
+int nccl_ofi_dmabuf_viable_and_supported(struct fi_info *nic_prov);
 
 #endif  // NCCL_OFI_DMABUF_H_

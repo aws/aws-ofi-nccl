@@ -24,6 +24,8 @@ extern "C" {
 // Maximum number of requests per comm object
 #define NCCL_NET_MAX_REQUESTS 128
 
+#define NCCL_NET_OPTIONAL_RECV_COMPLETION 0x1
+
 typedef enum {
         NCCL_LOG_NONE=0,
         NCCL_LOG_VERSION=1,
@@ -53,7 +55,8 @@ typedef void (*ncclDebugLogger_t)(ncclDebugLogLevel level, unsigned long flags, 
 } // End extern "C"
 #endif
 
-#include "net_v4.h"
+#include "net_v6.h"
 #include "net_v5.h"
+#include "net_v4.h"
 
 #endif // End NCCL_HEADERS_NEURON_NET_H
