@@ -65,6 +65,20 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 #include <rdma/fi_ext.h>
 #endif]])])
 
+  dnl Check for the efa-direct GDA ops extension (used by GIN GDAKI).
+  dnl Presence of both the header and the FI_EFA_GDA_OPS macro indicates
+  dnl the libfabric build supports opening ops via fi_open_ops with the
+  dnl GDA table, which is required to drive EFA QPs from GPU kernels.
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_HEADERS([rdma/fi_ext_efa.h])])
+
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_DECLS([FI_EFA_GDA_OPS],
+                  [], [], [AC_INCLUDES_DEFAULT
+[#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif]])])
+
   AS_IF([test "${check_pkg_found}" = "yes"],
         [$1],
         [CPPFLAGS="${check_pkg_CPPFLAGS_save}"
