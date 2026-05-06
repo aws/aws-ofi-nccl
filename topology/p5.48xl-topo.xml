@@ -1,0 +1,204 @@
+<system version="1">
+  <cpu numaid="0" affinity="00000000,00000000,0000ffff,ffffffff" arch="x86_64" vendor="AuthenticAMD" familyid="25" modelid="17">
+    <pci busid="0000:00:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:4f:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="0" sm="90" rank="0" gdr="1"/>
+      </pci>
+      <pci busid="0000:50:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap79s0" dev="0" speed="100000" port="1" latency="0.0" guid="0" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:51:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap80s0" dev="1" speed="100000" port="1" latency="0.0" guid="1" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:52:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap81s0" dev="2" speed="100000" port="1" latency="0.0" guid="2" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:53:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap82s0" dev="3" speed="100000" port="1" latency="0.0" guid="3" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:01:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:60:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="1" sm="90" rank="1" gdr="1"/>
+      </pci>
+      <pci busid="0000:61:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap96s0" dev="4" speed="100000" port="1" latency="0.0" guid="4" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:62:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap97s0" dev="5" speed="100000" port="1" latency="0.0" guid="5" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:63:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap98s0" dev="6" speed="100000" port="1" latency="0.0" guid="6" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:64:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap99s0" dev="7" speed="100000" port="1" latency="0.0" guid="7" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:02:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:70:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="2" sm="90" rank="2" gdr="1"/>
+      </pci>
+      <pci busid="0000:71:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap113s0" dev="8" speed="100000" port="1" latency="0.0" guid="8" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:72:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap114s0" dev="9" speed="100000" port="1" latency="0.0" guid="9" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:73:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap115s0" dev="10" speed="100000" port="1" latency="0.0" guid="10" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:74:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap116s0" dev="11" speed="100000" port="1" latency="0.0" guid="11" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:03:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:80:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="3" sm="90" rank="3" gdr="1"/>
+      </pci>
+      <pci busid="0000:81:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap130s0" dev="12" speed="100000" port="1" latency="0.0" guid="12" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:82:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap131s0" dev="13" speed="100000" port="1" latency="0.0" guid="13" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:83:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap132s0" dev="14" speed="100000" port="1" latency="0.0" guid="14" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:84:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap133s0" dev="15" speed="100000" port="1" latency="0.0" guid="15" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:04:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:90:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="4" sm="90" rank="4" gdr="1"/>
+      </pci>
+      <pci busid="0000:91:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap147s0" dev="16" speed="100000" port="1" latency="0.0" guid="16" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:92:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap148s0" dev="17" speed="100000" port="1" latency="0.0" guid="17" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:93:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap149s0" dev="18" speed="100000" port="1" latency="0.0" guid="18" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:94:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap150s0" dev="19" speed="100000" port="1" latency="0.0" guid="19" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:05:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:a0:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="5" sm="90" rank="5" gdr="1"/>
+      </pci>
+      <pci busid="0000:a1:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap164s0" dev="20" speed="100000" port="1" latency="0.0" guid="20" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:a2:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap165s0" dev="21" speed="100000" port="1" latency="0.0" guid="21" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:a3:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap166s0" dev="22" speed="100000" port="1" latency="0.0" guid="22" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:a4:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap167s0" dev="23" speed="100000" port="1" latency="0.0" guid="23" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:06:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:b0:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="6" sm="90" rank="6" gdr="1"/>
+      </pci>
+      <pci busid="0000:b1:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap181s0" dev="24" speed="100000" port="1" latency="0.0" guid="24" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:b2:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap182s0" dev="25" speed="100000" port="1" latency="0.0" guid="25" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:b3:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap183s0" dev="26" speed="100000" port="1" latency="0.0" guid="26" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:b4:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap184s0" dev="27" speed="100000" port="1" latency="0.0" guid="27" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+    <pci busid="0000:07:00.0" class="0x060400" link_speed="16.0 GT/s PCIe" link_width="16">
+      <pci busid="0000:c0:00.0" class="0x030200" link_speed="32.0 GT/s PCIe" link_width="16">
+        <gpu dev="7" sm="90" rank="7" gdr="1"/>
+      </pci>
+      <pci busid="0000:c1:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap198s0" dev="28" speed="100000" port="1" latency="0.0" guid="28" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:c2:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap199s0" dev="29" speed="100000" port="1" latency="0.0" guid="29" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:c3:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap200s0" dev="30" speed="100000" port="1" latency="0.0" guid="30" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+      <pci busid="0000:c4:00.0" class="0x020000" link_speed="16.0 GT/s PCIe" link_width="8">
+        <nic>
+          <net name="rdmap201s0" dev="31" speed="100000" port="1" latency="0.0" guid="31" maxconn="1024" gdr="1"/>
+        </nic>
+      </pci>
+    </pci>
+  </cpu>
+</system>
