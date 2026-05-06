@@ -116,7 +116,7 @@ static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t 
 	props->speed = ofi_properties.port_speed;
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
-	props->maxComms = ofi_properties.max_communicators;
+	props->maxComms = NCCL_GIN_MAX_COMMS;
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
@@ -358,7 +358,7 @@ static ncclResult_t nccl_ofi_gin_getProperties_v13(int dev, ncclNetProperties_v1
 	props->speed = ofi_properties.port_speed;
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
-	props->maxComms = ofi_properties.max_communicators;
+	props->maxComms = NCCL_GIN_MAX_COMMS;
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;

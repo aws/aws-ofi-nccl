@@ -8,7 +8,9 @@
 #include "rdma/gin/nccl_ofi_gin_reqs.h"
 
 #include "nccl_ofi_assert.h"
+#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
+#endif
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_mr.h"
 #include "nccl_ofi_param.h"
@@ -425,7 +427,7 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 }
 
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
-    : ep_holder(ep_arg.shared_from_this()), gin_comms(), comm_id_pool(GIN_MAX_COMMS), gin_ep(ep_arg.get_domain()),
+    : ep_holder(ep_arg.shared_from_this()), gin_comms(), comm_id_pool(NCCL_GIN_MAX_COMMS), gin_ep(ep_arg.get_domain()),
       req_fl(nullptr, &freelist_deleter),
       rx_buff_fl(nullptr, &freelist_deleter),
       ack_send_fl(nullptr, &freelist_deleter)

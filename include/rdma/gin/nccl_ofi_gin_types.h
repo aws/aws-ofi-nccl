@@ -58,7 +58,6 @@ enum gin_msg_type_t : uint8_t {
 #define GIN_IMM_SEQ_SHIFT      (GIN_IMM_COMM_SHIFT + GIN_IMM_COMM_BITS)
 #define GIN_IMM_SEQ_MASK       ((1 << GIN_IMM_SEQ_BITS) - 1)
 #define GIN_IMM_COMM_MASK      ((1 << GIN_IMM_COMM_BITS) - 1)
-#define GIN_MAX_COMMS          (1 << GIN_IMM_COMM_BITS)
 
 #define GIN_IMM_GET_COMM_ID(data)  (((data) >> GIN_IMM_COMM_SHIFT) & GIN_IMM_COMM_MASK)
 #define GIN_IMM_GET_SEQ_NUM(data)  (((data) >> GIN_IMM_SEQ_SHIFT) & GIN_IMM_SEQ_MASK)
@@ -90,6 +89,10 @@ struct nccl_net_ofi_gin_ack_t {
 	uint32_t comm_id:GIN_IMM_COMM_BITS;
 	uint32_t ack_count:GIN_ACK_COUNT_BITS;
 };
+
+
+/* Maximum number of GIN comms */
+#define NCCL_GIN_MAX_COMMS    (1 << GIN_IMM_COMM_BITS)
 
 struct nccl_net_ofi_gin_signal_metadata_msg_t {
 	/* Message type identifier — must be GIN_MSG_TYPE_METADATA */
