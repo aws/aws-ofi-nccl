@@ -126,6 +126,22 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.env = {},
 	},
 	{
+		.name = "p5.48xlarge",
+		.regex = "^p5\\.48xlarge$",
+		.topology = "p5.48xl-topo.xml",
+		.default_dup_conns = 0,
+		.latency = 75.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+		},
+	},
+	{
 		.name = "p5/p5e",
 		.regex = "^p5(e?\\..*)",
 		.topology = NULL,
