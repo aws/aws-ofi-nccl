@@ -76,10 +76,16 @@ RUN if [ "$ENABLE_CUDA" = "true" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-# Install lttng if enabled
+# Install tracing packages if enabled.  lttng is always installed
+# when tracing is on; cuda-nvtx is added for CUDA-enabled images so
+# the plugin can be configured with both --with-lttng and
+# --with-nvtx=... and exercise both tracing backends together.
 RUN if [ "$ENABLE_TRACING" = "true" ]; then \
         apt-get update && \
         DEBIAN_FRONTEND=noninteractive apt-get install -y liblttng-ust-dev && \
+        if [ "$ENABLE_CUDA" = "true" ]; then \
+            DEBIAN_FRONTEND=noninteractive apt-get install -y cuda-nvtx-12-6 ; \
+        fi && \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
