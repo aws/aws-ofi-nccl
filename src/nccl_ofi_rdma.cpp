@@ -5587,6 +5587,20 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 
 	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num, tag);
 
+	/*
+	 * In some transports with FI_PROGRESS_MANUAL, inbound RDMA writes
+	 * (carrying control messages) may not complete until the target
+	 * calls a progress function.  If the control message has not
+	 * arrived yet, drive progress and re-check.
+	 */
+	if (OFI_UNLIKELY(!data_progress_auto && !have_ctrl)) {
+		ret = endpoint->ofi_process_cq();
+		if (OFI_UNLIKELY(ret != 0)) {
+			goto error;
+		}
+		have_ctrl = has_ctrl_msg(s_comm, msg_seq_num, tag);
+	}
+
 	/* If ctrl msg indicates a grouped recv, start tracking the group */
 	if (have_ctrl && !in_group) {
 		uint16_t slot = msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
