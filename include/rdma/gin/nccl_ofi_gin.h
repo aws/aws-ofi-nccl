@@ -351,6 +351,41 @@ private:
 	nccl_ofi_dlist pending_ack_list;
 	uint32_t progress_counter = 0;
 
+	/* Controls signal delivery ordering on this communicator
+	   (env: OFI_NCCL_GIN_STRONG_SIGNAL, default true).
+	 *
+	 * true  (strong-signal mode, default):
+	 *   Completed requests are released up the stack in sequence-number
+	 *   order on a per-(comm, peer) basis. A signal visible to the
+	 *   application therefore implies that:
+	 *     - this signal's own data has landed at the target, and
+	 *     - all prior puts and signals on the same (comm, peer) stream
+	 *       have also landed and been delivered.
+	 *   Out-of-order arrivals are buffered and held until earlier
+	 *   seq_nums complete (see iput_signal_deliver_all and
+	 *   next_delivered_signal_seq_num). This is the contract most NCCL
+	 *   kernels rely on: a single terminal signal proves a whole batch
+	 *   of prior writes is visible, with no per-write verification.
+	 *
+	 * false (weak-signal mode, opt-in):
+	 *   Each signal is delivered as soon as its own segments (metadata +
+	 *   data write) have arrived — no waiting for earlier seq_nums.
+	 *   Per-item payloads may become visible out of order, so the
+	 *   application must verify each item independently (e.g. a per-token
+	 *   SignalInc in MoE low-latency dispatch). Reduces head-of-line
+	 *   blocking when the kernel already handles its own ordering.
+	 *
+	 * Notes:
+	 *   - ACK emission back to the sender stays ordered in both modes
+	 *     (seq-num stream + bundled range ACKs); only the app-visible
+	 *     completion order changes.
+	 *   - The proxy thread supports both modes; this flag is a per-comm
+	 *     selector captured at construction from ofi_nccl_gin_strong_signal(),
+	 *     not a dynamic capability bit.
+	 *   - See handle_signal_metadata_completion / handle_signal_write_completion
+	 *     for the weak-mode early-deliver paths. */
+	bool strong_signal_ordering_enabled;
+
 	/**
 	 * Send a range ACK via fi_send to the peer.
 	 *
@@ -371,11 +406,15 @@ private:
 
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 
+	int do_gin_signal_and_trace(uint32_t peer_rank,
+				    nccl_net_ofi_gin_iputsignal_recv_req *req);
+
 	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 					    nccl_net_ofi_gin_iputsignal_recv_req *req);
 
 	int stash_pending_ack(uint32_t peer_rank, uint16_t seq_num);
-	int iput_signal_deliver_all(uint32_t peer_rank);
+
+	int retire_completed_peer_iput_ops(uint32_t peer_rank);
 
 	friend class nccl_ofi_rdma_gin_listen_comm;
 

@@ -8,6 +8,7 @@
 
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_gdrcopy.h"
+#include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_tracepoint.h"
 
@@ -30,6 +31,7 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 				     nccl_net_ofi_recv_comm *r_comm_)
     : resources(resources_arg), resource_releaser { resources }, rank(rank_), nranks(nranks_),
       dev(s_comm_->dev_id), ag_comm(s_comm_, r_comm_, rank_, nranks_),
+      strong_signal_ordering_enabled(ofi_nccl_gin_strong_signal()),
       metadata_fl(nullptr, &freelist_deleter)
 {
 	auto &ep = resources.get_ep();
@@ -663,6 +665,21 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 	return 0;
 }
 
+int nccl_ofi_rdma_gin_put_comm::do_gin_signal_and_trace(uint32_t peer_rank,
+					      nccl_net_ofi_gin_iputsignal_recv_req *req)
+{
+	NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN(dev, this, peer_rank,
+						 req->metadata.header.seq_num, req);
+	int ret = do_gin_signal(req->metadata);
+	NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank,
+					       req->metadata.header.seq_num, req);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Failed to complete signal seq_num %hu",
+			      req->metadata.header.seq_num);
+	}
+	return ret;
+}
+
 int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 						       nccl_net_ofi_gin_iputsignal_recv_req *req)
 {
@@ -671,16 +688,11 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_ra
 	NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on target",
 		       req->metadata.header.seq_num);
 
-	if (req->metadata_received) {
-		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN(dev, this, peer_rank,
-							 req->metadata.header.seq_num, req);
-		ret = do_gin_signal(req->metadata);
-		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank,
-						       req->metadata.header.seq_num, req);
-	}
-
-	if (ret != 0) {
-		return ret;
+	if (req->metadata_received && strong_signal_ordering_enabled) {
+		ret = do_gin_signal_and_trace(peer_rank, req);
+		if (ret != 0) {
+			return ret;
+		}
 	}
 
 	/* Remove this request entry from the map */
@@ -755,7 +767,7 @@ int nccl_ofi_rdma_gin_put_comm::flush_stale_acks()
 	return 0;
 }
 
-int nccl_ofi_rdma_gin_put_comm::iput_signal_deliver_all(uint32_t peer_rank)
+int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_rank)
 {
 	int ret = 0;
 
@@ -783,8 +795,6 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_deliver_all(uint32_t peer_rank)
 					GIN_IMM_SEQ_MASK;
 				ret = iput_signal_recv_req_completion(peer_rank, map_key, req);
 				if (OFI_UNLIKELY(ret != 0)) {
-					NCCL_OFI_WARN("Failed to complete signal seq_num %hu",
-						      next_seq_num);
 					return ret;
 				}
 
@@ -840,8 +850,18 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 		req->metadata_received = true;
 		req->num_seg_completions += 1;
 	}
+
+	/* Weak-signal mode: once all segments of this signal (metadata +
+	   writes at this same seq, if any) have arrived, deliver it
+	   immediately. This covers metadata-first and writes-first orderings. */
+	if (!strong_signal_ordering_enabled && req->num_seg_completions == req->total_segments) {
+		ret = do_gin_signal_and_trace(peer_rank, req);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	}
 	NCCL_OFI_TRACE_GIN_RECV_METADATA(dev, rail_id, this, peer_rank, msg_seq_num, req);
-	ret = iput_signal_deliver_all(peer_rank);
+	ret = retire_completed_peer_iput_ops(peer_rank);
 
 	return ret;
 }
@@ -898,9 +918,25 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(fi_addr_t src_add
 		req->metadata.header.seq_num = msg_seq_num;
 		req->metadata.header.seq_seg_cnt = req->total_segments;
 		req->metadata.header.msg_type = GIN_MSG_TYPE_METADATA;
+
+		/* Weak-signal mode: from GIN's perspective, iput+signal is a
+		 * single logical operation sharing one sequence number.
+		 * However, from libfabric's perspective these are two separate
+		 * packets — an RDMA write-with-immediate and an fi_send — that
+		 * can complete in either order on the receiver. We therefore
+		 * need to check for signal delivery here (when the last write
+		 * completes after metadata) in addition to
+		 * handle_signal_metadata_completion() (when metadata completes
+		 * after writes). */
+		if (!strong_signal_ordering_enabled && req->metadata_received) {
+			ret = do_gin_signal_and_trace(peer_rank, req);
+			if (OFI_UNLIKELY(ret != 0)) {
+				return ret;
+			}
+		}
 	}
 
-	ret = iput_signal_deliver_all(peer_rank);
+	ret = retire_completed_peer_iput_ops(peer_rank);
 
 	return ret;
 }
