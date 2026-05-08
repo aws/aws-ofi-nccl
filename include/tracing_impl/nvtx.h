@@ -269,13 +269,13 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN_NVTX(comm, rank, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = (comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(request)->signal_delivery_trace_id = nvtx_start_domain(true, handle, "gin_signal_delivery", 0x32CD32); \
+		(request)->trace_id = nvtx_start_domain(true, handle, "gin_signal_delivery", 0x32CD32); \
 	} \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
-		nvtx_end_domain(0, (request)->signal_delivery_trace_id); \
+		nvtx_end_domain(0, (request)->trace_id); \
 	} \
 } while(0)
 

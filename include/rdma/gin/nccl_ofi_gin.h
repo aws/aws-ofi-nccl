@@ -274,83 +274,58 @@ public:
 	/**
 	 * Callback for metadata completion.
 	 *
+	 * @param metadata_msg: metadata message
 	 * @param src_addr: source address of the signal
 	 * @param rail_id: rail ID of the signal
-	 * @param metadata_msg: metadata message
 	 *
 	 * @return: 0 on success, non-zero on failure
 	 */
 	int handle_signal_metadata_completion(
-		fi_addr_t src_addr, uint16_t rail_id,
-		const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg);
+		const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg,
+		fi_addr_t src_addr, uint16_t rail_id);
 
 	/**
 	 * Callback for write completion (data signals only).
 	 *
+	 * @param cq_entry: completion queue entry
 	 * @param src_addr: source address of the signal
 	 * @param rail_id: rail ID of the signal
-	 * @param msg_seq_num: sequence number of the signal
-	 * @param total_segms: total number of segments in the signal
-	 * @param len: length of the signal
-	 * @param is_ack_requested: whether the sender is requesting an ACK
 	 */
-	int handle_signal_write_completion(fi_addr_t src_addr, uint16_t rail_id,
-					   uint16_t msg_seq_num, uint64_t total_segms,
-					   size_t len, bool is_ack_requested);
+	int handle_signal_write_completion(struct fi_cq_data_entry * cq_entry,
+					   fi_addr_t src_addr, uint16_t rail_id);
 
 	/**
 	 * Callback for ACK message received via fi_recv.
 	 *
+	 * @param ack_msg: the received ACK message
 	 * @param src_addr: source address of the ACK sender
 	 * @param rail_id: rail on which the ACK was received
-	 * @param ack_msg: the received ACK message
 	 */
-	int handle_ack_completion(fi_addr_t src_addr, uint16_t rail_id,
-				  const gin_ack_msg_t *ack_msg);
+	int handle_ack_completion(const gin_ack_msg_t *ack_msg, fi_addr_t src_addr,
+				  uint16_t rail_id);
 
 private:
+	/* Member layout is ordered by access frequency (higher to lower). */
+	/* --- TIER 1: every iputSignal + every CQ completion --- */
 	nccl_ofi_gin_resources &resources;
+	/* Keep resource_releaser declared before free lists, to destroy it
+	   late after metadata_fl and other members whose destructors need the
+	   resources/endpoint alive. */
 	nccl_ofi_gin_resource_releaser resource_releaser;
-
-	uint32_t local_comm_id;
-
-	int rank;
-	int nranks;
-	int dev;
-
-	/* AllGather ring for metadata exchange */
-	nccl_ofi_gin_allgather_comm ag_comm;
 
 	/* Remote comm info book */
 	std::vector<nccl_ofi_gin_peer_rank_info> rank_comms;
 
-	/* For each rail, map of fi_addr => peer comm rank */
-	std::unordered_map<fi_addr_t, uint32_t> rank_map[MAX_NUM_RAILS];
+	/**
+	 * Freelist of buffers storing signal information (type
+	 * nccl_net_ofi_gin_signal_metadata_msg_t). An entry is allocated from
+	 * this freelist for each putSignal operation.
+	 */
+	// FIXME: Get rid of freelist_deleter and change to embedded
+	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
+	int dev;
 
-	/* Map of <rank, msg_seq_num> => recv_req
-	 *
-	 * This key is guaranteed to be unique because each initiating rank
-	 * maintains a monotonically increasing sequence counter for each target
-	 * rank. */
-	std::unordered_map<uint64_t, nccl_net_ofi_gin_iputsignal_recv_req *>
-		outstanding_iput_signal_recv_reqs;
-
-	/* Map from pointers to memory registration handle. Used to look up
-	   GDRCopy handle for signal delivery.
-
-	   TODO: we could also just pass this in the handle to avoid a map
-	   lookup. Not sure yet if that is the right thing to do. */
-	std::unordered_map<void *, nccl_ofi_rdma_gin_symm_mr_handle *> mr_handle_map;
-
-	/* Number of outstanding RDMA writes for signal delivery acknowledgement
-	   Used to wait for remaining acknowledgements on communicator close. */
-	size_t outstanding_ack_counter = 0;
-
-	/* Active queue of peers with pending acks.
-	   Only these are visited by flush_stale_acks(). */
-	nccl_ofi_dlist pending_ack_list;
-	uint32_t progress_counter = 0;
-
+	/* --- TIER 2: Receiver side — every CQ completion --- */
 	/* Controls signal delivery ordering on this communicator
 	   (env: OFI_NCCL_GIN_STRONG_SIGNAL, default true).
 	 *
@@ -386,6 +361,45 @@ private:
 	 *     for the weak-mode early-deliver paths. */
 	bool strong_signal_ordering_enabled;
 
+	/* For each rail, map of fi_addr => peer comm rank */
+	std::unordered_map<fi_addr_t, uint32_t> rank_map[MAX_NUM_RAILS];
+
+	/* Map of <rank, msg_seq_num> => recv_req
+	 *
+	 * This key is guaranteed to be unique because each initiating rank
+	 * maintains a monotonically increasing sequence counter for each target
+	 * rank. */
+	std::unordered_map<uint64_t, nccl_net_ofi_gin_iputsignal_recv_req *>
+		outstanding_iput_signal_recv_reqs;
+
+	/* --- TIER 3: progress / ack flush path --- */
+	/* Active queue of peers with pending acks.
+	   Only these are visited by flush_stale_acks(). */
+	nccl_ofi_dlist pending_ack_list;
+	uint32_t progress_counter = 0;
+
+	/* Number of outstanding RDMA writes for signal delivery acknowledgement.
+	   Used to wait for remaining acknowledgements on communicator close. */
+	uint32_t outstanding_ack_counter = 0;
+
+	/* --- TIER 4: signal delivery (do_gin_signal) --- */
+	/* Map from pointers to memory registration handle. Used to look up
+	   GDRCopy handle for signal delivery.
+
+	   TODO: we could also just pass this in the handle to avoid a map
+	   lookup. Not sure yet if that is the right thing to do. */
+	std::unordered_map<void *, nccl_ofi_rdma_gin_symm_mr_handle *> mr_handle_map;
+
+	/* --- TIER 5: setup / teardown only --- */
+	uint32_t local_comm_id;
+	int rank;
+	int nranks;
+
+	/* AllGather ring for metadata exchange */
+	nccl_ofi_gin_allgather_comm ag_comm;
+
+	/* --- Private methods --- */
+
 	/**
 	 * Send a range ACK via fi_send to the peer.
 	 *
@@ -396,13 +410,6 @@ private:
 	 */
 	int send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
 		     uint32_t ack_seq_num, uint32_t count);
-
-	/**
-	 * Freelist of buffers storing signal information (type
-	 * nccl_net_ofi_gin_signal_metadata_msg_t). An entry is allocated from
-	 * this freelist for each putSignal operation.
-	 */
-	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
 
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 

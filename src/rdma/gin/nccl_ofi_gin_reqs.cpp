@@ -81,17 +81,9 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 	if (cq_entry->flags & FI_REMOTE_WRITE) {
 		/* RDMA write-immediate completion */
 		uint32_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
-		uint16_t msg_seq_num = GIN_IMM_GET_SEQ_NUM(cq_entry->data);
-
 		auto &gin_comm = resources.get_comm(comm_id);
 
-		uint64_t total_segms = GIN_IMM_GET_SEG_CNT(cq_entry->data);
-		bool is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
-		size_t len = cq_entry->len;
-
-		ret = gin_comm.handle_signal_write_completion(src_addr, rail_id_arg,
-							      msg_seq_num, total_segms,
-							      len, is_ack_requested);
+		ret = gin_comm.handle_signal_write_completion(cq_entry, src_addr, rail_id_arg);
 		if (ret != 0) {
 			NCCL_OFI_WARN("gin_handle_signal_write_completion failure");
 			return ret;
@@ -103,8 +95,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 		if (msg_type == GIN_MSG_TYPE_ACK) {
 			auto &gin_comm = resources.get_comm(ack_msg->ack_comm_id);
 
-			ret = gin_comm.handle_ack_completion(src_addr, rail_id_arg,
-							     ack_msg);
+			ret = gin_comm.handle_ack_completion(ack_msg, src_addr, rail_id_arg);
 			if (ret != 0) {
 				NCCL_OFI_WARN("handle_ack_completion failure");
 				return ret;
@@ -115,8 +106,8 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 
 			auto &gin_comm = resources.get_comm(msg->header.remote_comm_id);
 
-			ret = gin_comm.handle_signal_metadata_completion(src_addr,
-									 rail_id_arg, msg);
+			ret = gin_comm.handle_signal_metadata_completion(msg, src_addr,
+									 rail_id_arg);
 			if (ret != 0) {
 				NCCL_OFI_WARN(
 					"gin_handle_signal_metadata_completion failure");
@@ -194,58 +185,34 @@ nccl_net_ofi_gin_sendack_req_t::~nccl_net_ofi_gin_sendack_req_t()
 
 int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 {
-	*done = 0;
-
-	auto &gin_ep = gin_comm.get_resources().get_ep();
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
-
-	bool all_writes_done = true;
-	for (auto &write_req : write_reqs) {
-		if (write_req) {
-			int write_done = 0;
-			int ret = write_req->test(&write_done);
-			if (ret != 0)
-				return ret;
-			if (write_done) {
-				gin_comm.get_resources().return_req_to_pool(write_req);
-				write_req = nullptr;
-			} else {
-				all_writes_done = false;
-				break;
-			}
-		}
-	}
-
-	if (send_req) {
-		int send_done = 0;
-		int ret = send_req->test(&send_done);
-		if (ret != 0)
-			return ret;
-		if (send_done) {
-			gin_comm.get_resources().return_req_to_pool(send_req);
-			send_req = nullptr;
-		}
-	}
-
-	bool reqs_done = all_writes_done && !send_req;
-	if (reqs_done) {
+	if (OFI_UNLIKELY(any_reqs_pending == 0)) {
+		/* Check outstanding signal only if no pending subrequests */
+		auto &gin_ep = gin_comm.get_resources().get_ep();
 		if (is_ack_requested) {
 			/* This message requested ACK (SIGNAL, PUT-SIGNAL, or every Nth PUT) */
 			bool ack_outstanding = gin_comm.query_ack_outstanding(peer_rank, msg_seq_num);
-			*done = !ack_outstanding;
+			if (OFI_UNLIKELY(!ack_outstanding)) {
+				*done = 1;
+			}
 		} else {
 			/* This message doesn't need ACK (most PUTs) */
 			*done = 1;
 		}
+		/* Free iputSignal request when done */
+		if (OFI_UNLIKELY(*done)) {
+			std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+			NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
+				       this->msg_seq_num);
+			NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_END(gin_comm.get_dev(), &gin_comm, peer_rank,
+							   msg_seq_num, this);
+			gin_comm.get_resources().return_req_to_pool(this);
+		}
+	} else {
+		/* NCCL GIN Proxy only calls test() when state->done == 0,
+		 * so skip the redundant store (*done = 0) for now.
+		 */
 	}
 
-	if (*done) {
-		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
-			       this->msg_seq_num);
-		NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_END(gin_comm.get_dev(), &gin_comm, peer_rank,
-						   msg_seq_num, this);
-		gin_comm.get_resources().return_req_to_pool(this);
-	}
 
 	/* If not done, the GIN plugin will do nothing.
 
@@ -276,11 +243,26 @@ int nccl_net_ofi_gin_write_req_t::post()
 	/* Drop FI_MORE for retry — must not remain pending in the queue */
 	flags &= ~FI_MORE;
 
-	if (rc != 0 && rc != -FI_EAGAIN) {
+	if (OFI_UNLIKELY(rc != 0 && rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("Failed call to fi_writemsg; RC: %zd", rc);
 	}
 
 	return rc;
+}
+
+int nccl_net_ofi_gin_write_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/,
+						   fi_addr_t /*src_addr*/, uint16_t rail_id)
+{
+	NCCL_OFI_TRACE_GIN_WRITE_END(dev, rail_id, comm, rank, msg_seq_num, this);
+
+	if (OFI_LIKELY(pending_flag != nullptr)) {
+		*pending_flag = false;
+	}
+
+	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(comm);
+	gin_comm->get_resources().return_req_to_pool(this);
+
+	return 0;
 }
 
 int nccl_net_ofi_gin_metadata_send_req_t::post()
@@ -296,6 +278,22 @@ int nccl_net_ofi_gin_metadata_send_req_t::post()
 	}
 
 	return rc;
+}
+
+int nccl_net_ofi_gin_metadata_send_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/,
+							   fi_addr_t /*src_addr*/,
+							   uint16_t rail_id_arg)
+{
+	NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id_arg, comm, rank, msg_seq_num, this);
+
+	if (OFI_LIKELY(pending_flag != nullptr)) {
+		*pending_flag = false;
+	}
+
+	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(comm);
+	gin_comm->get_resources().return_req_to_pool(this);
+
+	return 0;
 }
 
 nccl_net_ofi_gin_metadata_send_req_t::~nccl_net_ofi_gin_metadata_send_req_t()

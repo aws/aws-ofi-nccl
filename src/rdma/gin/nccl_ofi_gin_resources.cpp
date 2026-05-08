@@ -87,17 +87,17 @@ int nccl_ofi_rdma_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 {
 	assert(rail_id < num_rails);
 
-	auto &rail = this->get_rail(rail_id);
 	struct fi_cq_data_entry cqe_buffers[cq_read_count];
 	fi_addr_t src_addrs[cq_read_count];
+	auto *rail_cq = this->get_rail(rail_id).rail_cq.get();
 	ssize_t rc = 0;
-	int ret = 0;
 	size_t iter = 0;
+	int ret = 0;
 
 	do {
 		++iter;
 		/* Receive completions for the given rail */
-		rc = fi_cq_readfrom(rail.rail_cq.get(), cqe_buffers, cq_read_count, src_addrs);
+		rc = fi_cq_readfrom(rail_cq, cqe_buffers, cq_read_count, src_addrs);
 		if (rc > 0) {
 			ret = gin_process_completions(cqe_buffers, src_addrs, rc, rail_id);
 			if (OFI_UNLIKELY(ret != 0))
@@ -110,7 +110,7 @@ int nccl_ofi_rdma_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 			 */
 			struct fi_cq_err_entry err_entry = {};
 
-			ret = fi_cq_readerr(rail.rail_cq.get(), &err_entry, 0);
+			ret = fi_cq_readerr(rail_cq, &err_entry, 0);
 			if (OFI_UNLIKELY(ret == -FI_EAGAIN)) {
 				/*
 				 * Error not available yet.
@@ -126,7 +126,7 @@ int nccl_ofi_rdma_gin_ep_t::gin_process_cq_rail(uint16_t rail_id)
 				goto exit;
 			}
 
-			ret = gin_process_error_entry(&err_entry, rail.rail_cq.get(), rail_id);
+			ret = gin_process_error_entry(&err_entry, rail_cq, rail_id);
 			if (ret != 0) {
 				goto exit;
 			}
@@ -153,7 +153,7 @@ int nccl_ofi_rdma_gin_ep_t::process_cq()
 	/* Process completion queues for all rails */
 	for (uint16_t rail_id = 0; rail_id < num_rails; ++rail_id) {
 		ret = gin_process_cq_rail(rail_id);
-		if (ret != 0) {
+		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to process CQ for rail %u: %d", rail_id, ret);
 			return ret;
 		}

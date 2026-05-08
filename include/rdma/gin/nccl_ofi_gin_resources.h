@@ -361,6 +361,7 @@ private:
 	uint16_t next_rail_id = 0;
 
 	/* Requests pool used by all comms of this resource */
+	// FIXME: Get rid of freelist_deleter and change to embedded
 	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> req_fl;
 
 	/**
