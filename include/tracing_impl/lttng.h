@@ -57,7 +57,9 @@ LTTNG_UST_TRACEPOINT_EVENT(
             uint64_t, peer_addr,
             uint16_t, msg_seq_num,
             void *, request,
-            void *, nccl_req
+            void *, nccl_req,
+            int, tag,
+            uint16_t, recv_idx
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
@@ -67,6 +69,8 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
+            lttng_ust_field_integer(int, tag, tag)
+            lttng_ust_field_integer(uint16_t, recv_idx, recv_idx)
     )
 )
 
@@ -243,7 +247,8 @@ LTTNG_UST_TRACEPOINT_EVENT(
             uint64_t, peer_addr,
             size_t, size,
             void *, request,
-            void *, nccl_req
+            void *, nccl_req,
+            uint16_t, num_recvs
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
@@ -252,6 +257,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer(size_t, size, size)
             lttng_ust_field_integer_hex(uint64_t, request, (uint64_t)request)
             lttng_ust_field_integer_hex(uint64_t, nccl_req, (uint64_t)nccl_req)
+            lttng_ust_field_integer(uint16_t, num_recvs, num_recvs)
     )
 )
 
