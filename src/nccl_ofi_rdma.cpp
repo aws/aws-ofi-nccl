@@ -2357,6 +2357,11 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 	if (READ_ONCE(s_comm->ctrl_mailbox[slot].entries[0].msg_seq_num) != expected) {
 		return false;
 	}
+
+	// create barrier point so that no code which depends on a valid
+	// control message is hoisted above the msg_seq_num check
+	std::atomic_thread_fence(std::memory_order_acquire);
+
 	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
 	if (ctrl->entries[0].num_recvs <= 1) {
 		return true;
@@ -5630,8 +5635,6 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 			goto error;
 		}
 	} else if (!in_group || s_comm->group_sends_remaining == s_comm->group_num_recvs) {
-		/* Memory synchronization point - only on first send of a group or non-grouped */
-		std::atomic_thread_fence(std::memory_order_acquire);
 		s_comm->n_ctrl_received += 1;
 	}
 
