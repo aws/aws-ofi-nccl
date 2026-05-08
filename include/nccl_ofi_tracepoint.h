@@ -12,11 +12,11 @@
 
 /***** SENDRECV PROTOCOL *****/
 #define NCCL_OFI_TRACE_SEND_SENDRECV(dev, size, comm, msg_seq_num, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, 0, msg_seq_num, request, nccl_req); \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm, 0, msg_seq_num, request, nccl_req, 0, 0); \
 } while (0)
 
 #define NCCL_OFI_TRACE_RECV_SENDRECV(dev, comm, size, request, nccl_req) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, 0, size, request, nccl_req); \
+	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, 0, size, request, nccl_req, 0); \
 } while(0)
 
 #define NCCL_OFI_TRACE_FLUSH_SENDRECV(request, nccl_req) do { \
@@ -29,10 +29,10 @@
 
 /***** RDMA PROTOCL *****/
 
-#define NCCL_OFI_TRACE_SEND(dev, size, comm, msg_seq_num, request, nccl_req) do { \
+#define NCCL_OFI_TRACE_SEND(dev, size, comm, msg_seq_num, request, nccl_req, tag, recv_idx) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send, dev, size, comm,\
 			     comm->get_data_rail(0)->remote_addr, \
-			     msg_seq_num, request, nccl_req); \
+			     msg_seq_num, request, nccl_req, tag, recv_idx); \
 	NCCL_OFI_TRACE_SEND_NVTX(dev, size, comm, msg_seq_num, request, nccl_req); \
 } while(0)
 
@@ -71,9 +71,9 @@
 	NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req) do { \
+#define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req, num_recvs) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, \
-			     comm->get_data_rail(0)->remote_addr, size, request, nccl_req); \
+			     comm->get_data_rail(0)->remote_addr, size, request, nccl_req, num_recvs); \
 	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
 } while(0)
 

@@ -3270,7 +3270,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	/* At this point, we've successfully inserted a new request, so update the num inflight. */
 	(this->num_inflight_reqs)++;
 
-	NCCL_OFI_TRACE_RECV(device_id, this, sizes[0], req, base_req);
+	NCCL_OFI_TRACE_RECV(device_id, this, sizes[0], req, base_req, n);
 
 	/* Send ctrl msg */
 	this->n_ctrl_sent += 1;
@@ -5667,7 +5667,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		(s_comm->num_inflight_writes)++;
 	}
 
-	NCCL_OFI_TRACE_SEND(req->dev_id, size, s_comm, msg_seq_num, req, base_req);
+	NCCL_OFI_TRACE_SEND(req->dev_id, size, s_comm, msg_seq_num, req, base_req, tag, get_send_data(req)->recv_idx);
 
 	/* Try posting RDMA write for received RDMA control messages */
 	if (have_ctrl || eager) {
