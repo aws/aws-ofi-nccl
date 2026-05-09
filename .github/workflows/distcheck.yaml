@@ -55,6 +55,10 @@ jobs:
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
+      - name: Install libasan
+        if: matrix.build-type == 'debug'
+        run: dnf -y install libasan
+
       - name: Call `autoreconf -ivf`
         run: |
           ./autogen.sh
