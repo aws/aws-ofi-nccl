@@ -259,11 +259,25 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 
 int nccl_net_ofi_gin_write_req_t::post()
 {
-	ssize_t rc =
-		fi_writedata(ep, src, size, desc, imm_data, remote_addr, dest, key, &ctx.ofi_ctx);
+	struct iovec iov = { .iov_base = src, .iov_len = size };
+	struct fi_rma_iov rma_iov = { .addr = dest, .len = size, .key = key };
+	struct fi_msg_rma msg = {};
+	msg.msg_iov = &iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = remote_addr;
+	msg.rma_iov = &rma_iov;
+	msg.rma_iov_count = 1;
+	msg.context = &ctx.ofi_ctx;
+	msg.data = imm_data;
+
+	ssize_t rc = fi_writemsg(ep, &msg, flags);
+
+	/* Drop FI_MORE for retry — must not remain pending in the queue */
+	flags &= ~FI_MORE;
 
 	if (rc != 0 && rc != -FI_EAGAIN) {
-		NCCL_OFI_WARN("Failed call to fi_writedata; RC: %zd", rc);
+		NCCL_OFI_WARN("Failed call to fi_writemsg; RC: %zd", rc);
 	}
 
 	return rc;

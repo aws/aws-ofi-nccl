@@ -290,10 +290,10 @@ public:
 				     void *desc_arg, uint64_t imm_data_arg,
 				     fi_addr_t remote_addr_arg, uint64_t dest_arg, uint64_t key_arg,
 				     void *comm_arg, int dev_arg, uint32_t rank_arg,
-				     uint16_t msg_seq_num_arg)
+				     uint16_t msg_seq_num_arg, uint64_t msg_flags = 0)
 	    : comm(comm_arg), dev(dev_arg), rank(rank_arg), msg_seq_num(msg_seq_num_arg),
 	      ep(ep_arg), src(src_arg), size(size_arg), desc(desc_arg), imm_data(imm_data_arg),
-	      remote_addr(remote_addr_arg), dest(dest_arg), key(key_arg)
+	      remote_addr(remote_addr_arg), dest(dest_arg), key(key_arg), flags(msg_flags)
 	{
 	}
 
@@ -327,6 +327,10 @@ private:
 	fi_addr_t remote_addr;
 	uint64_t dest;
 	uint64_t key;
+	/* Flags for fi_writemsg. On retry FI_MORE is dropped as the
+	   request must be handled immediately and should not remain
+	   pending in the queue. */
+	uint64_t flags;
 };
 
 /**
