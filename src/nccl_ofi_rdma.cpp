@@ -624,7 +624,7 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
 
 	/* Add completion to parent request */
 	if (recv_data->num_recvs > 1) {
-		ret = inc_recv_seg_completion(recv_data->recv_segms_req, size, 1);
+		ret = inc_recv_seg_completion(recv_data->recv_segms_req, size, recv_data->num_recvs);
 	} else {
 		ret = inc_req_completion(recv_req, size, recv_data->total_num_compls);
 	}
@@ -698,23 +698,10 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
 	/* Sum up number of segments */
 	req->ncompls++;
 
-	/* Detect when a completion belongs to a new sender we haven't
-	 * registered yet. Each sender's first segment pushes ncompls past
-	 * the sum of all previously registered senders' segment counts.
-	 * When that happens, we register this sender's total_nsegms.
-	 * For single recv (1 sender), this fires once on the first completion.
-	 * For grouped recv (N senders), this fires N times as each sender's
-	 * first completion crosses the running total. */
-	if (req->ncompls > recv_segms_data->total_expected_segms) {
-		recv_segms_data->total_expected_segms += total_nsegms;
-		recv_segms_data->num_senders_registered++;
-	}
-
-	/* The arrival of the last segment is treated as a single
+	/* The arrival of the last sub req is treated as a single
 	 * request completion of the parent request */
-	segms_received = (req->ncompls == recv_segms_data->total_expected_segms) &&
-			   (recv_segms_data->num_senders_registered == recv_segms_data->num_expected_senders);
-	
+	segms_received = (req->ncompls == total_nsegms);
+
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
 		/* recv_segms_data already available from outer scope */
@@ -950,7 +937,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 			return ret;
 		}
 		if (recv_data->num_recvs > 1) {
-			ret = inc_recv_seg_completion(recv_data->recv_segms_req, 0, 1);
+			ret = inc_recv_seg_completion(recv_data->recv_segms_req, 0, recv_data->num_recvs);
 		} else {
 			ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
 		}
@@ -1143,12 +1130,17 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	uint64_t total_segms = GET_NUM_SEG_FROM_IMM(cq_entry->data);
 	uint8_t recv_idx = GET_RECV_IDX_FROM_IMM(cq_entry->data);
 
-	/* Accumulate per-sub-receive size for grouped receives */
+	/* Accumulate per-sub-receive size and ncompls for grouped receives */
 	recv_data->recvs[recv_idx].recv_size += cq_entry->len;
+	recv_data->recvs[recv_idx].total_segms = total_segms;
+	recv_data->recvs[recv_idx].ncompls++;
 
-	ret = inc_recv_seg_completion(recv_segms_req, cq_entry->len, total_segms);
-	if (OFI_UNLIKELY(ret != 0)) {
-		return ret;
+	/* Only when entire sub recv completed, update parent req */
+	if (recv_data->recvs[recv_idx].ncompls == (int)total_segms) {
+		ret = inc_recv_seg_completion(recv_segms_req, recv_data->recvs[recv_idx].recv_size, recv_data->num_recvs);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
 	}
 
 	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, req->comm, cq_entry->len, req, req->msg_seq_num);
@@ -2948,9 +2940,6 @@ static inline int insert_recv_segms_req(
 
 	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(recv_segms_req);
 	recv_segms_data->recv_req = recv_req;
-	recv_segms_data->total_expected_segms = 0;
-	recv_segms_data->num_senders_registered = 0;
-	recv_segms_data->num_expected_senders = num_recvs;
 
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 	recv_data->recv_segms_req = recv_segms_req;

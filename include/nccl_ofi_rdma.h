@@ -389,12 +389,6 @@ typedef struct {
 typedef struct {
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req *recv_req;
-	/* For grouped receives: running total of expected segments across all senders.
-	 * Updated dynamically as we learn each sender's segment count from immediate data. */
-	int total_expected_segms;
-	/* Number of distinct senders whose segment count we've registered */
-	int num_senders_registered;
-	int num_expected_senders;
 } rdma_req_recv_segms_data_t;
 
 /*
