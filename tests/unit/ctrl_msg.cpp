@@ -21,6 +21,7 @@
 #include "unit_test.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_rdma.h"
+#include "nccl_ofi_dlist.h"
 
 /* Replicate the tag-matching search from get_ctrl_msg_buff_len / update_send_data_from_remote */
 static nccl_net_ofi_ctrl_msg_entry_t *find_entry_by_tag(nccl_net_ofi_ctrl_msg_t *ctrl, int tag)
@@ -211,6 +212,163 @@ static int test_max_recvs_entries()
 	return 0;
 }
 
+
+/* Replicate the sort helpers from nccl_ofi_rdma.cpp for unit testing */
+static inline bool test_seq_before(uint16_t a, uint16_t b)
+{
+	uint16_t diff = (a - b) & 0x3FF; return diff > 0x1FF;
+}
+
+static inline bool test_eager_entry_less(const nccl_ofi_recv_eager_entry_t *a,
+					 const nccl_ofi_recv_eager_entry_t *b)
+{
+	if (a->msg_seq_num != b->msg_seq_num)
+		return test_seq_before(a->msg_seq_num, b->msg_seq_num);
+	return a->eager_offset < b->eager_offset;
+}
+
+static inline void test_sorted_insert(nccl_ofi_dlist *list,
+				       nccl_ofi_recv_eager_entry_t *entry)
+{
+	nccl_ofi_dlist_node *pos = list->head.prev;
+	while (pos != &list->head) {
+		nccl_ofi_recv_eager_entry_t *existing =
+			nccl_ofi_dlist_entry(pos, &nccl_ofi_recv_eager_entry_t::link);
+		if (!test_eager_entry_less(entry, existing))
+			break;
+		pos = pos->prev;
+	}
+	entry->link.prev = pos;
+	entry->link.next = pos->next;
+	pos->next->prev = &entry->link;
+	pos->next = &entry->link;
+}
+
+static int collect_list(nccl_ofi_dlist *list, nccl_ofi_recv_eager_entry_t **out, int max)
+{
+	int n = 0;
+	nccl_ofi_dlist_node *pos;
+	nccl_ofi_dlist_for_each_safe(list, pos) {
+		if (n >= max) break;
+		out[n++] = nccl_ofi_dlist_entry(pos, &nccl_ofi_recv_eager_entry_t::link);
+	}
+	return n;
+}
+
+static int test_eager_sorted_insert()
+{
+	nccl_ofi_dlist list;
+	nccl_ofi_recv_eager_entry_t entries[8] = {};
+
+	/* Test 1: Insert in order */
+	entries[0].msg_seq_num = 1; entries[0].eager_offset = 0;
+	entries[1].msg_seq_num = 1; entries[1].eager_offset = 1;
+	entries[2].msg_seq_num = 2; entries[2].eager_offset = 0;
+	test_sorted_insert(&list, &entries[0]);
+	test_sorted_insert(&list, &entries[1]);
+	test_sorted_insert(&list, &entries[2]);
+
+	nccl_ofi_recv_eager_entry_t *out[8];
+	int n = collect_list(&list, out, 8);
+	if (n != 3 || out[0] != &entries[0] || out[1] != &entries[1] || out[2] != &entries[2]) {
+		NCCL_OFI_WARN("in-order insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 2: Insert in reverse order */
+	test_sorted_insert(&list, &entries[2]);
+	test_sorted_insert(&list, &entries[1]);
+	test_sorted_insert(&list, &entries[0]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 3 || out[0] != &entries[0] || out[1] != &entries[1] || out[2] != &entries[2]) {
+		NCCL_OFI_WARN("reverse insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 3: Same seq, different offsets interleaved */
+	entries[3].msg_seq_num = 1; entries[3].eager_offset = 3;
+	entries[4].msg_seq_num = 1; entries[4].eager_offset = 1;
+	entries[5].msg_seq_num = 1; entries[5].eager_offset = 2;
+	entries[6].msg_seq_num = 1; entries[6].eager_offset = 0;
+	test_sorted_insert(&list, &entries[3]);
+	test_sorted_insert(&list, &entries[4]);
+	test_sorted_insert(&list, &entries[5]);
+	test_sorted_insert(&list, &entries[6]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 4 || out[0]->eager_offset != 0 || out[1]->eager_offset != 1 ||
+	    out[2]->eager_offset != 2 || out[3]->eager_offset != 3) {
+		NCCL_OFI_WARN("interleaved offset insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 4: Seq wraparound (1023 before 0 in 10-bit space) */
+	entries[0].msg_seq_num = 1023; entries[0].eager_offset = 0;
+	entries[1].msg_seq_num = 0;    entries[1].eager_offset = 0;
+	entries[2].msg_seq_num = 1;    entries[2].eager_offset = 0;
+	test_sorted_insert(&list, &entries[2]);
+	test_sorted_insert(&list, &entries[0]);
+	test_sorted_insert(&list, &entries[1]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 3 || out[0]->msg_seq_num != 1023 || out[1]->msg_seq_num != 0 || out[2]->msg_seq_num != 1) {
+		NCCL_OFI_WARN("wraparound insert failed: got seq %d, %d, %d",
+			out[0]->msg_seq_num, out[1]->msg_seq_num, out[2]->msg_seq_num);
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 5: Single element */
+	entries[0].msg_seq_num = 5; entries[0].eager_offset = 2;
+	test_sorted_insert(&list, &entries[0]);
+	n = collect_list(&list, out, 8);
+	if (n != 1 || out[0] != &entries[0]) {
+		NCCL_OFI_WARN("single element insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 6: Duplicate key — both should be in list */
+	entries[0].msg_seq_num = 3; entries[0].eager_offset = 1; entries[0].tag = 10;
+	entries[1].msg_seq_num = 3; entries[1].eager_offset = 1; entries[1].tag = 20;
+	test_sorted_insert(&list, &entries[0]);
+	test_sorted_insert(&list, &entries[1]);
+	n = collect_list(&list, out, 8);
+	if (n != 2) {
+		NCCL_OFI_WARN("duplicate key insert failed: got %d entries", n);
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	/* Test 7: Multiple seq batches interleaved */
+	entries[0].msg_seq_num = 2; entries[0].eager_offset = 1;
+	entries[1].msg_seq_num = 1; entries[1].eager_offset = 0;
+	entries[2].msg_seq_num = 2; entries[2].eager_offset = 0;
+	entries[3].msg_seq_num = 1; entries[3].eager_offset = 1;
+	test_sorted_insert(&list, &entries[0]);
+	test_sorted_insert(&list, &entries[1]);
+	test_sorted_insert(&list, &entries[2]);
+	test_sorted_insert(&list, &entries[3]);
+
+	n = collect_list(&list, out, 8);
+	if (n != 4 ||
+	    !(out[0]->msg_seq_num == 1 && out[0]->eager_offset == 0) ||
+	    !(out[1]->msg_seq_num == 1 && out[1]->eager_offset == 1) ||
+	    !(out[2]->msg_seq_num == 2 && out[2]->eager_offset == 0) ||
+	    !(out[3]->msg_seq_num == 2 && out[3]->eager_offset == 1)) {
+		NCCL_OFI_WARN("multi-batch interleaved insert failed");
+		return 1;
+	}
+	while (!list.empty()) list.pop_front();
+
+	printf("PASS: eager sorted insert\n");
+	return 0;
+}
+
 int main(int argc, char *argv[])
 {
 	unit_test_init();
@@ -220,6 +378,7 @@ int main(int argc, char *argv[])
 	rc |= test_tag_matching();
 	rc |= test_ready_bit();
 	rc |= test_max_recvs_entries();
+	rc |= test_eager_sorted_insert();
 
 	if (rc == 0)
 		printf("All ctrl_msg tests passed\n");

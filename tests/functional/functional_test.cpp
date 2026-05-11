@@ -202,6 +202,14 @@ ncclResult_t validate_data(char *recv_buf, char *expected_buf, size_t size, int 
 	case NCCL_PTR_HOST:
 		ret = memcmp(recv_buf, expected_buf, size);
 		if (ret != 0) {
+			// Find first mismatch
+			for (size_t i = 0; i < size; i++) {
+				if (recv_buf[i] != expected_buf[i]) {
+					NCCL_OFI_WARN("Data validation failed at byte %zu: recv=0x%02x expected=0x%02x (size=%zu)",
+						      i, (unsigned char)recv_buf[i], (unsigned char)expected_buf[i], size);
+					break;
+				}
+			}
 			NCCL_OFI_WARN("Data validation check failed. RC: %d, Buffer Type: %d",
 				      ret, buffer_type);
 			return ncclSystemError;
@@ -951,6 +959,15 @@ ncclResult_t TestSuite::run_all()
 	void *net_ctx = nullptr;
 	test_nccl_net_config_t config = { .trafficClass = -1 };
 	OFINCCLCHECK(ext_net->init(&net_ctx, 0, &config, functional_test_logger, nullptr));
+
+	/* Call getProperties on all devices to initialize device-level flags
+	 * (e.g., supports_eager_header) before creating communicators. */
+	int ndev;
+	OFINCCLCHECK(ext_net->devices(&ndev));
+	for (int dev = 0; dev < ndev; dev++) {
+		test_nccl_properties_t props = {};
+		OFINCCLCHECK(ext_net->getProperties(dev, &props));
+	}
 
 	int passed = 0;
 	for (const auto &test : tests) {

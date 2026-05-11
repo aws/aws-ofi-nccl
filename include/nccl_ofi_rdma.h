@@ -18,6 +18,7 @@
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_msgbuff.h"
+#include "nccl_ofi_dlist.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_ofiutils.h"
@@ -44,6 +45,10 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  * @brief      Number of bits used for the communicator ID
  */
 #define NCCL_OFI_RDMA_COMM_ID_BITS (15)
+
+/*
+ * @brief      Number of bits used for the sub-receive index in grouped receives
+ */
 #define NCCL_OFI_RDMA_RECV_IDX_BITS (3)
 
 /* Maximum number of comms open simultaneously. Eventually this will be
@@ -65,9 +70,10 @@ static_assert(MAX_NUM_RAILS <= UINT16_MAX);
  * communicator ID, and the message sequence number (msg_seq_num).
  * The data is encoded as follows:
  *
- * | 4-bit segment count | 18-bit comm ID | 10-bit msg_seq_num |
+ * | 4-bit segment count | 3-bit recv_idx | 15-bit comm ID | 10-bit msg_seq_num |
  *
  * - Segment count: number of RDMA writes that will be delivered as part of this message
+ * - Recv index: sub-receive index within a grouped receive (0 for non-grouped)
  * - Comm ID: the ID for this communicator
  * - Message sequence number: message identifier
  */
@@ -164,6 +170,27 @@ public:
 /* Sentinel tag value indicating a ctrl msg entry has been consumed */
 #define NCCL_OFI_CTRL_MSG_TAG_INVALID ((int16_t)-1)
 
+/* Maximum number of outstanding eager messages in the sender queue */
+#define NCCL_OFI_MAX_EAGER_PENDING NCCL_NET_MAX_REQUESTS
+
+/* Size of the eager message header prepended to bounce buffer data */
+#define NCCL_OFI_EAGER_HEADER_SIZE 8
+
+/*
+ * @brief Header prepended to eager message data in the bounce buffer.
+ *
+ * The sender prepends this header so the receiver can identify which
+ * sub-receive (in a grouped receive) the eager data belongs to.
+ */
+typedef struct nccl_ofi_eager_msg_header {
+	uint8_t eager_offset;
+	uint8_t prev_batch_count;     /* only meaningful when eager_offset == 0 */
+	uint16_t prev_msg_seq_num;    /* only meaningful when eager_offset == 0 */
+	int32_t tag;
+} nccl_ofi_eager_msg_header_t;
+static_assert(sizeof(nccl_ofi_eager_msg_header_t) == NCCL_OFI_EAGER_HEADER_SIZE,
+		"Wrong size for eager message header");
+
 /*
  * @brief Control message sub-entry
  *
@@ -194,8 +221,10 @@ typedef struct nccl_net_ofi_ctrl_msg_entry {
 	uint16_t num_recvs;
 	/* Index of this entry within the grouped receive (0..N-1) */
 	uint8_t recv_idx;
+	/* Set by sender when this entry has been consumed by either eager or write */
+	uint8_t entry_used;
 	/* Padding to 64-byte cache line boundary */
-	uint8_t pad[9];
+	uint8_t pad[8];
 } nccl_net_ofi_ctrl_msg_entry_t;
 static_assert(sizeof(nccl_net_ofi_ctrl_msg_entry_t) == 64,
 		"Wrong size for RDMA Control message entry");
@@ -325,6 +354,8 @@ typedef struct {
 typedef struct {
 	/* True for eager messages */
 	bool eager;
+	/* True if ctrl msg was received - Only valid if eager=true */
+	bool eager_ctrl_msg_received;
 	/* Remote destination buffer offset from base address */
 	uintptr_t remote_buff_offset;
 	/* Remote buffer length */
@@ -341,8 +372,15 @@ typedef struct {
 	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
 	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
 	int tag;
-	/* Sub-receive index within a grouped receive (encoded in immediate data) */
+	/* Eager offset within the sender's eager queue (only for eager sends) */
+	uint8_t eager_offset;
+	/* Freelist entry for the eager header buffer (returned on send completion) */
+	nccl_ofi_freelist::fl_entry *eager_hdr_fl_entry;
+	/* Sub-receive index from ctrl msg entry (for RDMA write immediate data) */
 	uint8_t recv_idx;
+	/* Previous batch info */
+	uint8_t prev_batch_count;
+	uint16_t prev_msg_seq_num;
 	/* Schedule used to transfer this request. We save the pointer to
 	 * reference it when transferring the request over network. */
 	nccl_net_ofi_schedule_t *schedule;
@@ -381,6 +419,8 @@ typedef struct {
 	nccl_net_ofi_rdma_req *eager_rx_buff_req;
 	/* Pointer to recv parent request */
 	nccl_net_ofi_rdma_req *recv_req;
+	/* Sub-receive index within grouped receive (0 for single recv) */
+	int sub_recv_idx;
 } rdma_req_eager_copy_data_t;
 
 /*
@@ -415,6 +455,10 @@ typedef struct rdma_req_recv_sub {
 	int ncompls;
 	/* Total expected segments for this sub-receive */
 	int total_segms;
+	/* Flag indicating if this request was consumed */
+	bool consumed;
+	/* (Eager) pointer to eager local copy request for this sub-recv */
+	nccl_net_ofi_rdma_req *eager_copy_req;
 } rdma_req_recv_sub_t;
 
 /*
@@ -427,9 +471,6 @@ typedef struct {
 	rdma_req_recv_sub_t recvs[NCCL_OFI_MAX_RECVS];
 	/* Pointer to receive segments child request */
 	nccl_net_ofi_rdma_req *recv_segms_req;
-	/* (Eager messages) pointer to eager local copy request.
-	 * Only used when num_recvs == 1 */
-	nccl_net_ofi_rdma_req *eager_copy_req;
 	/* Total number of completions. Expect one send ctrl
 	 * completion and one completion that indicates that all
 	 * segments have arrived.
@@ -592,6 +633,15 @@ typedef struct nccl_net_ofi_rdma_send_comm_rail {
 } nccl_net_ofi_rdma_send_comm_rail_t;
 
 /*
+ * @brief	Entry in the sender-side eager queue
+ */
+typedef struct nccl_ofi_eager_queue_entry {
+	nccl_net_ofi_rdma_req *req;
+	int tag;
+	uint8_t eager_offset;
+} nccl_ofi_eager_queue_entry_t;
+
+/*
  * @brief	RDMA send communicator
  *
  * Rails and control rails are fixed-size arrays of MAX_NUM_RAILS.
@@ -631,6 +681,22 @@ public:
 	uint16_t group_num_recvs;
 	/* Bitmask of tags used in the current group */
 	uint32_t group_tag_used;
+
+	/* Eager queue: outstanding eager sends awaiting ctrl msg resolution */
+	nccl_ofi_eager_queue_entry_t eager_queue[NCCL_OFI_MAX_EAGER_PENDING];
+	uint8_t eager_queue_head;
+	uint8_t eager_queue_tail;
+	uint8_t eager_queue_count;
+	/* Next eager offset to assign */
+	uint8_t eager_offset_next;
+	/* Previous batch info (set when drain resets eager_offset_next) */
+	uint16_t prev_eager_msg_seq_num;
+	uint8_t prev_eager_batch_count;
+	/* Freelist of eager header buffers */
+	nccl_ofi_freelist *eager_hdr_fl;
+	nccl_net_ofi_rdma_mr_handle_t *eager_hdr_mr_handle;
+	/* Whether eager sends prepend an 8-byte header for multi-recv routing */
+	bool use_eager_header;
 
 	/* Number of rails */
 	uint16_t num_rails;
@@ -699,6 +765,20 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
  * Rails and control rails are fixed-size arrays of MAX_NUM_RAILS.
  * The constructor allocates a page-aligned control mailbox.
  */
+/*
+ * @brief	Entry in the receiver-side eager arrival queue
+ */
+typedef struct nccl_ofi_recv_eager_entry {
+	nccl_ofi_dlist_node link;  /* intrusive list node */
+	nccl_net_ofi_rdma_req *rx_buff_req;
+	uint16_t msg_seq_num;
+	uint8_t eager_offset;
+	uint8_t prev_batch_count;     /* from header, only meaningful when eager_offset == 0 */
+	uint16_t prev_msg_seq_num;    /* from header, only meaningful when eager_offset == 0 */
+	int32_t tag;
+	size_t recv_len;  /* payload length (excluding header) */
+} nccl_ofi_recv_eager_entry_t;
+
 class nccl_net_ofi_rdma_recv_comm : public nccl_net_ofi_recv_comm {
 public:
 	nccl_net_ofi_rdma_recv_comm();
@@ -715,11 +795,11 @@ public:
     nccl_net_ofi_rdma_recv_comm_rail_t *get_data_rail(uint16_t rail_id);
     nccl_net_ofi_rdma_recv_comm_rail_t *get_control_rail(uint16_t rail_id);
     int allocate_recv_req(nccl_net_ofi_rdma_device_t *device,
-			  int dev_id_arg, uint16_t msg_seq_num, int num_recvs,
-			  void **buffs, size_t *sizes, int *tags,
-			  nccl_net_ofi_rdma_mr_handle_t **buff_mr_handles,
-			  nccl_net_ofi_rdma_req **ret_req,
-			  bool recv_completion_optional);
+				int dev_id_arg, uint16_t msg_seq_num, int num_recvs,
+				void **buffs, size_t *sizes, int *tags,
+				nccl_net_ofi_rdma_mr_handle_t **buff_mr_handles,
+				nccl_net_ofi_rdma_req **ret_req,
+				bool recv_completion_optional);
 
 	/* CM receiver for connection establishment */
 	nccl_ofi_cm_receiver *receiver;
@@ -753,6 +833,24 @@ public:
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];
 #endif
+	/* Receiver-side eager queue: arrived eager messages pending resolution.
+	 * Can be more than NCCL_OFI_MAX_EAGER_PENDING since sender can complete these (see control message)
+	 * and continue sending before they arrive at the receiver
+	*/
+	nccl_ofi_dlist recv_eager_list;
+	nccl_ofi_recv_eager_entry_t recv_eager_pool[NCCL_OFI_CTRL_MAILBOX_SIZE];
+	nccl_ofi_dlist recv_eager_free;
+	/* Whether eager recvs carry an 8-byte header for multi-recv routing */
+	bool use_eager_header;
+	/* Last processed eager entry's coordinates */
+	uint16_t last_eager_msg_seq_num;
+	uint8_t last_eager_offset;
+	bool has_processed_eager;
+	/* Current recv seq being filled by the drain */
+	uint16_t eager_drain_recv_seq;
+	/* Last completed recv seq */
+	uint16_t last_completed_seq;
+
 	nccl_net_ofi_rdma_req *send_close_req;
 
 	/* Counters for total sent and received control messages */
@@ -1566,6 +1664,10 @@ public:
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
+
+	/* Whether the provider supports mixed host/device iovecs,
+	 * enabling the eager header for multi-recv routing. */
+	bool supports_eager_header = false;
 
 	/* ID pool */
 	nccl_ofi_idpool_t comm_idpool;

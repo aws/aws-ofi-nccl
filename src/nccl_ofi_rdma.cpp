@@ -423,7 +423,12 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 		props->port_speed *= plugin_ptr->topo->max_group_size;
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
+		static_assert(NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS + NCCL_OFI_RDMA_RECV_IDX_BITS + NUM_NUM_SEG_BITS == 32,
+					  "Immediate data fields must sum to 32 bits");
+		static_assert(NCCL_OFI_MAX_RECVS <= (1 << NCCL_OFI_RDMA_RECV_IDX_BITS),
+					  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
+		this->supports_eager_header = (props->max_group_receives > 1);
 	} else {
 		return ret;
 	}
@@ -622,6 +627,8 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
 		return ret;
 	}
 
+	/* Record per-sub-receive size for eager completion */
+	recv_data->recvs[eager_copy_data->sub_recv_idx].recv_size += size;
 	/* Add completion to parent request */
 	if (recv_data->num_recvs > 1) {
 		ret = inc_recv_seg_completion(recv_data->recv_segms_req, size, 1);
@@ -759,7 +766,7 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 		send_data->recv_idx = 0;
 	} else {
 		for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
-			if (ctrl->entries[i].tag == send_data->tag) {
+			if (ctrl->entries[i].tag == send_data->tag && !ctrl->entries[i].entry_used) {
 				entry = &ctrl->entries[i];
 				send_data->recv_idx = entry->recv_idx;
 				break;
@@ -779,9 +786,8 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 		send_data->remote_mr_key[rail_id] = entry->mr_key[rail_id];
 	}
 
-	/* Invalidate the entry so duplicate tags from step interleaving
-	 * won't match this already-consumed entry */
-	entry->tag = NCCL_OFI_CTRL_MSG_TAG_INVALID;
+	/* Mark entry as consumed so it won't match again */
+	entry->entry_used = 1;
 
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
 	nccl_net_ofi_mutex_lock(&req->req_lock);
@@ -870,7 +876,7 @@ static inline int free_eager_copy_req(nccl_net_ofi_rdma_req *req, bool dec_infli
 			     req, dec_inflight_reqs);
 }
 
-static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_recv_comm *r_comm,
+static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_recv_comm *r_comm, int sub_recv_idx,
 				       nccl_net_ofi_rdma_req *rx_buff_req)
 {
 	nccl_net_ofi_rdma_req *eager_copy_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
@@ -887,10 +893,227 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net
 	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(eager_copy_req);
 	eager_copy_data->recv_req = recv_req;
 	eager_copy_data->eager_rx_buff_req = rx_buff_req;
+	eager_copy_data->sub_recv_idx = sub_recv_idx;
 	assert(get_rx_buff_data(rx_buff_req)->recv_len != 0);
 
-	get_recv_data(recv_req)->eager_copy_req = eager_copy_req;
+	get_recv_data(recv_req)->recvs[sub_recv_idx].eager_copy_req = eager_copy_req;
 
+	return 0;
+}
+
+/*
+ * @brief Try to resolve a single eager entry against a recv request.
+ *
+ * For single recv: always matches (copies to recvs[0]).
+ * For grouped recv: matches if tag matches an unsatisfied sub-recv.
+ *
+ * Returns the sub-recv index on match, -1 on no match.
+ */
+static int eager_match_recv(nccl_net_ofi_rdma_req *recv_req, int32_t eager_tag)
+{
+	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	if (recv_data->num_recvs <= 1) {
+		return 0;
+	}
+	for (int i = 0; i < recv_data->num_recvs; i++) {
+		if ((!recv_data->recvs[i].consumed) && (recv_data->recvs[i].tag == eager_tag)) {
+			recv_data->recvs[i].consumed = true;
+			return i;
+		}
+	}
+	return -1;
+}
+
+/*
+ * @brief Initiate eager copy for a specific sub-recv.
+ *
+ * For sub_idx == 0, uses the existing eager_copy_req path.
+ * For sub_idx > 0, we complete via inc_recv_seg_completion.
+ */
+static int eager_copy_to_sub_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
+				  nccl_net_ofi_rdma_req *recv_req,
+				  nccl_net_ofi_rdma_req *rx_buff_req,
+				  int sub_idx)
+{
+	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
+
+	if (rx_buff_data->recv_len == 0) {
+		/* Zero-sized: repost buffer and complete */
+		int ret = check_post_rx_buff_req(rx_buff_req);
+		if (ret != 0) return ret;
+		if (recv_data->num_recvs > 1) {
+			return inc_recv_seg_completion(recv_data->recv_segms_req, 0, 1);
+		} else {
+			return inc_req_completion(recv_req, 0, recv_data->total_num_compls);
+		}
+	}
+
+	if (sub_idx == 0 && recv_data->num_recvs <= 1) {
+		/* Single recv: use existing eager_copy_req path */
+		int ret = alloc_eager_copy_req(recv_req, r_comm, sub_idx, rx_buff_req);
+		if (ret != 0) return ret;
+		return receive_progress(recv_data->recvs[sub_idx].eager_copy_req, true);
+	}
+
+	/* Multi-recv sub: do inline fi_read to the sub-recv buffer.
+	 * We reuse the eager_copy mechanism but target recvs[sub_idx]. */
+	/* For now, use recvs[0] eager_copy_req path for sub_idx 0,
+	 * and for sub_idx > 0, allocate a separate eager copy.
+	 * The eager_copy_req in recv_data is only for the legacy single path.
+	 * For grouped, we complete via recv_segms. */
+	int ret = alloc_eager_copy_req(recv_req, r_comm, sub_idx, rx_buff_req);
+	if (ret != 0) return ret;
+	return receive_progress(recv_data->recvs[sub_idx].eager_copy_req, true);
+}
+
+/*
+ * @brief Drain the receiver-side ordered eager queue.
+ *
+ * Processes eager entries in offset order against posted recv requests.
+ * - Single recv: consume one entry, advance seq.
+ * - Grouped recv: rotate queue matching tags. Non-matches pushed back.
+ *   Once group fully satisfied (by eager + writes), advance seq.
+ *   Stops if group is not fully satisfied by eager alone (writes will finish it).
+ */
+/*
+ * @brief Wraparound-aware sequence number comparison.
+ * Returns true if a comes before b in the sequence space.
+ */
+static inline bool seq_before(uint16_t a, uint16_t b)
+{
+	uint16_t diff = (a - b) & MSG_SEQ_NUM_MASK; return diff > (MSG_SEQ_NUM_MASK >> 1);
+}
+
+/*
+ * @brief Compare two eager entries by (msg_seq_num, eager_offset).
+ * Returns true if a should come before b.
+ */
+static inline bool eager_entry_less(const nccl_ofi_recv_eager_entry_t *a,
+				    const nccl_ofi_recv_eager_entry_t *b)
+{
+	if (a->msg_seq_num != b->msg_seq_num)
+		return seq_before(a->msg_seq_num, b->msg_seq_num);
+	return a->eager_offset < b->eager_offset;
+}
+
+/*
+ * @brief Insert an eager entry into the sorted list.
+ * Walks from tail backwards (most inserts go near the end).
+ */
+static inline void recv_eager_sorted_insert(nccl_ofi_dlist *list,
+					    nccl_ofi_recv_eager_entry_t *entry)
+{
+	/* Walk from tail to find insertion point */
+	nccl_ofi_dlist_node *pos = list->head.prev;
+	while (pos != &list->head) {
+		nccl_ofi_recv_eager_entry_t *existing =
+			nccl_ofi_dlist_entry(pos, &nccl_ofi_recv_eager_entry_t::link);
+		if (!eager_entry_less(entry, existing))
+			break;
+		pos = pos->prev;
+	}
+	/* Insert after pos */
+	entry->link.prev = pos;
+	entry->link.next = pos->next;
+	pos->next->prev = &entry->link;
+	pos->next = &entry->link;
+}
+
+static int drain_recv_eager_queue(nccl_net_ofi_rdma_recv_comm *r_comm)
+{
+	while (!r_comm->recv_eager_list.empty()) {
+		nccl_ofi_dlist_node *front = r_comm->recv_eager_list.front();
+		nccl_ofi_recv_eager_entry_t *entry =
+			nccl_ofi_dlist_entry(front, &nccl_ofi_recv_eager_entry_t::link);
+
+		/* Check if this entry is the next in sequence */
+		bool can_process;
+		if (!r_comm->has_processed_eager) {
+			can_process = ((entry->eager_offset == 0) && (entry->prev_msg_seq_num == 0xFFFF));
+		} else if (entry->eager_offset == 0) {
+			/* New batch: previous batch must be complete */
+			can_process = (r_comm->last_eager_msg_seq_num == entry->prev_msg_seq_num
+				    && r_comm->last_eager_offset == entry->prev_batch_count - 1);
+		} else {
+			/* Same batch: must be consecutive offset */
+			can_process = (r_comm->last_eager_msg_seq_num == entry->msg_seq_num
+				    && r_comm->last_eager_offset == entry->eager_offset - 1);
+		}
+
+		if (!can_process)
+			break;
+
+		if (entry->eager_offset == 0)
+			/* New batch starts at entry->msg_seq_num */
+			r_comm->eager_drain_recv_seq = entry->msg_seq_num;
+
+		/* Find the target recv, advancing past completed/non-matching recvs */
+		uint16_t recv_seq = r_comm->eager_drain_recv_seq;
+		bool resolved = false;
+		while (!resolved) {
+			void *elem;
+			nccl_ofi_msgbuff_elemtype_t type;
+			nccl_ofi_msgbuff_status_t stat;
+			nccl_ofi_msgbuff_result_t mb_res = r_comm->msgbuff->retrieve(
+				recv_seq, &elem, &type, &stat);
+			if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS || type != NCCL_OFI_MSGBUFF_REQ) {
+				if ((entry->eager_offset > 0) && (recv_seq == r_comm->last_completed_seq)) {
+					/* We already handled ctrl msg with this seq num but it completed since then, skip to next*/
+					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
+					continue;
+				} else
+					break;  /* recv not posted yet */
+			}
+
+			nccl_net_ofi_rdma_req *recv_req = (nccl_net_ofi_rdma_req *)elem;
+			rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
+
+			if (recv_data->num_recvs <= 1) {
+				/* Single recv: consume this entry */
+				front->remove();
+				eager_copy_to_sub_recv(r_comm, recv_req, entry->rx_buff_req, 0);
+				r_comm->recv_eager_free.push_back(&entry->link);
+				r_comm->eager_drain_recv_seq =
+					(r_comm->eager_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+				resolved = true;
+			} else {
+				/* Multi recv: match by tag */
+				int sub_idx = eager_match_recv(recv_req, entry->tag);
+				if (sub_idx >= 0) {
+					front->remove();
+					eager_copy_to_sub_recv(r_comm, recv_req, entry->rx_buff_req, sub_idx);
+					r_comm->recv_eager_free.push_back(&entry->link);
+					// Check if all sub-recvs are now consumed
+					bool all_consumed = true;
+					for (int i = 0; i < recv_data->num_recvs; i++) {
+						if (!recv_data->recvs[i].consumed) {
+							all_consumed = false;
+							break;
+						}
+					}
+					if (all_consumed) {
+						r_comm->eager_drain_recv_seq = (r_comm->eager_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+					}
+					resolved = true;
+				} else {
+					/* This eager message belongs in the next recv but don't advance eager_drain_recv_seq
+					 * in case there are additional eagers for this message
+					*/
+					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
+					continue;
+				}
+			}
+		}
+
+		if (!resolved)
+			break;  /* recv not posted, stop draining */
+
+		/* Update last processed */
+		r_comm->last_eager_msg_seq_num = entry->msg_seq_num;
+		r_comm->last_eager_offset = entry->eager_offset;
+		r_comm->has_processed_eager = true;
+	}
 	return 0;
 }
 
@@ -910,66 +1133,59 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 		return ret;
 	}
 
-	nccl_ofi_msgbuff_status_t stat;
-	nccl_ofi_msgbuff_result_t mb_res = r_comm->msgbuff->insert(msg_seq_num,
-		rx_buff_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
-
-	if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS) {
-		/* Inserted! In this case receiver has not yet called recv() for this message, so
-		   return success and initiate eager read when receiver calls recv(). */
-		return 0;
-	}
-	if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_INVALID_IDX)) {
-		NCCL_OFI_WARN("Unexpected message insert result (%d) (eager recv)", (int)mb_res);
-		return -EINVAL;
-	}
-
-	if (OFI_UNLIKELY(stat != NCCL_OFI_MSGBUFF_INPROGRESS)) {
-		NCCL_OFI_WARN("Unexpected message status (%d) (ctrl recv)", (int)stat);
-		return -EINVAL;
-	}
-
-	// In this case, there is already a req entry here. Initiate eager copy.
-	void *elem;
-	nccl_ofi_msgbuff_elemtype_t type;
-	mb_res = r_comm->msgbuff->retrieve( msg_seq_num, &elem, &type, &stat);
-	if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS || type != NCCL_OFI_MSGBUFF_REQ)) {
-		NCCL_OFI_WARN("Invalid message retrieval result for msg %hu", msg_seq_num);
-		return -EINVAL;
-	}
-	nccl_net_ofi_rdma_req *recv_req = (nccl_net_ofi_rdma_req *)elem;
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
-
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(rx_buff_req);
-	if (rx_buff_data->recv_len == 0) {
-		/* Special case: for zero-sized messages, we can skip the local read */
-		/* Re-post rx buffer */
-		ret = check_post_rx_buff_req(rx_buff_req);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
-			return ret;
-		}
-		if (recv_data->num_recvs > 1) {
-			ret = inc_recv_seg_completion(recv_data->recv_segms_req, 0, 1);
+	/* Without multi-recv, each eager maps 1:1 to a recv by msg_seq_num.
+	 * Look up directly in the msgbuff - no ordering or queue needed. */
+	if (!r_comm->use_eager_header) {
+		void *elem;
+		nccl_ofi_msgbuff_elemtype_t type;
+		nccl_ofi_msgbuff_status_t stat;
+		nccl_ofi_msgbuff_result_t mb_res = r_comm->msgbuff->retrieve(
+			msg_seq_num, &elem, &type, &stat);
+		if (mb_res == NCCL_OFI_MSGBUFF_SUCCESS && type == NCCL_OFI_MSGBUFF_REQ) {
+			return eager_copy_to_sub_recv(r_comm, (nccl_net_ofi_rdma_req *)elem, rx_buff_req, 0);
 		} else {
-			ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
+			mb_res = r_comm->msgbuff->insert(msg_seq_num,
+				rx_buff_req, NCCL_OFI_MSGBUFF_BUFF, &stat);
+			if (OFI_UNLIKELY(mb_res != NCCL_OFI_MSGBUFF_SUCCESS)) {
+				NCCL_OFI_WARN("Unexpected msgbuff insert result for eager msg %hu", msg_seq_num);
+				return -EINVAL;
+			}
+			return 0;
 		}
-		return ret;
 	}
 
-	ret = alloc_eager_copy_req(recv_req, r_comm, rx_buff_req);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to alloc_eager_copy_req");
-		return ret;
+	/* Multi-recv path: parse header, enqueue in sorted order and drain */
+	rdma_req_rx_buff_data_t *rx_data = get_rx_buff_data(rx_buff_req);
+	nccl_ofi_eager_msg_header_t *eager_hdr =
+		(nccl_ofi_eager_msg_header_t *)rx_data->rx_buff_fl_elem->ptr;
+	uint8_t eager_offset = eager_hdr->eager_offset;
+	int32_t eager_tag = eager_hdr->tag;
+	uint8_t prev_batch_count = eager_hdr->prev_batch_count;
+	uint16_t prev_msg_seq_num = eager_hdr->prev_msg_seq_num;
+	/* Adjust recv_len to exclude header */
+	rx_data->recv_len -= NCCL_OFI_EAGER_HEADER_SIZE;
+
+	/* Always enqueue in sorted order and drain */
+	if (r_comm->recv_eager_free.empty()) {
+		NCCL_OFI_WARN("Receiver eager queue full");
+		return -ENOMEM;
 	}
 
-	ret = receive_progress(recv_data->eager_copy_req, true);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed to post eager read: %d", ret);
-		return ret;
-	}
+	nccl_ofi_dlist_node *free_node = r_comm->recv_eager_free.pop_front();
+	nccl_ofi_recv_eager_entry_t *new_entry =
+		nccl_ofi_dlist_entry(free_node, &nccl_ofi_recv_eager_entry_t::link);
+	new_entry->rx_buff_req = rx_buff_req;
+	new_entry->msg_seq_num = msg_seq_num;
+	new_entry->eager_offset = eager_offset;
+	new_entry->tag = eager_tag;
+	new_entry->prev_batch_count = prev_batch_count;
+	new_entry->prev_msg_seq_num = prev_msg_seq_num;
+	new_entry->recv_len = rx_data->recv_len;
+	recv_eager_sorted_insert(&r_comm->recv_eager_list, new_entry);
 
-	return 0;
+	ret = drain_recv_eager_queue(r_comm);
+
+	return ret;
 }
 
 static int finish_connect(nccl_net_ofi_rdma_send_comm *s_comm);
@@ -1326,6 +1542,13 @@ int nccl_net_ofi_rdma_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base
 			NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
 			send_data = get_send_data(req);
 			assert(send_data->eager);
+			/* Return eager header buffer to freelist */
+			if (send_data->eager_hdr_fl_entry) {
+				nccl_net_ofi_rdma_send_comm *sc = (nccl_net_ofi_rdma_send_comm *)req->comm;
+				sc->eager_hdr_fl->entry_free(send_data->eager_hdr_fl_entry);
+				send_data->eager_hdr_fl_entry = nullptr;
+			}
+
 			ret = inc_req_completion(req, 0, send_data->total_num_compls);
 		} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
 			ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
@@ -1898,8 +2121,6 @@ static inline int free_recv_req(nccl_net_ofi_rdma_req *req,
 		(nccl_net_ofi_rdma_recv_comm *)req->comm;
 	rdma_req_recv_data_t *recv_data = get_recv_data(req);
 	nccl_net_ofi_rdma_req *recv_segms_req = recv_data->recv_segms_req;
-	nccl_net_ofi_rdma_req *eager_copy_req = recv_data->eager_copy_req;
-
 	if (recv_segms_req) {
 		ret = recv_segms_req->free(false);
 		if (ret) {
@@ -1908,11 +2129,14 @@ static inline int free_recv_req(nccl_net_ofi_rdma_req *req,
 		}
 	}
 
-	if (eager_copy_req) {
-		ret = eager_copy_req->free(false);
-		if (ret) {
-			NCCL_OFI_WARN("Failed to free receive request");
-			return ret;
+	/* Free eager copy requests for all sub-receives */
+	for (int i = 0; i < recv_data->num_recvs; i++) {
+		if (recv_data->recvs[i].eager_copy_req) {
+			ret = recv_data->recvs[i].eager_copy_req->free(false);
+			if (ret) {
+				NCCL_OFI_WARN("Failed to free eager copy request");
+				return ret;
+			}
 		}
 	}
 
@@ -2350,7 +2574,7 @@ static inline bool has_flush_completed(nccl_net_ofi_rdma_req *req)
  * @brief Check the contents of the control mailbox to check if the
  * control message has arrived or not
  */
-static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num, int tag)
+static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t seq_num, int tag, bool ignore_tag_match)
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	uint16_t expected = (uint16_t)(seq_num & MSG_SEQ_NUM_MASK);
@@ -2366,7 +2590,10 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected) {
 			return false;
 		}
-		if (ctrl->entries[i].tag == tag) {
+		if (ctrl->entries[i].entry_used == 1) {
+			continue;
+		}
+		if (ignore_tag_match || (ctrl->entries[i].tag == tag)) {
 			return true;
 		}
 	}
@@ -2396,13 +2623,19 @@ static inline uint32_t get_ctrl_msg_buff_len(nccl_net_ofi_rdma_send_comm* s_comm
  * Increment completion for eager sends if the control message has been received
  * Update request size if the recv buffer is small than the send
  */
+static bool drain_sender_eager_queue(nccl_net_ofi_rdma_send_comm *s_comm);
+
 static inline int update_send_request(nccl_net_ofi_rdma_send_comm* s_comm, nccl_net_ofi_rdma_req *req)
 {
 	int ret = 0;
 	rdma_req_send_data_t *send_data = get_send_data(req);
 
+	if (s_comm->eager_queue_count > 0)
+		drain_sender_eager_queue(s_comm);
+
 	/* Only increment completion if the send has completed */
-	if (send_data->eager && has_ctrl_msg(s_comm, req->msg_seq_num, send_data->tag) && req->ncompls > 0) {
+	bool recv_ctrl_msg = s_comm->use_eager_header ? send_data->eager_ctrl_msg_received : has_ctrl_msg(s_comm, req->msg_seq_num, send_data->tag, true);
+	if (send_data->eager && recv_ctrl_msg && req->ncompls > 0) {
 
 		send_data->remote_len = get_ctrl_msg_buff_len(s_comm, req->msg_seq_num, send_data->tag);
 		if (send_data->remote_len < send_data->buff_len) {
@@ -2418,7 +2651,6 @@ static inline int update_send_request(nccl_net_ofi_rdma_send_comm* s_comm, nccl_
 			NCCL_OFI_WARN("Failed to increase completion count for eager send request");
 			return ret;
 		}
-		s_comm->n_ctrl_received += 1;
 	}
 
 	return ret;
@@ -2536,6 +2768,8 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 				ret = -EINVAL;
 				goto exit;
 			}
+			auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+			r_comm->last_completed_seq = this->msg_seq_num;
 		}
 
 		if (this->type == NCCL_OFI_RDMA_SEND) {
@@ -2988,7 +3222,6 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	recv_data = get_recv_data(req);
 	/* In the case of early completion, only expect the completion for control msg itself */
 	recv_data->total_num_compls = recv_completion_optional ? 1 : 2;
-	recv_data->eager_copy_req = NULL;
 	recv_data->num_recvs = num_recvs;
 	for (i = 0; i < num_recvs; i++) {
 		recv_data->recvs[i].dst_buff = buffs[i];
@@ -2998,6 +3231,8 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 		recv_data->recvs[i].recv_size = 0;
 		recv_data->recvs[i].ncompls = 0;
 		recv_data->recvs[i].total_segms = 0;
+		recv_data->recvs[i].eager_copy_req = NULL;
+		recv_data->recvs[i].consumed = false;
 	}
 
 	ret = insert_recv_segms_req(this, device, dev_id_arg, msg_seq_num, num_recvs, req);
@@ -3008,6 +3243,7 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 
 	/* Update receiver's control mailbox slot */
 	uint16_t slot = req->msg_seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
+	/* Zero the slot first, then populate. msg_seq_num is written last as the ready bit. */
 	memset(&this->ctrl_mailbox[slot], 0, sizeof(nccl_net_ofi_ctrl_msg_t));
 	this->ctrl_mailbox[slot].entries[0].num_recvs = num_recvs;
 	if (recv_completion_optional) {
@@ -3022,6 +3258,7 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 		entry->buff_len = sizes[i];
 		entry->tag = tags[i];
 		entry->recv_idx = i;
+		entry->entry_used = 0;
 		entry->msg_seq_num = req->msg_seq_num & MSG_SEQ_NUM_MASK;
 		for (uint16_t rail_id = 0; rail_id < this->num_rails; rail_id++) {
 			uint64_t rkey = fi_mr_key(mr_h->mr[rail_id].get());
@@ -3201,15 +3438,6 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 		goto error;
 	}
 
-	/*
-	 * Disable eager for grouped receives (n > 1).
-	 * Eager requires matching a single rx bounce buffer to a single dest,
-	 * which doesn't generalize to multiple destinations.
-	 */
-	if (n > 1) {
-		eager = false;
-	}
-
 	/* NCCL versions prior to 2.24 require special handling for 0 byte
 	 * messages when using user buffer registration.  NCCL passes the base
 	 * pointer from the user buffer, but passes the registration from the
@@ -3248,9 +3476,9 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 				NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
 				return ret;
 			}
-			recv_data->eager_copy_req = NULL;
+			recv_data->recvs[0].eager_copy_req = NULL;
 		} else {
-			ret = alloc_eager_copy_req(req, this, rx_buff_req);
+			ret = alloc_eager_copy_req(req, this, 0, rx_buff_req);
 			if (ret != 0) {
 				goto error;
 			}
@@ -3276,7 +3504,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	}
 
 	if (eager) {
-		if (recv_data->eager_copy_req == NULL) {
+		if (recv_data->recvs[0].eager_copy_req == NULL) {
 			/* If we don't need to do eager copy, this recv is already complete */
 			ret = inc_req_completion(req, 0, recv_data->total_num_compls);
 			if (ret != 0) {
@@ -3284,7 +3512,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 			}
 		} else {
 			/* Post eager copy */
-			ret = receive_progress(recv_data->eager_copy_req, true);
+			ret = receive_progress(recv_data->recvs[0].eager_copy_req, true);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to issue eager read");
 				/* TODO: Remove req from message buffer */
@@ -3297,6 +3525,15 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	*base_req = (nccl_net_ofi_req *)req;
 	/* Increment next_msg_seq_num for next call */
 	this->next_msg_seq_num = (this->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+
+	/* Drain receiver eager queue: new recv() may unblock pending eager messages */
+	if (!this->recv_eager_list.empty()) {
+		int drain_ret = drain_recv_eager_queue(this);
+		if (drain_ret != 0) {
+			ret = drain_ret;
+			goto error;
+		}
+	}
 
 	goto exit;
 
@@ -3707,6 +3944,7 @@ exit:
 }
 
 nccl_net_ofi_rdma_send_comm::~nccl_net_ofi_rdma_send_comm() {
+	delete this->eager_hdr_fl;
 	if (this->ctrl_mailbox) {
 		free(this->ctrl_mailbox);
 	}
@@ -3733,6 +3971,8 @@ static int send_comm_destroy(nccl_net_ofi_rdma_send_comm *s_comm)
 
 	/* Deregister control mailbox */
 	domain->dereg_mr(s_comm->ctrl_mr_handle);
+
+	/* Eager header freelist is cleaned up in destructor */
 
 	/* Release communicator ID */
 	device->comm_idpool.free_id(s_comm->local_comm_id);
@@ -4123,6 +4363,15 @@ nccl_net_ofi_rdma_recv_comm::nccl_net_ofi_rdma_recv_comm()
 	ctrl_mailbox = nullptr;
 	ctrl_mr_handle = nullptr;
 	remote_mailbox_addr = 0;
+	/* Initialize eager entry pool as free list */
+	for (int i = 0; i < NCCL_OFI_CTRL_MAILBOX_SIZE; i++) {
+		recv_eager_free.push_back(&recv_eager_pool[i].link);
+	}
+	has_processed_eager = false;
+	last_eager_msg_seq_num = 0;
+	last_eager_offset = 0;
+	eager_drain_recv_seq = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
+	last_completed_seq = NCCL_OFI_RDMA_MSG_SEQ_NUM_START - 1;
 	remote_mr_key = {};
 
 	const size_t ctrl_mailbox_raw_size = sizeof(nccl_net_ofi_ctrl_msg_t) * NCCL_OFI_CTRL_MAILBOX_SIZE;
@@ -4402,6 +4651,7 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 	r_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 
 	r_comm->ep = l_comm_ep->shared_from_this();
+	r_comm->use_eager_header = device->supports_eager_header;
 
 	ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 
@@ -4472,9 +4722,9 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	/* Allocate request freelist */
 	/* Maximum freelist entries is 4*NCCL_OFI_MAX_REQUESTS because each receive request
-	   can have associated reqs for send_ctrl, recv_segms, and eager_copy */
+	   can have associated reqs for send_ctrl, recv_segms, and 8 eager_copy */
 	r_comm->nccl_ofi_reqs_fl = new nccl_ofi_freelist(sizeof(nccl_net_ofi_rdma_req), 16, 16,
-							 4 * NCCL_OFI_MAX_REQUESTS,
+							 11 * NCCL_OFI_MAX_REQUESTS,
 							 rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
 							 "Recv Communicator Requests",
 							 true);
@@ -4672,6 +4922,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	 */
 
 	r_comm->ep = l_comm->ep;
+	r_comm->use_eager_header = ep->rdma_endpoint_get_device()->supports_eager_header;
 
 	/* Initialize connect response message */
 	nccl_ofi_rdma_connection_info_t conn_resp_msg;
@@ -4972,7 +5223,7 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 		   has not arrived, so we expect one extra completion for the ctrl msg recv. */
 		send_data->total_num_compls = send_data->schedule->num_xfer_infos + 1;
 		send_data->wdata = GET_RDMA_WRITE_IMM_DATA(s_comm->remote_comm_id, req->msg_seq_num,
-							   send_data->recv_idx, send_data->schedule->num_xfer_infos);
+								send_data->recv_idx, send_data->schedule->num_xfer_infos);
 	}
 
 	send_data->eager = eager;
@@ -5067,19 +5318,67 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req *req,
 				nccl_net_ofi_rdma_send_comm_rail_t *comm_rail,
 				nccl_net_ofi_xfer_info_t *xfer_info)
 {
+	nccl_net_ofi_rdma_send_comm *s_comm = (nccl_net_ofi_rdma_send_comm *)req->comm;
 	rdma_req_send_data_t *send_data = get_send_data(req);
 	assert(xfer_info->rail_id < send_data->buff_mr_handle->num_rails);
 	uint16_t rail_id = xfer_info->rail_id;
 	struct fid_mr *rail_mr_handle = send_data->buff_mr_handle->mr[rail_id].get();
-	void *desc = fi_mr_desc(rail_mr_handle);
-
 	ssize_t rc;
-	/* Post eager send */
-	rc = fi_senddata(comm_rail->local_ep, (void*)(((uintptr_t)send_data->buff) + xfer_info->offset), xfer_info->msg_size, desc,
-			 send_data->wdata, comm_rail->remote_addr, rdma_req_get_ofi_context(req, rail_id));
+
+	if (!s_comm->use_eager_header) {
+		/* Single-recv path: plain fi_senddata without header */
+		void *desc = fi_mr_desc(rail_mr_handle);
+		void *data = (void*)(((uintptr_t)send_data->buff) + xfer_info->offset);
+
+		rc = fi_senddata(comm_rail->local_ep, data, xfer_info->msg_size,
+				 desc, send_data->wdata, comm_rail->remote_addr,
+				 rdma_req_get_ofi_context(req, rail_id));
+
+		if ((rc != 0) && (rc != -FI_EAGAIN)) {
+			NCCL_OFI_WARN("fi_senddata (eager) failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
+		}
+		return rc;
+	}
+
+	/* Multi-recv path: 2-iovec send with [header][payload] */
+	/* Allocate eager header from freelist */
+	nccl_ofi_freelist::fl_entry *hdr_fl_entry = s_comm->eager_hdr_fl->entry_alloc();
+	if (OFI_UNLIKELY(!hdr_fl_entry)) {
+		NCCL_OFI_WARN("No free eager header buffers");
+		return -ENOMEM;
+	}
+	nccl_ofi_eager_msg_header_t *hdr = (nccl_ofi_eager_msg_header_t *)hdr_fl_entry->ptr;
+	send_data->eager_hdr_fl_entry = hdr_fl_entry;
+	hdr->eager_offset = send_data->eager_offset;
+	hdr->tag = send_data->tag;
+	hdr->prev_batch_count = send_data->prev_batch_count;
+	hdr->prev_msg_seq_num = send_data->prev_msg_seq_num;
+
+	/* Build 2-iovec message: [header][payload] */
+	struct iovec iov[2];
+	void *desc_arr[2];
+
+	iov[0].iov_base = hdr;
+	iov[0].iov_len = NCCL_OFI_EAGER_HEADER_SIZE;
+	freelist_regmr_fn_handle_t *hdr_mr_fl = (freelist_regmr_fn_handle_t *)hdr_fl_entry->mr_handle;
+	desc_arr[0] = fi_mr_desc(hdr_mr_fl->mr_handle->mr[rail_id].get());
+
+	iov[1].iov_base = (void*)(((uintptr_t)send_data->buff) + xfer_info->offset);
+	iov[1].iov_len = xfer_info->msg_size;
+	desc_arr[1] = fi_mr_desc(rail_mr_handle);
+
+	struct fi_msg msg = {};
+	msg.msg_iov = iov;
+	msg.desc = desc_arr;
+	msg.iov_count = 2;
+	msg.addr = comm_rail->remote_addr;
+	msg.context = rdma_req_get_ofi_context(req, rail_id);
+	msg.data = send_data->wdata;
+
+	rc = fi_sendmsg(comm_rail->local_ep, &msg, FI_REMOTE_CQ_DATA);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
-		NCCL_OFI_WARN("fi_senddata failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
+		NCCL_OFI_WARN("fi_sendmsg (eager) failed; RC: %zd, Error: %s", rc, fi_strerror(-rc));
 	} else if (rc == 0) {
 		NCCL_OFI_TRACE_EAGER_SEND_START(req->dev_id, rail_id, xfer_info->msg_size, req->comm, req->msg_seq_num, req);
 	}
@@ -5251,7 +5550,6 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 	size_t ctrl_msg_len = r_comm->ctrl_mailbox[slot].entries[0].num_recvs
 			      * sizeof(nccl_net_ofi_ctrl_msg_entry_t);
 	nccl_net_ofi_schedule_t *schedule = NULL;
-
 	if (ep->num_control_rails > 1) {
 		schedule = scheduler->get_schedule(ctrl_msg_len, ep->num_control_rails);
 
@@ -5322,11 +5620,12 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
 	rdma_req_recv_data_t *recv_data = get_recv_data(eager_copy_data->recv_req);
 
-	/* Validate size of data (eager only used for single recv, so use recvs[0]) */
-	if (recv_data->recvs[0].dst_len < rx_buff_data->recv_len) {
+	/* Validate size of data against target sub-recv */
+	int sub_idx = eager_copy_data->sub_recv_idx;
+	if (recv_data->recvs[sub_idx].dst_len < rx_buff_data->recv_len) {
 		NCCL_OFI_TRACE(NCCL_NET, "Recv buffer (%zu) smaller than eager send size (%zu)",
-			       recv_data->recvs[0].dst_len, rx_buff_data->recv_len);
-		rx_buff_data->recv_len = recv_data->recvs[0].dst_len;
+			       recv_data->recvs[sub_idx].dst_len, rx_buff_data->recv_len);
+		rx_buff_data->recv_len = recv_data->recvs[sub_idx].dst_len;
 	}
 
 	// Get communicator rail information to xfer the req
@@ -5339,7 +5638,7 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 		(freelist_regmr_fn_handle_t *)rx_buff_data->rx_buff_fl_elem->mr_handle;
 	nccl_net_ofi_rdma_mr_handle_t *rx_mr_handle = fl_handle->mr_handle;
 
-	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->recvs[0].dest_mr_handle;
+	nccl_net_ofi_rdma_mr_handle_t *dest_mr_handle = recv_data->recvs[sub_idx].dest_mr_handle;
 
 	assert(rx_rail_id < dest_mr_handle->num_rails);
 	void *desc = fi_mr_desc(dest_mr_handle->mr[rx_rail_id].get());
@@ -5351,8 +5650,10 @@ static int post_eager_copy(nccl_net_ofi_rdma_req *req)
 		return -EIO;
 	}
 
-	uintptr_t buff_offset = (uintptr_t)rx_buff - rx_mr_handle->base_addr;
-	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->recvs[0].dst_buff,
+	/* Skip the eager header in the bounce buffer if present */
+	uintptr_t buff_offset = (uintptr_t)rx_buff - rx_mr_handle->base_addr +
+		(r_comm->use_eager_header ? NCCL_OFI_EAGER_HEADER_SIZE : 0);
+	ssize_t rc = fi_read(comm_rail->local_ep, recv_data->recvs[sub_idx].dst_buff,
 			     rx_buff_data->recv_len, desc, comm_rail->local_addr,
 			     buff_offset,
 			     rx_key, rdma_req_get_ofi_context(req, rx_rail_id));
@@ -5515,6 +5816,96 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req *rx_buff_req)
  * @brief	Send a message. This "interface function" is called, indirectly, from
  *       	the application
  */
+
+/*
+ * @brief Drain the sender eager queue against available ctrl msgs.
+ *
+ * For each ctrl msg at next_msg_seq_num:
+ *   - Single recv: pop front of queue (first entry satisfies it), advance seq.
+ *   - Grouped recv: rotate queue once, matching tags..
+ *
+ * Returns whether control message was not found. This is needed so it won't
+ * be checked again if we stopped draining. Otherwise there could be a race
+ * where we didn't drain but we are using a new control message
+ */
+static bool drain_sender_eager_queue(nccl_net_ofi_rdma_send_comm *s_comm)
+{
+	while (s_comm->eager_queue_count > 0) {
+		uint16_t seq = s_comm->next_msg_seq_num;
+		if (!has_ctrl_msg(s_comm, seq, 0, true))
+			return false;
+
+		/* Memory fence: we're about to read ctrl msg contents */
+		std::atomic_thread_fence(std::memory_order_acquire);
+
+		uint16_t slot = seq % NCCL_OFI_CTRL_MAILBOX_SIZE;
+		nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
+		uint16_t num_recvs = ctrl->entries[0].num_recvs;
+		uint8_t head = s_comm->eager_queue_head;
+		nccl_ofi_eager_queue_entry_t *entry = &s_comm->eager_queue[head];
+		rdma_req_send_data_t *send_data = get_send_data(entry->req);
+		/* Consume element from head. If it won't be found, we'll push it to the end*/
+		s_comm->eager_queue_head = (head + 1) % NCCL_OFI_MAX_EAGER_PENDING;
+		s_comm->eager_queue_count--;
+
+		if (num_recvs <= 1) {
+			/* Single recv: the front entry satisfies it */
+			send_data->eager_ctrl_msg_received = true;
+			s_comm->n_ctrl_received += 1;
+			s_comm->next_msg_seq_num = (seq + 1) & MSG_SEQ_NUM_MASK;
+			/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
+			if (s_comm->eager_offset_next > 0) {
+				s_comm->prev_eager_msg_seq_num = seq;
+				s_comm->prev_eager_batch_count = s_comm->eager_offset_next;
+				s_comm->eager_offset_next = 0;
+			}
+			continue;
+		}
+
+		if (s_comm->group_sends_remaining == 0) {
+			/* Start a new group */
+			s_comm->n_ctrl_received += 1;
+			s_comm->group_num_recvs = num_recvs;
+			s_comm->group_sends_remaining = num_recvs;
+		}
+
+		/* Search for matching tag in ctrl entries */
+		bool found = false;
+		for (uint16_t e = 0; e < num_recvs; e++) {
+			if ((ctrl->entries[e].entry_used == 0) && (ctrl->entries[e].tag == entry->tag)) {
+				send_data->eager_ctrl_msg_received = true;
+				ctrl->entries[e].entry_used = 1;
+				s_comm->group_sends_remaining--;
+				found = true;
+				break;
+			}
+		}
+		if (!found) {
+			/* No match: push back */
+			uint8_t tail = s_comm->eager_queue_tail;
+			s_comm->eager_queue[tail] = *entry;
+			s_comm->eager_queue_tail = (tail + 1) % NCCL_OFI_MAX_EAGER_PENDING;
+			s_comm->eager_queue_count++;
+			break;
+
+		}
+
+		if (s_comm->group_sends_remaining == 0) {
+			/* All sub-recvs satisfied by eager */
+			s_comm->next_msg_seq_num = (seq + 1) & MSG_SEQ_NUM_MASK;
+			s_comm->group_num_recvs = 0;
+			/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
+			if (s_comm->eager_offset_next > 0) {
+				s_comm->prev_eager_msg_seq_num = seq;
+				s_comm->prev_eager_batch_count = s_comm->eager_offset_next;
+				s_comm->eager_offset_next = 0;
+			}
+		}
+	}
+
+	return true;
+}
+
 int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
                          			  nccl_net_ofi_mr_handle_t *mhandle, nccl_net_ofi_req **base_req)
 {
@@ -5583,9 +5974,20 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		mr_handle = domain->flush_buff.mr_handle;
 	}
 
-	in_group = (s_comm->group_sends_remaining > 0);
+	/* Drain eager queue against any available ctrl msgs */
+	if (s_comm->eager_queue_count > 0) {
+		have_ctrl = drain_sender_eager_queue(s_comm);
+		if (have_ctrl) {
+			/* Control message can be used - Check on specific tag*/
+			have_ctrl = has_ctrl_msg(s_comm, s_comm->next_msg_seq_num, tag, false);
+		}
+	} else {
+		have_ctrl = has_ctrl_msg(s_comm, s_comm->next_msg_seq_num, tag, false);
+	}
 
-	have_ctrl = has_ctrl_msg(s_comm, msg_seq_num, tag);
+	/* Determine state again after drain*/
+	msg_seq_num = s_comm->next_msg_seq_num;
+	in_group = (s_comm->group_sends_remaining > 0) ? true : false;
 
 	/*
 	 * In some transports with FI_PROGRESS_MANUAL, inbound RDMA writes
@@ -5613,12 +6015,16 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	}
 
 	/* Determine if this should be sent eagerly.
-	 * Eager is disabled when multi-recv requires the sender to wait for
-	 * the ctrl msg to detect grouped receives. Currently multi-recv is
-	 * only supported with eager_send_size == -1, so the size check
-	 * is sufficient to disable eager for multi-recv. */
-	if (!have_ctrl &&
-	    (ssize_t)size <= endpoint->eager_send_size && s_comm->num_inflight_writes == 0) {
+	 * Eager is allowed if: no ctrl msg, size + header fits, queue not full,
+	 * not mid-group,
+	 * no inflight writes.
+	 * and not in the middle of eager sequence (to keep msg_seq_num of eager with offset=0 to be correct)
+	 */
+	if (!have_ctrl && !in_group &&
+	    (ssize_t)(size + NCCL_OFI_EAGER_HEADER_SIZE) <= endpoint->eager_send_size &&
+	    s_comm->eager_queue_count < NCCL_OFI_MAX_EAGER_PENDING &&
+	    s_comm->num_inflight_writes == 0 &&
+		((s_comm->eager_queue_count == 0) || (s_comm->eager_offset_next > 0))) {
 		eager = true;
 	}
 
@@ -5639,6 +6045,23 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 				  size, mr_handle, eager, tag, &req);
 	if (OFI_UNLIKELY(ret != 0)) {
 		goto error;
+	}
+
+	if (s_comm->use_eager_header && eager) {
+		/* Set eager offset and enqueue */
+		rdma_req_send_data_t *eager_send_data = get_send_data(req);
+		eager_send_data->eager_offset = s_comm->eager_offset_next;
+		eager_send_data->eager_ctrl_msg_received = false;
+		eager_send_data->prev_batch_count = s_comm->prev_eager_batch_count;
+		eager_send_data->prev_msg_seq_num = s_comm->prev_eager_msg_seq_num;
+
+		uint8_t idx = s_comm->eager_queue_tail;
+		s_comm->eager_queue[idx].req = req;
+		s_comm->eager_queue[idx].tag = tag;
+		s_comm->eager_queue[idx].eager_offset = s_comm->eager_offset_next;
+		s_comm->eager_queue_tail = (idx + 1) % NCCL_OFI_MAX_EAGER_PENDING;
+		s_comm->eager_queue_count++;
+		s_comm->eager_offset_next++;
 	}
 
 	if (have_ctrl) {
@@ -5686,15 +6109,24 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 
 	/* Return request to NCCL */
 	*base_req = req;
-	/* Increment next_msg_seq_num: for grouped sends, only after the last sub-send */
-	if (in_group) {
-		s_comm->group_sends_remaining--;
-		if (s_comm->group_sends_remaining == 0) {
-			s_comm->group_num_recvs = 0;
+	/* Increment next_msg_seq_num: skip for eager (resolved during drain) */
+	if (!eager || !s_comm->use_eager_header) {
+		uint16_t orig_seq = s_comm->next_msg_seq_num;
+		if (in_group) {
+			s_comm->group_sends_remaining--;
+			if (s_comm->group_sends_remaining == 0) {
+				s_comm->group_num_recvs = 0;
+				s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+			}
+		} else {
 			s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
 		}
-	} else {
-		s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
+		/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
+		if ((s_comm->eager_offset_next > 0) && (orig_seq != s_comm->next_msg_seq_num)) {
+			s_comm->prev_eager_msg_seq_num = orig_seq;
+			s_comm->prev_eager_batch_count = s_comm->eager_offset_next;
+			s_comm->eager_offset_next = 0;
+		}
 	}
 
 	goto exit;
@@ -6097,10 +6529,19 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	ret_s_comm->type = NCCL_NET_OFI_SEND_COMM;
 	ret_s_comm->dev_id = dev_id;
 	ret_s_comm->comm_active = true;
+	ret_s_comm->use_eager_header = device->supports_eager_header;
 	ret_s_comm->next_msg_seq_num = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 	ret_s_comm->group_sends_remaining = 0;
 	ret_s_comm->group_num_recvs = 0;
 	ret_s_comm->group_tag_used = 0;
+	ret_s_comm->eager_queue_head = 0;
+	ret_s_comm->eager_queue_tail = 0;
+	ret_s_comm->eager_queue_count = 0;
+	ret_s_comm->eager_offset_next = 0;
+	ret_s_comm->prev_eager_msg_seq_num = 0xFFFF;
+	ret_s_comm->prev_eager_batch_count = 0;
+	ret_s_comm->eager_hdr_fl = nullptr;
+	ret_s_comm->eager_hdr_mr_handle = nullptr;
 
 	/* The connect() API function acquired the endpoint we are using via
 	   get_ep(). Store shared_ptr in the comm to keep ep alive. */
@@ -6135,6 +6576,20 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 						  NCCL_PTR_HOST, &ret_s_comm->ctrl_mr_handle);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Could not register memory for control mailbox for dev %d", dev_id);
+		ret = -ENOMEM;
+		goto error;
+	}
+
+	/* Create freelist for eager header buffers */
+	ret_s_comm->eager_hdr_fl = new nccl_ofi_freelist(
+		sizeof(nccl_ofi_eager_msg_header_t),
+		NCCL_OFI_CTRL_MAILBOX_SIZE, 16, 0,
+		NULL, NULL,
+		freelist_regmr_host_fn, freelist_deregmr_host_fn,
+		domain_ptr, NCCL_OFI_EAGER_HEADER_SIZE,
+		"Eager Header", true);
+	if (!ret_s_comm->eager_hdr_fl) {
+		NCCL_OFI_WARN("Could not create eager header freelist for dev %d", dev_id);
 		ret = -ENOMEM;
 		goto error;
 	}
@@ -6554,7 +7009,7 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 	   posting 0 byte rx buffers.  Note that if eager_send_size is -1
 	   (disabled), eager_rx_buff_size will also be -1. */
 	this->eager_rx_buff_size = (this->eager_send_size == 0) ?
-		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size;
+		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size + (device->supports_eager_header ? NCCL_OFI_EAGER_HEADER_SIZE : 0);
 
 	ret = this->init_rail_ofi_resources(device, domain_arg.get());
 	if (ret != 0) {
