@@ -2363,9 +2363,6 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 	std::atomic_thread_fence(std::memory_order_acquire);
 
 	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
-	if (ctrl->entries[0].num_recvs <= 1) {
-		return true;
-	}
 	/* Grouped receive: verify per-entry seq nums and find matching tag */
 	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
 		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected) {
