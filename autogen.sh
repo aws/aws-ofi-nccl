@@ -6,4 +6,6 @@
 
 #! /bin/sh -x
 
+echo "Hello"
+
 autoreconf -ivf
