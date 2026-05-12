@@ -7,6 +7,17 @@
 - Debian 12 and Debian 13
 - RHEL 9 and RHEL 10
 
+# v1.19.2 (2026-05)
+
+The 1.19 release series has been tested with [NCCL v2.27.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.3-1), [NCCL v2.28.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.28.7-1), and [NCCL v2.29.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.29.7-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+This release has been tested with [Libfabric v2.4.0](https://github.com/aws/libfabric/releases/tag/v2.4.0amzn3.0). The plugin requires at least [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0), and compiling AWS-specific support requires at least [Libfabric v1.22.0](https://github.com/ofiwg/libfabric/releases/tag/v1.22.0).
+
+### Bug Fixes and Improvements:
+
+- Fixed correctness issues with multirecv feature
+- Fixed RCCL build when building from release tarballs
+
 # v1.19.1 (2026-05)
 
 The 1.19 release series has been tested with [NCCL v2.27.3-1](https://github.com/NVIDIA/nccl/releases/tag/v2.27.3-1), [NCCL v2.28.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.28.7-1), and [NCCL v2.29.7-1](https://github.com/NVIDIA/nccl/releases/tag/v2.29.7-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
