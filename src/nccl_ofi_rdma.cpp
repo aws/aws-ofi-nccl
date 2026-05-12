@@ -542,16 +542,14 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req *req)
  * To update the state of subrequests, use the subrequest specific
  * update functions.
  *
- * @param	req
- *		The request
+ * @param	recv_data
+ *		The recv data
  * @param	size
  *		Size of the completion
- * @param	total_ncompls
- *		Total number of expected request completions
  * @return	0, on success
  *		non-zero, on error
  */
-static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req, size_t size, int total_nsegms);
+static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data, size_t size);
 
 static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 				     size_t size, int total_ncompls)
@@ -624,7 +622,7 @@ static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
 
 	/* Add completion to parent request */
 	if (recv_data->num_recvs > 1) {
-		ret = inc_recv_seg_completion(recv_data->recv_segms_req, size, recv_data->num_recvs);
+		ret = inc_recv_seg_completion(recv_data, size);
 	} else {
 		ret = inc_req_completion(recv_req, size, recv_data->total_num_compls);
 	}
@@ -682,13 +680,14 @@ static inline int set_write_ctrl_completed(nccl_net_ofi_rdma_req *req)
  * @return	0, on success
  *		non-zero, on error
  */
-static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
-					  size_t size, int total_nsegms)
+static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data,
+					  size_t size)
 {
-	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
 	int ret = 0;
 	bool segms_received;
-	
+	nccl_net_ofi_rdma_req *req = recv_data->recv_segms_req;
+	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
+
 	nccl_net_ofi_mutex_lock(&req->req_lock);
 
 	rdma_req_recv_segms_data_t *recv_segms_data = get_recv_segms_data(req);
@@ -700,13 +699,12 @@ static inline int inc_recv_seg_completion(nccl_net_ofi_rdma_req *req,
 
 	/* The arrival of the last sub req is treated as a single
 	 * request completion of the parent request */
-	segms_received = (req->ncompls == total_nsegms);
+	segms_received = (req->ncompls == recv_data->num_recvs);
 
 	/* Mark receive segments request and receive request as completed */
 	if (segms_received) {
 		/* recv_segms_data already available from outer scope */
 		nccl_net_ofi_rdma_req *recv_req = recv_segms_data->recv_req;
-		rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
 		/* Total number of completions have arrived */
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
@@ -937,7 +935,7 @@ static inline int handle_eager_recv(nccl_net_ofi_rdma_recv_comm *r_comm,
 			return ret;
 		}
 		if (recv_data->num_recvs > 1) {
-			ret = inc_recv_seg_completion(recv_data->recv_segms_req, 0, recv_data->num_recvs);
+			ret = inc_recv_seg_completion(recv_data, 0);
 		} else {
 			ret = inc_req_completion(recv_req, 0, recv_data->total_num_compls);
 		}
@@ -1125,7 +1123,6 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	assert(req->type == NCCL_OFI_RDMA_RECV);
 
 	rdma_req_recv_data_t *recv_data = get_recv_data(req);
-	nccl_net_ofi_rdma_req *recv_segms_req = recv_data->recv_segms_req;
 
 	uint64_t total_segms = GET_NUM_SEG_FROM_IMM(cq_entry->data);
 	uint8_t recv_idx = GET_RECV_IDX_FROM_IMM(cq_entry->data);
@@ -1137,7 +1134,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 
 	/* Only when entire sub recv completed, update parent req */
 	if (recv_data->recvs[recv_idx].ncompls == (int)total_segms) {
-		ret = inc_recv_seg_completion(recv_segms_req, recv_data->recvs[recv_idx].recv_size, recv_data->num_recvs);
+		ret = inc_recv_seg_completion(recv_data, recv_data->recvs[recv_idx].recv_size);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
