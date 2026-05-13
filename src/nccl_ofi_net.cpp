@@ -500,7 +500,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov,
 							int dev_id,
 							int num_devices,
-							nccl_ofi_properties_t *props)
+							nccl_ofi_properties_t *props) const
 {
 	int ret = 0;
 	struct fid_nic *nic_info = nullptr;
@@ -753,7 +753,7 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_device_t::get_ep(unsigned int do
 }
 
 
-nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+nccl_net_ofi_device_t::nccl_net_ofi_device_t(const nccl_net_ofi_plugin_t *plugin_arg,
 					     int device_index,
 					     struct fi_info *info)
 	: plugin(plugin_arg),

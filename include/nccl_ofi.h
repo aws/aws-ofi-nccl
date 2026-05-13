@@ -283,7 +283,7 @@ public:
 	 * Expectation is that this will be called by a transport's device
 	 * constructor 
 	 */
-	nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+	nccl_net_ofi_device_t(const nccl_net_ofi_plugin_t *plugin_arg,
 			      int device_index,
 			      struct fi_info *info);
 
@@ -329,7 +329,7 @@ public:
 	 */
 	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
 
-	nccl_net_ofi_plugin_t *plugin = nullptr;
+	const nccl_net_ofi_plugin_t *const plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
 	int dev_id;
@@ -786,7 +786,7 @@ public:
 		return 0;
 	}
 
-	inline nccl_net_ofi_device_t *get_device(size_t device_index)
+	inline nccl_net_ofi_device_t *get_device(size_t device_index) const
 	{
 		if (device_index >= get_num_devices()) {
 			NCCL_OFI_WARN("Invalid device index %zu", device_index);
@@ -795,7 +795,7 @@ public:
 		return p_devs[device_index];
 	}
 
-	inline size_t get_num_devices()
+	inline size_t get_num_devices() const
 	{
 		return p_devs.size();
 	}
@@ -808,7 +808,7 @@ public:
 	int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
 					 int dev_id,
 					 int num_devices,
-					 nccl_ofi_properties_t *props);
+					 nccl_ofi_properties_t *props) const;
 protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
