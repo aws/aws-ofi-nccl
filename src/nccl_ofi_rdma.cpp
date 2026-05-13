@@ -408,7 +408,7 @@ static inline size_t ofi_info_list_length(struct fi_info *info_list)
 int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	int ret;
-	nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
+	const nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
 	assert(plugin_ptr != nullptr);
 
 	/* Retrieve NIC properties of first rail */

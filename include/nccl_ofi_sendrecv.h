@@ -379,9 +379,9 @@ public:
 		return info;
 	}
 
-	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
+	inline const nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+		return reinterpret_cast<const nccl_net_ofi_sendrecv_plugin_t*>(plugin);
 	}
 
 	/* Device provider */

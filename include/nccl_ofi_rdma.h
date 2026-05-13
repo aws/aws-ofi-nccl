@@ -1489,9 +1489,9 @@ public:
 	/**
 	 * @brief	Return RDMA transport plugin
 	 */
-	inline nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
+	inline const nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
+		return reinterpret_cast<const nccl_net_ofi_rdma_plugin_t*>(plugin);
 	}
 
 	/**
