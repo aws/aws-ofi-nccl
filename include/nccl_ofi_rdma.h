@@ -1546,13 +1546,13 @@ public:
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
-	inline struct fi_info *get_ofi_info_for_cm() override
+	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
 		assert(!device_rails.empty());
 		return device_rails[0].info;
 	}
 
-	inline struct fi_info *get_ofi_info(uint16_t rail_id) override
+	inline struct fi_info *get_ofi_info(uint16_t rail_id) const override
 	{
 		assert(!this->device_rails.empty());
 		assert(rail_id < num_rails);
@@ -1562,7 +1562,7 @@ public:
 	/**
 	 * @brief	Return RDMA transport plugin
 	 */
-	inline const nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
+	inline const nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin() const
 	{
 		return static_cast<const nccl_net_ofi_rdma_plugin_t*>(plugin);
 	}
@@ -1580,7 +1580,7 @@ public:
 	/**
 	 * @brief	Get endpoint communicator with given ID
 	 */
-	inline nccl_net_ofi_comm *rdma_device_get_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_comm *rdma_device_get_comm(uint32_t local_comm_id) const
 	{
 		assert(local_comm_id < NCCL_OFI_RDMA_MAX_COMMS);
 		assert(local_comm_id < num_comm_ids);
@@ -1601,7 +1601,7 @@ public:
 	/**
 	 * @brief	Get endpoint send communicator with given ID
 	 */
-	inline nccl_net_ofi_rdma_send_comm *rdma_device_get_send_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_send_comm *rdma_device_get_send_comm(uint32_t local_comm_id) const
 	{
 		auto s_comm = static_cast<nccl_net_ofi_rdma_send_comm *>
 			(rdma_device_get_comm(local_comm_id));
@@ -1616,7 +1616,7 @@ public:
 	/**
 	 * @brief	Get endpoint recv communicator with given comm_id
 	 */
-	inline nccl_net_ofi_rdma_recv_comm *rdma_device_get_recv_comm(uint32_t local_comm_id)
+	inline nccl_net_ofi_rdma_recv_comm *rdma_device_get_recv_comm(uint32_t local_comm_id) const
 	{
 		auto r_comm = static_cast<nccl_net_ofi_rdma_recv_comm *>
 			(rdma_device_get_comm(local_comm_id));

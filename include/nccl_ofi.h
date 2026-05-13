@@ -296,7 +296,7 @@ public:
 	 * transport; in that case, this will be the info object associated with the 
 	 * "leader NIC"
 	 */
-	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+	virtual struct fi_info *get_ofi_info_for_cm() const = 0;
 
 	/**
 	 * Retrieve fi_info object associated with this device with rail index.
@@ -307,7 +307,7 @@ public:
 	 * instead, currently this doesn't work with EFA provider. Once that
 	 * works, that is the preferred approach.
 	 */
-	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) = 0;
+	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) const = 0;
 
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
