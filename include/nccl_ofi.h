@@ -15,6 +15,7 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
+#include <string>
 #include <nccl/net.h>
 
 #include "nccl_ofi_log.h"
@@ -332,26 +333,26 @@ public:
 	const nccl_net_ofi_plugin_t *const plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
-	int dev_id;
+	const int dev_id;
 
 	/*
 	 * Globally unique identifier for the device. An opaque identifier
 	 * returned to NCCL without assumptions about individual platforms.
 	 */
-	uint64_t guid;
+	const uint64_t guid;
 
 	/*
 	 * name of the device - should include the provider name, but may be
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
 	 */
-	char *name = nullptr;
+	const std::string name;
 
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
 	 * selected.
 	 */
-	bool need_mr_rkey_pool;
+	const bool need_mr_rkey_pool;
 
 	/* Lock for concurrency since domains can be shared by
 	 * multiple entities. */
@@ -362,9 +363,11 @@ public:
 	 * 
 	 * Releases resources associated with base device.
 	 */
-	virtual ~nccl_net_ofi_device_t();
+	virtual ~nccl_net_ofi_device_t() = default;
 
 protected:
+
+	static bool compute_need_mr_rkey_pool(struct fi_info *info);
 
 	/*
 	 * create a new domain.  This funcion is a private pure

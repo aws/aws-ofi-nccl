@@ -27,7 +27,7 @@ uint32_t nccl_ofi_get_unique_node_id(void);
  *          address of the host. Platforms can override with with
  *          platform_device_set_guid() as needed.
  */
-void nccl_net_ofi_device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device);
+void nccl_net_ofi_device_set_guid(struct fi_info *info, int dev_id);
 /*
  * @brief   Reads the product name from the DMI information.
  *          The caller must free the returned string.

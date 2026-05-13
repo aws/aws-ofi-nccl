@@ -35,7 +35,7 @@ public:
 	int init(const char **provider_filter) override;
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
-	void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) override;
+	uint64_t device_get_guid(struct fi_info *info, int dev_id) override;
 
 protected:
 	struct ec2_platform_data {
