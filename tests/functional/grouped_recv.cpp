@@ -663,6 +663,185 @@ private:
 	}
 };
 
+/*
+ * Two recv groups with different tags, sends interleaved across groups.
+ * Recv group 1: n=1, tag=8
+ * Recv group 2: n=8, tags=0-7
+ * Sends (in order): tag=0, tag=8, tag=1, tag=2, ..., tag=7
+ */
+class GroupedRecvMultiTagTest : public TestScenario {
+public:
+	GroupedRecvMultiTagTest()
+		: TestScenario("Grouped Recv Multi-Tag (recv[n=1,tag=8] + recv[n=8,tags=0-7])") {}
+
+	void run(ThreadContext& ctx) override {
+		test_nccl_properties_t props = {};
+		OFINCCLTHROW(ext_net->getProperties(0, &props));
+
+		if (props.maxRecvs < MAX_RECVS) {
+			NCCL_OFI_INFO(NCCL_NET,
+				"Skipping: maxRecvs=%d < %d", props.maxRecvs, MAX_RECVS);
+			return;
+		}
+
+		for (size_t dev_idx = 0; dev_idx < ctx.lcomms.size(); dev_idx++) {
+			run_test(ctx, dev_idx);
+		}
+	}
+
+private:
+	void run_test(ThreadContext& ctx, int dev_idx) {
+		void *sComm = ctx.scomms[dev_idx];
+		void *rComm = ctx.rcomms[dev_idx];
+
+		auto gdr_support = get_support_gdr(ext_net);
+		int buffer_type = gdr_support[dev_idx] ? NCCL_PTR_CUDA : NCCL_PTR_HOST;
+
+		if (ctx.rank == 0) {
+			sender(sComm, buffer_type);
+		} else {
+			receiver(rComm, buffer_type);
+		}
+	}
+
+	void sender(void* sComm, int buffer_type) {
+		static constexpr int send_tags[] = {0, 8, 1, 2, 3, 4, 5, 6, 7};
+		static constexpr int NUM_SENDS = 9;
+
+		void* send_bufs[NUM_SENDS] = {};
+		void* send_mh[NUM_SENDS] = {};
+		void* send_reqs[NUM_SENDS] = {};
+
+		for (int i = 0; i < NUM_SENDS; i++) {
+			OFINCCLTHROW(allocate_buff(&send_bufs[i], LARGE_SEND, buffer_type));
+			OFINCCLTHROW(initialize_buff(send_bufs[i], LARGE_SEND, buffer_type, 'A' + i));
+			OFINCCLTHROW(ext_net->regMr(sComm, send_bufs[i], LARGE_SEND, buffer_type, &send_mh[i]));
+		}
+
+		/* Round-robin post: retry sends that return NULL */
+		int num_posted = 0;
+		while (num_posted < NUM_SENDS) {
+			for (int i = 0; i < NUM_SENDS; i++) {
+				if (send_reqs[i])
+					continue;
+				OFINCCLTHROW(ext_net->isend(sComm, send_bufs[i], LARGE_SEND,
+					     send_tags[i], send_mh[i], nullptr, &send_reqs[i]));
+				if (send_reqs[i])
+					num_posted++;
+			}
+		}
+
+		/* Poll sends to completion */
+		bool all_done = false;
+		while (!all_done) {
+			all_done = true;
+			for (int i = 0; i < NUM_SENDS; i++) {
+				if (send_reqs[i]) {
+					int done = 0;
+					OFINCCLTHROW(ext_net->test(send_reqs[i], &done, nullptr));
+					if (done) send_reqs[i] = nullptr;
+					else all_done = false;
+				}
+			}
+		}
+
+		for (int i = 0; i < NUM_SENDS; i++) {
+			ext_net->deregMr(sComm, send_mh[i]);
+			deallocate_buffer(send_bufs[i], buffer_type);
+		}
+	}
+
+	void receiver(void* rComm, int buffer_type) {
+		/* Recv group 1: n=1, tag=8 */
+		void* recv1_buf = nullptr;
+		void* recv1_mh = nullptr;
+		size_t recv1_size = BUF_SIZE;
+		int recv1_tag = 8;
+		void* recv1_req = nullptr;
+
+		OFINCCLTHROW(allocate_buff(&recv1_buf, BUF_SIZE, buffer_type));
+		OFINCCLTHROW(ext_net->regMr(rComm, recv1_buf, BUF_SIZE, buffer_type, &recv1_mh));
+		post_recv(ext_net, rComm, 1, &recv1_buf, &recv1_size, &recv1_tag,
+			  &recv1_mh, &recv1_req);
+
+		/* Recv group 2: n=8, tags=0-7 */
+		void* recv2_bufs[MAX_RECVS] = {};
+		void* recv2_mh[MAX_RECVS] = {};
+		size_t recv2_sizes[MAX_RECVS];
+		int recv2_tags[MAX_RECVS];
+		void* recv2_req = nullptr;
+
+		for (int i = 0; i < MAX_RECVS; i++) {
+			OFINCCLTHROW(allocate_buff(&recv2_bufs[i], BUF_SIZE, buffer_type));
+			OFINCCLTHROW(ext_net->regMr(rComm, recv2_bufs[i], BUF_SIZE, buffer_type, &recv2_mh[i]));
+			recv2_sizes[i] = BUF_SIZE;
+			recv2_tags[i] = i;
+		}
+		post_recv(ext_net, rComm, MAX_RECVS, recv2_bufs, recv2_sizes,
+			  recv2_tags, recv2_mh, &recv2_req);
+
+		/* Poll both recv groups to completion */
+		int done1 = 0, done2 = 0;
+		int recv1_sizes[1] = {};
+		int recv2_recv_sizes[MAX_RECVS] = {};
+		while (!done1 || !done2) {
+			if (!done1)
+				OFINCCLTHROW(ext_net->test(recv1_req, &done1, recv1_sizes));
+			if (!done2)
+				OFINCCLTHROW(ext_net->test(recv2_req, &done2, recv2_recv_sizes));
+		}
+
+		/* Validate sizes */
+		if (recv1_sizes[0] != (int)LARGE_SEND) {
+			throw std::runtime_error(
+				"Recv group 1 (tag=8): expected size " +
+				std::to_string(LARGE_SEND) + " got " +
+				std::to_string(recv1_sizes[0]));
+		}
+		for (int i = 0; i < MAX_RECVS; i++) {
+			if (recv2_recv_sizes[i] != (int)LARGE_SEND) {
+				throw std::runtime_error(
+					"Recv group 2 sub " + std::to_string(i) +
+					" (tag=" + std::to_string(i) +
+					"): expected size " + std::to_string(LARGE_SEND) +
+					" got " + std::to_string(recv2_recv_sizes[i]));
+			}
+		}
+
+		/* Validate data patterns */
+		if (buffer_type == NCCL_PTR_HOST) {
+			char *expected = nullptr;
+			/* Recv group 1 got send index 1 (tag=8, pattern 'B') */
+			OFINCCLTHROW(allocate_buff((void**)&expected, LARGE_SEND, NCCL_PTR_HOST));
+			OFINCCLTHROW(initialize_buff(expected, LARGE_SEND, NCCL_PTR_HOST, 'B'));
+			OFINCCLTHROW(validate_data((char*)recv1_buf, expected, LARGE_SEND, buffer_type));
+			deallocate_buffer(expected, NCCL_PTR_HOST);
+
+			/* Recv group 2: send_tags={0,8,1,2,3,4,5,6,7}
+			 * sub 0 (tag=0) <- send idx 0, pattern 'A'
+			 * sub 1 (tag=1) <- send idx 2, pattern 'C'
+			 * sub 2..7 (tag=2..7) <- send idx 3..8, pattern 'D'..'I' */
+			static constexpr char patterns[MAX_RECVS] = {
+				'A', 'C', 'D', 'E', 'F', 'G', 'H', 'I'
+			};
+			for (int i = 0; i < MAX_RECVS; i++) {
+				OFINCCLTHROW(allocate_buff((void**)&expected, LARGE_SEND, NCCL_PTR_HOST));
+				OFINCCLTHROW(initialize_buff(expected, LARGE_SEND, NCCL_PTR_HOST, patterns[i]));
+				OFINCCLTHROW(validate_data((char*)recv2_bufs[i], expected, LARGE_SEND, buffer_type));
+				deallocate_buffer(expected, NCCL_PTR_HOST);
+			}
+		}
+
+		ext_net->deregMr(rComm, recv1_mh);
+		deallocate_buffer(recv1_buf, buffer_type);
+		for (int i = 0; i < MAX_RECVS; i++) {
+			ext_net->deregMr(rComm, recv2_mh[i]);
+			deallocate_buffer(recv2_bufs[i], buffer_type);
+		}
+	}
+};
+
+
 int main(int argc, char* argv[])
 {
 	/* Disable eager to avoid 2-iovec sends with mixed host/device memory */
@@ -694,6 +873,9 @@ int main(int argc, char* argv[])
 	suite.add(&pattern_test);
 	suite.add(&mixed_pattern_test);
 	suite.add(&mixed_both_test);
+
+	GroupedRecvMultiTagTest multi_tag_test;
+	suite.add(&multi_tag_test);
 
 	return suite.run_all();
 }
