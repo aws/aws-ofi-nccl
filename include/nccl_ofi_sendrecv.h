@@ -368,12 +368,12 @@ public:
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
-	inline struct fi_info *get_ofi_info_for_cm() override
+	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
 		return info;
 	}
 
-	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) override
+	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) const override
 	{
 		assert(rail_id == 0);
 		return info;

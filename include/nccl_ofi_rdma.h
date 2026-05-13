@@ -1473,13 +1473,13 @@ public:
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
-	inline struct fi_info *get_ofi_info_for_cm() override
+	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
 		assert(!device_rails.empty());
 		return device_rails[0].info;
 	}
 
-	inline struct fi_info *get_ofi_info(uint16_t rail_id) override
+	inline struct fi_info *get_ofi_info(uint16_t rail_id) const override
 	{
 		assert(!this->device_rails.empty());
 		assert(rail_id < num_rails);
