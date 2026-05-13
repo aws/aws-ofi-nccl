@@ -1545,7 +1545,7 @@ public:
 	nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin,
 				   int dev_id,
 				   struct fi_info *info_list,
-				   nccl_ofi_topo_t *topo);
+				   const nccl_ofi_topo_t *topo);
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 

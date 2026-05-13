@@ -107,7 +107,7 @@ typedef struct nccl_ofi_topo {
  * @brief	Set topology user data iterator to the first element of NCCL OFI
  *		topologies's user data array
  */
-int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo,
+int nccl_ofi_topo_set_to_begin(const nccl_ofi_topo_t *topo,
 			       nccl_ofi_topo_data_iterator_t *iter);
 
 /*
@@ -283,7 +283,7 @@ int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list)
  * @return	0, on success
  *		non-zero, on error
  */
-int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file);
+int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file);
 
 /*
  * @brief	Return number of topology nodes that store a libfabric NIC info
@@ -298,7 +298,7 @@ int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file);
  *		ncclSuccess, on success
  *
  */
-int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists);
+int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists);
 
 /*
  * @brief	Return next libfabric NIC info list from NCCL OFI topology
@@ -321,6 +321,6 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
  * @return	true, if EFA or ENA device detected
  *		false, topo is null or EFA/ENA device not detected.
  */
-bool nccl_ofi_topo_has_efa_ena_devices(nccl_ofi_topo_t* topo);
+bool nccl_ofi_topo_has_efa_ena_devices(const nccl_ofi_topo_t* topo);
 
 #endif // End NCCL_NET_OFI_TOPO_H_
