@@ -800,6 +800,11 @@ public:
 		return p_devs.size();
 	}
 
+	inline const nccl_ofi_topo_t *get_topo() const
+	{
+		return topo;
+	}
+
 	/**
 	 * @brief	Set properties obtained from libfabric NIC Info.
 	 *
@@ -813,7 +818,6 @@ protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
 
-public:
 	/*
 	 * Hardware topology (non-owning pointer).
 	 *
