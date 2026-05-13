@@ -738,7 +738,8 @@ public:
 	 * is called from nccl_net_ofi_create_plugin() and should properly resize the p_devs vector
 	 * to the number of devices derived from the created topology.
 	 */
-	nccl_net_ofi_plugin_t()
+	nccl_net_ofi_plugin_t(const nccl_ofi_topo_t *topo_arg)
+		: topo(topo_arg)
 	{}
 
 	/**
@@ -748,8 +749,9 @@ public:
 	 * This is expected to be called from the transport-specific SENDRECV plugin creation
 	 * function, which is called from nccl_net_ofi_create_plugin().
 	 */
-	nccl_net_ofi_plugin_t(size_t num_devices)
-		: p_devs(num_devices, nullptr)
+	nccl_net_ofi_plugin_t(size_t num_devices, const nccl_ofi_topo_t *topo_arg)
+		: p_devs(num_devices, nullptr),
+		  topo(topo_arg)
 	{
 		/* Validate that at least one Libfabric NIC was found */
 		assert(!p_devs.empty());
@@ -823,7 +825,7 @@ public:
 	 * data.  Plugins must not free this pointer; the static
 	 * unique_ptr handles cleanup automatically.
 	 */
-	nccl_ofi_topo_t *topo = nullptr;
+	const nccl_ofi_topo_t *const topo = nullptr;
 };
 
 

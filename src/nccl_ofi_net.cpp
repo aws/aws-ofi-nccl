@@ -261,7 +261,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 		switch (ofi_nccl_protocol.get()) {
 		case PROTOCOL::SENDRECV:
-			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
+			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin, topo.get());
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 				goto exit;
@@ -297,7 +297,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		if (!have_multiple_rails || rdma_plugin == NULL) {
 			try {
 				ret = nccl_net_ofi_sendrecv_init(provider_filter,
-								 &sendrecv_plugin);
+								 &sendrecv_plugin,
+								 topo.get());
 			}
 			catch (const std::exception &e) {
 				NCCL_OFI_WARN("Caught exception in sendrecv_init: %s", e.what());
@@ -333,10 +334,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
 			      ofi_nccl_protocol.get_string());
 	}
-
-	/* Set non-owning topo pointer on the winning plugin so that
-	 * complete_init and get_properties can access it. */
-	plugin->topo = topo.get();
 
 	ret = plugin->complete_init();
 	if (ret != 0) {
