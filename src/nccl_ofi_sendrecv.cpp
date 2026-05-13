@@ -79,7 +79,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 	
 	size_t num_devices = this->plugin->get_num_devices();
 	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
+	const nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
 	/* Validate libfabric NIC info */
 	if (OFI_UNLIKELY(this->info == nullptr)) {
