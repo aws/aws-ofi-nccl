@@ -236,7 +236,7 @@ nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_data_rail(u
  * @param	0, on success
  *		non-zero, on error
  */
-static int write_topo_file(nccl_ofi_topo_t *topo)
+static int write_topo_file(const nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	int topo_fd = -1;
@@ -6733,7 +6733,7 @@ nccl_net_ofi_rdma_device_t::~nccl_net_ofi_rdma_device_t()
 nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 							int device_id,
 							struct fi_info *info_list,
-							nccl_ofi_topo_t *topo)
+							const nccl_ofi_topo_t *topo)
 	: nccl_net_ofi_device_t(plugin_arg, device_id, info_list),
 	  num_comm_ids(static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS)),
 	  comm_idpool(num_comm_ids),
@@ -6939,6 +6939,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 
 
 nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo)
+	: nccl_net_ofi_plugin_t(global_topo)
 {
 	int ret = 0;
 	int num_devices = 0;
