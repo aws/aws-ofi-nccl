@@ -314,18 +314,6 @@ int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists);
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
 
 /*
- * @brief	Dump NCCL topology into file
- *
- * @param	topo
- * 		The topology
- * @param	file
- *		The file
- * @return	0, on success
- *		non-zero, on error
- */
-int nccl_ofi_topo_write_nccl_topology(nccl_ofi_topo_t *topo, FILE *file);
-
-/*
  * @brief	Check if topology has EFA/ENA devices
  *
  * @param	topo
