@@ -17,6 +17,7 @@ This release has been tested with [Libfabric v2.4.0](https://github.com/aws/libf
 
 - Fixed correctness issues with multirecv feature
 - Fixed RCCL build when building from release tarballs
+- Re-enabled dma-buf on EFAv1–v3
 
 # v1.19.1 (2026-05)
 
