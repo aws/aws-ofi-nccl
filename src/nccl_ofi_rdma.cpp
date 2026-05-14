@@ -452,8 +452,9 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req *req)
 	req->state = NCCL_OFI_RDMA_REQ_ERROR;
 
 	/* Set state of parent requests to error as well */
-	if (req->type == NCCL_OFI_RDMA_RECV_SEGMS) {
-		rdma_req_recv_segms_data_t *recv_segms_data = &static_cast<rdma_recv_segms_req *>(req)->recv_segms_data;
+	if (req->get_type() == NCCL_OFI_RDMA_RECV_SEGMS) {
+		auto *recv_segms_req = static_cast<rdma_recv_segms_req *>(req);
+		rdma_req_recv_segms_data_t *recv_segms_data = &recv_segms_req->recv_segms_data;
 		recv_segms_data->recv_req->state = NCCL_OFI_RDMA_REQ_ERROR;
 	}
 }
@@ -500,7 +501,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
 		/* Trace this completion */
-		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->type, req, req);
+		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->get_type(), req, req);
 	}
 
 	return -ret;
@@ -532,7 +533,7 @@ static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data,
 	int ret = 0;
 	bool segms_received;
 	nccl_net_ofi_rdma_req *req = recv_data->recv_segms_req;
-	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
+	assert(req->get_type() == NCCL_OFI_RDMA_RECV_SEGMS);
 
 	req->req_lock.lock();
 
@@ -703,7 +704,6 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net
 
 	eager_copy_req->comm = r_comm;
 	eager_copy_req->dev_id = recv_req->dev_id;
-	eager_copy_req->type = NCCL_OFI_RDMA_EAGER_COPY;
 	eager_copy_req->msg_seq_num = recv_req->msg_seq_num;
 
 	rdma_req_eager_copy_data_t *eager_copy_data = &static_cast<rdma_eager_copy_req *>(eager_copy_req)->eager_copy_data;
@@ -798,7 +798,6 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm *s_comm);
 
 static int handle_close_msg_recv(nccl_net_ofi_rdma_req *rx_buff_req)
 {
-	assert(rx_buff_req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF);
 
 	rdma_req_rx_buff_data_t *rx_buff_data = &static_cast<rdma_rx_buff_req *>(rx_buff_req)->rx_buff_data;
 
@@ -839,13 +838,15 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 		NCCL_OFI_WARN("RECV event had NULL ctx!");
 		return -EINVAL;
 	}
-	if (OFI_UNLIKELY((eager && (rx_buff_req->type != NCCL_OFI_RDMA_EAGER_RX_BUFF))
-			 || ((!eager) && (rx_buff_req->type != NCCL_OFI_RDMA_CTRL_RX_BUFF)))) {
+	nccl_net_ofi_rdma_req_type_t expected = eager ? NCCL_OFI_RDMA_EAGER_RX_BUFF
+						       : NCCL_OFI_RDMA_CTRL_RX_BUFF;
+	if (OFI_UNLIKELY(rx_buff_req->get_type() != expected)) {
 		NCCL_OFI_WARN("Invalid non-rx_buff request as ctx!");
 		return -EINVAL;
 	}
+	auto *rx_req = static_cast<rdma_rx_buff_req *>(rx_buff_req);
 
-	rx_buff_data = &static_cast<rdma_rx_buff_req *>(rx_buff_req)->rx_buff_data;
+	rx_buff_data = &rx_req->rx_buff_data;
 	rx_buff_data->recv_len = cq_entry->len;
 
 
@@ -957,7 +958,6 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	if (!req) {
 		return -EINVAL;
 	}
-	assert(req->type == NCCL_OFI_RDMA_RECV);
 
 	rdma_req_recv_data_t *recv_data = &static_cast<rdma_recv_req *>(req)->recv_data;
 
@@ -1042,7 +1042,7 @@ static const char *nccl_net_ofi_req_str(nccl_net_ofi_rdma_req *req)
 		 req->dev_id,
 		 req->size,
 		 req_state_str(req->state),
-		 req_type_str(req->type)
+		 req_type_str(req->get_type())
 		);
 	return buf;
 }
@@ -1203,8 +1203,8 @@ int nccl_net_ofi_rdma_context::handle_error_entry(struct fid_cq *cq,
 		      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 		      (long)err_entry->len, nccl_net_ofi_req_str(req));
 
-	if ((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) ||
-		(req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF)) {
+	if (req->get_type() == NCCL_OFI_RDMA_CTRL_RX_BUFF ||
+	    req->get_type() == NCCL_OFI_RDMA_EAGER_RX_BUFF) {
 		/* A rx buffer receive failed -- this is an internal error so bail out */
 		NCCL_OFI_WARN("Fatal: rx buffer recv completed with error");
 	} else {
@@ -1687,14 +1687,12 @@ static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_e
 {
 	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
 	if (!elem) return NULL;
-	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req();
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req(rdma_rx_buff_req::kind::EAGER);
 	req->elem = elem;
-	static_cast<rdma_rx_buff_req *>(req)->rx_kind = rdma_rx_buff_req::kind::EAGER;
 
 	assert(ep->eager_rx_buff_size > 0);
 
 	req->comm = NULL;
-	req->type = NCCL_OFI_RDMA_EAGER_RX_BUFF;
 	req->dev_id = ep->rdma_endpoint_get_device()->dev_id;
 
 	rdma_req_rx_buff_data_t *rx_buff_data = &static_cast<rdma_rx_buff_req *>(req)->rx_buff_data;
@@ -1720,12 +1718,10 @@ static inline nccl_net_ofi_rdma_req *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep
 {
 	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
 	if (!elem) return NULL;
-	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req();
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req(rdma_rx_buff_req::kind::CTRL);
 	req->elem = elem;
-	static_cast<rdma_rx_buff_req *>(req)->rx_kind = rdma_rx_buff_req::kind::CTRL;
 
 	req->comm = NULL;
-	req->type = NCCL_OFI_RDMA_CTRL_RX_BUFF;
 	req->dev_id = ep->rdma_endpoint_get_device()->dev_id;
 
 	rdma_req_rx_buff_data_t *rx_buff_data = &static_cast<rdma_rx_buff_req *>(req)->rx_buff_data;
@@ -2126,7 +2122,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	 * may have produced. */
 	if (this->state != NCCL_OFI_RDMA_REQ_COMPLETED
 		&& OFI_LIKELY(this->state != NCCL_OFI_RDMA_REQ_ERROR)) {
-		if (this->type == NCCL_OFI_RDMA_FLUSH) {
+		if (this->get_type() == NCCL_OFI_RDMA_FLUSH) {
 			if (static_cast<rdma_flush_req *>(this)->check_if_already_complete(size_p)) {
 				*done = 1;
 				goto exit;
@@ -2142,7 +2138,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 
 		/* For eager sends, the ctrl message may arrive during the CQ
 		 * scan.  Observe that arrival and update completion state. */
-		if (this->type == NCCL_OFI_RDMA_SEND) {
+		if (this->get_type() == NCCL_OFI_RDMA_SEND) {
 			ret = update_send_request(
 				static_cast<rdma_send_req *>(this)->get_send_comm(),
 				static_cast<rdma_send_req *>(this));
@@ -2156,7 +2152,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	/* Determine whether the request has finished without error and free if done */
 	if (OFI_LIKELY(this->state == NCCL_OFI_RDMA_REQ_COMPLETED)) {
 		if (size_p) {
-			if (this->type == NCCL_OFI_RDMA_RECV) {
+			if (this->get_type() == NCCL_OFI_RDMA_RECV) {
 				static_cast<rdma_recv_req *>(this)->write_completion_size(size_p);
 			} else {
 				this->req_lock.lock();
@@ -2233,7 +2229,7 @@ int rdma_recv_segms_req::post()
 int nccl_net_ofi_rdma_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
 {
 	NCCL_OFI_WARN("CQ completion (flags 0x%016" PRIx64 ") from unexpected request type %d",
-		      comp_flags, this->type);
+		      comp_flags, this->get_type());
 	return -EINVAL;
 }
 
@@ -2726,7 +2722,7 @@ int rdma_flush_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[ma
 	if (num_completions == data->total_num_compls &&
 		OFI_LIKELY(this->state != NCCL_OFI_RDMA_REQ_ERROR)) {
 
-		NCCL_OFI_TRACE_COMPLETIONS(this->dev_id, this->type, this, this);
+		NCCL_OFI_TRACE_COMPLETIONS(this->dev_id, this->get_type(), this, this);
 
 		/* If the state is already marked complete (before getting the completion event),
 		 * decrement num_pending_flush_comps to indicate we've received the completion
@@ -3219,7 +3215,6 @@ static inline int insert_recv_segms_req(
 	/* Init receive segments request */
 	recv_segms_req->comm = r_comm;
 	recv_segms_req->dev_id = dev_id;
-	recv_segms_req->type = NCCL_OFI_RDMA_RECV_SEGMS;
 	recv_segms_req->msg_seq_num = msg_seq_num;
 
 	rdma_req_recv_segms_data_t *recv_segms_data = &static_cast<rdma_recv_segms_req *>(recv_segms_req)->recv_segms_data;
@@ -3259,7 +3254,6 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	/* Init receive request */
 	req->comm = this;
 	req->dev_id = dev_id_arg;
-	req->type = NCCL_OFI_RDMA_RECV;
 	req->msg_seq_num = msg_seq_num;
 
 	recv_data = &static_cast<rdma_recv_req *>(req)->recv_data;
@@ -3806,7 +3800,6 @@ static inline int recv_comm_insert_send_close_req(nccl_net_ofi_rdma_recv_comm *r
 
 	send_close_req->comm = r_comm;
 	send_close_req->dev_id = r_comm->dev_id;
-	send_close_req->type = NCCL_OFI_RDMA_SEND_CLOSE;
 	send_close_req->msg_seq_num = 0; /* Unimportant */
 
 	rdma_req_send_close_data_t *send_close_data = &static_cast<rdma_send_close_req *>(send_close_req)->send_close_data;
@@ -4212,7 +4205,6 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm *r_comm,
 	req->elem = elem;
 	req->comm = r_comm;
 	req->dev_id = dev_id;
-	req->type = NCCL_OFI_RDMA_FLUSH;
 
 	flush_data = &static_cast<rdma_flush_req *>(req)->flush_data;
 	flush_data->data = buff;
@@ -4400,12 +4392,10 @@ static void init_rma_op_req(nccl_net_ofi_rdma_req *req,
 			    void *desc,
 			    uint64_t remote_buff,
 			    uint64_t remote_mr_key,
-			    uint64_t flags,
-			    nccl_net_ofi_rdma_req_type_t req_type)
+			    uint64_t flags)
 {
 	req->comm = comm;
 	req->dev_id = comm->dev_id;
-	req->type = req_type;
 	req->size = size;
 
 	rdma_req_rma_op_data_t *rma_op_data = &static_cast<rdma_rma_op_req *>(req)->rma_op_data;
@@ -4440,11 +4430,11 @@ static int alloc_rdma_read_req(nccl_net_ofi_rdma_recv_comm *r_comm,
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
 	}
-	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rma_op_req();
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rma_op_req(rdma_rma_op_req::direction::READ);
 	req->elem = elem;
 
 	init_rma_op_req(req, r_comm, buff, size, desc, remote_buff,
-			remote_mr_key, flags, NCCL_OFI_RDMA_READ);
+			remote_mr_key, flags);
 
 	*ret_req = req;
 
@@ -4533,18 +4523,18 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 }
 
 
-nccl_net_ofi_rdma_req::nccl_net_ofi_rdma_req()
+nccl_net_ofi_rdma_req::nccl_net_ofi_rdma_req(nccl_net_ofi_rdma_req_type_t type)
+	: req_type(type)
 {
-	/* Zero-initialize the common fields.  The union is left untouched;
-	 * each allocation site populates its type-specific members before
-	 * the request is handed out. */
+	/* Zero-initialize the common fields.  Subclass-specific data
+	 * members are populated by each allocation site after the
+	 * constructor runs. */
 	this->comm = nullptr;
 	this->dev_id = -1;
 	this->msg_seq_num = 0;
 	this->ncompls = 0;
 	this->size = 0;
 	this->state = NCCL_OFI_RDMA_REQ_CREATED;
-	this->type = NCCL_OFI_RDMA_INVALID_TYPE;
 	this->elem = nullptr;
 }
 
@@ -5188,10 +5178,10 @@ static int alloc_rdma_write_req(nccl_net_ofi_rdma_send_comm *s_comm,
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device");
 		return -ENOMEM;
 	}
-	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rma_op_req();
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rma_op_req(rdma_rma_op_req::direction::WRITE);
 	req->elem = elem;
 	init_rma_op_req(req, s_comm, buff, size, desc, remote_buff,
-			remote_mr_key, flags, NCCL_OFI_RDMA_WRITE);
+			remote_mr_key, flags);
 
 	*ret_req = req;
 
@@ -5220,7 +5210,6 @@ static int alloc_rdma_send_req(nccl_net_ofi_rdma_send_comm *s_comm,
 	req->elem = elem;
 	req->comm = s_comm;
 	req->dev_id = s_comm->dev_id;
-	req->type = NCCL_OFI_RDMA_SEND;
 	req->msg_seq_num = msg_seq_num;
 	req->size = size;
 
@@ -5282,9 +5271,8 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 	 * accessible but undefined to cover cases where the buffer
 	 * gets re-posted */
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
-	assert(req->type != NCCL_OFI_RDMA_EAGER_RX_BUFF || ep->eager_rx_buff_size > 0);
 
-	nccl_ofi_freelist *fl = (req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF ?
+	nccl_ofi_freelist *fl = (static_cast<rdma_rx_buff_req *>(req)->rx_kind == rdma_rx_buff_req::kind::EAGER ?
 		ep->eager_rx_buff_fl : ep->ctrl_rx_buff_fl);
 	fl->entry_set_undefined(rx_buff_fl_elem->ptr);
 
