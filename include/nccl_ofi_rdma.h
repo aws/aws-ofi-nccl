@@ -562,6 +562,21 @@ public:
 	 * ep/req relationship is redesigned. */
 	void enqueue_pending(bool push_front);
 
+	/* Handle a libfabric CQ completion for this request.  The
+	 * dispatcher in handle_cq_entry strips off the FI_RECV path
+	 * (which goes through rx-buffer handling) and forwards every
+	 * other completion to this method, passing the libfabric
+	 * completion flags so the subclass can branch on FI_SEND vs
+	 * FI_WRITE vs FI_READ as needed.  rail_id identifies which
+	 * libfabric rail produced the completion.
+	 *
+	 * Subclasses override this and switch on comp_flags internally.
+	 * The base class implementation logs a warning and returns
+	 * -EINVAL: it is only reached when a completion arrives on a
+	 * request type that has no corresponding override (which would
+	 * indicate a programming error). */
+	virtual int handle_completion(uint64_t comp_flags, uint16_t rail_id);
+
 };
 
 /*
@@ -587,6 +602,7 @@ public:
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
@@ -594,6 +610,7 @@ public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
@@ -601,6 +618,7 @@ public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
@@ -613,6 +631,7 @@ public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
@@ -631,6 +650,7 @@ public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
@@ -638,6 +658,7 @@ public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
 };
 
 class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
