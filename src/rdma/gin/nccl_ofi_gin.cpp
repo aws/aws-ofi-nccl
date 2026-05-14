@@ -325,6 +325,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 			delete mr_handle;
 			return ret;
 		}
+		/* Initialize signal shadow array (one entry per uint64_t in the region) */
+		mr_handle->signal_shadow.resize(mr_handle->size / sizeof(uint64_t), 0);
 	}
 
 	auto *local_handle = mr_handle->local_handle;
@@ -757,21 +759,12 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = it->second;
 
 	if (mr_handle->type == NCCL_PTR_CUDA) {
-		uint64_t old_value;
-
-		int ret = get_device_copy().copy_from_device(*mr_handle->gdr_handle,
-							     metadata.signal_offset, &old_value,
-							     sizeof(old_value));
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to read current signal value");
-			return -ret;
-		}
-
-		/* We only support addition */
-		uint64_t new_value = old_value + add_value;
+		uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
+		uint64_t new_value = mr_handle->signal_shadow[idx] + add_value;
+		mr_handle->signal_shadow[idx] = new_value;
 
 		/* Write using GDRcopy. */
-		ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
+		int ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
 						       metadata.signal_offset, sizeof(new_value));
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to update signal value");

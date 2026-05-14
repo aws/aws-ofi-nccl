@@ -164,6 +164,9 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 
 	/* Remote MR information for each peer rank */
 	std::vector<gin_remote_mr> remote_mr;
+
+	/* Shadow of signal values, indexed by offset / sizeof(uint64_t) */
+	std::vector<uint64_t> signal_shadow;
 };
 
 /**
