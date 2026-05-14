@@ -276,6 +276,22 @@ public:
 		 uint32_t rank, nccl_ofi_gin_req_t **request) override;
 
 	/**
+	 * Fence prior iget operations to ensure data is visible locally.
+	 *
+	 * Posts a loopback fi_read on each rail from a local GPU buffer into
+	 * a host buffer. PCIe ordering guarantees that completion of the read
+	 * implies all prior NIC writes (from igets) are committed to memory.
+	 *
+	 * @param mhandle: memory handle associated with the flushed region
+	 * @param rank: rank whose prior igets are being fenced
+	 * @param request: request to be returned to caller
+	 *
+	 * @return: 0 on success, non-zero on failure
+	 */
+	int iflush(nccl_ofi_gin_symm_mr_handle_t *mhandle, uint32_t rank,
+		   nccl_ofi_gin_req_t **request) override;
+
+	/**
 	 * Callback for metadata completion.
 	 *
 	 * @param metadata_msg: metadata message

@@ -256,6 +256,26 @@ public:
 		return ack_send_fl.get();
 	}
 
+	void *get_flush_buff() const
+	{
+		return flush_buff;
+	}
+
+	void *get_flush_buff_gpu() const
+	{
+		return flush_buff_gpu;
+	}
+
+	nccl_ofi_gin_mr_handle_t *get_flush_buff_mr_handle() const
+	{
+		return flush_buff_mr_handle;
+	}
+
+	nccl_ofi_gin_mr_handle_t *get_flush_buff_gpu_mr_handle() const
+	{
+		return flush_buff_gpu_mr_handle;
+	}
+
 	/**
 	 * Get a request from the freelist
 	 *
@@ -340,6 +360,8 @@ public:
 	}
 
 private:
+	void init_flush_buffers(uint16_t num_rails);
+
 	/* === Tier 1 — accessed every CQ completion and/or iputSignal === */
 	nccl_ofi_gin_ep_holder ep_holder;
 
@@ -367,6 +389,16 @@ private:
 	 */
 	std::deque<nccl_net_ofi_gin_op_req_t *> pending_requests;
 
+	/* Pre-allocated host buffer used as the local DMA target for iflush
+	   fi_read operations. One cache-line slot per rail. */
+	void *flush_buff = nullptr;
+	nccl_ofi_gin_mr_handle_t *flush_buff_mr_handle = nullptr;
+
+	/* GPU-resident flush buffer — source of the local fi_read. The NIC
+	   reads from this GPU buffer into flush_buff (host) via loopback,
+	   which forces the NIC to drain its PCIe write/read queue. */
+	void *flush_buff_gpu = nullptr;
+	nccl_ofi_gin_mr_handle_t *flush_buff_gpu_mr_handle = nullptr;
 
 	/* === Tier 3 — accessed only at connect/disconnect time === */
 	nccl_ofi_idpool_t comm_id_pool;

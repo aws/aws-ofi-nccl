@@ -274,6 +274,36 @@ private:
 	nccl_ofi_gin_resources &resources;
 };
 
+#define NCCL_OFI_GIN_FLUSH_SENTINEL_VAL (0xdeadbeefdeadbeefULL)
+
+/**
+ * Flush request that uses sentinel-based polling to detect completion.
+ *
+ * Instead of waiting for CQ completions, test() polls the host flush buffer
+ * for the sentinel value. The fi_read copies the sentinel from the GPU buffer
+ * into the host buffer; once visible, all prior operations are fenced.
+ * Sub-requests still self-return to pool via their CQ completion handler.
+ *
+ * Only one iflush may be outstanding per resources instance at a time (the
+ * host flush buffer is shared). NCCL guarantees this by polling to completion.
+ */
+class nccl_ofi_gin_iflush_req : public nccl_net_ofi_gin_base_req {
+public:
+	nccl_ofi_gin_iflush_req(nccl_ofi_gin_resources &resources_arg,
+				void *host_buff_arg, uint16_t num_rails_arg)
+	    : resources(resources_arg), host_buff(host_buff_arg),
+	      num_rails(num_rails_arg)
+	{
+	}
+
+	int test(int *done) override;
+
+private:
+	nccl_ofi_gin_resources &resources;
+	void *host_buff;
+	uint16_t num_rails;
+};
+
 /**
  * Represents an in-progress iputSignal operation on the target side.
  *
@@ -450,6 +480,7 @@ private:
 	nccl_net_ofi_gin_read_req_t read_req;
 	nccl_net_ofi_gin_metadata_send_req_t metadata_send_req;
 	nccl_ofi_gin_iget_req iget_req;
+	nccl_ofi_gin_iflush_req iflush_req;
 };
 
 #endif

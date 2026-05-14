@@ -442,6 +442,22 @@ static ncclResult_t nccl_ofi_gin_iget_v13(void *ginCtx, int context, uint64_t re
 				 localOff, localMhandle, rank, request);
 }
 
+static ncclResult_t nccl_ofi_gin_iflush_v13(void *ginCtx, int context, void *mhandle,
+					    uint32_t rank, void **request)
+{
+	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(ginCtx);
+	auto *mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(mhandle);
+
+	nccl_ofi_gin_req_t *req = nullptr;
+	int ret = gin_comm->iflush(mr_handle, rank, &req);
+	if (ret != 0) {
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	*request = req;
+	return ncclSuccess;
+}
+
 NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
 	/* Since there is no equivalent of NCCL_NET for GIN, currently we don't
 	   have name fixup depending on env var like nvidia_plugin_name_fixup().
@@ -488,7 +504,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v13_t ncclGinPlugin_v13 = {
 	.iput = nccl_ofi_gin_iput_v13,
 	.iputSignal = nccl_ofi_gin_iputSignal_v13,
 	.iget = nccl_ofi_gin_iget_v13,
-	.iflush = nullptr,
+	.iflush = nccl_ofi_gin_iflush_v13,
 	.test = nccl_ofi_gin_test,
 	.ginProgress = nccl_ofi_gin_ginProgress,
 	.queryLastError = nullptr,

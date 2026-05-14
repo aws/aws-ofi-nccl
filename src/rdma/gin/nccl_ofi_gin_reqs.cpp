@@ -7,6 +7,7 @@
 #include "rdma/gin/nccl_ofi_gin.h"
 #include "rdma/gin/nccl_ofi_gin_reqs.h"
 #include "rdma/gin/nccl_ofi_gin_resources.h"
+#include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_tracepoint.h"
 
 int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
@@ -338,5 +339,28 @@ int nccl_ofi_gin_iget_req::test(int *done)
 	   calls ginProgress, which drives CQ processing and clears pending
 	   flags as completions arrive. */
 
+	return 0;
+}
+
+int nccl_ofi_gin_iflush_req::test(int *done)
+{
+	*done = 0;
+
+	/* Poll host buffer for sentinel value — avoids waiting for CQ entries.
+	   The fi_read copies the sentinel from GPU into each per-rail slot;
+	   once visible here, all prior operations on that rail are fenced. */
+	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {
+		auto *slot = reinterpret_cast<volatile uint64_t *>(
+			static_cast<uint8_t *>(host_buff) +
+			(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id));
+		if (READ_ONCE(*slot) != NCCL_OFI_GIN_FLUSH_SENTINEL_VAL) {
+			return 0;
+		}
+	}
+
+	*done = 1;
+	auto &gin_ep = resources.get_ep();
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	resources.return_req_to_pool(this);
 	return 0;
 }

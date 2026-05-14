@@ -725,6 +725,70 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 	return 0;
 }
 
+int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle*/,
+					uint32_t /*dst_rank*/,
+					nccl_ofi_gin_req_t **request)
+{
+	/* mhandle and dst_rank are unused — flush is a local loopback fi_read
+	   that fences all prior igets on every rail, regardless of peer or MR. */
+	auto &gin_ep = resources.get_ep();
+	auto *flush_host_buff = resources.get_flush_buff();
+	auto *flush_host_mr = resources.get_flush_buff_mr_handle();
+	auto *flush_gpu_mr = resources.get_flush_buff_gpu_mr_handle();
+	auto &self_rank_comm = rank_comms[rank];
+	const uint16_t num_rails = gin_ep.get_num_rails();
+
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+
+	/* Clear host buffer slots so we can detect when the sentinel arrives */
+	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {
+		auto *slot = reinterpret_cast<volatile uint64_t *>(
+			static_cast<uint8_t *>(flush_host_buff) +
+			(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id));
+		*slot = 0;
+	}
+
+	auto *iflush_req = resources.get_req_from_pool<nccl_ofi_gin_iflush_req>(
+		resources, flush_host_buff, num_rails);
+
+	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {
+		/* Destination: per-rail slot in host flush buffer */
+		void *local_buf = static_cast<uint8_t *>(flush_host_buff) +
+				  (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * rail_id);
+		void *desc = fi_mr_desc(flush_host_mr->get_mr(rail_id));
+
+		/* Source: local GPU flush buffer via loopback (own rank's AV entry).
+		   GPU buffer is pre-filled with sentinel value. */
+		uint64_t gpu_key = fi_mr_key(flush_gpu_mr->get_mr(rail_id));
+		fi_addr_t loopback_addr = self_rank_comm.address[rail_id];
+		uint64_t remote_offset = virt_addr_mr
+			? (uintptr_t)resources.get_flush_buff_gpu()
+			: 0;
+
+		auto *read_req = resources.get_req_from_pool<nccl_net_ofi_gin_read_req_t>(
+			resources,
+			gin_ep.get_rail(rail_id).ofi_ep.get(),
+			local_buf, NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc,
+			loopback_addr, remote_offset, gpu_key);
+
+		/* No pending_flag — completion detected via sentinel polling */
+		read_req->pending_flag = nullptr;
+
+		int ret = read_req->post();
+		if (ret == -FI_EAGAIN) {
+			resources.add_pending_req(read_req);
+		} else if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("fi_read iflush failed on rail %u: %d",
+				      rail_id, ret);
+			resources.return_req_to_pool(iflush_req);
+			return ret;
+		}
+	}
+
+	*request = iflush_req;
+	return 0;
+}
+
 static inline uint32_t get_peer_rank(fi_addr_t src_addr,
 				     const std::vector<uint32_t> &rank_map_rail)
 {

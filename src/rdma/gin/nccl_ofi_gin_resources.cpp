@@ -8,6 +8,7 @@
 #include "rdma/gin/nccl_ofi_gin_reqs.h"
 
 #include "nccl_ofi_assert.h"
+#include <cstdlib>
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
@@ -464,10 +465,81 @@ nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
 	req_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0,
 					   nullptr, nullptr, "GIN Requests", true);
 	this->req_fl.reset(req_fl_tmp);
+
+	init_flush_buffers(num_rails);
+}
+
+void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
+{
+	size_t flush_buff_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * num_rails;
+
+	auto cleanup = [&]() {
+		if (flush_buff_gpu_mr_handle) { gin_ep.dereg_mr(flush_buff_gpu_mr_handle); flush_buff_gpu_mr_handle = nullptr; }
+		if (flush_buff_gpu) { nccl_net_ofi_gpu_mem_free(flush_buff_gpu); flush_buff_gpu = nullptr; }
+		if (flush_buff_mr_handle) { gin_ep.dereg_mr(flush_buff_mr_handle); flush_buff_mr_handle = nullptr; }
+		if (flush_buff) { std::free(flush_buff); flush_buff = nullptr; }
+	};
+
+	flush_buff = std::aligned_alloc(NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, flush_buff_size);
+	if (!flush_buff) {
+		throw std::runtime_error("Failed to allocate flush buffer");
+	}
+
+	try {
+		auto ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff, flush_buff_size, nullptr);
+		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle) != 0) {
+			throw std::runtime_error("Failed to register flush buffer");
+		}
+
+		if (nccl_net_ofi_gpu_mem_alloc(&flush_buff_gpu, flush_buff_size) != 0) {
+			throw std::runtime_error("Failed to allocate GPU flush buffer");
+		}
+
+		auto gpu_ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff_gpu, flush_buff_size, nullptr);
+		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle) != 0) {
+			throw std::runtime_error("Failed to register GPU flush buffer");
+		}
+
+		/* Fill GPU buffer with sentinel. Polling host buffer for this
+		   value after fi_read confirms all prior operations are fenced. */
+		uint64_t sentinel_line[NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE / sizeof(uint64_t)];
+		for (auto &v : sentinel_line) {
+			v = NCCL_OFI_GIN_FLUSH_SENTINEL_VAL;
+		}
+		for (uint16_t i = 0; i < num_rails; i++) {
+			if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+				    static_cast<uint8_t *>(flush_buff_gpu) +
+					    (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * i),
+				    sentinel_line, sizeof(sentinel_line)) != 0) {
+				throw std::runtime_error("Failed to init GPU flush buffer sentinel");
+			}
+		}
+	} catch (...) {
+		cleanup();
+		throw;
+	}
 }
 
 nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
 {
+	/* Deregister and free flush buffer before closing endpoints */
+	if (flush_buff_gpu_mr_handle) {
+		gin_ep.dereg_mr(flush_buff_gpu_mr_handle);
+		flush_buff_gpu_mr_handle = nullptr;
+	}
+	if (flush_buff_gpu) {
+		nccl_net_ofi_gpu_mem_free(flush_buff_gpu);
+		flush_buff_gpu = nullptr;
+	}
+	if (flush_buff_mr_handle) {
+		gin_ep.dereg_mr(flush_buff_mr_handle);
+		flush_buff_mr_handle = nullptr;
+	}
+	if (flush_buff) {
+		std::free(flush_buff);
+		flush_buff = nullptr;
+	}
+
 	/* For non-endpoint-MR providers, we first close the OFI endpoint, then
 	   let resources clean up in reverse-order. */
 	gin_ep.close_ofi_eps();
