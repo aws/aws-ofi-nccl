@@ -154,8 +154,6 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 			      nccl_net_ofi_rdma_ep_rail_t *ep_rail,
 			      bool set_fi_more);
 
-static nccl_net_ofi_rdma_req *allocate_req(nccl_ofi_freelist *fl);
-
 static inline int free_base_req(uint64_t *num_inflight_reqs,
 				nccl_ofi_freelist *nccl_ofi_reqs_fl,
 				nccl_net_ofi_rdma_req *req,
@@ -844,15 +842,12 @@ int nccl_net_ofi_rdma_ep_t::decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *ra
 	return this->check_post_rx_buffers_rail(rail);
 }
 
-static inline int free_eager_copy_req(nccl_net_ofi_rdma_req *req, bool dec_inflight_reqs)
+int rdma_eager_copy_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
-
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			     req, dec_inflight_reqs);
+			     this, dec_inflight_reqs);
 }
 
 static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_recv_comm *r_comm,
@@ -1772,24 +1767,6 @@ int nccl_net_ofi_rdma_ep_t::ofi_process_cq()
 
 
 /*
- * @brief	Zero out rdma request
- */
-static inline void zero_nccl_ofi_req(nccl_net_ofi_rdma_req *req)
-{
-	req->comm = NULL;
-
-	req->dev_id = -1;
-	req->size = 0;
-
-	req->state = NCCL_OFI_RDMA_REQ_CREATED;
-
-	/* Mrail zero-out */
-	req->ncompls = 0;
-
-	req->type = NCCL_OFI_RDMA_INVALID_TYPE;
-}
-
-/*
  * @brief	Free request by returning request back into freelist
  */
 static inline int free_base_req(uint64_t *num_inflight_reqs,
@@ -1815,6 +1792,11 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 
 	elem = req->elem;
 
+	/* Call the virtual destructor before returning the block to the freelist.
+	 * Construction happens per-allocation via placement new, so destruction
+	 * must also happen per-deallocation. */
+	req->~nccl_net_ofi_rdma_req();
+
 	nccl_ofi_reqs_fl->entry_free(elem);
 
 	/* Reduce inflight commands */
@@ -1828,44 +1810,35 @@ static inline int free_base_req(uint64_t *num_inflight_reqs,
 /*
  * @brief	Free write request
  */
-static inline int free_write_req(nccl_net_ofi_rdma_req *req,
-				 bool dec_inflight_reqs)
+int rdma_rma_op_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_WRITE);
-	nccl_net_ofi_rdma_send_comm *s_comm =
-		(nccl_net_ofi_rdma_send_comm *)req->comm;
-	return free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
-			req, dec_inflight_reqs);
-}
+	/* WRITE is posted on the send_comm, READ is posted on the recv_comm.
+	 * Extract the comm-specific fields first, then share the free call. */
+	uint64_t *inflight;
+	nccl_ofi_freelist *fl;
 
-/*
- * @brief	Free read request
- */
-static inline int free_read_req(nccl_net_ofi_rdma_req *req,
-				bool dec_inflight_reqs)
-{
-	assert(req->type == NCCL_OFI_RDMA_READ);
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
+	if (this->dir == direction::WRITE) {
+		auto *s_comm = this->get_send_comm();
+		inflight = &s_comm->num_inflight_reqs;
+		fl = s_comm->nccl_ofi_reqs_fl;
+	} else {
+		auto *r_comm = this->get_recv_comm();
+		inflight = &r_comm->num_inflight_reqs;
+		fl = r_comm->nccl_ofi_reqs_fl;
+	}
 
-	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			req, dec_inflight_reqs);
+	return free_base_req(inflight, fl, this, dec_inflight_reqs);
 }
 
 /*
  * @brief	Free send request
  */
-static inline int free_send_req(nccl_net_ofi_rdma_req *req,
-					 bool dec_inflight_reqs)
+int rdma_send_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_SEND);
-	nccl_net_ofi_rdma_send_comm *s_comm =
-		(nccl_net_ofi_rdma_send_comm *)req->comm;
-	rdma_req_send_data_t *send_data;
+	nccl_net_ofi_rdma_send_comm *s_comm = this->get_send_comm();
+	rdma_req_send_data_t *data = get_send_data(this);
 
-	send_data = get_send_data(req);
-
-	if (!send_data->eager && dec_inflight_reqs) {
+	if (!data->eager && dec_inflight_reqs) {
 		/* free is going to be called inside of test(), which will
 		   happen in a time when NCCL guarantees no other thread will
 		   be accessing the communicator.  So no mutex protections are
@@ -1877,30 +1850,27 @@ static inline int free_send_req(nccl_net_ofi_rdma_req *req,
 		(s_comm->num_inflight_writes)--;
 	}
 
-	if (send_data->schedule) {
+	if (data->schedule) {
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 		assert(ep != NULL);
-		nccl_net_ofi_release_schedule(ep->scheduler, send_data->schedule);
-		send_data->schedule = NULL;
+		nccl_net_ofi_release_schedule(ep->scheduler, data->schedule);
+		data->schedule = NULL;
 	}
 
 	return free_base_req(&s_comm->num_inflight_reqs, s_comm->nccl_ofi_reqs_fl,
-			req, dec_inflight_reqs);
+			this, dec_inflight_reqs);
 }
 
 /*
  * @brief	Free receive request
  */
-static inline int free_recv_req(nccl_net_ofi_rdma_req *req,
-					 bool dec_inflight_reqs)
+int rdma_recv_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_RECV);
 	int ret = 0;
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
-	rdma_req_recv_data_t *recv_data = get_recv_data(req);
-	nccl_net_ofi_rdma_req *recv_segms_req = recv_data->recv_segms_req;
-	nccl_net_ofi_rdma_req *eager_copy_req = recv_data->eager_copy_req;
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
+	rdma_req_recv_data_t *data = get_recv_data(this);
+	nccl_net_ofi_rdma_req *recv_segms_req = data->recv_segms_req;
+	nccl_net_ofi_rdma_req *eager_copy_req = data->eager_copy_req;
 
 	if (recv_segms_req) {
 		ret = recv_segms_req->free(false);
@@ -1919,94 +1889,96 @@ static inline int free_recv_req(nccl_net_ofi_rdma_req *req,
 	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			     req, dec_inflight_reqs);
+			     this, dec_inflight_reqs);
 }
 
 /*
  * @brief	Free receive segments request
  */
-static inline int free_recv_segms_req(nccl_net_ofi_rdma_req *req,
-					      bool dec_inflight_reqs)
+int rdma_recv_segms_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_RECV_SEGMS);
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			     req, dec_inflight_reqs);
+			     this, dec_inflight_reqs);
 }
 
 /*
  * @brief	Free send close request
  */
-static inline int free_send_close_req(nccl_net_ofi_rdma_req *req,
-					      bool dec_inflight_reqs)
+int rdma_send_close_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_SEND_CLOSE);
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
-	rdma_req_send_close_data_t *send_close_data = req_get_send_close_data(req);
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
+	rdma_req_send_close_data_t *data = req_get_send_close_data(this);
 
-	if (send_close_data->ctrl_schedule) {
+	if (data->ctrl_schedule) {
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 		assert(ep != NULL);
-		nccl_net_ofi_release_schedule(ep->scheduler, send_close_data->ctrl_schedule);
-		send_close_data->ctrl_schedule = NULL;
+		nccl_net_ofi_release_schedule(ep->scheduler, data->ctrl_schedule);
+		data->ctrl_schedule = NULL;
 	}
 
-	if (send_close_data->ctrl_fl_elem) {
-		r_comm->ctrl_buff_fl->entry_free(send_close_data->ctrl_fl_elem);
-		send_close_data->ctrl_fl_elem = NULL;
+	if (data->ctrl_fl_elem) {
+		r_comm->ctrl_buff_fl->entry_free(data->ctrl_fl_elem);
+		data->ctrl_fl_elem = NULL;
 	}
 
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			     req, dec_inflight_reqs);
+			     this, dec_inflight_reqs);
 }
 
 
 /*
  * @brief	Free flush request
  */
-static inline int free_flush_req(nccl_net_ofi_rdma_req *req,
-					  bool dec_inflight_reqs)
+int rdma_flush_req::free(bool dec_inflight_reqs)
 {
-	assert(req->type == NCCL_OFI_RDMA_FLUSH);
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
 
-	rdma_req_flush_data_t *flush_data = get_flush_data(req);
+	rdma_req_flush_data_t *data = get_flush_data(this);
 
 	// Free flush buffer
-	if (flush_data->flush_fl_elem) {
-		r_comm->flush_buff_fl->entry_free(flush_data->flush_fl_elem);
-		flush_data->flush_fl_elem = NULL;
+	if (data->flush_fl_elem) {
+		r_comm->flush_buff_fl->entry_free(data->flush_fl_elem);
+		data->flush_fl_elem = NULL;
 	}
 	return free_base_req(&r_comm->num_inflight_reqs, r_comm->nccl_ofi_reqs_fl,
-			req, dec_inflight_reqs);
+			this, dec_inflight_reqs);
 }
 
 
-static inline int eager_rx_buff_req_free(nccl_net_ofi_rdma_req *req,
-					   bool dec_inflight_reqs)
+int rdma_rx_buff_req::free(bool dec_inflight_reqs)
 {
 	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
-	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+	rdma_req_rx_buff_data_t *data = get_rx_buff_data(this);
+	nccl_net_ofi_rdma_ep_t *ep = data->ep;
 
-	assert(ep->eager_rx_buff_size > 0);
+	/* Pick the buffer freelist based on whether this is a ctrl or eager
+	 * rx buffer request.  The request freelist (rx_buff_reqs_fl) is the
+	 * same for both kinds. */
+	nccl_ofi_freelist *buff_fl;
+	if (this->rx_kind == kind::EAGER) {
+		assert(ep->eager_rx_buff_size > 0);
+		buff_fl = ep->eager_rx_buff_fl;
+	} else {
+		buff_fl = ep->ctrl_rx_buff_fl;
+	}
 
 	/* Free buffer */
-	if (rx_buff_data->rx_buff_fl_elem) {
-		ep->eager_rx_buff_fl->entry_free(rx_buff_data->rx_buff_fl_elem);
+	if (data->rx_buff_fl_elem) {
+		buff_fl->entry_free(data->rx_buff_fl_elem);
 	}
-	return free_base_req(NULL, ep->rx_buff_reqs_fl, req, false);
+	return free_base_req(NULL, ep->rx_buff_reqs_fl, this, false);
 }
 
 static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							       nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	nccl_net_ofi_rdma_req *req = allocate_req(ep->rx_buff_reqs_fl);
-	if (!req) return NULL;
+	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
+	if (!elem) return NULL;
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req();
+	req->elem = elem;
+	static_cast<rdma_rx_buff_req *>(req)->rx_kind = rdma_rx_buff_req::kind::EAGER;
 
 	assert(ep->eager_rx_buff_size > 0);
 
@@ -2032,24 +2004,14 @@ static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_e
 	return req;
 }
 
-static inline int ctrl_rx_buff_req_free(nccl_net_ofi_rdma_req *req,
-					bool dec_inflight_reqs)
-{
-	assert(!dec_inflight_reqs);
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(req);
-	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
-	/* Free buffer */
-	if (rx_buff_data->rx_buff_fl_elem) {
-		ep->ctrl_rx_buff_fl->entry_free(rx_buff_data->rx_buff_fl_elem);
-	}
-	return free_base_req(NULL, ep->rx_buff_reqs_fl, req, false);
-}
-
 static inline nccl_net_ofi_rdma_req *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							      nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	nccl_net_ofi_rdma_req *req = allocate_req(ep->rx_buff_reqs_fl);
-	if (!req) return NULL;
+	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
+	if (!elem) return NULL;
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req();
+	req->elem = elem;
+	static_cast<rdma_rx_buff_req *>(req)->rx_kind = rdma_rx_buff_req::kind::CTRL;
 
 	req->comm = NULL;
 	req->type = NCCL_OFI_RDMA_CTRL_RX_BUFF;
@@ -2563,33 +2525,18 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 }
 
 
-int nccl_net_ofi_rdma_req::free(bool dec_inflight_reqs)
+int nccl_net_ofi_rdma_req::free([[maybe_unused]] bool dec_inflight_reqs)
 {
-	switch (this->type) {
-	case NCCL_OFI_RDMA_WRITE:
-		return free_write_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_READ:
-		return free_read_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_SEND:
-		return free_send_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_RECV:
-		return free_recv_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_SEND_CLOSE:
-		return free_send_close_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_RECV_SEGMS:
-		return free_recv_segms_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_EAGER_COPY:
-		return free_eager_copy_req(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-		return ctrl_rx_buff_req_free(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-		return eager_rx_buff_req_free(this, dec_inflight_reqs);
-	case NCCL_OFI_RDMA_FLUSH:
-		return free_flush_req(this, dec_inflight_reqs);
-	default:
-		NCCL_OFI_WARN("Unexpected request type: %d", this->type);
-		return -EINVAL;
-	}
+	/* This base implementation is intentionally not pure virtual: every
+	 * concrete subclass overrides free(), and a request is always
+	 * allocated as a specific subclass via placement new, so this
+	 * body is unreachable in normal operation.  Keeping it as a
+	 * non-pure virtual lets the base class remain instantiable for
+	 * tooling and tests, and turns any future regression where a
+	 * caller bypasses virtual dispatch into a logged warning rather
+	 * than undefined behaviour. */
+	NCCL_OFI_WARN("Base nccl_net_ofi_rdma_req::free() called; expected virtual dispatch");
+	return -EINVAL;
 }
 
 
@@ -2903,31 +2850,6 @@ int nccl_net_ofi_rdma_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 
 	nccl_net_ofi_rdma_mr_handle_t *mr_handle = (nccl_net_ofi_rdma_mr_handle_t *)mhandle;
 	return domain->dereg_mr(mr_handle);
-}
-
-/*
- * @brief	Assign an allocated rdma request buffer
- */
-static inline nccl_net_ofi_rdma_req *allocate_req(nccl_ofi_freelist *fl)
-{
-	assert(fl != NULL);
-
-	nccl_ofi_freelist::fl_entry *elem = fl->entry_alloc();
-	if (OFI_UNLIKELY(elem == NULL)) {
-		NCCL_OFI_WARN("No freelist items available");
-		return NULL;
-	}
-
-	/* Placement new to construct base request and set vtable */
-	nccl_net_ofi_rdma_req *req = new (elem->ptr) nccl_net_ofi_rdma_req();
-	assert(req);
-
-	req->elem = elem;
-
-	/* Zero out buffer */
-	zero_nccl_ofi_req(req);
-
-	return req;
 }
 
 /**
@@ -4290,6 +4212,17 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 
 nccl_net_ofi_rdma_req::nccl_net_ofi_rdma_req()
 {
+	/* Zero-initialize the common fields.  The union is left untouched;
+	 * each allocation site populates its type-specific members before
+	 * the request is handed out. */
+	this->comm = nullptr;
+	this->dev_id = -1;
+	this->msg_seq_num = 0;
+	this->ncompls = 0;
+	this->size = 0;
+	this->state = NCCL_OFI_RDMA_REQ_CREATED;
+	this->type = NCCL_OFI_RDMA_INVALID_TYPE;
+	this->elem = nullptr;
 }
 
 

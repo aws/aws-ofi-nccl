@@ -557,16 +557,19 @@ public:
 	 * downcast from the base nccl_net_ofi_comm * here so the rest of
 	 * the subclass stays type-clean.  Asserted in debug builds. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
@@ -577,12 +580,14 @@ public:
 	 * Callers pick the appropriate accessor based on dir. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class kind { CTRL, EAGER };
 	kind rx_kind;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_send_close_req : public nccl_net_ofi_rdma_req {
@@ -591,16 +596,19 @@ public:
 	 * close control message to the sender), so this request is
 	 * associated with a recv_comm. */
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
 };
 
 /* Maximum size across all request subclasses.  Used as the freelist
