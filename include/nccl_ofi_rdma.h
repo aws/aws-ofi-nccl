@@ -480,7 +480,6 @@ public:
  */
 class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
 public:
-	nccl_net_ofi_rdma_req();
 	virtual ~nccl_net_ofi_rdma_req() = default;
 	
 	int test(int *done, int *size_p) override;
@@ -511,9 +510,6 @@ public:
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
 
-	/* Type of request */
-	nccl_net_ofi_rdma_req_type_t type;
-
 	/* Backpointer to freelist element */
 	nccl_ofi_freelist::fl_entry *elem;
 
@@ -522,6 +518,14 @@ public:
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
 	virtual int free(bool dec_inflight_reqs) = 0;
+
+	/* Return the request type enum value for this subclass.  Used
+	 * only for logging and tracing: dispatch is handled through the
+	 * per-type virtual methods above, not through the enum value.
+	 * The value is set once at construction by the subclass and is
+	 * read directly from a private const field, so this getter is
+	 * non-virtual and trivially inlinable. */
+	nccl_net_ofi_rdma_req_type_t get_type() const { return req_type; }
 
 	/* Post this request to the network.  Each subclass overrides this
 	 * to perform the type-specific libfabric post operation. */
@@ -586,6 +590,14 @@ public:
 	 * per-sub sizes, such as grouped receives. */
 	virtual void write_completion_size(int *size_p);
 
+protected:
+	/* Subclasses construct via this constructor, supplying their
+	 * concrete type tag.  The base class stores it in a private
+	 * const field so get_type() is a non-virtual field read. */
+	explicit nccl_net_ofi_rdma_req(nccl_net_ofi_rdma_req_type_t type);
+
+private:
+	const nccl_net_ofi_rdma_req_type_t req_type;
 };
 
 /*
@@ -601,6 +613,7 @@ public:
 	 * downcast from the base nccl_net_ofi_comm * here so the rest of
 	 * the subclass stays type-clean.  Asserted in debug builds. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	rdma_send_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND) {}
 	rdma_req_send_data_t send_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -610,6 +623,7 @@ public:
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_recv_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV) {}
 	rdma_req_recv_data_t recv_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -620,6 +634,7 @@ public:
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_flush_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_FLUSH) {}
 	rdma_req_flush_data_t flush_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -630,8 +645,11 @@ public:
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class direction { WRITE, READ };
+	explicit rdma_rma_op_req(direction d)
+		: nccl_net_ofi_rdma_req(d == direction::WRITE ? NCCL_OFI_RDMA_WRITE : NCCL_OFI_RDMA_READ),
+		  dir(d) {}
 	rdma_req_rma_op_data_t rma_op_data;
-	direction dir;
+	const direction dir;
 	/* RMA write requests use a send_comm; reads use a recv_comm.
 	 * Callers pick the appropriate accessor based on dir. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
@@ -644,8 +662,11 @@ public:
 class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class kind { CTRL, EAGER };
+	explicit rdma_rx_buff_req(kind k)
+		: nccl_net_ofi_rdma_req(k == kind::CTRL ? NCCL_OFI_RDMA_CTRL_RX_BUFF : NCCL_OFI_RDMA_EAGER_RX_BUFF),
+		  rx_kind(k) {}
 	rdma_req_rx_buff_data_t rx_buff_data;
-	kind rx_kind;
+	const kind rx_kind;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 };
@@ -656,6 +677,7 @@ public:
 	 * close control message to the sender), so this request is
 	 * associated with a recv_comm. */
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_send_close_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND_CLOSE) {}
 	rdma_req_send_close_data_t send_close_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -665,6 +687,7 @@ public:
 class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_eager_copy_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_EAGER_COPY) {}
 	rdma_req_eager_copy_data_t eager_copy_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -674,6 +697,7 @@ public:
 class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_recv_segms_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV_SEGMS) {}
 	rdma_req_recv_segms_data_t recv_segms_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
