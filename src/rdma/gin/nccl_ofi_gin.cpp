@@ -475,8 +475,8 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	bool has_signal = (signalOp != 0);
 	bool is_ack_requested = false;
 
-	if (rank_comm.active_put_signal.count() >= (GIN_IMM_SEQ_MASK >> 1)) {
-		if (rank_comm.consecutive_puts_without_ack++ >= GIN_ACK_INTERVAL) {
+	if (OFI_UNLIKELY(rank_comm.active_put_signal_count >= (GIN_IMM_SEQ_MASK >> 1))) {
+		if (OFI_UNLIKELY(rank_comm.consecutive_puts_without_ack++ >= GIN_ACK_INTERVAL)) {
 			is_ack_requested = true;
 			rank_comm.consecutive_puts_without_ack = 0;
 		}
@@ -511,7 +511,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_START(dev, size, this, dst_rank, msg_seq_num,
 						   signalValue, signalOp, (int)has_signal, req);
 
-	if (size > 0) {
+	if (OFI_LIKELY(size > 0)) {
 		/* Post write-immediate request with user data */
 		void *src = static_cast<uint8_t *>(src_mr->input_address) + srcOff;
 		auto *src_mhandle = src_mr->local_handle;
@@ -534,9 +534,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		 * The first write is posted with FI_MORE to hint the provider
 		 * that more operations follow on this EP, enabling doorbell
 		 * coalescing (single PCIe doorbell for write + send). */
-		if (has_signal) {
-			rail_id = xfers[0].rail_id;
-		}
+		rail_id = xfers[0].rail_id;
 
 		for (uint16_t rail_it = 0; rail_it < schedule->num_xfer_infos; rail_it++) {
 			nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
@@ -565,10 +563,12 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			NCCL_OFI_TRACE_GIN_WRITE_BEGIN(dev, xfer_info->rail_id, xfer_info->msg_size,
 						       this, dst_rank, msg_seq_num, write_req);
 			ret = write_req->post();
-			if (ret == -FI_EAGAIN) {
-				resources.add_pending_req(write_req);
-				ret = 0;
-			} else if (OFI_UNLIKELY(ret != 0)) {
+			if (OFI_UNLIKELY(ret != 0)) {
+				if (ret == -FI_EAGAIN) {
+					resources.add_pending_req(write_req);
+					ret = 0;
+					break;
+				}
 				NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
 				resources.return_req_to_pool(write_req);
 				nccl_net_ofi_release_schedule(scheduler, schedule);
@@ -578,14 +578,11 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			}
 		}
 		nccl_net_ofi_release_schedule(scheduler, schedule);
+	} else {
+		rail_id = resources.get_next_rail();
 	}
 
 	if (has_signal) {
-		/* For signal-only (size == 0), no write was posted so we
-		   cannot coalesce — pick a rail via round-robin. */
-		if (size == 0)
-			rail_id = resources.get_next_rail();
-
 		/* Post metadata send with signal information */
 		nccl_ofi_freelist::fl_entry *metadata_elem = nullptr;
 
@@ -636,15 +633,17 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), this, dst_rank, msg_seq_num,
 						       send_req);
 		ret = send_req->post();
-		if (ret == -FI_EAGAIN) {
-			resources.add_pending_req(send_req);
-			ret = 0;
-		} else if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Metadata send failed for seq_num %hu", msg_seq_num);
-			resources.return_req_to_pool(send_req);
-			resources.return_req_to_pool(req);
-			clear_write_reqs_pending_back_pointers(write_reqs);
-			return ret;
+		if (OFI_UNLIKELY(ret != 0)) {
+			if (ret == -FI_EAGAIN) {
+				resources.add_pending_req(send_req);
+				ret = 0;
+			} else {
+				NCCL_OFI_WARN("Metadata send failed for seq_num %hu", msg_seq_num);
+				resources.return_req_to_pool(send_req);
+				resources.return_req_to_pool(req);
+				clear_write_reqs_pending_back_pointers(write_reqs);
+				return ret;
+			}
 		}
 		send_req->pending_flag = &(req->reqs_pending[MAX_NUM_RAILS]); // last one
 #if HAVE_NVTX_TRACING || HAVE_LIBLTTNG_UST
@@ -653,7 +652,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		req->reqs_pending[MAX_NUM_RAILS] = true;
 	}
 
-	rank_comm.active_put_signal.set(msg_seq_num & GIN_IMM_SEQ_MASK, is_ack_requested);
+	set_ack_outstanding(dst_rank, msg_seq_num, is_ack_requested);
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
 
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_END(dev, size, this, dst_rank, msg_seq_num,
@@ -1022,15 +1021,19 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	/* Weak-signal mode: once all segments of this signal (metadata +
 	   writes at this same seq, if any) have arrived, deliver it
 	   immediately. This covers metadata-first and writes-first orderings. */
-	if (!strong_signal_ordering_enabled && req->num_seg_completions == req->total_segments) {
-		ret = do_gin_signal_and_trace(peer_rank, req);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
+	if (req->num_seg_completions == req->total_segments) {
+		if (!strong_signal_ordering_enabled) {
+			ret = do_gin_signal_and_trace(peer_rank, req);
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
 				dev, this, rail_id, peer_rank, msg_seq_num, ret);
-			return ret;
+				return ret;
+			}
 		}
+
+		// If this packet is not full there is no reasong to try and retire packets.
+		ret = retire_completed_peer_iput_ops(peer_rank);
 	}
-	ret = retire_completed_peer_iput_ops(peer_rank);
 
 	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
 		dev, this, rail_id, peer_rank, msg_seq_num, ret);
@@ -1096,10 +1099,10 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 	} else {
 		req = it->second;
 		assert(req->total_segments == total_segms);
-		req->num_seg_completions += 1;
 		/* OR across submission paths: data-imm or metadata header may
 		   request the ACK; honor either. */
 		req->is_ack_requested = req->is_ack_requested || is_ack_requested;
+		req->num_seg_completions += 1;
 	}
 	NCCL_OFI_TRACE_GIN_RECV_WRITE(dev, rail_id, cq_entry->len, this, peer_rank, msg_seq_num, req);
 
@@ -1126,9 +1129,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 				return ret;
 			}
 		}
+		// If this packet is not full there is no reasong to try and retire packets.
+		ret = retire_completed_peer_iput_ops(peer_rank);
 	}
-
-	ret = retire_completed_peer_iput_ops(peer_rank);
 
 	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_END(dev, this, rail_id, peer_rank,
 								   msg_seq_num, ret);

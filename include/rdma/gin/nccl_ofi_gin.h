@@ -123,6 +123,12 @@ struct nccl_ofi_gin_peer_rank_info {
 	std::bitset<GIN_IMM_SEQ_MASK + 1> active_put_signal;
 	static_assert(GIN_IMM_SEQ_MASK + 1 <= UINT16_MAX,
 		      "active_put_signal must fit within the 16-bit seq_num range");
+
+	/* Cached popcount of active_put_signal. Maintained incrementally on
+	   every transition (set/reset) so the 50%-utilization gate in
+	   iputSignal does not have to walk all 128 uint64_t words of the
+	   bitset on every call. */
+	uint16_t active_put_signal_count = 0;
 };
 
 /**
