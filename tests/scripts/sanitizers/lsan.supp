@@ -1,0 +1,30 @@
+# LSAN (LeakSanitizer) suppression file for aws-ofi-nccl.
+# Suppresses known leaks from third-party libraries (MPI, libfabric, hwloc).
+# Plugin leaks (nccl_ofi_*) are intentionally NOT suppressed.
+
+# libfabric internals
+leak:ofi_nic_dup
+leak:fi_dupinfo
+leak:fi_getinfo
+leak:fi_allocinfo
+leak:efa_post_send_validate
+
+# OpenMPI runtime
+leak:orte_ess_base_proc_binding
+leak:opal_argv_append_nosize
+leak:ompi_op_base_op_select
+leak:ompi_mpi_init
+leak:mca_btl_ofi
+leak:mca_mpool_hugepage
+leak:libopen-pal
+
+# hwloc (MPI dependency)
+leak:hwloc_bitmap_alloc
+leak:hwloc_topology_init
+
+# glibc internals triggered by MPI
+leak:__vasprintf_internal
+leak:___asprintf_chk
+
+# Unsymbolized third-party allocations (EFA provider, nvidia driver)
+leak:<unknown module>
