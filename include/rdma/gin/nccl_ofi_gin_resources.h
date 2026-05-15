@@ -259,6 +259,11 @@ public:
 		return gin_ep;
 	}
 
+	int get_dev() const
+	{
+		return dev;
+	}
+
 	size_t alloc_comm_id()
 	{
 		return comm_id_pool.allocate_id();
@@ -379,6 +384,9 @@ private:
 	nccl_ofi_gin_ep_holder ep_holder;
 
 	nccl_ofi_rdma_gin_ep_t gin_ep;
+
+	/* Device id; cached for cheap access in tracepoint emission. */
+	int dev;
 
 	/* Requests pool used by all comms of this resource */
 	// FIXME: Get rid of freelist_deleter and change to embedded
