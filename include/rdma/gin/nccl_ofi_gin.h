@@ -68,7 +68,7 @@ struct nccl_ofi_gin_resource_releaser {
 /**
  * Pending bundled ack: accumulated in deliver_all,
  * sent with the next outgoing metadata message to this peer.
- * On the pending_ack_list iff node.next != nullptr.
+ * Empty when ack_count == 0.
  */
 struct nccl_ofi_gin_pending_ack_info {
 	nccl_ofi_dlist_node node;
@@ -123,6 +123,12 @@ struct nccl_ofi_gin_peer_rank_info {
 	std::bitset<GIN_IMM_SEQ_MASK + 1> active_put_signal;
 	static_assert(GIN_IMM_SEQ_MASK + 1 <= UINT16_MAX,
 		      "active_put_signal must fit within the 16-bit seq_num range");
+
+	/* Cached popcount of active_put_signal. Maintained incrementally on
+	   every transition (set/reset) so the 50%-utilization gate in
+	   iputSignal does not have to walk all 128 uint64_t words of the
+	   bitset on every call. */
+	uint16_t active_put_signal_count = 0;
 };
 
 /**
@@ -242,7 +248,25 @@ public:
 
 	void clear_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
 	{
-		rank_comms[peer_rank].active_put_signal.reset(msg_seq_num & GIN_IMM_SEQ_MASK);
+		auto &rank_comm = rank_comms[peer_rank];
+		const uint16_t bit = msg_seq_num & GIN_IMM_SEQ_MASK;
+		if (rank_comm.active_put_signal.test(bit)) {
+			rank_comm.active_put_signal.reset(bit);
+			rank_comm.active_put_signal_count--;
+		}
+	}
+
+	/* Set the bit for msg_seq_num to `value`. Maintains the cached
+	   popcount in active_put_signal_count. */
+	void set_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num, bool value)
+	{
+		auto &rank_comm = rank_comms[peer_rank];
+		const uint16_t bit = msg_seq_num & GIN_IMM_SEQ_MASK;
+		const bool prev = rank_comm.active_put_signal.test(bit);
+		if (prev != value) {
+			rank_comm.active_put_signal.set(bit, value);
+			rank_comm.active_put_signal_count += value ? 1 : -1;
+		}
 	}
 
 	void clear_ack_range(uint32_t peer_rank, uint16_t ack_seq_num, uint16_t ack_count)
@@ -258,9 +282,6 @@ public:
 	/* Wait for any outstanding requests as necessary. Should be called before
 	   the GIN comm is destructed. */
 	int await_pending_requests() override;
-
-	/* Flush bundled acks that were not sent with metadata. Called from progress. */
-	int flush_stale_acks();
 
 	/**
 	 * iputSignal API. Transfers some user data (determined by memory registrations
@@ -458,7 +479,7 @@ private:
 	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 					    nccl_net_ofi_gin_iputsignal_recv_req *req);
 
-	int stash_pending_ack(uint32_t peer_rank, uint16_t seq_num);
+	int stash_pending_ack(uint32_t peer_rank, uint16_t seq_num, bool is_ack_requested);
 
 	int retire_completed_peer_iput_ops(uint32_t peer_rank);
 
