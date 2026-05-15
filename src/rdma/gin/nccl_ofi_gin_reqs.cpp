@@ -186,6 +186,14 @@ nccl_net_ofi_gin_sendack_req_t::~nccl_net_ofi_gin_sendack_req_t()
 
 int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 {
+	/* Snapshot state for tracing before any mutation. has_write_reqs is
+	   noisy info about whether any per-rail write was still in flight at
+	   the time of this test() call. */
+	int has_write_reqs = (any_reqs_pending != 0);
+	(void)has_write_reqs;  /* Only used when tracing is enabled. */
+	NCCL_OFI_TRACE_GIN_TEST_FUNC_BEGIN(gin_comm.get_dev(), &gin_comm, peer_rank,
+					   msg_seq_num, this, has_write_reqs, 0);
+
 	if (OFI_UNLIKELY(any_reqs_pending == 0)) {
 		/* Check outstanding signal only if no pending subrequests */
 		auto &gin_ep = gin_comm.get_resources().get_ep();
@@ -206,7 +214,10 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 				       this->msg_seq_num);
 			NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_END(gin_comm.get_dev(), &gin_comm, peer_rank,
 							   msg_seq_num, this);
+			NCCL_OFI_TRACE_GIN_TEST_FUNC_END(gin_comm.get_dev(), &gin_comm,
+							 peer_rank, msg_seq_num, this, 1, 1);
 			gin_comm.get_resources().return_req_to_pool(this);
+			return 0;
 		}
 	} else {
 		/* NCCL GIN Proxy only calls test() when state->done == 0,
@@ -214,6 +225,8 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 		 */
 	}
 
+	NCCL_OFI_TRACE_GIN_TEST_FUNC_END(gin_comm.get_dev(), &gin_comm,
+					 peer_rank, msg_seq_num, this, *done, 0);
 
 	/* If not done, the GIN plugin will do nothing.
 
@@ -285,7 +298,7 @@ int nccl_net_ofi_gin_metadata_send_req_t::handle_cq_entry(struct fi_cq_entry * /
 							   fi_addr_t /*src_addr*/,
 							   uint16_t rail_id_arg)
 {
-	NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id_arg, comm, rank, msg_seq_num, this);
+	NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id_arg, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), comm, rank, msg_seq_num, this);
 
 	if (OFI_LIKELY(pending_flag != nullptr)) {
 		*pending_flag = false;

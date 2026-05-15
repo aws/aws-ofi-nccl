@@ -259,13 +259,6 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_RECV_METADATA_NVTX(comm, rail_id, rank, msg_seq_num, request) do { \
-	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
-		nvtxDomainHandle_t handle = (comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_mark_domain(handle, "gin_recv_metadata", 0x9370DB); \
-	} \
-} while(0)
-
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN_NVTX(comm, rank, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = (comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
@@ -319,7 +312,6 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 #define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN_NVTX(...)
 #define NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(...)
 #define NCCL_OFI_TRACE_GIN_RECV_WRITE_NVTX(...)
-#define NCCL_OFI_TRACE_GIN_RECV_METADATA_NVTX(...)
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN_NVTX(...)
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(...)
 #define NCCL_OFI_TRACE_GIN_ACK_RECV_NVTX(...)
