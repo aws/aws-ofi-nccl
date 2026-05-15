@@ -264,11 +264,6 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	int ret = gin_comm->get_resources().progress();
-	if (OFI_UNLIKELY(ret != 0)) {
-		return nccl_net_ofi_retval_translate(ret);
-	}
-
-	ret = gin_comm->flush_stale_acks();
 	return nccl_net_ofi_retval_translate(ret);
 }
 

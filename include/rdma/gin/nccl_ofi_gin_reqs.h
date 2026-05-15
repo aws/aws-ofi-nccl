@@ -218,10 +218,9 @@ class nccl_net_ofi_gin_metadata_send_req_t;
 class nccl_ofi_rdma_gin_iputsignal_req : public nccl_net_ofi_gin_base_req {
 public:
 	nccl_ofi_rdma_gin_iputsignal_req(
-		nccl_ofi_rdma_gin_put_comm &gin_comm_arg, uint32_t peer_rank_arg, uint16_t msg_seq_num_arg,
-		bool is_ack_requested_arg)
+		nccl_ofi_rdma_gin_put_comm &gin_comm_arg, uint32_t peer_rank_arg, uint16_t msg_seq_num_arg)
 	    : any_reqs_pending(0), gin_comm(gin_comm_arg),
-	      peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg), is_ack_requested(is_ack_requested_arg)
+	      peer_rank(peer_rank_arg), msg_seq_num(msg_seq_num_arg)
 	{
 	}
 
@@ -243,8 +242,6 @@ private:
 	uint32_t peer_rank;
 	/* Message sequence number */
 	uint16_t msg_seq_num;
-	/* True if sender is requesting an ACK (SIGNAL, PUT-SIGNAL, or every Nth PUT) */
-	bool is_ack_requested;
 };
 
 /**
