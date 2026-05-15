@@ -396,17 +396,16 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 
 	/* Flush any deferred bundled acks so remote senders can
 	  complete their outstanding requests. */
-	nccl_ofi_dlist_node *pos;
-	nccl_ofi_dlist_for_each_safe(&pending_ack_list, pos) {
-		auto *pa = nccl_ofi_dlist_entry(pos, &nccl_ofi_gin_pending_ack_info::node);
-		if (pa->ack_count > 0) {
-			ret = send_ack(*this, pa->peer_rank,
-				pa->seq_num, pa->ack_count);
+	for (auto &rank_comm : rank_comms) {
+		if (rank_comm.pending_ack.ack_count > 0) {
+			ret = send_ack(*this, rank_comm.pending_ack.peer_rank,
+				       rank_comm.pending_ack.seq_num,
+				       rank_comm.pending_ack.ack_count);
 			if (OFI_UNLIKELY(ret != 0)) {
 				return ret;
 			}
+			rank_comm.pending_ack.ack_count = 0;
 		}
-		pos->remove();
 	}
 
 	while (outstanding_ack_counter > 0) {
@@ -462,18 +461,22 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		return -EBUSY;
 	}
 
-	/* Determine if this message needs an ACK:
-	 * - SIGNAL or PUT-SIGNAL: always needs ACK
-	 * - PUT-only: needs ACK every N consecutive PUTs */
+	/* Determine if this message needs an ACK.
+	 *
+	 * Same policy for SIGNAL, PUT-SIGNAL, and PUT-only:
+	 * Request an ACK only when both conditions hold:
+	 *   1. The per-peer outstanding-ACK bitset is at >= 50% capacity
+	 *      (so seq-number wraparound is approaching).
+	 *   2. At least GIN_ACK_INTERVAL ops have elapsed since the last ACK
+	 *      request (so we don't ACK on every op when utilization stays
+	 *      above 50%).
+	 *
+	 * Below 50% utilization, no ACK is requested. */
 	bool has_signal = (signalOp != 0);
 	bool is_ack_requested = false;
 
-	if (has_signal) {
-		is_ack_requested = true;
-		rank_comm.consecutive_puts_without_ack = 0;
-	} else {
-		rank_comm.consecutive_puts_without_ack++;
-		if (rank_comm.consecutive_puts_without_ack >= GIN_ACK_INTERVAL) {
+	if (rank_comm.active_put_signal.count() >= (GIN_IMM_SEQ_MASK >> 1)) {
+		if (rank_comm.consecutive_puts_without_ack++ >= GIN_ACK_INTERVAL) {
 			is_ack_requested = true;
 			rank_comm.consecutive_puts_without_ack = 0;
 		}
@@ -601,6 +604,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		metadata_send->header.remote_comm_id = remote_comm_id;
 		metadata_send->header.seq_num = msg_seq_num;
 		metadata_send->header.seq_seg_cnt = nseg;
+		metadata_send->header.ack_req = is_ack_requested ? 1 : 0;
 		metadata_send->signal_base_address =
 			(sig_mr ? sig_mr->remote_mr[dst_rank].address : 0);
 		metadata_send->signal_offset = signalOff;
@@ -833,9 +837,21 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_ra
 	return ret;
 }
 
-/* Extend the pending bundled ack to include seq_num. If the merged
-   range would overflow the bitfield, flush the old range first. */
-int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num)
+/* Extend the pending bundled ack to include seq_num.
+
+   Most ops are bundled silently; the sender requests a standalone
+   ACK only when it needs the bit cleared (e.g. seq window crossing the
+   50% threshold), and we flush eagerly in that case.
+
+   Note: under the current sender-side ACK policy, the bundling path here
+   should only ever see seq_nums where the sender did NOT request an ACK.
+   If the sender requested an ACK, the appropriate response is to flush
+   immediately (send a standalone ACK) — silently bundling such a seq_num
+   would defeat the sender's gating logic and leave it waiting on a
+   bit-clear that never comes via the bundled path. The is_ack_requested
+   flush below is what guarantees that. */
+int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t seq_num,
+						  bool is_ack_requested)
 {
 	auto &rank_comm = this->rank_comms[peer_rank];
 
@@ -843,70 +859,62 @@ int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t s
 	int flushed = 0;
 	(void)flushed;  /* Used only when tracing is enabled */
 
-	if (rank_comm.pending_ack.node.on_list()) {
-		if (rank_comm.pending_ack.ack_count > 0) {
-			/* Callers must add ranges in-order (ascending seq_num).
-			   delta must be in (0, half_seq_space] to confirm forward progress. */
-			assert(((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) > 0 &&
-			       ((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) <= (GIN_IMM_SEQ_MASK >> 1));
+	uint32_t merged_count = 1;
 
-			uint32_t prev_start = (rank_comm.pending_ack.seq_num
-						- rank_comm.pending_ack.ack_count + 1) & GIN_IMM_SEQ_MASK;
-			uint32_t merged_count = ((seq_num - prev_start + 1) & GIN_IMM_SEQ_MASK);
+	if (rank_comm.pending_ack.ack_count > 0) {
+		/* Callers must add ranges in-order (ascending seq_num).
+		   delta must be in (0, half_seq_space] to confirm forward progress. */
+		assert(((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) > 0 &&
+		       ((seq_num - rank_comm.pending_ack.seq_num) & GIN_IMM_SEQ_MASK) <= (GIN_IMM_SEQ_MASK >> 1));
 
-			if (merged_count > GIN_ACK_INTERVAL) {
-				int ret = send_ack(*this, peer_rank,
-							rank_comm.pending_ack.seq_num,
-							rank_comm.pending_ack.ack_count);
-				if (OFI_UNLIKELY(ret != 0)) {
-					NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(
-						dev, this, peer_rank, seq_num,
-						rank_comm.pending_ack.ack_count, 1, ret);
-					return ret;
-				}
-				flushed = 1;
-				merged_count = 1;
+		uint32_t prev_start = (rank_comm.pending_ack.seq_num
+					- rank_comm.pending_ack.ack_count + 1) & GIN_IMM_SEQ_MASK;
+		merged_count = ((seq_num - prev_start + 1) & GIN_IMM_SEQ_MASK);
+
+		/* Flush the previously-bundled range as a standalone ACK
+		   when the sender explicitly requested one for this seq.
+		   Marked unlikely: under the 50%-utilization gate, an
+		   explicit ACK request only fires when the sender's
+		   outstanding-ACK bitset is at least half full — i.e. the
+		   receiver has not piggybacked a single bundled-ack on
+		   metadata back to this peer for ~half the seq window.
+		   That is a strongly asymmetric traffic pattern: this
+		   side delivered thousands of packets to the peer, and
+		   the peer did not send a single packet back during the
+		   entire window. Even sparse collectives (MoE expert
+		   routing, etc.) generate some return traffic, so hitting
+		   this path is unusual; we log it via TRACE for
+		   diagnosability rather than warning. */
+		if (OFI_UNLIKELY(is_ack_requested)) {
+			NCCL_OFI_TRACE(NCCL_NET,
+				       "Standalone ACK fallback fired on peer_rank %u "
+				       "seq_num %hu (bundle ack_count=%hu): asymmetric "
+				       "traffic — this peer delivered ~half the seq "
+				       "window without sending us a single packet to "
+				       "piggyback on.",
+				       peer_rank, seq_num,
+				       rank_comm.pending_ack.ack_count);
+			int ret = send_ack(*this, peer_rank,
+						rank_comm.pending_ack.seq_num,
+						rank_comm.pending_ack.ack_count);
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(
+					dev, this, peer_rank, seq_num,
+					rank_comm.pending_ack.ack_count, 1, ret);
+				return ret;
 			}
-			rank_comm.pending_ack.ack_count = merged_count;
-		} else {
-			/* Was consumed by iputSignal piggyback; reuse slot */
-			rank_comm.pending_ack.ack_count = 1;
+			flushed = 1;
+			merged_count = 1;
 		}
-	} else {
-		rank_comm.pending_ack.ack_count = 1;
-		rank_comm.pending_ack.peer_rank = peer_rank;
-		pending_ack_list.push_back(&rank_comm.pending_ack.node);
 	}
 
+	rank_comm.pending_ack.peer_rank = peer_rank;
+	rank_comm.pending_ack.ack_count = merged_count;
 	rank_comm.pending_ack.seq_num = seq_num;
-	rank_comm.pending_ack.start = progress_counter;
 
 	NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(dev, this, peer_rank, seq_num,
 						      rank_comm.pending_ack.ack_count,
 						      flushed, 0);
-	return 0;
-}
-
-/* Flush pending bundled acks that have aged past the threshold
-   for peers with no recent completions. Called from progress. */
-int nccl_ofi_rdma_gin_put_comm::flush_stale_acks()
-{
-	++progress_counter;
-	nccl_ofi_dlist_node *pos;
-	nccl_ofi_dlist_for_each_safe(&pending_ack_list, pos) {
-		auto *pa = nccl_ofi_dlist_entry(pos, &nccl_ofi_gin_pending_ack_info::node);
-		if (pa->ack_count == 0 ||
-		    progress_counter - pa->start > GIN_ACK_MAX_AGE) {
-			if (pa->ack_count > 0) {
-				int ret = send_ack(*this, pa->peer_rank,
-						pa->seq_num, pa->ack_count);
-				if (OFI_UNLIKELY(ret != 0)) {
-					return ret;
-				}
-			}
-			pos->remove();
-		}
-	}
 	return 0;
 }
 
@@ -915,8 +923,9 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 	int ret = 0;
 
 	/* Process undelivered signals in order.  ACK coalescing is
-	   handled entirely by stash_pending_ack(), which merges
-	   ranges and flushes when they exceed GIN_ACK_INTERVAL. */
+	   handled entirely by stash_pending_ack(), which extends a
+	   per-peer pending range and flushes only when the sender
+	   explicitly requested an ACK. */
 	while (true) {
 		auto &rank_comm = this->rank_comms[peer_rank];
 		uint16_t next_seq_num = rank_comm.next_delivered_signal_seq_num;
@@ -927,11 +936,10 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			auto *req = it->second;
 
 			if (req->num_seg_completions == req->total_segments) {
-				if (req->is_ack_requested) {
-					ret = stash_pending_ack(peer_rank, next_seq_num);
-					if (OFI_UNLIKELY(ret != 0)) {
-						return ret;
-					}
+				ret = stash_pending_ack(peer_rank, next_seq_num,
+							req->is_ack_requested);
+				if (OFI_UNLIKELY(ret != 0)) {
+					return ret;
 				}
 				rank_comm.next_delivered_signal_seq_num =
 					(rank_comm.next_delivered_signal_seq_num + 1) &
@@ -970,7 +978,15 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 		dev, this, rail_id, peer_rank, msg_seq_num, num_segments,
 		metadata_msg->header.ack_count);
 
-	/* Process bundled ack if present */
+	/* Process bundled ack if present.
+	 *
+	 * Sender piggybacks the receiver's pending bundled-ack range on the
+	 * next outbound metadata message; here we apply it to clear our local
+	 * active_put_signal bits for the run [ack_seq_num - ack_count + 1,
+	 * ack_seq_num]. This is the steady-state path that keeps the per-peer
+	 * ack window draining without any standalone ACK round-trips. Standalone
+	 * ACKs only fire as a fallback when the sender explicitly requests one
+	 * (50% gate). */
 	if (metadata_msg->header.ack_count > 0) {
 		clear_ack_range(peer_rank,
 				metadata_msg->header.ack_seq_num,
@@ -978,6 +994,8 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	}
 
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
+
+	const bool meta_ack_req = (metadata_msg->header.ack_req != 0);
 
 	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
 	nccl_net_ofi_gin_iputsignal_recv_req *req;
@@ -988,7 +1006,7 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 		req->total_segments = num_segments;
 		req->metadata = *metadata_msg;
 		req->metadata_received = true;
-		req->is_ack_requested = true;  // Metadata always requests ACK
+		req->is_ack_requested = meta_ack_req;
 		outstanding_iput_signal_recv_reqs[map_key] = req;
 	} else {
 		req = it->second;
@@ -996,6 +1014,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 		req->metadata = *metadata_msg;
 		req->metadata_received = true;
 		req->num_seg_completions += 1;
+		/* OR across submission paths: data-imm or metadata header may
+		   request the ACK; honor either. */
+		req->is_ack_requested = req->is_ack_requested || meta_ack_req;
 	}
 
 	/* Weak-signal mode: once all segments of this signal (metadata +
@@ -1076,6 +1097,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 		req = it->second;
 		assert(req->total_segments == total_segms);
 		req->num_seg_completions += 1;
+		/* OR across submission paths: data-imm or metadata header may
+		   request the ACK; honor either. */
+		req->is_ack_requested = req->is_ack_requested || is_ack_requested;
 	}
 	NCCL_OFI_TRACE_GIN_RECV_WRITE(dev, rail_id, cq_entry->len, this, peer_rank, msg_seq_num, req);
 

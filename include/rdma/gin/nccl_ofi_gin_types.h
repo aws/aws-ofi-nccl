@@ -93,7 +93,8 @@ static_assert(((1 << GIN_MSG_TYPE_BITS) - 1) >= GIN_MSG_TYPE_MAX,
 /* Reserved bit computation for Metadata message header */
 #define GIN_MSG_HEADER_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
                                       - GIN_IMM_SEQ_BITS - GIN_ACK_COUNT_BITS    \
-                                      - GIN_IMM_SEQ_BITS - GIN_IMM_SEG_CNT_BITS)
+                                      - GIN_IMM_SEQ_BITS - GIN_IMM_SEG_CNT_BITS \
+                                      - 1 /* ack_req */)
 
 /**
  * Metadata message header (64 bits).
@@ -115,6 +116,10 @@ struct nccl_net_ofi_gin_msg_header_t {
 	/* Message sequence number and count */
 	uint64_t seq_num         : GIN_IMM_SEQ_BITS;
 	uint64_t seq_seg_cnt     : GIN_IMM_SEG_CNT_BITS;
+	/* Receiver should ACK this seq_num. Mirrors the GIN_IMM_ACK_REQ bit
+	 * carried in the data-write immediate; the sender sets both to the
+	 * same value, the receiver OR's them across the two submission paths. */
+	uint64_t ack_req         : 1;
 	/* Reserved for future use */
 	uint64_t reserved        : GIN_MSG_HEADER_RESERVED_BITS;
 };
@@ -172,7 +177,7 @@ static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, header) == 0,
 #if !defined(__clang__) && defined(__GNUC__) && (__GNUC__ >= 9)
 static_assert(
 	__builtin_bit_cast(uint64_t,
-		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0})
+		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0, 0})
 		== (uint64_t)GIN_MSG_TYPE_MAX,
 	"msg_type must be at LSB of nccl_net_ofi_gin_msg_header_t");
 static_assert(
@@ -188,7 +193,12 @@ static_assert(
 static_assert(GIN_ACK_INTERVAL <= (1 << (GIN_IMM_SEQ_BITS - 1)),
 	      "GIN_ACK_INTERVAL must not exceed half the sequence number space");
 
-/* Max progress calls a bundled ack can wait before being flushed. */
-#define GIN_ACK_MAX_AGE 50
+/* Receiver-side stash batching: call stash_pending_ack() once every
+   GIN_STASH_BATCH retires. The range-encoded bundle (prev_start +
+   ack_count) extends to the new high water mark on the next stash, so
+   skipped retires are picked up for free. Must be a power of two. */
+#define GIN_STASH_BATCH 128
+static_assert((GIN_STASH_BATCH & (GIN_STASH_BATCH - 1)) == 0,
+	      "GIN_STASH_BATCH must be a power of two");
 
 #endif
