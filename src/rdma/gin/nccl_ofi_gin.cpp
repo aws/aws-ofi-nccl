@@ -505,6 +505,8 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	int ret = 0;
 
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_BEGIN(dev, size, this, dst_rank, msg_seq_num, req);
+	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_START(dev, size, this, dst_rank, msg_seq_num,
+						   signalValue, signalOp, (int)has_signal, req);
 
 	if (size > 0) {
 		/* Post write-immediate request with user data */
@@ -627,7 +629,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			gin_ep.get_rail(rail_id).ofi_ep.get(), rail_id, metadata_elem,
 			rank_comm.address[rail_id], metadata_fl.get(), this);
 
-		NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, this, dst_rank, msg_seq_num,
+		NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), this, dst_rank, msg_seq_num,
 						       send_req);
 		ret = send_req->post();
 		if (ret == -FI_EAGAIN) {
@@ -649,6 +651,9 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 
 	rank_comm.active_put_signal.set(msg_seq_num & GIN_IMM_SEQ_MASK, is_ack_requested);
 	rank_comm.next_target_seq_num = (rank_comm.next_target_seq_num + 1) & GIN_IMM_SEQ_MASK;
+
+	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_END(dev, size, this, dst_rank, msg_seq_num,
+						 (int)has_signal, req);
 
 	*request = req;
 	return 0;
@@ -834,6 +839,10 @@ int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t s
 {
 	auto &rank_comm = this->rank_comms[peer_rank];
 
+	NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_START(dev, this, peer_rank, seq_num);
+	int flushed = 0;
+	(void)flushed;  /* Used only when tracing is enabled */
+
 	if (rank_comm.pending_ack.node.on_list()) {
 		if (rank_comm.pending_ack.ack_count > 0) {
 			/* Callers must add ranges in-order (ascending seq_num).
@@ -850,8 +859,12 @@ int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t s
 							rank_comm.pending_ack.seq_num,
 							rank_comm.pending_ack.ack_count);
 				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(
+						dev, this, peer_rank, seq_num,
+						rank_comm.pending_ack.ack_count, 1, ret);
 					return ret;
 				}
+				flushed = 1;
 				merged_count = 1;
 			}
 			rank_comm.pending_ack.ack_count = merged_count;
@@ -867,6 +880,10 @@ int nccl_ofi_rdma_gin_put_comm::stash_pending_ack(uint32_t peer_rank, uint16_t s
 
 	rank_comm.pending_ack.seq_num = seq_num;
 	rank_comm.pending_ack.start = progress_counter;
+
+	NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(dev, this, peer_rank, seq_num,
+						      rank_comm.pending_ack.ack_count,
+						      flushed, 0);
 	return 0;
 }
 
@@ -949,6 +966,10 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
 
+	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(
+		dev, this, rail_id, peer_rank, msg_seq_num, num_segments,
+		metadata_msg->header.ack_count);
+
 	/* Process bundled ack if present */
 	if (metadata_msg->header.ack_count > 0) {
 		clear_ack_range(peer_rank,
@@ -983,11 +1004,15 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	if (!strong_signal_ordering_enabled && req->num_seg_completions == req->total_segments) {
 		ret = do_gin_signal_and_trace(peer_rank, req);
 		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
+				dev, this, rail_id, peer_rank, msg_seq_num, ret);
 			return ret;
 		}
 	}
-	NCCL_OFI_TRACE_GIN_RECV_METADATA(dev, rail_id, this, peer_rank, msg_seq_num, req);
 	ret = retire_completed_peer_iput_ops(peer_rank);
+
+	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
+		dev, this, rail_id, peer_rank, msg_seq_num, ret);
 
 	return ret;
 }
@@ -1000,6 +1025,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_ack_completion(const gin_ack_msg_t *ack_m
 	uint16_t count = ack_msg->ack_count;
 	assert(count > 0);
 
+	NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_START(dev, this, rail_id, peer_rank,
+							    ack_seq_num, count);
+
 	NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, this, peer_rank, ack_seq_num);
 
 	/* Self-contained range ACK: clear ack_outstanding from start_seq
@@ -1010,6 +1038,9 @@ int nccl_ofi_rdma_gin_put_comm::handle_ack_completion(const gin_ack_msg_t *ack_m
 	   in any order. A single ack_seq_num would require cumulative
 	   state that breaks under reordering. */
 	clear_ack_range(peer_rank, ack_seq_num, count);
+
+	NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_END(dev, this, rail_id, peer_rank,
+							  ack_seq_num, 0);
 	return 0;
 }
 
@@ -1022,6 +1053,12 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 	bool is_ack_requested = GIN_IMM_GET_ACK_REQUESTED(cq_entry->data);
 
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
+
+	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_START(dev, this, rail_id, peer_rank,
+								     msg_seq_num, total_segms,
+								     cq_entry->len,
+								     (int)is_ack_requested);
+
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
 
 	int ret = 0;
@@ -1060,12 +1097,17 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 		if (!strong_signal_ordering_enabled && req->metadata_received) {
 			ret = do_gin_signal_and_trace(peer_rank, req);
 			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_END(
+					dev, this, rail_id, peer_rank, msg_seq_num, ret);
 				return ret;
 			}
 		}
 	}
 
 	ret = retire_completed_peer_iput_ops(peer_rank);
+
+	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_END(dev, this, rail_id, peer_rank,
+								   msg_seq_num, ret);
 
 	return ret;
 }

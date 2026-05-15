@@ -143,24 +143,19 @@
 	NCCL_OFI_TRACE_GIN_WRITE_END_NVTX(request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, comm, rank, msg_seq_num, request) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_metadata_send_begin, dev, rail_id, comm, rank, msg_seq_num, request); \
-	NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN_NVTX(comm, rail_id, rank, msg_seq_num, request); \
+#define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_metadata_send_begin, dev, rail_id, size, comm, rank, msg_seq_num, request); \
+	NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN_NVTX(comm, rail_id, rank, msg_seq_num, size, request); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id, comm, rank, msg_seq_num, request) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_metadata_send_end, dev, rail_id, comm, rank, msg_seq_num, request); \
+#define NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_metadata_send_end, dev, rail_id, size, comm, rank, msg_seq_num, request); \
 	NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_RECV_WRITE(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_recv_write, dev, rail_id, size, comm, rank, msg_seq_num, request); \
 	NCCL_OFI_TRACE_GIN_RECV_WRITE_NVTX(comm, rail_id, rank, msg_seq_num, size, request); \
-} while(0)
-
-#define NCCL_OFI_TRACE_GIN_RECV_METADATA(dev, rail_id, comm, rank, msg_seq_num, request) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_recv_metadata, dev, rail_id, comm, rank, msg_seq_num, request); \
-	NCCL_OFI_TRACE_GIN_RECV_METADATA_NVTX(comm, rail_id, rank, msg_seq_num, request); \
 } while(0)
 
 
@@ -182,6 +177,54 @@
 #define NCCL_OFI_TRACE_GIN_ACK_SEND(dev, rail_id, comm, rank, msg_seq_num) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_ack_send, dev, rail_id, comm, rank, msg_seq_num); \
 	NCCL_OFI_TRACE_GIN_ACK_SEND_NVTX(comm, rail_id, rank, msg_seq_num); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_START(dev, size, comm, dst_rank, msg_seq_num, signal_value, signal_op, has_signal, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_iput_signal_func_start, dev, size, comm, dst_rank, msg_seq_num, signal_value, signal_op, has_signal, request); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_FUNC_END(dev, size, comm, dst_rank, msg_seq_num, has_signal, request) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_iput_signal_func_end, dev, size, comm, dst_rank, msg_seq_num, has_signal, request); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_TEST_FUNC_BEGIN(dev, comm, peer_rank, msg_seq_num, request, has_write_reqs, has_send_req) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_test_func_begin, dev, comm, peer_rank, msg_seq_num, request, has_write_reqs, has_send_req); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_TEST_FUNC_END(dev, comm, peer_rank, msg_seq_num, request, done, freed) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_test_func_end, dev, comm, peer_rank, msg_seq_num, request, done, freed); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, total_segms, len, is_ack_requested) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_write_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, total_segms, len, is_ack_requested); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, msg_seq_num, ret) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_write_completion_func_end, dev, comm, rail_id, peer_rank, msg_seq_num, ret); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, ack_count) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, ack_count); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, msg_seq_num, ret) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_end, dev, comm, rail_id, peer_rank, msg_seq_num, ret); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, ack_seq_num, count) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_start, dev, comm, rail_id, peer_rank, ack_seq_num, count); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, ack_seq_num, ret) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_end, dev, comm, rail_id, peer_rank, ack_seq_num, ret); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_START(dev, comm, peer_rank, seq_num) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_stash_pending_ack_func_start, dev, comm, peer_rank, seq_num); \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(dev, comm, peer_rank, seq_num, ack_count, flushed, ret) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_stash_pending_ack_func_end, dev, comm, peer_rank, seq_num, ack_count, flushed, ret); \
 } while(0)
 
 #endif /* NCCL_OFI_TRACEPOINT_H_ */
