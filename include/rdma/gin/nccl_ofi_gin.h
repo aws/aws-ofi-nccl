@@ -66,70 +66,87 @@ struct nccl_ofi_gin_resource_releaser {
 };
 
 /**
- * Pending bundled ack: accumulated in deliver_all,
- * sent with the next outgoing metadata message to this peer.
- * Empty when ack_count == 0.
- */
-struct nccl_ofi_gin_pending_ack_info {
-	nccl_ofi_dlist_node node;
-	uint32_t peer_rank = 0;
-	uint32_t start = 0;
-	uint16_t seq_num = 0;
-	uint16_t ack_count = 0;
-};
-
-/**
  * Represents per-peer-rank data associated with a collective communicator.
  *
  * The collective communicator stores a vector of these structures, of size
  * nranks.
+ *
+ * Producer/consumer flow-control model
+ * ------------------------------------
+ * Each peer pair maintains four monotonically-advancing cursors of width
+ * GIN_RX_CONSUMED_BITS (= GIN_IMM_SEQ_BITS + 1, so exactly 2x the seq
+ * window). Cursors wrap at GIN_RX_CONSUMED_MASK + 1 and are stored in a
+ * uint32_t backing for cheap arithmetic.
+ *
+ *   tx_head     - sender: ops produced (advances on every iputSignal)
+ *   tx_tail     - sender's local view of "ops the receiver has consumed"
+ *                 (advances when an ACK -- bundled or standalone -- arrives)
+ *   rx_consumed - receiver: ops delivered upstream in seq order
+ *   rx_acked    - receiver: last value of rx_consumed it sent back
+ *
+ * Wrap-safe forward delta is computed as
+ *     ((b - a) & GIN_RX_CONSUMED_MASK)
+ * which is in [0, 2x seq window). A delta in the lower half is "forward",
+ * in the upper half is "backward" (older ACK or duplicate).
+ *
+ * Invariants:
+ *   outstanding   = (tx_head - tx_tail) & GIN_RX_CONSUMED_MASK
+ *   tx may send   iff outstanding < GIN_IMM_SEQ_MASK + 1
+ *   ack-request   when outstanding >= GIN_ACK_REQ_THRESHOLD
+ *
+ * The wire seq number is the low GIN_IMM_SEQ_BITS of tx_head.
+ * The wire `rx_consumed` field is the entire receiver-side cursor
+ * (since cursor width matches wire width).
  */
 struct nccl_ofi_gin_peer_rank_info {
 	/* Remote comm id */
 	uint32_t comm_id;
 
-	/* Counter for consecutive PUT-only messages without ACK.
-	   When this reaches OFI_NCCL_GIN_ACK_INTERVAL, the next PUT will request an ACK.
-	   Reset to 0 when SIGNAL or PUT-SIGNAL is sent. */
-	uint32_t consecutive_puts_without_ack = 0;
-
-	/* A sequence number, stored at initiator, exclusively for this (target) peer rank.
-	   This allows the remote rank to enforce ordering of signal delivery
-
-	   A 16-bit integer is large enough to store all outstanding requests, because the
-	   plugin and NCCL limit max inflight requests. (See NCCL_OFI_MAX_REQUESTS.) */
-	uint16_t next_target_seq_num = 0;
-
-	/**
-	 * Next-to-be-delivered sequence number, stored at target, from
-	 * (initiator) peer rank
-	 */
-	uint16_t next_delivered_signal_seq_num = 0;
-
-	nccl_ofi_gin_pending_ack_info pending_ack;
-
 	/* Rail addresses */
 	fi_addr_t address[MAX_NUM_RAILS];
 
-	/* Flag, stored at initiator, indicating the given sequence number (mod
-	   the sequence space) is in use at initiator side. This allows initiator
-	   to track in-use sequence numbers to avoid overflow and only mark
-	   iputSignal complete when it has received the ack from the target,
-	   which has delivered the signal atomic.
-	
-	   Sized to the full sequence number space so that every in-flight
-	   seq number maps to a unique slot, regardless of how many contexts
-	   are active. */
-	std::bitset<GIN_IMM_SEQ_MASK + 1> active_put_signal;
-	static_assert(GIN_IMM_SEQ_MASK + 1 <= UINT16_MAX,
-		      "active_put_signal must fit within the 16-bit seq_num range");
+	/* Sender-side cursors. tx_head is the next ring-position we'll
+	   produce; tx_tail is the latest position the receiver has
+	   acknowledged consuming. tx_head's low GIN_IMM_SEQ_BITS go on
+	   the wire as msg_seq_num. */
+	uint32_t tx_head = 0;
+	uint32_t tx_tail = 0;
 
-	/* Cached popcount of active_put_signal. Maintained incrementally on
-	   every transition (set/reset) so the 50%-utilization gate in
-	   iputSignal does not have to walk all 128 uint64_t words of the
-	   bitset on every call. */
-	uint16_t active_put_signal_count = 0;
+	/* Receiver-side cursors. rx_consumed advances every time we retire
+	   an op in seq order (signal delivered upstream). rx_acked is the
+	   latest value of rx_consumed we transmitted back to the peer either
+	   via metadata piggyback or a standalone ACK. */
+	uint32_t rx_consumed = 0;
+	uint32_t rx_acked = 0;
+
+	/* Hysteresis counter for the sender-side ack-request gate. Once
+	   outstanding crosses GIN_ACK_REQ_THRESHOLD this counts ops; only
+	   every GIN_ACK_INTERVAL'th op flips ack_req on the wire. Without
+	   this, every op above threshold would request an ACK and we'd
+	   flood the receiver with standalone ACK packets. */
+	uint32_t consecutive_puts_without_ack = 0;
+
+	/**
+	 * Next-to-be-delivered sequence number, stored at target, from
+	 * (initiator) peer rank. Mirrors the low GIN_IMM_SEQ_BITS of
+	 * rx_consumed; kept as a separate field to match how it is read
+	 * (compared against incoming msg_seq_num bitfield).
+	 */
+	uint16_t next_delivered_signal_seq_num = 0;
 };
+
+/* Helpers for the cursor ring. Cursors are uint32_t in memory but we
+   never let them advance past GIN_RX_CONSUMED_MASK, so subtraction is
+   performed under the same mask. */
+static inline uint32_t gin_cursor_inc(uint32_t c)
+{
+	return (c + 1) & GIN_RX_CONSUMED_MASK;
+}
+
+static inline uint32_t gin_cursor_delta(uint32_t lhs, uint32_t rhs)
+{
+	return (lhs - rhs) & GIN_RX_CONSUMED_MASK;
+}
 
 /**
  * Representation of a remote rank's memory registration
@@ -241,41 +258,23 @@ public:
 		outstanding_ack_counter--;
 	}
 
-	bool query_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num) const
-	{
-		return rank_comms[peer_rank].active_put_signal.test(msg_seq_num & GIN_IMM_SEQ_MASK);
-	}
-
-	void clear_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num)
-	{
-		auto &rank_comm = rank_comms[peer_rank];
-		const uint16_t bit = msg_seq_num & GIN_IMM_SEQ_MASK;
-		if (rank_comm.active_put_signal.test(bit)) {
-			rank_comm.active_put_signal.reset(bit);
-			rank_comm.active_put_signal_count--;
-		}
-	}
-
-	/* Set the bit for msg_seq_num to `value`. Maintains the cached
-	   popcount in active_put_signal_count. */
-	void set_ack_outstanding(uint32_t peer_rank, uint16_t msg_seq_num, bool value)
+	/**
+	 * Apply an inbound rx_consumed cursor from the peer (bundled on
+	 * metadata or on a standalone ACK). Wrap-safe: only advances tx_tail
+	 * when the cursor represents forward progress.
+	 *
+	 * The wire value is already at the cursor width (GIN_RX_CONSUMED_BITS)
+	 * thanks to the bitfield bring-in. We compute the modular forward
+	 * delta from tx_tail; out-of-order older ACKs land in the upper half
+	 * of the ring and are dropped.
+	 */
+	void apply_rx_consumed(uint32_t peer_rank, uint32_t wire_rx_consumed)
 	{
 		auto &rank_comm = rank_comms[peer_rank];
-		const uint16_t bit = msg_seq_num & GIN_IMM_SEQ_MASK;
-		const bool prev = rank_comm.active_put_signal.test(bit);
-		if (prev != value) {
-			rank_comm.active_put_signal.set(bit, value);
-			rank_comm.active_put_signal_count += value ? 1 : -1;
-		}
-	}
-
-	void clear_ack_range(uint32_t peer_rank, uint16_t ack_seq_num, uint16_t ack_count)
-	{
-		uint16_t seq = (ack_seq_num - ack_count + 1) & GIN_IMM_SEQ_MASK;
-		while (true) {
-			clear_ack_outstanding(peer_rank, seq);
-			if (seq == ack_seq_num) break;
-			seq = (seq + 1) & GIN_IMM_SEQ_MASK;
+		const uint32_t delta = gin_cursor_delta(wire_rx_consumed,
+							rank_comm.tx_tail);
+		if (delta > 0 && delta <= GIN_RX_CONSUMED_HALF) {
+			rank_comm.tx_tail = wire_rx_consumed;
 		}
 	}
 
@@ -433,11 +432,6 @@ private:
 		outstanding_iput_signal_recv_reqs;
 
 	/* --- TIER 3: progress / ack flush path --- */
-	/* Active queue of peers with pending acks.
-	   Only these are visited by flush_stale_acks(). */
-	nccl_ofi_dlist pending_ack_list;
-	uint32_t progress_counter = 0;
-
 	/* Number of outstanding RDMA writes for signal delivery acknowledgement.
 	   Used to wait for remaining acknowledgements on communicator close. */
 	uint32_t outstanding_ack_counter = 0;
@@ -461,15 +455,16 @@ private:
 	/* --- Private methods --- */
 
 	/**
-	 * Send a range ACK via fi_send to the peer.
+	 * Send a standalone ACK via fi_send to the peer carrying our
+	 * receiver-side rx_consumed cursor. Sender uses this to advance its
+	 * tx_tail and free up window slots.
 	 *
 	 * @param gin_comm communicator to send the ACK on
 	 * @param peer_rank rank to send the acknowledgement to
-	 * @param ack_seq_num last (highest) sequence number in the acknowledged range
-	 * @param count number of seq_nums in the acknowledged range
+	 * @param rx_consumed receiver's rx_consumed cursor at this moment
 	 */
 	int send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
-		     uint32_t ack_seq_num, uint32_t count);
+		     uint32_t rx_consumed);
 
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 
@@ -479,7 +474,12 @@ private:
 	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
 					    nccl_net_ofi_gin_iputsignal_recv_req *req);
 
-	int stash_pending_ack(uint32_t peer_rank, uint16_t seq_num, bool is_ack_requested);
+	/**
+	 * Receiver-side: emit a standalone ACK if we have unsent rx_consumed
+	 * progress and either the sender requested it or we've crossed the
+	 * flush threshold. Idempotent and cheap when there's nothing to do.
+	 */
+	int maybe_send_ack(uint32_t peer_rank, bool sender_requested);
 
 	int retire_completed_peer_iput_ops(uint32_t peer_rank);
 

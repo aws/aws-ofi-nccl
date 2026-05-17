@@ -83,16 +83,33 @@ enum gin_msg_type_t : uint8_t {
 static_assert(((1 << GIN_MSG_TYPE_BITS) - 1) >= GIN_MSG_TYPE_MAX,
 	      "GIN_MSG_TYPE_BITS must be wide enough to hold all message types");
 
-/* Bundled/standalone ack count. ack_count == 0 means no ack. */
-#define GIN_ACK_COUNT_BITS    10
-#define GIN_ACK_COUNT_MASK    ((1 << GIN_ACK_COUNT_BITS) - 1)
+/* Receiver's "rx_consumed" cursor: the count of in-order delivered ops
+   modulo a wrap-safe space. The wire width is exactly twice the seq
+   window so the standard half-window forward-delta comparison
+   distinguishes "newer" from "older" ACKs without ambiguity. */
+#define GIN_RX_CONSUMED_BITS  (GIN_IMM_SEQ_BITS + 1)
+#define GIN_RX_CONSUMED_MASK  (((uint64_t)1 << GIN_RX_CONSUMED_BITS) - 1)
+#define GIN_RX_CONSUMED_HALF  ((uint32_t)((GIN_RX_CONSUMED_MASK + 1) >> 1))
+static_assert((1ULL << GIN_RX_CONSUMED_BITS) == 2ULL * (GIN_IMM_SEQ_MASK + 1),
+	      "GIN_RX_CONSUMED_BITS must give exactly 2x the seq window for "
+	      "wrap-safe forward-delta comparison between TX/RX cursors");
+
+/* Once the sender's outstanding window is at GIN_ACK_REQ_THRESHOLD, only
+   request a standalone ACK every GIN_ACK_INTERVAL ops. Without this
+   throttle, every iputSignal above the threshold would request an ACK,
+   producing an ACK storm rather than the slow drip the receiver needs
+   to drain the bitset. */
+#define GIN_ACK_INTERVAL  64
+static_assert(GIN_ACK_INTERVAL <= (GIN_IMM_SEQ_MASK >> 1),
+	      "GIN_ACK_INTERVAL must be much smaller than the seq window so "
+	      "ack-request hysteresis does not delay drain past wrap");
 
 /* Maximum number of GIN comms */
 #define NCCL_GIN_MAX_COMMS    (1 << GIN_IMM_COMM_BITS)
 
 /* Reserved bit computation for Metadata message header */
 #define GIN_MSG_HEADER_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
-                                      - GIN_IMM_SEQ_BITS - GIN_ACK_COUNT_BITS    \
+                                      - GIN_RX_CONSUMED_BITS                    \
                                       - GIN_IMM_SEQ_BITS - GIN_IMM_SEG_CNT_BITS \
                                       - 1 /* ack_req */)
 
@@ -100,25 +117,26 @@ static_assert(((1 << GIN_MSG_TYPE_BITS) - 1) >= GIN_MSG_TYPE_MAX,
  * Metadata message header (64 bits).
  *
  * Both nccl_net_ofi_gin_msg_header_t and gin_ack_msg_t share a common
- * prefix in bits [0:34]: msg_type(2) + comm_id(10) + ack_seq_num(13) +
- * ack_count(10) = 35 bits.  This allows dispatch and ACK processing to
- * read from the same offsets regardless of message type.
+ * prefix in bits [0:25]: msg_type(2) + comm_id(10) + rx_consumed(14) =
+ * 26 bits.  This allows dispatch and ACK processing to read from the
+ * same offsets regardless of message type.
  */
 struct nccl_net_ofi_gin_msg_header_t {
 	/* Message type identifier */
 	uint64_t msg_type        : GIN_MSG_TYPE_BITS;
 	/* Comm identifier on the receiver side */
 	uint64_t remote_comm_id  : GIN_IMM_COMM_BITS;
-	/* Bundled ack sequence number (ack_count == 0 when absent) */
-	uint64_t ack_seq_num     : GIN_IMM_SEQ_BITS;
-	/* Bundled ack count */
-	uint64_t ack_count       : GIN_ACK_COUNT_BITS;
+	/* Receiver's rx_consumed cursor at the time this packet was queued.
+	   Wraps at 2x the seq window. The sender uses a wrap-safe forward
+	   delta against tx_tail (see apply_rx_consumed) to advance its tail. */
+	uint64_t rx_consumed     : GIN_RX_CONSUMED_BITS;
 	/* Message sequence number and count */
 	uint64_t seq_num         : GIN_IMM_SEQ_BITS;
 	uint64_t seq_seg_cnt     : GIN_IMM_SEG_CNT_BITS;
-	/* Receiver should ACK this seq_num. Mirrors the GIN_IMM_ACK_REQ bit
-	 * carried in the data-write immediate; the sender sets both to the
-	 * same value, the receiver OR's them across the two submission paths. */
+	/* Receiver should send back a standalone ACK soon. Mirrors the
+	 * GIN_IMM_ACK_REQ bit carried in the data-write immediate; the sender
+	 * sets both to the same value, the receiver OR's them across the two
+	 * submission paths. */
 	uint64_t ack_req         : 1;
 	/* Reserved for future use */
 	uint64_t reserved        : GIN_MSG_HEADER_RESERVED_BITS;
@@ -141,7 +159,7 @@ static_assert(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t) == 32,
 	     "nccl_net_ofi_gin_signal_metadata_msg_t must be exactly 32 bytes for inline send");
 
 #define GIN_ACK_MSG_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
-                                   - GIN_IMM_SEQ_BITS - GIN_ACK_COUNT_BITS)
+                                   - GIN_RX_CONSUMED_BITS)
 
 /**
  * Standalone ACK message sent via fi_send from receiver to sender (8 bytes).
@@ -154,10 +172,8 @@ struct gin_ack_msg_t {
 	uint64_t msg_type        : GIN_MSG_TYPE_BITS;
 	/* Comm identifier on the original sender side */
 	uint64_t ack_comm_id     : GIN_IMM_COMM_BITS;
-	/* ACK sequence number */
-	uint64_t ack_seq_num     : GIN_IMM_SEQ_BITS;
-	/* ACK count */
-	uint64_t ack_count       : GIN_ACK_COUNT_BITS;
+	/* Receiver's rx_consumed cursor (wraps at 2x seq window) */
+	uint64_t rx_consumed     : GIN_RX_CONSUMED_BITS;
 	/* Reserved for future use */
 	uint64_t reserved        : GIN_ACK_MSG_RESERVED_BITS;
 };
@@ -177,28 +193,21 @@ static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, header) == 0,
 #if !defined(__clang__) && defined(__GNUC__) && (__GNUC__ >= 9)
 static_assert(
 	__builtin_bit_cast(uint64_t,
-		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0, 0})
+		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0})
 		== (uint64_t)GIN_MSG_TYPE_MAX,
 	"msg_type must be at LSB of nccl_net_ofi_gin_msg_header_t");
 static_assert(
 	__builtin_bit_cast(uint64_t,
-		gin_ack_msg_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0})
+		gin_ack_msg_t{GIN_MSG_TYPE_MAX, 0, 0, 0})
 		== (uint64_t)GIN_MSG_TYPE_MAX,
 	"msg_type must be at LSB of gin_ack_msg_t");
 #endif
 
-/* ACK interval for PUT-only messages. Send an ACK every N consecutive PUTs
-   to prevent sequence number wraparound. */
-#define GIN_ACK_INTERVAL 64
-static_assert(GIN_ACK_INTERVAL <= (1 << (GIN_IMM_SEQ_BITS - 1)),
-	      "GIN_ACK_INTERVAL must not exceed half the sequence number space");
-
-/* Receiver-side stash batching: call stash_pending_ack() once every
-   GIN_STASH_BATCH retires. The range-encoded bundle (prev_start +
-   ack_count) extends to the new high water mark on the next stash, so
-   skipped retires are picked up for free. Must be a power of two. */
-#define GIN_STASH_BATCH 128
-static_assert((GIN_STASH_BATCH & (GIN_STASH_BATCH - 1)) == 0,
-	      "GIN_STASH_BATCH must be a power of two");
+/* Sender requests an ACK once the outstanding window is at least half full
+   (i.e. tx_head - tx_tail >= GIN_ACK_REQ_THRESHOLD). The receiver answers
+   either by piggybacking its `consumed` cursor on the next outbound
+   metadata to this peer, or via a standalone ACK packet when no metadata
+   is in flight back to us. */
+#define GIN_ACK_REQ_THRESHOLD ((GIN_IMM_SEQ_MASK + 1) / 2)
 
 #endif
