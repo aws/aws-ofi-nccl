@@ -796,7 +796,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             uint32_t, peer_rank,
             uint16_t, msg_seq_num,
             uint16_t, num_segments,
-            uint16_t, ack_count
+            uint32_t, consumed
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
@@ -805,7 +805,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
             lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
             lttng_ust_field_integer(uint16_t, num_segments, num_segments)
-            lttng_ust_field_integer(uint16_t, ack_count, ack_count)
+            lttng_ust_field_integer(uint32_t, consumed, consumed)
     )
 )
 
@@ -838,16 +838,14 @@ LTTNG_UST_TRACEPOINT_EVENT(
             void *, comm,
             uint16_t, rail_id,
             uint32_t, peer_rank,
-            uint16_t, ack_seq_num,
-            uint16_t, count
+            uint32_t, consumed
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
             lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
             lttng_ust_field_integer(uint16_t, rail_id, rail_id)
             lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
-            lttng_ust_field_integer(uint16_t, ack_seq_num, ack_seq_num)
-            lttng_ust_field_integer(uint16_t, count, count)
+            lttng_ust_field_integer(uint32_t, consumed, consumed)
     )
 )
 
@@ -859,7 +857,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             void *, comm,
             uint16_t, rail_id,
             uint32_t, peer_rank,
-            uint16_t, ack_seq_num,
+            uint32_t, consumed,
             int, ret
     ),
     LTTNG_UST_TP_FIELDS(
@@ -867,47 +865,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
             lttng_ust_field_integer(uint16_t, rail_id, rail_id)
             lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
-            lttng_ust_field_integer(uint16_t, ack_seq_num, ack_seq_num)
-            lttng_ust_field_integer(int, ret, ret)
-    )
-)
-
-LTTNG_UST_TRACEPOINT_EVENT(
-    nccl_ofi_plugin,
-    gin_stash_pending_ack_func_start,
-    LTTNG_UST_TP_ARGS(
-            int, dev,
-            void *, comm,
-            uint32_t, peer_rank,
-            uint16_t, seq_num
-    ),
-    LTTNG_UST_TP_FIELDS(
-            lttng_ust_field_integer(int, dev, dev)
-            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
-            lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
-            lttng_ust_field_integer(uint16_t, seq_num, seq_num)
-    )
-)
-
-LTTNG_UST_TRACEPOINT_EVENT(
-    nccl_ofi_plugin,
-    gin_stash_pending_ack_func_end,
-    LTTNG_UST_TP_ARGS(
-            int, dev,
-            void *, comm,
-            uint32_t, peer_rank,
-            uint16_t, seq_num,
-            uint16_t, ack_count,
-            int, flushed,
-            int, ret
-    ),
-    LTTNG_UST_TP_FIELDS(
-            lttng_ust_field_integer(int, dev, dev)
-            lttng_ust_field_integer_hex(uint64_t, comm, (uint64_t)comm)
-            lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
-            lttng_ust_field_integer(uint16_t, seq_num, seq_num)
-            lttng_ust_field_integer(uint16_t, ack_count, ack_count)
-            lttng_ust_field_integer(int, flushed, flushed)
+            lttng_ust_field_integer(uint32_t, consumed, consumed)
             lttng_ust_field_integer(int, ret, ret)
     )
 )

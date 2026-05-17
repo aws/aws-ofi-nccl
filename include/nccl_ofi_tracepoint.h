@@ -203,28 +203,20 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_write_completion_func_end, dev, comm, rail_id, peer_rank, msg_seq_num, ret); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, ack_count) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, ack_count); \
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, consumed) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, consumed); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, msg_seq_num, ret) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_end, dev, comm, rail_id, peer_rank, msg_seq_num, ret); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, ack_seq_num, count) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_start, dev, comm, rail_id, peer_rank, ack_seq_num, count); \
+#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, consumed) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_start, dev, comm, rail_id, peer_rank, consumed); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, ack_seq_num, ret) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_end, dev, comm, rail_id, peer_rank, ack_seq_num, ret); \
-} while(0)
-
-#define NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_START(dev, comm, peer_rank, seq_num) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_stash_pending_ack_func_start, dev, comm, peer_rank, seq_num); \
-} while(0)
-
-#define NCCL_OFI_TRACE_GIN_STASH_PENDING_ACK_FUNC_END(dev, comm, peer_rank, seq_num, ack_count, flushed, ret) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_stash_pending_ack_func_end, dev, comm, peer_rank, seq_num, ack_count, flushed, ret); \
+#define NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, consumed, ret) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_ack_completion_func_end, dev, comm, rail_id, peer_rank, consumed, ret); \
 } while(0)
 
 #endif /* NCCL_OFI_TRACEPOINT_H_ */
