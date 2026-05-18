@@ -287,6 +287,8 @@ void gdaki_sc_endpoint::create(struct fi_efa_ops_gda *gda_ops,
 	counter_dev_handle.host[0].address_handles = peers.ahs.dev;
 	counter_dev_handle.host[0].remote_qpns = peers.qpns.dev;
 	counter_dev_handle.host[0].qkey = peers.qkeys.dev;
+	counter_dev_handle.host[0].sq_lock = 0;
+	counter_dev_handle.host[0].sq_lock_pad = 0;
 	counter_dev_handle.commit();
 
 	signal_dev_handle.allocate(1);
@@ -296,6 +298,8 @@ void gdaki_sc_endpoint::create(struct fi_efa_ops_gda *gda_ops,
 	signal_dev_handle.host[0].address_handles = peers.ahs.dev;
 	signal_dev_handle.host[0].remote_qpns = peers.qpns.dev;
 	signal_dev_handle.host[0].qkey = peers.qkeys.dev;
+	signal_dev_handle.host[0].sq_lock = 0;
+	signal_dev_handle.host[0].sq_lock_pad = 0;
 	signal_dev_handle.commit();
 }
 #endif /* HAVE_FI_EFA_COMP_CNTR */

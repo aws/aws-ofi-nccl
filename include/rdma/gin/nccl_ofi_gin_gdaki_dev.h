@@ -177,6 +177,14 @@ struct nccl_ofi_gin_dev_counter_handle {
 	uint16_t *address_handles;
 	uint16_t *remote_qpns;
 	uint32_t *qkey;
+
+	/* Per-QP spinlock used by the device-side WQE post path. efa-dp-direct's
+	 * start_sq_batch / sq_batch_place_wr / flush_sq_wrs sequence must be
+	 * serialized per QP (per the efa-dp-direct CUDA README). One lock here
+	 * lets multiple CTAs posting on different signal endpoints proceed in
+	 * parallel; only CTAs targeting the same endpoint contend. */
+	uint32_t sq_lock;
+	uint32_t sq_lock_pad;
 };
 
 /**
@@ -213,6 +221,14 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 	/* Count of outstanding requests tracked on the device. Used by Flush.
 	 * Initialized to 0. */
 	uint64_t pending_reqs;
+
+	/* Spinlock for serializing SQ WQE posting on the main endpoint's QP
+	 * across multiple concurrent threads in the same CTA / across CTAs.
+	 * efa-dp-direct's WQE posting functions are not thread-safe on their
+	 * own. Initialized to 0. (Per-signal-endpoint posts use their own
+	 * sq_lock on nccl_ofi_gin_dev_counter_handle.) */
+	uint32_t sq_lock;
+	uint32_t sq_lock_pad;
 
 	/* Number of counter_handles entries. 0 means counter_handles is NULL. */
 	int32_t nCounters;

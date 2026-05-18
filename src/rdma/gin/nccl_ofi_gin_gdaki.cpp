@@ -380,6 +380,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		h.nSignals = 0;
 #endif
 		h.pending_reqs = 0;
+		h.sq_lock = 0;
+		h.sq_lock_pad = 0;
 		h.nranks = nranks;
 		h.rank = rank;
 #if HAVE_FI_EFA_COMP_CNTR
