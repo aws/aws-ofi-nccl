@@ -7,7 +7,11 @@
 
 #include <sanitizer/asan_interface.h>
 
-#if !defined(__SANITIZE_ADDRESS__)
+#if defined(__SANITIZE_ADDRESS__) || (defined(__has_feature) && __has_feature(address_sanitizer))
+#define NCCL_OFI_ASAN_ENABLED 1
+#endif
+
+#ifndef NCCL_OFI_ASAN_ENABLED
 #error "memcheck-asan should not be compiled when ASAN is disabled"
 #endif
 
