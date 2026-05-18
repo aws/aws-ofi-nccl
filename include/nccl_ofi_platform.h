@@ -104,7 +104,7 @@ public:
 	 * @param	info	Fabric info structure
 	 * @param	device	Network device to set GUID for
 	 */
-	virtual void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) = 0;
+	virtual uint64_t device_get_guid(struct fi_info *info, int dev_id) = 0;
 };
 
 using PlatformPtr = std::unique_ptr<Platform>;
@@ -116,14 +116,14 @@ public:
 	int init(const char **provider_filter) override { return 0; }
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override { return 0; }
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override {}
-	void device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device) override {
+	uint64_t device_get_guid(struct fi_info *info, int dev_id) override {
 		uint32_t node_id = nccl_ofi_get_unique_node_id();
 		/*
 		 * Use device_index as lower 8 bits
 		 * Use node_id as next 32 bits (bits 8-39)
 		 * Upper 24 bits remain 0
 		 */
-		device->guid = (static_cast<uint64_t>(node_id) << 8) | device->dev_id;
+		return (static_cast<uint64_t>(node_id) << 8) | dev_id;
 	}
 };
 

@@ -79,7 +79,7 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 	
 	size_t num_devices = this->plugin->get_num_devices();
 	int ret;
-	nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
+	const nccl_net_ofi_sendrecv_plugin_t *plugin_ptr = this->sendrecv_device_get_plugin();
 
 	/* Validate libfabric NIC info */
 	if (OFI_UNLIKELY(this->info == nullptr)) {
@@ -2278,7 +2278,8 @@ int nccl_net_ofi_sendrecv_plugin_t::complete_init()
 
 
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
-			       nccl_net_ofi_plugin_t **plugin_p)
+			       nccl_net_ofi_plugin_t **plugin_p,
+			       const nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	struct fi_info *provider_list = NULL;
@@ -2459,7 +2460,7 @@ found:
 		return ret;
 	}
 
-	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list);
+	plugin = new nccl_net_ofi_sendrecv_plugin_t(num_providers, provider_list, topo);
 
 	*plugin_p = plugin;
 

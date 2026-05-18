@@ -324,8 +324,9 @@ public:
 	 * @brief	Default SENDRECV plugin constructor
 	 */
 	nccl_net_ofi_sendrecv_plugin_t(size_t num_devices,
-				       struct fi_info *provider_list_arg)
-		: nccl_net_ofi_plugin_t(num_devices),
+				       struct fi_info *provider_list_arg,
+				       const nccl_ofi_topo_t *topo_arg)
+		: nccl_net_ofi_plugin_t(num_devices, topo_arg),
 		  provider_list(provider_list_arg)
 	{}
 
@@ -367,20 +368,20 @@ public:
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
-	inline struct fi_info *get_ofi_info_for_cm() override
+	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
 		return info;
 	}
 
-	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) override
+	inline struct fi_info *get_ofi_info(uint16_t rail_id = 0) const override
 	{
 		assert(rail_id == 0);
 		return info;
 	}
 
-	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
+	inline const nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+		return reinterpret_cast<const nccl_net_ofi_sendrecv_plugin_t*>(plugin);
 	}
 
 	/* Device provider */
@@ -462,6 +463,7 @@ public:
  * @brief	Initialize plugin with sendrecv protocol structures
  */
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
-			       nccl_net_ofi_plugin_t **plugin_p);
+			       nccl_net_ofi_plugin_t **plugin_p,
+			       const nccl_ofi_topo_t *topo);
 
 #endif // End NCCL_OFI_SENDRECV_H_

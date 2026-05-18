@@ -261,7 +261,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 
 		switch (ofi_nccl_protocol.get()) {
 		case PROTOCOL::SENDRECV:
-			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin);
+			ret = nccl_net_ofi_sendrecv_init(provider_filter, &plugin, topo.get());
 			if (ret != 0) {
 				NCCL_OFI_WARN("Failed to initialize sendrecv protocol");
 				goto exit;
@@ -297,7 +297,8 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		if (!have_multiple_rails || rdma_plugin == NULL) {
 			try {
 				ret = nccl_net_ofi_sendrecv_init(provider_filter,
-								 &sendrecv_plugin);
+								 &sendrecv_plugin,
+								 topo.get());
 			}
 			catch (const std::exception &e) {
 				NCCL_OFI_WARN("Caught exception in sendrecv_init: %s", e.what());
@@ -333,10 +334,6 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Using transport protocol %s",
 			      ofi_nccl_protocol.get_string());
 	}
-
-	/* Set non-owning topo pointer on the winning plugin so that
-	 * complete_init and get_properties can access it. */
-	plugin->topo = topo.get();
 
 	ret = plugin->complete_init();
 	if (ret != 0) {
@@ -503,7 +500,7 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov,
 							int dev_id,
 							int num_devices,
-							nccl_ofi_properties_t *props)
+							nccl_ofi_properties_t *props) const
 {
 	int ret = 0;
 	struct fid_nic *nic_info = nullptr;
@@ -727,7 +724,7 @@ std::shared_ptr<nccl_net_ofi_domain_t> nccl_net_ofi_device_t::get_domain(unsigne
 	auto *raw_domain = this->create_domain();
 	if (raw_domain == nullptr) {
 		NCCL_OFI_WARN("Initializing a new domain for device %s failed",
-			      this->name);
+			      this->name.c_str());
 		return nullptr;
 	}
 
@@ -735,7 +732,7 @@ std::shared_ptr<nccl_net_ofi_domain_t> nccl_net_ofi_device_t::get_domain(unsigne
 	this->domain_table.insert(std::make_pair(domain_key, domain_ptr));
 
 	NCCL_OFI_TRACE(NCCL_NET, "Domain %p for device #%d (%s) is created",
-		       raw_domain, this->dev_id, this->name);
+		       raw_domain, this->dev_id, this->name.c_str());
 
 	return domain_ptr;
 }
@@ -756,40 +753,32 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_device_t::get_ep(unsigned int do
 }
 
 
-nccl_net_ofi_device_t::nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+bool nccl_net_ofi_device_t::compute_need_mr_rkey_pool(struct fi_info *info)
+{
+	bool result = true;
+	int ret = nccl_ofi_mr_keys_need_own_key(info, &result);
+	if (ret != 0) {
+		NCCL_OFI_WARN("MR key config parsing failed: %s", strerror(-ret));
+		throw std::runtime_error("Base device constructor: MR key config parse failed");
+	}
+	return result;
+}
+
+nccl_net_ofi_device_t::nccl_net_ofi_device_t(const nccl_net_ofi_plugin_t *plugin_arg,
 					     int device_index,
 					     struct fi_info *info)
 	: plugin(plugin_arg),
 	  dev_id(device_index),
-	  name(strdup(info->fabric_attr->prov_name))
+	  guid(PlatformManager::get_global().get_platform().device_get_guid(info, device_index)),
+	  name(info->fabric_attr->prov_name),
+	  need_mr_rkey_pool(compute_need_mr_rkey_pool(info))
 {
-	int ret = 0;
-
 	assert(this->plugin != nullptr);
-
-	if (this->name == nullptr) {
-		NCCL_OFI_WARN("Unable to allocate device name");
-		throw std::runtime_error("Base device constructor: device name alloc failed");
-	}
-
-	PlatformManager::get_global().get_platform().device_set_guid(info, this);
-
-	/* Initialize mr rkey handling */
-	this->need_mr_rkey_pool = true;
-	ret = nccl_ofi_mr_keys_need_own_key(info, &this->need_mr_rkey_pool);
-	if (ret != 0) {
-		NCCL_OFI_WARN("MR key config parsing failed: %s",
-			      strerror(-ret));
-		throw std::runtime_error("Base device constructor: MR key config parse failed");
-	}
 }
 
 
 nccl_net_ofi_device_t::~nccl_net_ofi_device_t()
 {
-	if (this->name != nullptr) {
-		free(this->name);
-	}
 }
 
 

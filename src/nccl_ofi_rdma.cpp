@@ -236,7 +236,7 @@ nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_data_rail(u
  * @param	0, on success
  *		non-zero, on error
  */
-static int write_topo_file(nccl_ofi_topo_t *topo)
+static int write_topo_file(const nccl_ofi_topo_t *topo)
 {
 	int ret = 0;
 	int topo_fd = -1;
@@ -408,7 +408,7 @@ static inline size_t ofi_info_list_length(struct fi_info *info_list)
 int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 {
 	int ret;
-	nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
+	const nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
 	assert(plugin_ptr != nullptr);
 
 	/* Retrieve NIC properties of first rail */
@@ -420,7 +420,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
-		props->port_speed *= plugin_ptr->topo->max_group_size;
+		props->port_speed *= plugin_ptr->get_topo()->max_group_size;
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
@@ -6751,7 +6751,7 @@ nccl_net_ofi_rdma_device_t::~nccl_net_ofi_rdma_device_t()
 nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 							int device_id,
 							struct fi_info *info_list,
-							nccl_ofi_topo_t *topo)
+							const nccl_ofi_topo_t *topo)
 	: nccl_net_ofi_device_t(plugin_arg, device_id, info_list),
 	  num_comm_ids(static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS)),
 	  comm_idpool(num_comm_ids),
@@ -6957,6 +6957,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 
 
 nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo)
+	: nccl_net_ofi_plugin_t(global_topo)
 {
 	int ret = 0;
 	int num_devices = 0;

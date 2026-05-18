@@ -1472,17 +1472,17 @@ public:
 	nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin,
 				   int dev_id,
 				   struct fi_info *info_list,
-				   nccl_ofi_topo_t *topo);
+				   const nccl_ofi_topo_t *topo);
 
 	int get_properties(nccl_ofi_properties_t *props) override;
 
-	inline struct fi_info *get_ofi_info_for_cm() override
+	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
 		assert(!device_rails.empty());
 		return device_rails[0].info;
 	}
 
-	inline struct fi_info *get_ofi_info(uint16_t rail_id) override
+	inline struct fi_info *get_ofi_info(uint16_t rail_id) const override
 	{
 		assert(!this->device_rails.empty());
 		assert(rail_id < num_rails);
@@ -1492,9 +1492,9 @@ public:
 	/**
 	 * @brief	Return RDMA transport plugin
 	 */
-	inline nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
+	inline const nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
+		return reinterpret_cast<const nccl_net_ofi_rdma_plugin_t*>(plugin);
 	}
 
 	/**

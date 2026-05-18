@@ -936,24 +936,26 @@ const PlatformAWS::platform_aws_node_guid* PlatformAWS::get_node_guid_fields(str
 	}
 }
 
-void PlatformAWS::device_set_guid(struct fi_info *info, nccl_net_ofi_device_t *device)
+uint64_t PlatformAWS::device_get_guid(struct fi_info *info, int dev_id)
 {
 	const PlatformAWS::platform_aws_node_guid* fields = get_node_guid_fields(info);
 	uint32_t node_id = nccl_ofi_get_unique_node_id();
+	uint64_t guid;
 
 	if (!fields ||
 	    strcmp("0xefa0", info->nic->device_attr->device_id) == 0 ||
 	    strcmp("0xefa1", info->nic->device_attr->device_id) == 0 ||
 	    strcmp("0xefa2", info->nic->device_attr->device_id) == 0) {
 
-		device->guid = (static_cast<uint64_t>(node_id) << 32) | device->dev_id;
+		guid = (static_cast<uint64_t>(node_id) << 32) | dev_id;
 	} else {
-		device->guid = (static_cast<uint64_t>(node_id) << 32) |
+		guid = (static_cast<uint64_t>(node_id) << 32) |
 			       (fields->per_card_pci_domain << 8) |
 				fields->per_card_pci_bus;
 	}
 
-	NCCL_OFI_INFO(NCCL_INIT, "GUID for dev[%d]: %032lx", device->dev_id, device->guid);
+	NCCL_OFI_INFO(NCCL_INIT, "GUID for dev[%d]: %032lx", dev_id, guid);
+	return guid;
 }
 
 /*

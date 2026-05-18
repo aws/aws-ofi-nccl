@@ -15,6 +15,7 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
+#include <string>
 #include <nccl/net.h>
 
 #include "nccl_ofi_log.h"
@@ -283,7 +284,7 @@ public:
 	 * Expectation is that this will be called by a transport's device
 	 * constructor 
 	 */
-	nccl_net_ofi_device_t(nccl_net_ofi_plugin_t *plugin_arg,
+	nccl_net_ofi_device_t(const nccl_net_ofi_plugin_t *plugin_arg,
 			      int device_index,
 			      struct fi_info *info);
 
@@ -295,7 +296,7 @@ public:
 	 * transport; in that case, this will be the info object associated with the 
 	 * "leader NIC"
 	 */
-	virtual struct fi_info *get_ofi_info_for_cm() = 0;
+	virtual struct fi_info *get_ofi_info_for_cm() const = 0;
 
 	/**
 	 * Retrieve fi_info object associated with this device with rail index.
@@ -306,7 +307,7 @@ public:
 	 * instead, currently this doesn't work with EFA provider. Once that
 	 * works, that is the preferred approach.
 	 */
-	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) = 0;
+	virtual struct fi_info *get_ofi_info(uint16_t rail_id = 0) const = 0;
 
 	/* Retrieve a domain associated with this device.  There may
 	 * be more than one domain per device, depending on a number
@@ -329,29 +330,29 @@ public:
 	 */
 	void remove_domain_from_map(nccl_net_ofi_domain_t *domain);
 
-	nccl_net_ofi_plugin_t *plugin = nullptr;
+	const nccl_net_ofi_plugin_t *const plugin = nullptr;
 
 	/* this device's index in the plugin's devices array */
-	int dev_id;
+	const int dev_id;
 
 	/*
 	 * Globally unique identifier for the device. An opaque identifier
 	 * returned to NCCL without assumptions about individual platforms.
 	 */
-	uint64_t guid;
+	const uint64_t guid;
 
 	/*
 	 * name of the device - should include the provider name, but may be
 	 * augmented (in the case of mrail).  Set during the transport's
 	 * initialization, and should be read-only from that point.
 	 */
-	char *name = nullptr;
+	const std::string name;
 
 	/* do we need to use an mr rkey pool?  This is a
 	 * provider-specific behavior determined when providers are
 	 * selected.
 	 */
-	bool need_mr_rkey_pool;
+	const bool need_mr_rkey_pool;
 
 	/* Lock for concurrency since domains can be shared by
 	 * multiple entities. */
@@ -365,6 +366,8 @@ public:
 	virtual ~nccl_net_ofi_device_t();
 
 protected:
+
+	static bool compute_need_mr_rkey_pool(struct fi_info *info);
 
 	/*
 	 * create a new domain.  This funcion is a private pure
@@ -738,7 +741,8 @@ public:
 	 * is called from nccl_net_ofi_create_plugin() and should properly resize the p_devs vector
 	 * to the number of devices derived from the created topology.
 	 */
-	nccl_net_ofi_plugin_t()
+	nccl_net_ofi_plugin_t(const nccl_ofi_topo_t *topo_arg)
+		: topo(topo_arg)
 	{}
 
 	/**
@@ -748,8 +752,9 @@ public:
 	 * This is expected to be called from the transport-specific SENDRECV plugin creation
 	 * function, which is called from nccl_net_ofi_create_plugin().
 	 */
-	nccl_net_ofi_plugin_t(size_t num_devices)
-		: p_devs(num_devices, nullptr)
+	nccl_net_ofi_plugin_t(size_t num_devices, const nccl_ofi_topo_t *topo_arg)
+		: p_devs(num_devices, nullptr),
+		  topo(topo_arg)
 	{
 		/* Validate that at least one Libfabric NIC was found */
 		assert(!p_devs.empty());
@@ -784,7 +789,7 @@ public:
 		return 0;
 	}
 
-	inline nccl_net_ofi_device_t *get_device(size_t device_index)
+	inline nccl_net_ofi_device_t *get_device(size_t device_index) const
 	{
 		if (device_index >= get_num_devices()) {
 			NCCL_OFI_WARN("Invalid device index %zu", device_index);
@@ -793,9 +798,14 @@ public:
 		return p_devs[device_index];
 	}
 
-	inline size_t get_num_devices()
+	inline size_t get_num_devices() const
 	{
 		return p_devs.size();
+	}
+
+	inline const nccl_ofi_topo_t *get_topo() const
+	{
+		return topo;
 	}
 
 	/**
@@ -806,12 +816,11 @@ public:
 	int nccl_net_ofi_info_properties(struct fi_info *nic_prov,
 					 int dev_id,
 					 int num_devices,
-					 nccl_ofi_properties_t *props);
+					 nccl_ofi_properties_t *props) const;
 protected:
 	/* Array of devices */
 	std::vector<nccl_net_ofi_device_t *> p_devs;
 
-public:
 	/*
 	 * Hardware topology (non-owning pointer).
 	 *
@@ -823,7 +832,7 @@ public:
 	 * data.  Plugins must not free this pointer; the static
 	 * unique_ptr handles cleanup automatically.
 	 */
-	nccl_ofi_topo_t *topo = nullptr;
+	const nccl_ofi_topo_t *const topo = nullptr;
 };
 
 

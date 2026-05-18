@@ -79,7 +79,7 @@ static nccl_ofi_topo_data_vec_t *nccl_ofi_topo_data_vec_create(size_t size)
 	return vec;
 }
 
-int nccl_ofi_topo_set_to_begin(nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter)
+int nccl_ofi_topo_set_to_begin(const nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter)
 {
 	if (!topo) {
 		NCCL_OFI_WARN("Invalid NCCL OFI topology");
@@ -1729,7 +1729,7 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	return ret;
 }
 
-int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file)
+int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file)
 {
 	int ret = 0;
 	int bridge_depth = 0;
@@ -1757,7 +1757,7 @@ int nccl_ofi_topo_write(nccl_ofi_topo_t *topo, FILE *file)
 	return ret;
 }
 
-int nccl_ofi_topo_num_info_lists(nccl_ofi_topo_t *topo, int *num_lists)
+int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists)
 {
 	if (!topo || !topo->data_vec) {
 		NCCL_OFI_WARN("Invalid topology. Topology is not initialized.");
@@ -1794,7 +1794,7 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 	return info_list;
 }
 
-bool nccl_ofi_topo_has_efa_ena_devices(nccl_ofi_topo_t* topo) {
+bool nccl_ofi_topo_has_efa_ena_devices(const nccl_ofi_topo_t* topo) {
 	if (topo == nullptr || topo->topo == nullptr) {
 		return false;
 	}
