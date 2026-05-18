@@ -26,6 +26,7 @@ bool nccl_ofi_gin_gdaki_enabled()
 
 #if HAVE_DECL_FI_EFA_GDA_OPS
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -145,6 +146,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		 * to the proxy's fabric + domain name.
 		 */
 		ctx->endpoint.open(ofi_domain, proxy_info, ofi_nccl_cq_size());
+		ctx->endpoint.enable();
 
 		/*
 		 * Step 3: Open FI_EFA_GDA_OPS on the reused domain and query
@@ -225,7 +227,152 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		ctx->peers.populate(ctx->endpoint, all_addrs, ep_addr_len, nranks, gda_ops);
 
 		/*
-		 * Step 7: Populate and upload the device-visible handle.
+		 * Step 7: Create signal/counter endpoints if requested.
+		 *
+		 * Each endpoint has its own QP plus two hardware counters
+		 * (FI_WRITE for local completion, FI_REMOTE_WRITE for remote
+		 * notification). Both counter values live in GPU memory
+		 * (DMA-BUF-mapped). We expose them through GPU-resident
+		 * arrays of nccl_ofi_gin_dev_counter_handle pointers, one
+		 * per signal and one per counter.
+		 */
+#if HAVE_FI_EFA_COMP_CNTR
+		int n_sc = std::max(config->nSignals, config->nCounters);
+		if (n_sc > 0) {
+			ctx->nSignals = config->nSignals;
+			ctx->nCounters = config->nCounters;
+			ctx->sc_endpoints.reserve(n_sc);
+
+			for (int i = 0; i < n_sc; i++) {
+				ctx->sc_endpoints.push_back(std::make_unique<gdaki_sc_endpoint>());
+				ctx->sc_endpoints[i]->open(ofi_domain, proxy_info, gda_ops);
+
+				/* Allgather this sc endpoint's address */
+				std::vector<uint8_t> sc_addrs(nranks * ep_addr_len, 0);
+				size_t sc_addrlen = ep_addr_len;
+				ret = fi_getname(&ctx->sc_endpoints[i]->endpoint.ep->fid,
+						 &sc_addrs[rank * ep_addr_len], &sc_addrlen);
+				if (ret != 0)
+					throw std::runtime_error("fi_getname for sc endpoint failed");
+
+				ret = put_comm->get_ag_comm().all_gather(sc_addrs.data(), ep_addr_len);
+				if (ret != 0)
+					throw std::runtime_error("allgather of sc endpoint addresses failed");
+
+				ctx->sc_endpoints[i]->create(gda_ops, sc_addrs, ep_addr_len, nranks);
+			}
+
+			/* Build counter_handles GPU array. cntr_value points at the
+			 * FI_WRITE counter (local completion). */
+			if (config->nCounters > 0) {
+				ctx->d_counter_handles.allocate(config->nCounters);
+				for (int i = 0; i < config->nCounters; i++) {
+					volatile uint64_t *ptr = ctx->sc_endpoints[i]->write_cntr.gpu_ptr();
+					size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, cntr_value);
+					if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+						    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->counter_dev_handle.dev) + offset,
+						    &ptr, sizeof(ptr)) != 0)
+						throw std::runtime_error("patch counter cntr_value failed");
+
+					ctx->d_counter_handles.host[i] = ctx->sc_endpoints[i]->counter_dev_handle.dev;
+				}
+				ctx->d_counter_handles.commit();
+			}
+
+			/* Build signal_handles GPU array. cntr_value points at the
+			 * FI_REMOTE_WRITE counter (signal semantics); local_cntr_value
+			 * points at the FI_WRITE counter (local completion, used by
+			 * the device backpressure check and by Flush in a follow-up
+			 * commit). */
+			if (config->nSignals > 0) {
+				ctx->d_signal_handles.allocate(config->nSignals);
+				for (int i = 0; i < config->nSignals; i++) {
+					{
+						volatile uint64_t *ptr = ctx->sc_endpoints[i]->remote_write_cntr.gpu_ptr();
+						size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, cntr_value);
+						if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+							    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->signal_dev_handle.dev) + offset,
+							    &ptr, sizeof(ptr)) != 0)
+							throw std::runtime_error("patch signal cntr_value failed");
+					}
+					{
+						volatile uint64_t *ptr = ctx->sc_endpoints[i]->write_cntr.gpu_ptr();
+						size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, local_cntr_value);
+						if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+							    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->signal_dev_handle.dev) + offset,
+							    &ptr, sizeof(ptr)) != 0)
+							throw std::runtime_error("patch signal local_cntr_value failed");
+					}
+
+					ctx->d_signal_handles.host[i] = ctx->sc_endpoints[i]->signal_dev_handle.dev;
+				}
+				ctx->d_signal_handles.commit();
+			}
+
+			/*
+			 * Step 7.5: Allocate signal-only scratch buffer and
+			 * allgather (addr, rkey) per rank. The GPU kernel uses
+			 * these for net.signal()-style writes that have no data
+			 * (hasWins=false, bytes=0) — EFA still needs a real remote
+			 * address to bump the receiver's FI_REMOTE_WRITE counter.
+			 */
+			{
+				constexpr size_t kScratchBytes = sizeof(uint64_t);
+				ctx->scratch_buf = calloc(1, kScratchBytes);
+				if (ctx->scratch_buf == nullptr) {
+					throw std::runtime_error("scratch calloc failed");
+				}
+
+				struct iovec iov = { .iov_base = ctx->scratch_buf,
+				                     .iov_len = kScratchBytes };
+				struct fi_mr_attr mr_attr = {};
+				mr_attr.mr_iov = &iov;
+				mr_attr.iov_count = 1;
+				mr_attr.access = FI_REMOTE_WRITE | FI_WRITE | FI_SEND | FI_RECV;
+				mr_attr.iface = FI_HMEM_SYSTEM;
+
+				int mret = fi_mr_regattr(ofi_domain, &mr_attr, 0,
+				                         &ctx->scratch_mr);
+				if (mret != 0) {
+					throw std::runtime_error(
+						"scratch fi_mr_regattr failed: " +
+						std::string(fi_strerror(-mret)));
+				}
+
+				ctx->scratch_lkey = (uint32_t)fi_mr_key(ctx->scratch_mr);
+				ctx->scratch_local_addr = (uint64_t)ctx->scratch_buf;
+
+				/* Allgather (local_addr, local_rkey) across ranks. */
+				std::vector<uint64_t> scratch_all_addrs(nranks, 0);
+				std::vector<uint32_t> scratch_all_rkeys(nranks, 0);
+				scratch_all_addrs[rank] = ctx->scratch_local_addr;
+				scratch_all_rkeys[rank] = ctx->scratch_lkey;
+
+				if (put_comm->get_ag_comm().all_gather(
+					    scratch_all_addrs.data(), sizeof(uint64_t)) != 0) {
+					throw std::runtime_error(
+						"scratch allgather addrs failed");
+				}
+				if (put_comm->get_ag_comm().all_gather(
+					    scratch_all_rkeys.data(), sizeof(uint32_t)) != 0) {
+					throw std::runtime_error(
+						"scratch allgather rkeys failed");
+				}
+
+				ctx->scratch_remote_addrs_buf.allocate(nranks);
+				ctx->scratch_remote_rkeys_buf.allocate(nranks);
+				for (int i = 0; i < nranks; i++) {
+					ctx->scratch_remote_addrs_buf.host[i] = scratch_all_addrs[i];
+					ctx->scratch_remote_rkeys_buf.host[i] = scratch_all_rkeys[i];
+				}
+				ctx->scratch_remote_addrs_buf.commit();
+				ctx->scratch_remote_rkeys_buf.commit();
+			}
+		}
+#endif /* HAVE_FI_EFA_COMP_CNTR */
+
+		/*
+		 * Step 8: Populate and upload the device-visible handle.
 		 */
 		ctx->dev_handle.allocate(1);
 		nccl_ofi_gin_gdaki_dev_handle &h = *ctx->dev_handle.host;
@@ -234,9 +381,35 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		h.address_handles = ctx->peers.ahs.dev;
 		h.remote_qpns = ctx->peers.qpns.dev;
 		h.qkey = ctx->peers.qkeys.dev;
+#if HAVE_FI_EFA_COMP_CNTR
+		h.counter_handles = (config->nCounters > 0) ? ctx->d_counter_handles.dev : nullptr;
+		h.signal_handles  = (config->nSignals  > 0) ? ctx->d_signal_handles.dev  : nullptr;
+		h.nCounters = config->nCounters;
+		h.nSignals  = config->nSignals;
+#else
+		h.counter_handles = nullptr;
+		h.signal_handles = nullptr;
+		h.nCounters = 0;
+		h.nSignals = 0;
+#endif
 		h.pending_reqs = 0;
+		h.sq_lock = 0;
+		h.sq_lock_pad = 0;
 		h.nranks = nranks;
 		h.rank = rank;
+#if HAVE_FI_EFA_COMP_CNTR
+		h.scratch_lkey         = ctx->scratch_lkey;
+		h.scratch_pad          = 0;
+		h.scratch_local_addr   = ctx->scratch_local_addr;
+		h.scratch_remote_addrs = ctx->scratch_remote_addrs_buf.dev;
+		h.scratch_remote_rkeys = ctx->scratch_remote_rkeys_buf.dev;
+#else
+		h.scratch_lkey         = 0;
+		h.scratch_pad          = 0;
+		h.scratch_local_addr   = 0;
+		h.scratch_remote_addrs = nullptr;
+		h.scratch_remote_rkeys = nullptr;
+#endif
 		ctx->dev_handle.commit();
 
 		/*
@@ -348,9 +521,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	uint32_t lkey = (uint32_t)gda_ops->get_mr_lkey(mr);
 
 	/* Step 4/5: allocate and populate the device-visible handle.
-	 * Layout: base struct + flex rkeys[nranks]. */
+	 * Layout: base struct + flex peers[nranks]. */
 	size_t handle_size = sizeof(nccl_ofi_gin_gdaki_mr_handle) +
-			     (size_t)nranks * sizeof(uint32_t);
+			     (size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
 	auto *gdaki_handle = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(
 		calloc(1, handle_size));
 	if (gdaki_handle == nullptr) {
@@ -360,10 +533,13 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 
 	gdaki_handle->lkey = lkey;
 	gdaki_handle->nranks = nranks;
+	gdaki_handle->local_addr = (uint64_t)data;
 	for (int i = 0; i < nranks; i++) {
-		/* remote_mr[i].mr_key[0] is the peer rkey on rail 0, stored
-		 * by the shared regMrSymDmaBuf after its internal allgather. */
-		gdaki_handle->rkeys[i] = (uint32_t)sym->remote_mr[i].mr_key[0];
+		/* remote_mr[i].address is the peer's base VA, allgathered by
+		 * the shared regMrSym. remote_mr[i].mr_key[0] is the peer's
+		 * rkey on rail 0. */
+		gdaki_handle->peers[i].remote_addr = (uint64_t)sym->remote_mr[i].address;
+		gdaki_handle->peers[i].rkey        = (uint32_t)sym->remote_mr[i].mr_key[0];
 	}
 
 	/* Stash on the mhandle so deregMrSym can free it. The mhandle and

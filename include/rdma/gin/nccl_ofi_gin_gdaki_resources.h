@@ -26,18 +26,18 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_ext_efa.h>
 
-#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
-#endif
 #include "rdma/gin/nccl_ofi_gin_gdaki_dev.h"
 
 /**
@@ -191,12 +191,18 @@ public:
 	}
 
 	/*
-	 * Open EP + CQ + AV on `domain`, using ref_info to derive our own
-	 * fi_info via fi_getinfo. cq_size is the fi_cq_attr size passed
-	 * to fi_cq_open.
+	 * Open EP + CQ + AV on `domain`, bind CQ and AV.
+	 * Does NOT enable — caller must call enable() after any
+	 * additional binds (e.g. counters).
 	 */
 	void open(struct fid_domain *domain, struct fi_info *ref_info,
 		  size_t cq_size);
+
+	/*
+	 * Enable the endpoint. Must be called after open() and
+	 * any additional binds.
+	 */
+	void enable();
 };
 
 /**
@@ -270,6 +276,151 @@ public:
 	}
 };
 
+#if HAVE_FI_EFA_COMP_CNTR
+/**
+ * A hardware completion counter backed by GPU-accessible external memory.
+ *
+ * The NIC writes the counter value directly into GPU memory via
+ * cntr_open_ext with FI_EFA_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM.
+ * The GPU kernel reads *gpu_ptr to observe completions without any
+ * host round-trip.
+ *
+ * Destruction closes the counter and frees the GPU memory.
+ */
+class gdaki_hw_counter {
+public:
+	gdaki_hw_counter() = default;
+	gdaki_hw_counter(const gdaki_hw_counter &) = delete;
+	gdaki_hw_counter &operator=(const gdaki_hw_counter &) = delete;
+
+	~gdaki_hw_counter()
+	{
+		if (cntr) {
+			fi_close(&cntr->fid);
+		}
+		if (dmabuf_fd >= 0) {
+			close(dmabuf_fd);
+		}
+		if (d_mem) {
+			nccl_net_ofi_gpu_vmm_free(d_mem, alloc_size);
+		}
+	}
+
+	/**
+	 * Create the hardware counter with GPU memory via DMA-BUF.
+	 *
+	 * Uses the CUDA VMM API (cuMemCreate + cuMemMap) with
+	 * gpuDirectRDMACapable so the allocation supports DMA-BUF export.
+	 * The NIC writes the counter value directly to GPU HBM.
+	 *
+	 * @param gda_ops  GDA ops handle (from fi_open_ops on the domain)
+	 * @param domain   libfabric domain to create counter on
+	 */
+	void create(struct fi_efa_ops_gda *gda_ops, struct fid_domain *domain)
+	{
+		void *gpu_mem = nullptr;
+		if (nccl_net_ofi_gpu_vmm_alloc(&gpu_mem, sizeof(uint64_t)) != 0) {
+			throw std::runtime_error("gdaki_hw_counter: gpu_vmm_alloc failed");
+		}
+
+		/* Get DMA-BUF fd */
+		int fd = -1;
+		size_t offset = 0;
+		if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_mem, 4096, &fd, &offset) != 0) {
+			nccl_net_ofi_gpu_vmm_free(gpu_mem, 4096);
+			throw std::runtime_error("gdaki_hw_counter: get_dma_buf_fd failed");
+		}
+
+		struct fi_cntr_attr cntr_attr = {};
+		cntr_attr.events = FI_CNTR_EVENTS_COMP;
+
+		struct fi_efa_comp_cntr_init_attr efa_attr = {};
+		efa_attr.flags = FI_EFA_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM;
+		efa_attr.comp_cntr_ext_mem.type = FI_EFA_MEMORY_LOCATION_DMABUF;
+		efa_attr.comp_cntr_ext_mem.dmabuf.fd = fd;
+		efa_attr.comp_cntr_ext_mem.dmabuf.offset = offset;
+
+		struct fid_cntr *c = nullptr;
+		int ret = gda_ops->cntr_open_ext(domain, &cntr_attr, &c, nullptr, &efa_attr);
+		if (ret != 0) {
+			close(fd);
+			nccl_net_ofi_gpu_vmm_free(gpu_mem, 4096);
+			throw std::runtime_error("gdaki_hw_counter: cntr_open_ext failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+
+		cntr = c;
+		d_mem = gpu_mem;
+		dmabuf_fd = fd;
+		alloc_size = 4096;
+	}
+
+	/** The fid_cntr for binding to an endpoint. */
+	struct fid_cntr *get() const { return cntr; }
+
+	/** GPU pointer to the counter value (for kernel to read). */
+	volatile uint64_t *gpu_ptr() const
+	{
+		return static_cast<volatile uint64_t *>(d_mem);
+	}
+
+private:
+	struct fid_cntr *cntr = nullptr;
+	void *d_mem = nullptr;
+	int dmabuf_fd = -1;
+	size_t alloc_size = 0;
+};
+
+/**
+ * Host-side state for a single signal or counter endpoint.
+ *
+ * Each signal/counter gets its own efa-direct endpoint with two hardware
+ * counters (FI_WRITE for local completion, FI_REMOTE_WRITE for remote
+ * notification). Destruction tears down in reverse creation order.
+ */
+class gdaki_sc_endpoint {
+public:
+	gdaki_sc_endpoint() = default;
+	gdaki_sc_endpoint(const gdaki_sc_endpoint &) = delete;
+	gdaki_sc_endpoint &operator=(const gdaki_sc_endpoint &) = delete;
+
+	/* Resources — declaration order is creation order; C++ destructs
+	 * in reverse, giving correct teardown sequencing.
+	 * endpoint must be declared AFTER counters so the QP is destroyed
+	 * before the counters (QP has counters attached). */
+	gdaki_hw_counter write_cntr;        /* FI_WRITE (local completion) */
+	gdaki_hw_counter remote_write_cntr; /* FI_REMOTE_WRITE (signal) */
+	gdaki_fi_endpoint endpoint;
+	gdaki_mmio_region sq_buffer;
+	gdaki_mmio_region sq_doorbell;
+	gdaki_gpu_qp gpu_qp;
+	gdaki_gpu_cq gpu_cq;
+	gdaki_peer_addressing peers;
+	/* counter_dev_handle exposes the WRITE (local completion) counter via cntr_value.
+	 * Returned to the kernel through counter_handles[]. */
+	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle> counter_dev_handle;
+	/* signal_dev_handle exposes the REMOTE_WRITE (signal) counter via cntr_value.
+	 * Returned to the kernel through signal_handles[]. Same QP/CQ/addressing as
+	 * counter_dev_handle; only cntr_value differs. */
+	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle> signal_dev_handle;
+
+	/**
+	 * Open the endpoint with hardware counters bound.
+	 * Creates EP + CQ + AV, binds counters, enables.
+	 */
+	void open(struct fid_domain *domain, struct fi_info *ref_info,
+		  struct fi_efa_ops_gda *gda_ops);
+
+	/**
+	 * Build GPU-resident structs and populate per-peer addressing.
+	 * Must be called after open().
+	 */
+	void create(struct fi_efa_ops_gda *gda_ops,
+		    const std::vector<uint8_t> &peer_addrs,
+		    size_t ep_addr_len, int nranks);
+};
+#endif /* HAVE_FI_EFA_COMP_CNTR */
+
 /**
  * The composed GDAKI context.
  *
@@ -300,6 +451,47 @@ struct nccl_ofi_gin_gdaki_context {
 
 	/* Per-peer addressing tables in GPU memory. */
 	gdaki_peer_addressing peers;
+
+#if HAVE_FI_EFA_COMP_CNTR
+	/* Signal/counter endpoints. Empty when nSignals == 0 && nCounters == 0. */
+	int nSignals = 0;
+	int nCounters = 0;
+	std::vector<std::unique_ptr<gdaki_sc_endpoint>> sc_endpoints;
+
+	/* GPU-resident arrays of device handle pointers for counter/signal. */
+	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle *> d_counter_handles;
+	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle *> d_signal_handles;
+
+	/* Signal-only scratch buffer.
+	 *
+	 * `net.signal(team, peer, ...)` (the path used by ncclBarrierSession)
+	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA needs
+	 * a real remote address to bump the receiver's FI_REMOTE_WRITE counter,
+	 * so we register a small per-rank buffer on the proxy domain and
+	 * allgather the (addr, rkey) pair across all ranks. The GPU kernel
+	 * issues a 4-byte RDMA write to the peer's scratch on the signal
+	 * endpoint when it needs a signal-only delivery. Cleanup is automatic:
+	 * fi_close on the MR before free of the host buffer.
+	 */
+	void *scratch_buf = nullptr;
+	struct fid_mr *scratch_mr = nullptr;
+	uint32_t scratch_lkey = 0;
+	uint64_t scratch_local_addr = 0;
+	gdaki_gpu_buf<uint64_t> scratch_remote_addrs_buf;
+	gdaki_gpu_buf<uint32_t> scratch_remote_rkeys_buf;
+
+	~nccl_ofi_gin_gdaki_context()
+	{
+		if (scratch_mr) {
+			fi_close(&scratch_mr->fid);
+			scratch_mr = nullptr;
+		}
+		if (scratch_buf) {
+			free(scratch_buf);
+			scratch_buf = nullptr;
+		}
+	}
+#endif /* HAVE_FI_EFA_COMP_CNTR */
 
 	/* GPU-resident device handle. Populated last; points into the
 	 * GPU buffers owned by the members above. */

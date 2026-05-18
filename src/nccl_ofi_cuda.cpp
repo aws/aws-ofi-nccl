@@ -88,6 +88,15 @@ DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
 DECLARE_CUDA_FUNCTION(cuMemHostRegister, 6050);
 DECLARE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
 DECLARE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
+DECLARE_CUDA_FUNCTION(cuMemCreate, 10020);
+DECLARE_CUDA_FUNCTION(cuMemRelease, 10020);
+DECLARE_CUDA_FUNCTION(cuMemAddressReserve, 10020);
+DECLARE_CUDA_FUNCTION(cuMemAddressFree, 10020);
+DECLARE_CUDA_FUNCTION(cuMemMap, 10020);
+DECLARE_CUDA_FUNCTION(cuMemUnmap, 10020);
+DECLARE_CUDA_FUNCTION(cuMemSetAccess, 10020);
+DECLARE_CUDA_FUNCTION(cuMemGetAllocationGranularity, 10020);
+DECLARE_CUDA_FUNCTION(cuDeviceGet, 2000);
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -161,6 +170,15 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuMemHostRegister, 6050);
 	RESOLVE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
+	RESOLVE_CUDA_FUNCTION(cuMemCreate, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemRelease, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemAddressReserve, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemAddressFree, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemMap, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemUnmap, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemSetAccess, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemGetAllocationGranularity, 10020);
+	RESOLVE_CUDA_FUNCTION(cuDeviceGet, 2000);
 
 	cu_ret = pfn_cuDriverGetVersion(&driverVersion);
 	if (cu_ret != CUDA_SUCCESS) {
@@ -274,6 +292,67 @@ int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int 
 #else
 	return -EINVAL;
 #endif
+}
+
+int nccl_net_ofi_gpu_vmm_alloc(void **ptr, size_t size)
+{
+	int cuda_dev = 0;
+	CUdevice cu_dev;
+	cudaGetDevice(&cuda_dev);
+	pfn_cuDeviceGet(&cu_dev, cuda_dev);
+
+	CUmemAllocationProp prop = {};
+	prop.type = CU_MEM_ALLOCATION_TYPE_PINNED;
+	prop.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+	prop.location.id = cu_dev;
+
+	int flag = 0;
+	pfn_cuDeviceGetAttribute(&flag, CU_DEVICE_ATTRIBUTE_GPU_DIRECT_RDMA_WITH_CUDA_VMM_SUPPORTED, cu_dev);
+	if (flag) prop.allocFlags.gpuDirectRDMACapable = 1;
+
+	size_t granularity = 0;
+	if (pfn_cuMemGetAllocationGranularity(&granularity, &prop, CU_MEM_ALLOC_GRANULARITY_MINIMUM) != CUDA_SUCCESS)
+		return -1;
+
+	size_t alloc_size = (size + granularity - 1) & ~(granularity - 1);
+	CUmemGenericAllocationHandle handle;
+	if (pfn_cuMemCreate(&handle, alloc_size, &prop, 0) != CUDA_SUCCESS)
+		return -1;
+
+	CUdeviceptr dptr = 0;
+	if (pfn_cuMemAddressReserve(&dptr, alloc_size, granularity, 0, 0) != CUDA_SUCCESS) {
+		pfn_cuMemRelease(handle);
+		return -1;
+	}
+
+	if (pfn_cuMemMap(dptr, alloc_size, 0, handle, 0) != CUDA_SUCCESS) {
+		pfn_cuMemAddressFree(dptr, alloc_size);
+		pfn_cuMemRelease(handle);
+		return -1;
+	}
+
+	CUmemAccessDesc access = {};
+	access.location.type = CU_MEM_LOCATION_TYPE_DEVICE;
+	access.location.id = cu_dev;
+	access.flags = CU_MEM_ACCESS_FLAGS_PROT_READWRITE;
+	if (pfn_cuMemSetAccess(dptr, alloc_size, &access, 1) != CUDA_SUCCESS) {
+		pfn_cuMemUnmap(dptr, alloc_size);
+		pfn_cuMemAddressFree(dptr, alloc_size);
+		pfn_cuMemRelease(handle);
+		return -1;
+	}
+
+	cudaMemset((void *)dptr, 0, alloc_size);
+	*ptr = (void *)dptr;
+	return 0;
+}
+
+int nccl_net_ofi_gpu_vmm_free(void *ptr, size_t size)
+{
+	if (!ptr) return 0;
+	pfn_cuMemUnmap((CUdeviceptr)ptr, size);
+	pfn_cuMemAddressFree((CUdeviceptr)ptr, size);
+	return 0;
 }
 
 int nccl_net_ofi_get_gpu_device_for_addr(void *ptr, int *dev_id)

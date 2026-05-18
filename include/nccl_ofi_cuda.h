@@ -84,6 +84,19 @@ int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr);
 int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 /*
+ * @brief Allocate GPU memory using the CUDA VMM API (cuMemCreate + cuMemMap)
+ * with gpuDirectRDMACapable flag. This allocation supports DMA-BUF export.
+ * @return 0 on success, -1 on error
+ */
+int nccl_net_ofi_gpu_vmm_alloc(void **ptr, size_t size);
+
+/*
+ * @brief Free GPU memory allocated with nccl_net_ofi_gpu_vmm_alloc.
+ * @return 0 on success, -1 on error
+ */
+int nccl_net_ofi_gpu_vmm_free(void *ptr, size_t size);
+
+/*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
 
  * @return	true if attr is fetched successfully and true.
