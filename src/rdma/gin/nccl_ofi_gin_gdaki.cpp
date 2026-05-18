@@ -280,16 +280,29 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			}
 
 			/* Build signal_handles GPU array. cntr_value points at the
-			 * FI_REMOTE_WRITE counter (signal semantics). */
+			 * FI_REMOTE_WRITE counter (signal semantics); local_cntr_value
+			 * points at the FI_WRITE counter (local completion, used by
+			 * the device backpressure check and by Flush in a follow-up
+			 * commit). */
 			if (config->nSignals > 0) {
 				ctx->d_signal_handles.allocate(config->nSignals);
 				for (int i = 0; i < config->nSignals; i++) {
-					volatile uint64_t *ptr = ctx->sc_endpoints[i]->remote_write_cntr.gpu_ptr();
-					size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, cntr_value);
-					if (nccl_net_ofi_gpu_mem_copy_host_to_device(
-						    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->signal_dev_handle.dev) + offset,
-						    &ptr, sizeof(ptr)) != 0)
-						throw std::runtime_error("patch signal cntr_value failed");
+					{
+						volatile uint64_t *ptr = ctx->sc_endpoints[i]->remote_write_cntr.gpu_ptr();
+						size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, cntr_value);
+						if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+							    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->signal_dev_handle.dev) + offset,
+							    &ptr, sizeof(ptr)) != 0)
+							throw std::runtime_error("patch signal cntr_value failed");
+					}
+					{
+						volatile uint64_t *ptr = ctx->sc_endpoints[i]->write_cntr.gpu_ptr();
+						size_t offset = offsetof(nccl_ofi_gin_dev_counter_handle, local_cntr_value);
+						if (nccl_net_ofi_gpu_mem_copy_host_to_device(
+							    reinterpret_cast<uint8_t *>(ctx->sc_endpoints[i]->signal_dev_handle.dev) + offset,
+							    &ptr, sizeof(ptr)) != 0)
+							throw std::runtime_error("patch signal local_cntr_value failed");
+					}
 
 					ctx->d_signal_handles.host[i] = ctx->sc_endpoints[i]->signal_dev_handle.dev;
 				}

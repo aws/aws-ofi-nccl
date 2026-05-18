@@ -289,6 +289,10 @@ void gdaki_sc_endpoint::create(struct fi_efa_ops_gda *gda_ops,
 	counter_dev_handle.host[0].qkey = peers.qkeys.dev;
 	counter_dev_handle.host[0].sq_lock = 0;
 	counter_dev_handle.host[0].sq_lock_pad = 0;
+	counter_dev_handle.host[0].local_cntr_value = nullptr; /* patched later for signal handles */
+	counter_dev_handle.host[0].submitted_count = 0;
+	counter_dev_handle.host[0].sq_size = sq_attr.num_entries;
+	counter_dev_handle.host[0].sq_size_pad = 0;
 	counter_dev_handle.commit();
 
 	signal_dev_handle.allocate(1);
@@ -300,6 +304,10 @@ void gdaki_sc_endpoint::create(struct fi_efa_ops_gda *gda_ops,
 	signal_dev_handle.host[0].qkey = peers.qkeys.dev;
 	signal_dev_handle.host[0].sq_lock = 0;
 	signal_dev_handle.host[0].sq_lock_pad = 0;
+	signal_dev_handle.host[0].local_cntr_value = nullptr; /* patched later to write_cntr */
+	signal_dev_handle.host[0].submitted_count = 0;
+	signal_dev_handle.host[0].sq_size = sq_attr.num_entries;
+	signal_dev_handle.host[0].sq_size_pad = 0;
 	signal_dev_handle.commit();
 }
 #endif /* HAVE_FI_EFA_COMP_CNTR */

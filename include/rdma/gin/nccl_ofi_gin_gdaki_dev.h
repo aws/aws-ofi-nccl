@@ -185,6 +185,29 @@ struct nccl_ofi_gin_dev_counter_handle {
 	 * parallel; only CTAs targeting the same endpoint contend. */
 	uint32_t sq_lock;
 	uint32_t sq_lock_pad;
+
+	/* Counter-based completion tracking.
+	 *
+	 * `local_cntr_value` points at the FI_WRITE hardware counter for this
+	 * endpoint's QP. The NIC increments it on every locally-completed
+	 * outgoing WR (regardless of remote semantics). The kernel reads it
+	 * directly from GPU memory.
+	 *
+	 * `submitted_count` is incremented by the device under the sq_lock
+	 * after a successful flush_sq_wrs. The pair (submitted_count,
+	 * *local_cntr_value) lets the device know how many WRs are still in
+	 * flight on this QP — used by the SQ-overflow backpressure check and
+	 * (in a follow-up commit) by Flush to wait for local completion. */
+	volatile uint64_t *local_cntr_value;
+	uint64_t submitted_count;
+
+	/* SQ ring size for this endpoint's QP. Used by the device-side Put
+	 * to gate new batches against in-flight WRs (efa-dp-direct's
+	 * start_sq_batch does not validate ring overflow on its own). The
+	 * kernel spins until (submitted_count - *local_cntr_value + batch_size)
+	 * <= sq_size before reserving slots. */
+	uint32_t sq_size;
+	uint32_t sq_size_pad;
 };
 
 /**
