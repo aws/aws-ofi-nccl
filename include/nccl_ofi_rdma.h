@@ -8,8 +8,11 @@
 
 #include <rdma/fabric.h>
 
+#include <algorithm>
 #include <array>
+#include <cassert>
 #include <deque>
+#include <mutex>
 
 #include "nccl_ofi.h"
 #include "cm/nccl_ofi_cm.h"
@@ -280,6 +283,8 @@ class nccl_net_ofi_rdma_domain_rail_t;
 class nccl_net_ofi_rdma_ep_rail_t;
 
 class nccl_net_ofi_rdma_req;
+class nccl_net_ofi_rdma_send_comm;
+class nccl_net_ofi_rdma_recv_comm;
 
 typedef struct {
 	/* Rx buffer freelist item */
@@ -475,7 +480,7 @@ public:
  */
 class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
 public:
-	nccl_net_ofi_rdma_req();
+	virtual ~nccl_net_ofi_rdma_req() = default;
 	
 	int test(int *done, int *size_p) override;
 
@@ -493,17 +498,6 @@ public:
 	/* Number of arrived request completions */
 	int ncompls;
 
-	union {
-		rdma_req_rma_op_data_t rma_op_data;
-		rdma_req_send_data_t send_data;
-		rdma_req_recv_data_t recv_data;
-		rdma_req_send_close_data_t send_close_data;
-		rdma_req_eager_copy_data_t eager_copy_data;
-		rdma_req_recv_segms_data_t recv_segms_data;
-		rdma_req_flush_data_t flush_data;
-		rdma_req_rx_buff_data_t rx_buff_data;
-	};
-
 	/* Size of completed request */
 	size_t size;
 
@@ -511,13 +505,10 @@ public:
 	 * Protect updating critical fields such as size and ncompls when
 	 * network xfer happened over multiple rails
 	 */
-	pthread_mutex_t req_lock;
+	std::mutex req_lock;
 
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
-
-	/* Type of request */
-	nccl_net_ofi_rdma_req_type_t type;
 
 	/* Backpointer to freelist element */
 	nccl_ofi_freelist::fl_entry *elem;
@@ -526,9 +517,205 @@ public:
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	int free(bool dec_inflight_reqs);
+	virtual int free(bool dec_inflight_reqs) = 0;
 
+	/* Return the request type enum value for this subclass.  Used
+	 * only for logging and tracing: dispatch is handled through the
+	 * per-type virtual methods above, not through the enum value.
+	 * The value is set once at construction by the subclass and is
+	 * read directly from a private const field, so this getter is
+	 * non-virtual and trivially inlinable. */
+	nccl_net_ofi_rdma_req_type_t get_type() const { return req_type; }
+
+	/* Post this request to the network.  Each subclass overrides this
+	 * to perform the type-specific libfabric post operation. */
+	virtual int post() = 0;
+
+	/* Post this request to the network, and if the post fails with
+	 * -FI_EAGAIN, push the request onto the endpoint's pending requests
+	 * queue so it can be retried later.  Returns 0 on success (including
+	 * the queued case), or a negative errno on other errors.
+	 *
+	 * This is the common post-with-retry entry point for both send and
+	 * receive direction callers.  The pending queue lives on the
+	 * endpoint, which is reached via this->comm->ep, so it works for
+	 * send_comm and recv_comm requests alike. */
+	int post_with_pending_retry();
+
+	/* Push this request onto the endpoint's pending requests queue.
+	 *
+	 * The queue and its mutex live on the endpoint, but the two
+	 * callers that enqueue are a request method (post_with_pending_retry)
+	 * and an endpoint method (process_pending_reqs).  Centralise the
+	 * lock/push/unlock here so the pattern is not duplicated.
+	 *
+	 * TODO: The endpoint owns the pending queue and arguably should
+	 * own this method too.  Leaving it on the request for now because
+	 * the enqueue pattern lived here historically; revisit once the
+	 * ep/req relationship is redesigned. */
+	void enqueue_pending(bool push_front);
+
+	/* Handle a libfabric CQ completion for this request.  The
+	 * dispatcher in handle_cq_entry strips off the FI_RECV path
+	 * (which goes through rx-buffer handling) and forwards every
+	 * other completion to this method, passing the libfabric
+	 * completion flags so the subclass can branch on FI_SEND vs
+	 * FI_WRITE vs FI_READ as needed.  rail_id identifies which
+	 * libfabric rail produced the completion.
+	 *
+	 * Subclasses override this and switch on comp_flags internally.
+	 * The base class implementation logs a warning and returns
+	 * -EINVAL: it is only reached when a completion arrives on a
+	 * request type that has no corresponding override (which would
+	 * indicate a programming error). */
+	virtual int handle_completion(uint64_t comp_flags, uint16_t rail_id);
+
+	/*
+	 * test() extension points.  test() runs the common state-machine
+	 * steps (lock the endpoint, process the CQ once, check the final
+	 * state, free on completion) and calls the hooks below at the
+	 * points where a request type may need to inject type-specific
+	 * behavior.  Subclasses override only the hooks they need.
+	 */
+
+	/* Called before ofi_process_cq().  If the request can already be
+	 * declared complete without waiting for a CQ event, return true
+	 * after updating state and writing *size_p.  Default: return
+	 * false so that test() falls through to the normal CQ scan. */
+	virtual bool check_if_already_complete(int *size_p);
+
+	/* Called on the completion path to write the completed size(s)
+	 * into the caller-supplied size_p.  Default: report this->size
+	 * (guarded by req_lock).  Override for request types that report
+	 * per-sub sizes, such as grouped receives. */
+	virtual void write_completion_size(int *size_p);
+
+protected:
+	/* Subclasses construct via this constructor, supplying their
+	 * concrete type tag.  The base class stores it in a private
+	 * const field so get_type() is a non-virtual field read. */
+	explicit nccl_net_ofi_rdma_req(nccl_net_ofi_rdma_req_type_t type);
+
+private:
+	const nccl_net_ofi_rdma_req_type_t req_type;
 };
+
+/*
+ * RDMA request subclasses, one per request type.  Each subclass owns
+ * its type-specific data struct as a named member.  Access goes
+ * through the get_*_data() helpers below, which static_cast to the
+ * subclass and return a pointer to the member.
+ */
+
+class rdma_send_req : public nccl_net_ofi_rdma_req {
+public:
+	/* Typed accessor for the associated send_comm.  Concentrates the
+	 * downcast from the base nccl_net_ofi_comm * here so the rest of
+	 * the subclass stays type-clean.  Asserted in debug builds. */
+	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	rdma_send_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND) {}
+	rdma_req_send_data_t send_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+};
+
+class rdma_recv_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_recv_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV) {}
+	rdma_req_recv_data_t recv_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+	void write_completion_size(int *size_p) override;
+};
+
+class rdma_flush_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_flush_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_FLUSH) {}
+	rdma_req_flush_data_t flush_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+	bool check_if_already_complete(int *size_p) override;
+};
+
+class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
+public:
+	enum class direction { WRITE, READ };
+	explicit rdma_rma_op_req(direction d)
+		: nccl_net_ofi_rdma_req(d == direction::WRITE ? NCCL_OFI_RDMA_WRITE : NCCL_OFI_RDMA_READ),
+		  dir(d) {}
+	rdma_req_rma_op_data_t rma_op_data;
+	const direction dir;
+	/* RMA write requests use a send_comm; reads use a recv_comm.
+	 * Callers pick the appropriate accessor based on dir. */
+	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+};
+
+class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
+public:
+	enum class kind { CTRL, EAGER };
+	explicit rdma_rx_buff_req(kind k)
+		: nccl_net_ofi_rdma_req(k == kind::CTRL ? NCCL_OFI_RDMA_CTRL_RX_BUFF : NCCL_OFI_RDMA_EAGER_RX_BUFF),
+		  rx_kind(k) {}
+	rdma_req_rx_buff_data_t rx_buff_data;
+	const kind rx_kind;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+};
+
+class rdma_send_close_req : public nccl_net_ofi_rdma_req {
+public:
+	/* The receive side originates the close handshake (sends a
+	 * close control message to the sender), so this request is
+	 * associated with a recv_comm. */
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_send_close_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND_CLOSE) {}
+	rdma_req_send_close_data_t send_close_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+};
+
+class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_eager_copy_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_EAGER_COPY) {}
+	rdma_req_eager_copy_data_t eager_copy_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+};
+
+class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
+public:
+	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_recv_segms_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV_SEGMS) {}
+	rdma_req_recv_segms_data_t recv_segms_data;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
+};
+
+/* Maximum size across all request subclasses.  Used as the freelist
+ * element size so that any subclass can be placement-new'd into any
+ * slot. */
+static constexpr size_t rdma_req_max_subclass_size = std::max({
+	sizeof(rdma_send_req),
+	sizeof(rdma_recv_req),
+	sizeof(rdma_flush_req),
+	sizeof(rdma_rma_op_req),
+	sizeof(rdma_rx_buff_req),
+	sizeof(rdma_send_close_req),
+	sizeof(rdma_eager_copy_req),
+	sizeof(rdma_recv_segms_req)
+});
 
 /*
  * Rdma endpoint name
@@ -777,6 +964,47 @@ public:
 	uint64_t remote_mailbox_addr;
 	std::array<uint64_t, MAX_NUM_RAILS> remote_mr_key;
 };
+
+
+inline nccl_net_ofi_rdma_send_comm *rdma_send_req::get_send_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
+	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_recv_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_flush_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_send_comm *rdma_rma_op_req::get_send_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
+	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_rma_op_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_send_close_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_eager_copy_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
+
+inline nccl_net_ofi_rdma_recv_comm *rdma_recv_segms_req::get_recv_comm() const {
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
+}
 
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
