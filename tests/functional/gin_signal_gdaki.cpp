@@ -168,7 +168,7 @@ int main(int argc, char *argv[])
 	std::vector<uint32_t> sig_rkeys(nranks);
 	for (int i = 0; i < nranks; i++) {
 		sig_addrs[i] = sig_sym->remote_mr[i].address;
-		sig_rkeys[i] = (uint32_t)sig_mr->rkeys[i];
+		sig_rkeys[i] = (uint32_t)sig_mr->peers[i].rkey;
 	}
 
 	/* Print counter value before */

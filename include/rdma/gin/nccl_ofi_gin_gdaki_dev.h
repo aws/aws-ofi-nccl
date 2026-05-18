@@ -39,21 +39,44 @@ extern "C" {
 #define NCCL_OFI_GDAKI_CQ_INITIAL_PHASE 1
 
 /**
+ * Per-peer MR metadata used by EFA GDA WQE construction.
+ *
+ * EFA uses FI_MR_VIRT_ADDR, so WQEs take absolute virtual addresses for
+ * both local and remote buffers. The kernel passes an offset (srcOff /
+ * dstOff) and we compute the absolute address by adding the base VA.
+ */
+struct nccl_ofi_gin_gdaki_mr_peer {
+	/* Remote rank's base virtual address for this MR. */
+	uint64_t remote_addr;
+	/* Remote rank's rkey for this MR. */
+	uint32_t rkey;
+	/* Padding to keep the struct 16-byte sized for natural alignment. */
+	uint32_t pad;
+};
+
+/**
  * GDAKI memory registration handle returned via ginHandle from regMrSym.
  *
  * Allocated in host memory. The lkey is used by the kernel for local SGEs.
- * The rkeys array (one per rank) is used for remote RDMA write destinations.
- * The kernel receives this as a ncclGinWindow_t (void*).
+ * The peers[] array holds per-rank (remote_addr, rkey) pairs used as the
+ * destination of remote RDMA writes. The kernel receives this as a
+ * ncclGinWindow_t (void*).
+ *
+ * Layout is shared with the NCCL mirror in
+ * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
  */
 struct nccl_ofi_gin_gdaki_mr_handle {
 	/* Local key for this MR on the efa-direct domain. */
 	uint32_t lkey;
 
-	/* Number of ranks (size of rkeys array). */
+	/* Number of ranks (size of peers[] array). */
 	int32_t nranks;
 
-	/* Per-peer remote keys, indexed by rank. [nranks] elements follow. */
-	uint32_t rkeys[];
+	/* Local (this rank's) base virtual address for this MR. */
+	uint64_t local_addr;
+
+	/* Per-peer remote metadata. [nranks] elements follow. */
+	struct nccl_ofi_gin_gdaki_mr_peer peers[];
 };
 
 /**
@@ -202,6 +225,30 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 
 	/* Rank of the local process within the context. */
 	int32_t rank;
+
+	/* Signal-only scratch buffer support.
+	 *
+	 * net.signal(team, peer, ...) (used by ncclBarrierSession) routes
+	 * through ncclGinApi_Put with hasWins=false, bytes=0. EFA needs an
+	 * actual remote memory destination to bump the receiver's
+	 * FI_REMOTE_WRITE counter on the signal endpoint, so the plugin
+	 * allocates a small buffer per createContext, registers it on the
+	 * proxy domain, and allgathers the (local_addr, rkey) per rank. The
+	 * GPU kernel uses these to post a 4-byte RDMA write to the peer's
+	 * scratch region whenever it needs a signal-only delivery.
+	 */
+	/* Local lkey for the scratch buffer on the proxy domain. */
+	uint32_t scratch_lkey;
+	uint32_t scratch_pad;
+
+	/* Local source address for scratch writes (this rank's scratch). */
+	uint64_t scratch_local_addr;
+
+	/* Per-peer remote scratch base addresses, indexed by rank. [nranks] in GPU mem. */
+	uint64_t *scratch_remote_addrs;
+
+	/* Per-peer remote scratch rkeys, indexed by rank. [nranks] in GPU mem. */
+	uint32_t *scratch_remote_rkeys;
 };
 
 #ifdef __cplusplus

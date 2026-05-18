@@ -461,6 +461,36 @@ struct nccl_ofi_gin_gdaki_context {
 	/* GPU-resident arrays of device handle pointers for counter/signal. */
 	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle *> d_counter_handles;
 	gdaki_gpu_buf<nccl_ofi_gin_dev_counter_handle *> d_signal_handles;
+
+	/* Signal-only scratch buffer.
+	 *
+	 * `net.signal(team, peer, ...)` (the path used by ncclBarrierSession)
+	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA needs
+	 * a real remote address to bump the receiver's FI_REMOTE_WRITE counter,
+	 * so we register a small per-rank buffer on the proxy domain and
+	 * allgather the (addr, rkey) pair across all ranks. The GPU kernel
+	 * issues a 4-byte RDMA write to the peer's scratch on the signal
+	 * endpoint when it needs a signal-only delivery. Cleanup is automatic:
+	 * fi_close on the MR before free of the host buffer.
+	 */
+	void *scratch_buf = nullptr;
+	struct fid_mr *scratch_mr = nullptr;
+	uint32_t scratch_lkey = 0;
+	uint64_t scratch_local_addr = 0;
+	gdaki_gpu_buf<uint64_t> scratch_remote_addrs_buf;
+	gdaki_gpu_buf<uint32_t> scratch_remote_rkeys_buf;
+
+	~nccl_ofi_gin_gdaki_context()
+	{
+		if (scratch_mr) {
+			fi_close(&scratch_mr->fid);
+			scratch_mr = nullptr;
+		}
+		if (scratch_buf) {
+			free(scratch_buf);
+			scratch_buf = nullptr;
+		}
+	}
 #endif /* HAVE_FI_EFA_COMP_CNTR */
 
 	/* GPU-resident device handle. Populated last; points into the

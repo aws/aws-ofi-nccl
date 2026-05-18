@@ -213,7 +213,7 @@ int main(int argc, char *argv[])
 	uint32_t src_lkey = src_gin_mr->lkey;
 	std::vector<uint64_t> all_rkeys(nranks);
 	for (int i = 0; i < nranks; i++) {
-		all_rkeys[i] = dst_gin_mr->rkeys[i];
+		all_rkeys[i] = dst_gin_mr->peers[i].rkey;
 	}
 
 	/* Remote addresses are not part of the device-visible contract (the
