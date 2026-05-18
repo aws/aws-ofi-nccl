@@ -6,3 +6,4 @@ ring
 gin
 grouped_recv
 gin_put_gdaki
+gin_signal_gdaki
