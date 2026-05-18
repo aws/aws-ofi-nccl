@@ -2693,18 +2693,8 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 
 	*mhandle = NULL;
 
-	/* Allocate rdma memory registration handle.
-	 *
-	 * In FI_MR_ENDPOINT mode (ep != nullptr) a separate fid_mr is registered
-	 * for each ctrl ep rail, so nctrl = ep->num_control_rails.
-	 *
-	 * In non-endpoint-MR mode (ep == nullptr) a single domain-level fid_mr is
-	 * shared across all rails.  We still size mr_ctrl[] to num_rails and alias
-	 * each entry to the corresponding mr_data[] entry so that IO-path callers
-	 * can always use mr_ctrl[rail_id] unconditionally, without checking
-	 * whether the vector is populated. */
-	uint16_t nctrl = ep ? ep->num_control_rails
-	                    : static_cast<uint16_t>(num_rails);
+	/* Allocate rdma memory registration handle */
+	uint16_t nctrl = ep ? ep->num_control_rails : num_rails;
 	auto *ret_handle = new nccl_net_ofi_rdma_mr_handle_t(num_rails, nctrl);
 
 	if (key_pool->get_size() != 0) {
@@ -2749,36 +2739,32 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 		}
 	}
 
-	if (ep != nullptr) {
-		/* FI_MR_ENDPOINT: register a separate fid_mr per ctrl rail, bind it
-		 * to the ctrl ep, and point mr_ctrl[] at the owned objects. */
-		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
-			nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
+	/* Register memory for each ctrl rail.
+	 * With FI_MR_ENDPOINT a single fid_mr may only be bound to one fid_ep,
+	 * so ctrl-rail registrations are kept separate in mr_ctrl[].
+	 * In non-endpoint mode (ep == nullptr) we still populate mr_ctrl[] with
+	 * valid registrations, but skip fi_mr_bind / fi_mr_enable since there is
+	 * no endpoint to bind to. */
+	for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
+		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
-			auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
-								      &mr_attr,
-								      regattr_flags);
-			if (OFI_UNLIKELY(mr_result.is_failure())) {
-				NCCL_OFI_WARN("Could not register memory on ctrl rail %u with flag %lu",
-					      rail_id, regattr_flags);
-				ret = mr_result.error_code;
-				goto error;
-			}
-			ret_handle->mr_ctrl_owned[rail_id] = std::move(mr_result.resource);
+		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
+							      &mr_attr,
+							      regattr_flags);
+		if (OFI_UNLIKELY(mr_result.is_failure())) {
+			NCCL_OFI_WARN("Could not register memory on ctrl rail %u with flag %lu",
+				      rail_id, regattr_flags);
+			ret = mr_result.error_code;
+			goto error;
+		}
+		ret_handle->mr_ctrl[rail_id] = std::move(mr_result.resource);
 
+		if (ep != nullptr) {
 			nccl_net_ofi_rdma_ep_rail_t *ctrl_rail = ep->rdma_endpoint_get_control_rail(rail_id);
 			struct fid_ep *ctrl_ofi_ep = ctrl_rail->ofi_ep.get();
-			ret = mr_bind_and_enable(ret_handle->mr_ctrl_owned[rail_id].get(), ctrl_ofi_ep,
+			ret = mr_bind_and_enable(ret_handle->mr_ctrl[rail_id].get(), ctrl_ofi_ep,
 						 rail_id, "ctrl");
 			if (ret != 0) goto error;
-
-			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_ctrl_owned[rail_id].get();
-		}
-	} else {
-		/* Non-endpoint-MR: the domain-level fid_mr is valid for all rails.
-		 * Alias mr_ctrl[i] to mr_data[i] so IO-path callers need no conditional. */
-		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
-			ret_handle->mr_ctrl[rail_id] = ret_handle->mr_data[rail_id].get();
 		}
 	}
 
@@ -5184,7 +5170,7 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 	nccl_net_ofi_rdma_mr_handle_t *mr_h = fl_mr_handle->mr_handle;
 	uint16_t rid = rx_buff_data->rail->rail_id;
 	struct fid_mr *raw_mr = ep_rail->is_ctrl
-		? mr_h->mr_ctrl[rid]
+		? mr_h->mr_ctrl[rid].get()
 		: mr_h->mr_data[rid].get();
 	void *desc = fi_mr_desc(raw_mr);
 	struct iovec iov;
@@ -5315,7 +5301,7 @@ static ssize_t send_ctrl_post(nccl_net_ofi_rdma_recv_comm *r_comm,
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
 	assert(rail_id < mr_handle->num_ctrl_rails);
-	void *desc = fi_mr_desc(mr_handle->mr_ctrl[rail_id]);
+	void *desc = fi_mr_desc(mr_handle->mr_ctrl[rail_id].get());
 
 	ssize_t rc = fi_send(comm_rail->local_ep, ctrl_fl_elem->ptr,
 			size,
@@ -5362,7 +5348,7 @@ static int post_rdma_ctrl(nccl_net_ofi_rdma_req *req)
 		rail_id = 0;
 	}
 
-	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr_ctrl[rail_id]);
+	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr_ctrl[rail_id].get());
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 
 	ssize_t rc = fi_write(comm_rail->local_ep, &r_comm->ctrl_mailbox[slot],
@@ -5849,12 +5835,10 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 
 	/* Send the MR key for each ctrl ep rail so the receiver can fi_write
 	 * into our ctrl mailbox.  The receiver will issue fi_write operations
-	 * through our ctrl ep rails, so in FI_MR_ENDPOINT mode the rkey must
-	 * come from an fid_mr bound to a ctrl ep (mr_ctrl[]).  In
-	 * non-endpoint-MR mode mr_ctrl[i] is the same object as mr_data[i]
-	 * because a single domain-level MR is valid for all endpoints. */
+	 * through our ctrl ep rails; the rkey must come from an fid_mr bound
+	 * to a ctrl ep (mr_ctrl[]). */
 	for (uint16_t rail_id = 0; rail_id != num_control_rails; ++rail_id) {
-		conn_msg->ctrl_mr_key[rail_id] = fi_mr_key(ctrl_msg_mr_handle->mr_ctrl[rail_id]);
+		conn_msg->ctrl_mr_key[rail_id] = fi_mr_key(ctrl_msg_mr_handle->mr_ctrl[rail_id].get());
 	}
 
 	/* Set number of rails to be sent back to remote for verification */
