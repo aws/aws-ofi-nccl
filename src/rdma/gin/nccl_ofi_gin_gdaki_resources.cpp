@@ -129,8 +129,11 @@ void gdaki_fi_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info
 		throw std::runtime_error("fi_ep_bind AV failed: " +
 					 std::string(fi_strerror(-ret)));
 	}
+}
 
-	ret = fi_enable(ep);
+void gdaki_fi_endpoint::enable()
+{
+	int ret = fi_enable(ep);
 	if (ret != 0) {
 		throw std::runtime_error("fi_enable failed: " +
 					 std::string(fi_strerror(-ret)));
@@ -218,5 +221,83 @@ void gdaki_peer_addressing::populate(gdaki_fi_endpoint &endpoint,
 	qpns.commit();
 	qkeys.commit();
 }
+
+#if HAVE_FI_EFA_COMP_CNTR
+void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
+			     struct fi_efa_ops_gda *gda_ops)
+{
+	/* Create hardware counters */
+	write_cntr.create(gda_ops, domain);
+	remote_write_cntr.create(gda_ops, domain);
+
+	/* Open EP + CQ + AV (without enable) */
+	endpoint.open(domain, ref_info, 128);
+
+	/* Bind counters before enabling */
+	int ret = fi_ep_bind(endpoint.ep, &write_cntr.get()->fid, FI_WRITE);
+	if (ret != 0)
+		throw std::runtime_error("sc_endpoint fi_ep_bind FI_WRITE counter failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	ret = fi_ep_bind(endpoint.ep, &remote_write_cntr.get()->fid, FI_REMOTE_WRITE);
+	if (ret != 0)
+		throw std::runtime_error("sc_endpoint fi_ep_bind FI_REMOTE_WRITE counter failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	/* Now enable */
+	endpoint.enable();
+}
+
+void gdaki_sc_endpoint::create(struct fi_efa_ops_gda *gda_ops,
+			       const std::vector<uint8_t> &peer_addrs,
+			       size_t ep_addr_len, int nranks)
+{
+	/* Query QP and map SQ MMIO for GPU */
+	struct fi_efa_wq_attr sq_attr = {}, rq_attr = {};
+	int ret = gda_ops->query_qp_wqs(endpoint.ep, &sq_attr, &rq_attr);
+	if (ret != 0)
+		throw std::runtime_error("sc_endpoint query_qp_wqs failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	sq_buffer.map(sq_attr.buffer,
+		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
+	sq_doorbell.map(sq_attr.doorbell, 4096);
+
+	gpu_qp.build(sq_attr, rq_attr, sq_buffer.dev, sq_doorbell.dev);
+
+	/* Query CQ */
+	struct fi_efa_cq_attr efa_cq_attr = {};
+	ret = gda_ops->query_cq(endpoint.cq, &efa_cq_attr);
+	if (ret != 0)
+		throw std::runtime_error("sc_endpoint query_cq failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	gpu_cq.build(efa_cq_attr);
+
+	/* Populate per-peer addressing */
+	peers.populate(endpoint, peer_addrs, ep_addr_len, nranks, gda_ops);
+
+	/* Build device handles. Both hold the same QP/CQ/addressing; they
+	 * differ only in which counter cntr_value points to (patched later
+	 * in createContext). */
+	counter_dev_handle.allocate(1);
+	counter_dev_handle.host[0].qp = gpu_qp.dev();
+	counter_dev_handle.host[0].cq = gpu_cq.dev();
+	counter_dev_handle.host[0].cntr_value = nullptr; /* patched later to write_cntr */
+	counter_dev_handle.host[0].address_handles = peers.ahs.dev;
+	counter_dev_handle.host[0].remote_qpns = peers.qpns.dev;
+	counter_dev_handle.host[0].qkey = peers.qkeys.dev;
+	counter_dev_handle.commit();
+
+	signal_dev_handle.allocate(1);
+	signal_dev_handle.host[0].qp = gpu_qp.dev();
+	signal_dev_handle.host[0].cq = gpu_cq.dev();
+	signal_dev_handle.host[0].cntr_value = nullptr; /* patched later to remote_write_cntr */
+	signal_dev_handle.host[0].address_handles = peers.ahs.dev;
+	signal_dev_handle.host[0].remote_qpns = peers.qpns.dev;
+	signal_dev_handle.host[0].qkey = peers.qkeys.dev;
+	signal_dev_handle.commit();
+}
+#endif /* HAVE_FI_EFA_COMP_CNTR */
 
 #endif /* HAVE_DECL_FI_EFA_GDA_OPS */

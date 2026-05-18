@@ -335,7 +335,7 @@ static inline struct fi_info *get_gin_info(struct fi_info *info)
 	get_gin_hints(*gin_hints.get(), info);
 
 	struct fi_info *results = nullptr;
-	int ret = fi_getinfo(FI_VERSION(1, 18), nullptr, nullptr, 0ULL, gin_hints.get(), &results);
+	int ret = fi_getinfo(FI_VERSION(2, 5), nullptr, nullptr, 0ULL, gin_hints.get(), &results);
 	if (ret != 0) {
 		throw std::runtime_error("Failed to get gin_info");
 	};

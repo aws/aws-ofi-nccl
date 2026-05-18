@@ -79,6 +79,16 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 #include <rdma/fi_ext_efa.h>
 #endif]])])
 
+  dnl Check for hardware counter support (cntr_open_ext) in the GDA ops.
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_TYPES([struct fi_efa_comp_cntr_init_attr],
+                  [AC_DEFINE([HAVE_FI_EFA_COMP_CNTR], [1],
+                             [Define to 1 if libfabric has fi_efa_comp_cntr_init_attr])],
+                  [], [AC_INCLUDES_DEFAULT
+[#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif]])])
+
   AS_IF([test "${check_pkg_found}" = "yes"],
         [$1],
         [CPPFLAGS="${check_pkg_CPPFLAGS_save}"

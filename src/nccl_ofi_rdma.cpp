@@ -7155,7 +7155,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 
 	get_hints(hints);
-	api_version = nccl_ofi_dmabuf_viable() ? FI_VERSION(1, 20) : FI_VERSION(1, 18);
+	api_version = nccl_ofi_dmabuf_viable() ? FI_VERSION(2, 5) : FI_VERSION(1, 18);
 	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
 					      &provider_list, &num_providers);
 	if (ret == 0) {

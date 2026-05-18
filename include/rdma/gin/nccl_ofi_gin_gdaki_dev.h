@@ -122,6 +122,41 @@ struct nccl_ofi_gin_gdaki_cq {
 };
 
 /**
+ * Per-signal/counter endpoint handle, visible to device code.
+ *
+ * Each signal or counter endpoint has its own QP (with SQ for posting)
+ * and per-peer addressing arrays. The hardware counter value lives in
+ * GPU memory and is updated by the NIC directly.
+ *
+ * For signals: the GPU kernel reads *cntr_value to detect remote writes
+ *              (FI_REMOTE_WRITE counter). The per-peer arrays let the
+ *              sender target this QP on the remote rank.
+ *
+ * For counters: the GPU kernel reads *cntr_value to track local write
+ *               completions (FI_WRITE counter). The QP is used by the
+ *               local rank to post writes that need completion tracking.
+ *
+ * Layout is shared with the NCCL mirror in
+ * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
+ */
+struct nccl_ofi_gin_dev_counter_handle {
+	/* GPU-resident QP for this signal/counter endpoint. */
+	struct nccl_ofi_gin_gdaki_qp *qp;
+
+	/* GPU-resident CQ for this signal/counter endpoint. */
+	struct nccl_ofi_gin_gdaki_cq *cq;
+
+	/* Pointer to the hardware counter value in GPU-accessible memory.
+	 * For signals: FI_REMOTE_WRITE count. For counters: FI_WRITE count. */
+	volatile uint64_t *cntr_value;
+
+	/* Per-peer addressing for this endpoint's QP. [nranks] in GPU mem. */
+	uint16_t *address_handles;
+	uint16_t *remote_qpns;
+	uint32_t *qkey;
+};
+
+/**
  * Device-visible handle returned from createContext.
  *
  * This struct is allocated in GPU memory. The pointer is stored in
@@ -146,9 +181,21 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 	/* Per-peer Q keys, indexed by rank. [nranks] in GPU mem. */
 	uint32_t *qkey;
 
+	/* Per-counter device handle array, [nCounters]. NULL when nCounters == 0. */
+	struct nccl_ofi_gin_dev_counter_handle **counter_handles;
+
+	/* Per-signal device handle array, [nSignals]. NULL when nSignals == 0. */
+	struct nccl_ofi_gin_dev_counter_handle **signal_handles;
+
 	/* Count of outstanding requests tracked on the device. Used by Flush.
 	 * Initialized to 0. */
 	uint64_t pending_reqs;
+
+	/* Number of counter_handles entries. 0 means counter_handles is NULL. */
+	int32_t nCounters;
+
+	/* Number of signal_handles entries. 0 means signal_handles is NULL. */
+	int32_t nSignals;
 
 	/* Number of ranks participating in this context. */
 	int32_t nranks;
