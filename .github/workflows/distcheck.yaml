@@ -94,6 +94,8 @@ jobs:
           - clang
         tracing:
           - lttng
+          - nvtx
+          - lttng-nvtx
           - none
         sdk:
           - cuda
@@ -101,6 +103,12 @@ jobs:
         build-type:
           - release
           - debug
+        exclude:
+          # NVTX requires CUDA, so skip the nvtx variants on neuron.
+          - tracing: nvtx
+            sdk: neuron
+          - tracing: lttng-nvtx
+            sdk: neuron
         include:
           - cc-variant: latest
             cc: clang
@@ -110,7 +118,11 @@ jobs:
             cc-version: 13
 
     name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}/${{ matrix.build-type }}
-    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
+    # The nvtx and lttng-nvtx tracing variants reuse the lttng container
+    # image, which already has cuda-nvtx installed (added in PR #1224).  Map
+    # any nvtx-containing variant to the lttng tag so the container reference
+    # resolves correctly.
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ (contains(matrix.tracing, 'nvtx') && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
 
@@ -133,6 +145,10 @@ jobs:
               exit 1
           fi
           ./autogen.sh
+          # Tracing values: "none" = no tracing backends,
+          #                  "lttng" = --with-lttng only,
+          #                  "nvtx" = --with-nvtx only (CUDA only),
+          #                  "lttng-nvtx" = --with-lttng + --with-nvtx (CUDA only)
           ./configure --with-mpi=/opt/amazon/openmpi \
                       --with-libfabric=/opt/amazon/efa \
                       --enable-tests=yes \
@@ -141,7 +157,8 @@ jobs:
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
                       ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
-                      ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
+                      ${{ contains(matrix.tracing, 'lttng') && '--with-lttng' || '' }} \
+                      ${{ contains(matrix.tracing, 'nvtx') && '--with-nvtx=/usr/local/cuda' || '' }}
 
       - name: Call `make`
         run: make V=1
@@ -173,6 +190,8 @@ jobs:
           - clang-18
         tracing:
           - lttng
+          - nvtx
+          - lttng-nvtx
           - none
         sdk:
           - cuda
@@ -180,9 +199,16 @@ jobs:
         build-type:
           - release
           - debug
+        exclude:
+          # NVTX requires CUDA, so skip the nvtx variants on neuron.
+          - tracing: nvtx
+            sdk: neuron
+          - tracing: lttng-nvtx
+            sdk: neuron
 
     name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/${{matrix.tracing}}/${{ matrix.build-type }}
-    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
+    # See comment on u2204 job: nvtx and lttng-nvtx reuse the lttng container.
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ (contains(matrix.tracing, 'nvtx') && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
 
@@ -215,7 +241,8 @@ jobs:
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
                       ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace'  || '' }} \
-                      ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
+                      ${{ contains(matrix.tracing, 'lttng') && '--with-lttng' || '' }} \
+                      ${{ contains(matrix.tracing, 'nvtx') && '--with-nvtx=/usr/local/cuda' || '' }}
 
       - name: Call `make`
         run: make V=1
