@@ -15,8 +15,11 @@
     "ubuntu": {
       "cc-variant": ["latest", "legacy"],
       "cc": ["gcc", "clang"],
-      "tracing": ["lttng", "none"],
+      "tracing": ["lttng", "lttng-nvtx", "none"],
       "sdk": ["cuda", "neuron"],
+      "exclude": [
+        {"tracing": "lttng-nvtx", "sdk": "neuron"}
+      ],
       "include": [
         {"cc-variant": "latest", "cc": "clang", "cc-version": 18},
         {"cc-variant": "latest", "cc": "gcc", "cc-version": 13}
@@ -24,8 +27,11 @@
     },
     "ubuntu2404": {
       "cc": ["gcc-13", "gcc-14", "clang-18"],
-      "tracing": ["lttng", "none"],
-      "sdk": ["cuda", "neuron"]
+      "tracing": ["lttng", "lttng-nvtx", "none"],
+      "sdk": ["cuda", "neuron"],
+      "exclude": [
+        {"tracing": "lttng-nvtx", "sdk": "neuron"}
+      ]
     },
     "codechecker": {
       "sdk": ["cuda", "neuron"]

@@ -110,7 +110,10 @@ jobs:
             cc-version: 13
 
     name: u2204/${{ matrix.sdk }}/${{matrix.cc}}-${{matrix.cc-variant}}-${{matrix.tracing}}/${{ matrix.build-type }}
-    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ matrix.tracing }}-efalattest
+    # The lttng-nvtx tracing variant reuses the lttng container image, which
+    # already has cuda-nvtx installed (added in PR #1224).  Strip the "-nvtx"
+    # suffix from the tag so the container reference resolves correctly.
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ (matrix.tracing == 'lttng-nvtx' && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
 
@@ -141,9 +144,11 @@ jobs:
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
                       ${{ matrix.build-type == 'debug' && '--enable-debug' || '' }} \
-                      ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
-
-      - name: Call `make`
+                      ${{ contains(matrix.tracing, 'lttng') && '--with-lttng' || '' }} \
+                      ${{ contains(matrix.tracing, 'nvtx') && '--with-nvtx=/usr/local/cuda' || '' }}
+          # Tracing values: "none" = no tracing backends,
+          #                  "lttng" = --with-lttng only,
+          #                  "lttng-nvtx" = --with-lttng + --with-nvtx (CUDA only)
         run: make V=1
 
       - name: Call `make check`
@@ -182,7 +187,8 @@ jobs:
           - debug
 
     name: U2404/${{ matrix.sdk }}/${{matrix.cc}}/${{matrix.tracing}}/${{ matrix.build-type }}
-    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
+    # See comment on u2204 job: lttng-nvtx reuses the lttng container.
+    container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ (matrix.tracing == 'lttng-nvtx' && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
 
@@ -215,7 +221,8 @@ jobs:
                       --enable-platform-aws \
                       ${{ matrix.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
                       ${{ matrix.build-type == 'debug' && '--enable-debug --enable-trace'  || '' }} \
-                      ${{ matrix.tracing == 'lttng' && '--with-lttng' || '' }}
+                      ${{ contains(matrix.tracing, 'lttng') && '--with-lttng' || '' }} \
+                      ${{ contains(matrix.tracing, 'nvtx') && '--with-nvtx=/usr/local/cuda' || '' }}
 
       - name: Call `make`
         run: make V=1
