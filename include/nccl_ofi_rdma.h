@@ -1770,6 +1770,10 @@ public:
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
 
+	/* Whether the provider supports mixed host/device iovecs,
+	 * eager support requires this */
+	bool eager_support = false;
+
 	/* ID pool */
 	nccl_ofi_idpool_t comm_idpool;
 

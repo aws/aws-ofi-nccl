@@ -423,6 +423,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 		static_assert(NCCL_OFI_MAX_RECVS <= (1 << NCCL_OFI_RDMA_RECV_IDX_BITS),
 					  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
+		this->eager_support = props->eager_support;
 	} else {
 		return ret;
 	}
@@ -7072,7 +7073,7 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 
 	this->ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
 				      sizeof(nccl_net_ofi_rdma_close_msg_t)});
-	this->eager_send_size = ofi_nccl_eager_max_size();
+	this->eager_send_size = device->eager_support ? ofi_nccl_eager_max_size() : 0;
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
 	   posting 0 byte rx buffers.  Note that if eager_send_size is -1
 	   (disabled), eager_rx_buff_size will also be -1. */

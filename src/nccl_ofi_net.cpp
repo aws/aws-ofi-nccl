@@ -16,6 +16,11 @@
 #include <sys/mman.h>
 #include <ctype.h>
 
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
+#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_environ.h"
@@ -475,11 +480,10 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 
 	props->latency = ofi_nccl_net_latency.get();
 
-	/*
-	 * Maximum number of grouped receives. We set it to 1 by default
-	 * Will be overwritten depending on libfabric feature
-	 */
-	props->max_group_receives = 1;
+	props->max_group_receives = NCCL_OFI_MAX_RECVS;
+
+	/* Disable eager by default.  Will be overwritten depending on libfabric feature*/
+	props->eager_support = false;
 
 	if (support_gdr == GDR_SUPPORTED) {
 		props->hmem_support = true;
@@ -562,12 +566,28 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		goto exit;
 	}
 
-	/* Only support multi-recv if eager is disabled for now
-	 * Enabling it requires multiple iovs that point to both host and GPU memory
-	 */
-	if (ofi_nccl_eager_max_size() < 0) {
-		props->max_group_receives = NCCL_OFI_MAX_RECVS;
+#if HAVE_DECL_FI_EFA_FEATURE_OPS
+	{ /* Scope block: C++ forbids goto past auto variable initialization */
+		auto fabric_result = nccl_ofi_ofiutils_fabric_create(nic_prov);
+		if (OFI_UNLIKELY(fabric_result.is_failure())) {
+			NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
+				      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
+			ret = fabric_result.error_code;
+			goto error;
+		}
+
+		struct fi_efa_feature_ops *feat_ops = NULL;
+		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
+				  (void **)&feat_ops, NULL);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			ret = 0;
+		} else if (feat_ops->query("mixed_hmem_iov")) {
+			props->eager_support = true;
+		}
 	}
+#endif
 
 	/* name is NULL if device is a part of multirail config */
 	/* overriding default name only if value is available from provider */

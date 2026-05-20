@@ -266,6 +266,8 @@ typedef struct nccl_ofi_properties {
 	size_t max_p2p_bytes;
 	/** Max transfer size for collective operations **/
 	size_t max_coll_bytes;
+	/** Support eager **/
+	bool eager_support;
 } nccl_ofi_properties_t;
 
 /**
