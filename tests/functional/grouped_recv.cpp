@@ -844,8 +844,6 @@ private:
 
 int main(int argc, char* argv[])
 {
-	/* Disable eager to avoid 2-iovec sends with mixed host/device memory */
-	setenv("OFI_NCCL_EAGER_MAX_SIZE", "-1", 0);
 	TestSuite suite;
 
 	/* Basic grouped recv tests */
