@@ -143,6 +143,9 @@ static ncclResult_t nccl_ofi_tuner_init_v2(size_t nRanks, size_t nNodes, ncclDeb
 	 * variables and so the internal tuner will be used instead.
 	 */
 	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
+		if (ofi_log_function == NULL) {
+			ofi_log_function = logFunction;
+		}
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "The tuner plugin can not be loaded when "
 				"explicitly choosing an algorithm or protocol "
 				"with NCCL_ALGO/NCCL_PROTO. "
@@ -188,14 +191,6 @@ static ncclResult_t nccl_ofi_tuner_init_v6(void** ctx, uint64_t commId, size_t n
 					    ncclNvlDomainInfo_v6_t* nvlDomainInfo,
 					    ncclTunerConstants_v6_t* constants)
 {
-	if (getenv("NCCL_ALGO") || getenv("NCCL_PROTO")) {
-		NCCL_OFI_INFO(NCCL_INIT | NCCL_TUNING, "The tuner plugin can not be loaded when "
-				"explicitly choosing an algorithm or protocol "
-				"with NCCL_ALGO/NCCL_PROTO. "
-				"Defaulting to internal tuner.");
-		*ctx = nullptr;
-		return ncclSuccess;
-	}
 	return nccl_ofi_tuner_init(nRanks, nNodes, logFunction, ctx);
 }
 
