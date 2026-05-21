@@ -265,6 +265,32 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 
 	/* Rank of the local process within the context. */
 	int32_t rank;
+
+	/* Signal-only scratch buffer support.
+	 *
+	 * net.signal(team, peer, ...) (used by ncclBarrierSession) routes
+	 * through ncclGinApi_Put with hasWins=false, bytes=0. EFA needs an
+	 * actual remote memory destination to bump the receiver's
+	 * FI_REMOTE_WRITE counter on the signal endpoint, so the plugin
+	 * allocates a small buffer per createContext, registers it on the
+	 * proxy domain, and allgathers the (local_addr, rkey) per rank. The
+	 * GPU kernel uses these to post a 4-byte RDMA write to the peer's
+	 * scratch region whenever it needs a signal-only delivery. The
+	 * buffer content is never read — only the RDMA write event itself
+	 * increments the receiver's FI_REMOTE_WRITE counter.
+	 */
+	/* Local lkey for the scratch buffer on the proxy domain. */
+	uint32_t scratch_lkey;
+	uint32_t scratch_pad;
+
+	/* Local source address for scratch writes (this rank's scratch). */
+	uint64_t scratch_local_addr;
+
+	/* Per-peer remote scratch base addresses, indexed by rank. [nranks] in GPU mem. */
+	uint64_t *scratch_remote_addrs;
+
+	/* Per-peer remote scratch rkeys, indexed by rank. [nranks] in GPU mem. */
+	uint32_t *scratch_remote_rkeys;
 };
 
 #ifdef __cplusplus
