@@ -58,16 +58,16 @@ __global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle *dev,
 {
 	if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-	auto *qp = reinterpret_cast<efa_cuda_qp *>(dev->qp);
-	auto *cq = reinterpret_cast<efa_cuda_cq *>(dev->cq);
+	auto *qp = reinterpret_cast<efa_cuda_qp *>(dev->data.qp);
+	auto *cq = reinterpret_cast<efa_cuda_cq *>(dev->data.cq);
 
 	efa_io_tx_wqe wr;
 	efa_cuda_init_rdma_write_wr(&wr, /*wr_id=*/0, dst_rkey, dst_addr);
 	efa_cuda_wr_set_sge(&wr, src_lkey, src_addr, bytes);
 	efa_cuda_wr_set_remote(&wr,
-			       dev->address_handles[peer],
-			       (uint32_t)dev->remote_qpns[peer],
-			       dev->qkey[peer]);
+			       dev->data.address_handles[peer],
+			       (uint32_t)dev->data.remote_qpns[peer],
+			       dev->data.qkey[peer]);
 
 	efa_cuda_start_sq_batch(qp, 1);
 	efa_cuda_sq_batch_place_wr(qp, 0, &wr);

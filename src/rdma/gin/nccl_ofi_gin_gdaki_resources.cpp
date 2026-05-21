@@ -127,8 +127,11 @@ void gdaki_fi_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info
 		throw std::runtime_error("fi_ep_bind AV failed: " +
 					 std::string(fi_strerror(-ret)));
 	}
+}
 
-	ret = fi_enable(ep);
+void gdaki_fi_endpoint::enable()
+{
+	int ret = fi_enable(ep);
 	if (ret != 0) {
 		throw std::runtime_error("fi_enable failed: " +
 					 std::string(fi_strerror(-ret)));
@@ -215,5 +218,77 @@ void gdaki_peer_addressing::populate(gdaki_fi_endpoint &endpoint,
 	ahs.commit();
 	qpns.commit();
 	qkeys.commit();
+}
+
+void gdaki_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
+			  size_t cq_size)
+{
+	endpoint.open(domain, ref_info, cq_size);
+	endpoint.enable();
+}
+
+void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+			      const std::vector<uint8_t> &peer_addrs,
+			      size_t ep_addr_len, int nranks)
+{
+	/* Query QP and map SQ MMIO for GPU access. */
+	struct fi_efa_wq_attr sq_attr = {}, rq_attr = {};
+	int ret = gda_ops->query_qp_wqs(endpoint.ep, &sq_attr, &rq_attr);
+	if (ret != 0)
+		throw std::runtime_error("gdaki_endpoint query_qp_wqs failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	sq_buffer.map(sq_attr.buffer,
+		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
+
+	/* rdma-core mmaps the doorbell MMIO region with sysconf(_SC_PAGESIZE)
+	 * (see providers/efa/verbs.c). Use the plugin's cached system_page_size
+	 * so our GPU-side mapping covers the same region rdma-core opened. */
+	sq_doorbell.map(sq_attr.doorbell, system_page_size);
+
+	gpu_qp.build(sq_attr, rq_attr, sq_buffer.dev, sq_doorbell.dev);
+
+	/* Stash SQ ring depth for the device-side SQ-overflow backpressure
+	 * check. gdaki_data_endpoint reads this via base.sq_size. */
+	sq_size = sq_attr.num_entries;
+
+	/* Query CQ and build GPU descriptor. */
+	struct fi_efa_cq_attr efa_cq_attr = {};
+	ret = gda_ops->query_cq(endpoint.cq, &efa_cq_attr);
+	if (ret != 0)
+		throw std::runtime_error("gdaki_endpoint query_cq failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	gpu_cq.build(efa_cq_attr);
+
+	/* Populate per-peer addressing tables in GPU memory. */
+	peers.populate(endpoint, peer_addrs, ep_addr_len, nranks, gda_ops);
+}
+
+void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
+			       struct fi_efa_ops_gda *gda_ops)
+{
+	/* Create the FI_WRITE counter first; it will be bound to the inner
+	 * endpoint between open() and enable(). */
+	write_cntr.create(gda_ops, domain);
+
+	/* Open the inner endpoint without enable. */
+	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size());
+
+	int ret = fi_ep_bind(base.endpoint.ep, &write_cntr.get()->fid, FI_WRITE);
+	if (ret != 0)
+		throw std::runtime_error("data_endpoint fi_ep_bind FI_WRITE counter failed: " +
+					 std::string(fi_strerror(-ret)));
+
+	base.endpoint.enable();
+}
+
+void gdaki_data_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+				   const std::vector<uint8_t> &peer_addrs,
+				   size_t ep_addr_len, int nranks)
+{
+	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
+	 * per-peer addressing, sq_size stash) to the inner endpoint. */
+	base.populate(gda_ops, peer_addrs, ep_addr_len, nranks);
 }
 
