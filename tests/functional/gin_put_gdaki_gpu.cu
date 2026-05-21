@@ -186,7 +186,7 @@ int main(int argc, char *argv[])
 	auto *dst_gin_mr = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(dst_ginhandle);
 	uint32_t src_lkey = src_gin_mr->lkey;
 	std::vector<uint32_t> all_rkeys(nranks);
-	for (int i = 0; i < nranks; i++) all_rkeys[i] = dst_gin_mr->rkeys[i];
+	for (int i = 0; i < nranks; i++) all_rkeys[i] = dst_gin_mr->peers[i].rkey;
 
 	/* Allgather destination buffer GPU addresses out-of-band over MPI so
 	 * rank 0 knows rank 1's RDMA-write target without reaching into any

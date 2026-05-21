@@ -297,12 +297,15 @@ static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
  *      on the GDAKI endpoint; no second registration is needed.
  *   2. Reach through the plugin mhandle to obtain the underlying fid_mr*.
  *   3. Query the local key via gda_ops->get_mr_lkey().
- *   4. Read the plugin's already-allgathered per-peer rkeys from
- *      mhandle->remote_mr[i].mr_key[0] — no second MPI allgather needed.
- *   5. Package lkey + rkeys[nranks] into an nccl_ofi_gin_gdaki_mr_handle
- *      (the layout declared in nccl_ofi_gin_gdaki_dev.h) and return it via
- *      ginHandle. The GPU kernel reads lkey for local SGEs and rkeys[peer]
- *      for remote RDMA writes.
+ *   4. Read the plugin's already-allgathered per-peer (base VA, rkey)
+ *      from mhandle->remote_mr[i].address / mr_key[0] — no second MPI
+ *      allgather needed.
+ *   5. Package lkey + local_addr + peers[nranks] into an
+ *      nccl_ofi_gin_gdaki_mr_handle (the layout declared in
+ *      nccl_ofi_gin_gdaki_dev.h) and return it via ginHandle. The GPU
+ *      kernel reads lkey for local SGEs and peers[peer].remote_addr +
+ *      peers[peer].rkey to compute absolute remote VAs for RDMA writes
+ *      (FI_MR_VIRT_ADDR mode).
  *
  * The device-visible handle owns no libfabric resources — the underlying
  * fid_mr is owned by the proxy regMrSym path and torn down by its dereg.
@@ -346,9 +349,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	uint32_t lkey = (uint32_t)gda_ops->get_mr_lkey(mr);
 
 	/* Step 4/5: allocate and populate the device-visible handle.
-	 * Layout: base struct + flex rkeys[nranks]. */
+	 * Layout: base struct + flex peers[nranks]. */
 	size_t handle_size = sizeof(nccl_ofi_gin_gdaki_mr_handle) +
-			     (size_t)nranks * sizeof(uint32_t);
+			     (size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
 	auto *gdaki_handle = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(
 		calloc(1, handle_size));
 	if (gdaki_handle == nullptr) {
@@ -358,10 +361,13 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 
 	gdaki_handle->lkey = lkey;
 	gdaki_handle->nranks = nranks;
+	gdaki_handle->local_addr = (uint64_t)data;
 	for (int i = 0; i < nranks; i++) {
-		/* remote_mr[i].mr_key[0] is the peer rkey on rail 0, stored
-		 * by the shared regMrSymDmaBuf after its internal allgather. */
-		gdaki_handle->rkeys[i] = (uint32_t)sym->remote_mr[i].mr_key[0];
+		/* remote_mr[i].address is the peer's base VA, allgathered by
+		 * the shared regMrSym. remote_mr[i].mr_key[0] is the peer's
+		 * rkey on rail 0. */
+		gdaki_handle->peers[i].remote_addr = (uint64_t)sym->remote_mr[i].address;
+		gdaki_handle->peers[i].rkey        = (uint32_t)sym->remote_mr[i].mr_key[0];
 	}
 
 	/* Stash on the mhandle so deregMrSym can free it. The mhandle and
