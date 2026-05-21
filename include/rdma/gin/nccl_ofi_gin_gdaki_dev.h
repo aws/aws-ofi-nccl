@@ -39,21 +39,44 @@ extern "C" {
 #define NCCL_OFI_GDAKI_CQ_INITIAL_PHASE 1
 
 /**
+ * Per-peer MR metadata used by EFA GDA WQE construction.
+ *
+ * EFA uses FI_MR_VIRT_ADDR, so WQEs take absolute virtual addresses for
+ * both local and remote buffers. The kernel passes an offset (srcOff /
+ * dstOff) and we compute the absolute address by adding the base VA.
+ */
+struct nccl_ofi_gin_gdaki_mr_peer {
+	/* Remote rank's base virtual address for this MR. */
+	uint64_t remote_addr;
+	/* Remote rank's rkey for this MR. */
+	uint32_t rkey;
+	/* Padding to keep the struct 16-byte sized for natural alignment. */
+	uint32_t pad;
+};
+
+/**
  * GDAKI memory registration handle returned via ginHandle from regMrSym.
  *
  * Allocated in host memory. The lkey is used by the kernel for local SGEs.
- * The rkeys array (one per rank) is used for remote RDMA write destinations.
- * The kernel receives this as a ncclGinWindow_t (void*).
+ * The peers[] array holds per-rank (remote_addr, rkey) pairs used as the
+ * destination of remote RDMA writes. The kernel receives this as a
+ * ncclGinWindow_t (void*).
+ *
+ * Layout is shared with the NCCL mirror in
+ * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
  */
 struct nccl_ofi_gin_gdaki_mr_handle {
 	/* Local key for this MR on the efa-direct domain. */
 	uint32_t lkey;
 
-	/* Number of ranks (size of rkeys array). */
+	/* Number of ranks (size of peers[] array). */
 	int32_t nranks;
 
-	/* Per-peer remote keys, indexed by rank. [nranks] elements follow. */
-	uint32_t rkeys[];
+	/* Local (this rank's) base virtual address for this MR. */
+	uint64_t local_addr;
+
+	/* Per-peer remote metadata. */
+	struct nccl_ofi_gin_gdaki_mr_peer peers[];
 };
 
 /**
