@@ -84,6 +84,29 @@ int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr);
 int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
 
 /*
+ * @brief Allocate GPU memory using the CUDA VMM API (cuMemCreate + cuMemMap)
+ * with gpuDirectRDMACapable flag. This allocation supports DMA-BUF export.
+ *
+ * The requested `size` is rounded up to the VMM allocation granularity
+ * (typically 2 MB on Hopper / Blackwell). The actual allocated size is
+ * returned via *out_alloc_size. The caller MUST pass that value back to
+ * nccl_net_ofi_gpu_vmm_free; passing the original (smaller) size results
+ * in cuMemUnmap / cuMemAddressFree being called with the wrong size and
+ * leaks the rest of the mapping.
+ *
+ * @return 0 on success, -1 on error
+ */
+int nccl_net_ofi_gpu_vmm_alloc(void **ptr, size_t size, size_t *out_alloc_size);
+
+/*
+ * @brief Free GPU memory allocated with nccl_net_ofi_gpu_vmm_alloc.
+ *        `alloc_size` must be the value returned via out_alloc_size from
+ *        the matching nccl_net_ofi_gpu_vmm_alloc call.
+ * @return 0 on success, -1 on error
+ */
+int nccl_net_ofi_gpu_vmm_free(void *ptr, size_t alloc_size);
+
+/*
  * @brief	query CU_DEVICE_ATTRIBUTE_DMA_BUF_SUPPORTED
 
  * @return	true if attr is fetched successfully and true.
