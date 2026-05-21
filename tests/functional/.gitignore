@@ -8,3 +8,4 @@ grouped_recv
 gin_gdaki_misconfig_probe
 eager_multirecv
 gin_put_gdaki_gpu
+gin_signal_gdaki_gpu
