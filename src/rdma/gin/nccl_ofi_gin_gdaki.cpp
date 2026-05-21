@@ -20,6 +20,8 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include <rdma/fi_cm.h>
@@ -34,6 +36,77 @@
 #endif
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_param.h"
+
+/*
+ * GDAKI contexts tracked by collComm so we can clean them up at
+ * closeColl time. NCCL's GIN call sequence is supposed to be
+ *   createContext -> destroyContext -> closeColl
+ * but in practice (verified on alltoall_perf shutdown) destroyContext
+ * is sometimes never called, leaving libfabric EPs / hardware counters
+ * / scratch MRs open on the proxy domain. The proxy plugin then closes
+ * its fabric/domain with our resources still alive, producing
+ * "Failed to close fid_domain/fid_fabric: Device or resource busy"
+ * warnings.
+ *
+ * The closeColl wrapper below sweeps any contexts created against this
+ * collComm before delegating to the shared closeColl, ensuring our
+ * resources are released before the proxy domain goes away.
+ *
+ * The map + mutex are bundled into a class so callers don't have to
+ * remember to take the lock when manipulating the map.
+ */
+class gdaki_context_registry {
+public:
+	/** Register a newly-created context against its collComm. */
+	void add(void *collComm, nccl_ofi_gin_gdaki_context *ctx)
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		map[collComm].push_back(ctx);
+	}
+
+	/**
+	 * Deregister a context from whichever collComm bucket it lives in.
+	 * Called from destroyContext, which is invoked either by NCCL or
+	 * by our own closeColl sweep — both paths must remove the entry
+	 * to avoid a double-free.
+	 */
+	void remove(nccl_ofi_gin_gdaki_context *ctx)
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		for (auto it = map.begin(); it != map.end(); ) {
+			auto &vec = it->second;
+			vec.erase(std::remove(vec.begin(), vec.end(), ctx), vec.end());
+			if (vec.empty()) {
+				it = map.erase(it);
+			} else {
+				++it;
+			}
+		}
+	}
+
+	/**
+	 * Atomically take and remove all contexts for a given collComm.
+	 * Used by closeColl to sweep any contexts that NCCL forgot to
+	 * destroyContext.
+	 */
+	std::vector<nccl_ofi_gin_gdaki_context *> take_all(void *collComm)
+	{
+		std::lock_guard<std::mutex> lock(mu);
+		auto it = map.find(collComm);
+		if (it == map.end()) {
+			return {};
+		}
+		auto leftover = std::move(it->second);
+		map.erase(it);
+		return leftover;
+	}
+
+private:
+	std::mutex mu;
+	std::unordered_map<void *, std::vector<nccl_ofi_gin_gdaki_context *>> map;
+};
+
+static gdaki_context_registry gdaki_contexts;
 
 static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties_v12_t *props)
 {
@@ -394,6 +467,10 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 
 		*ginCtx = ctx.release();
 		*devHandle = dev_handle_out;
+
+		gdaki_contexts.add(collComm,
+				   static_cast<nccl_ofi_gin_gdaki_context *>(*ginCtx));
+
 		return ncclSuccess;
 
 	} catch (const std::exception &e) {
@@ -412,8 +489,32 @@ static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
 	 * GPU QP/CQ first, then the MMIO BAR mappings, finally the
 	 * libfabric endpoint (after the BAR mappings are gone, as
 	 * required). */
-	delete static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+
+	/* Deregister from the per-collComm tracking map (if present).
+	 * destroyContext may be called by NCCL or by our own closeColl
+	 * sweep — either path needs to remove the entry to avoid a
+	 * double-free. */
+	gdaki_contexts.remove(ctx);
+
+	delete ctx;
 	return ncclSuccess;
+}
+
+/*
+ * GDAKI closeColl: sweep any GDAKI contexts that NCCL forgot to
+ * destroyContext for this collComm, then delegate to the shared
+ * closeColl. See gdaki_contexts comment above for rationale.
+ */
+static ncclResult_t nccl_ofi_gin_gdaki_closeColl(void *collComm)
+{
+	auto leftover = gdaki_contexts.take_all(collComm);
+
+	for (auto *ctx : leftover) {
+		nccl_ofi_gin_gdaki_destroyContext(ctx);
+	}
+
+	return nccl_ofi_gin_closeColl(collComm);
 }
 
 /*
@@ -539,7 +640,7 @@ ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
 	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
-	.closeColl = nccl_ofi_gin_closeColl,
+	.closeColl = nccl_ofi_gin_gdaki_closeColl,
 	.closeListen = nccl_ofi_gin_closeListen,
 	.iput = nullptr,
 	.iputSignal = nullptr,
