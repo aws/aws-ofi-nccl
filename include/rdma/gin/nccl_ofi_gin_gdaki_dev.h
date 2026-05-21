@@ -145,11 +145,12 @@ struct nccl_ofi_gin_gdaki_cq {
 };
 
 /**
- * Common per-endpoint state.
- * Holds the GPU-resident QP/CQ, per-peer addressing, the per-QP
- * spinlock that serializes the device-side WQE-post sequence, and
- * the counter-based completion tracking fields. Used directly as
- * the `data` member of nccl_ofi_gin_gdaki_dev_handle.
+ * Common per-endpoint state shared by the data, counter, and signal
+ * device handles. Holds the GPU-resident QP/CQ, per-peer addressing,
+ * the per-QP spinlock that serializes the device-side WQE-post
+ * sequence, and the counter-based completion tracking fields.
+ * Used directly as the `data` member of nccl_ofi_gin_gdaki_dev_handle,
+ * and embedded as a `base` member in nccl_ofi_gin_gdaki_dev_counter_handle.
  *
  * Layout is shared with the NCCL mirror in
  * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
@@ -201,6 +202,36 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 };
 
 /**
+ * Per-signal/counter endpoint handle, visible to device code.
+ *
+ * Composes nccl_ofi_gin_gdaki_dev_endpoint_handle (qp / cq / addressing /
+ * sq_lock / counter completion tracking) and adds the hardware counter
+ * value pointer that the kernel reads to observe signal arrivals
+ * (FI_REMOTE_WRITE) or counter increments (FI_WRITE). The hardware
+ * counter value lives in GPU memory and is updated by the NIC directly.
+ *
+ * For signals: the GPU kernel reads *cntr_value to detect remote writes
+ *              (FI_REMOTE_WRITE counter). The per-peer arrays let the
+ *              sender target this QP on the remote rank.
+ *
+ * For counters: the GPU kernel reads *cntr_value to track local write
+ *               completions (FI_WRITE counter). The QP is used by the
+ *               local rank to post writes that need completion tracking.
+ *
+ * Layout is shared with the NCCL mirror in
+ * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
+ */
+struct nccl_ofi_gin_gdaki_dev_counter_handle {
+	/* Endpoint-common fields (qp, cq, addressing, sq_lock,
+	 * counter completion tracking). */
+	struct nccl_ofi_gin_gdaki_dev_endpoint_handle base;
+
+	/* Pointer to the hardware counter value in GPU-accessible memory.
+	 * For signals: FI_REMOTE_WRITE count. For counters: FI_WRITE count. */
+	volatile uint64_t *cntr_value;
+};
+
+/**
  * Device-visible handle returned from createContext.
  *
  * This struct is allocated in GPU memory. The pointer is stored in
@@ -216,6 +247,18 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 	 * FI_WRITE counter and populates data.local_cntr_value at
 	 * createContext time. */
 	struct nccl_ofi_gin_gdaki_dev_endpoint_handle data;
+
+	/* Per-counter device handle array, [nCounters]. NULL when nCounters == 0. */
+	struct nccl_ofi_gin_gdaki_dev_counter_handle **counter_handles;
+
+	/* Per-signal device handle array, [nSignals]. NULL when nSignals == 0. */
+	struct nccl_ofi_gin_gdaki_dev_counter_handle **signal_handles;
+
+	/* Number of counter_handles entries. 0 means counter_handles is NULL. */
+	int32_t nCounters;
+
+	/* Number of signal_handles entries. 0 means signal_handles is NULL. */
+	int32_t nSignals;
 
 	/* Number of ranks participating in this context. */
 	int32_t nranks;

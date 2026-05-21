@@ -138,6 +138,15 @@ void gdaki_fi_endpoint::enable()
 	}
 }
 
+void gdaki_fi_endpoint::bind(struct fid *fid, uint64_t flags)
+{
+	int ret = fi_ep_bind(ep, fid, flags);
+	if (ret != 0) {
+		throw std::runtime_error("fi_ep_bind failed: " +
+					 std::string(fi_strerror(-ret)));
+	}
+}
+
 void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 			 const struct fi_efa_wq_attr &rq_attr,
 			 void *sq_buf_dev, void *sq_db_dev)
@@ -249,7 +258,8 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 	gpu_qp.build(sq_attr, rq_attr, sq_buffer.dev, sq_doorbell.dev);
 
 	/* Stash SQ ring depth for the device-side SQ-overflow backpressure
-	 * check. gdaki_data_endpoint reads this via base.sq_size. */
+	 * check. Both gdaki_data_endpoint and gdaki_sc_endpoint read this
+	 * via base.sq_size. */
 	sq_size = sq_attr.num_entries;
 
 	/* Query CQ and build GPU descriptor. */
@@ -275,10 +285,7 @@ void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_in
 	/* Open the inner endpoint without enable. */
 	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size());
 
-	int ret = fi_ep_bind(base.endpoint.ep, &write_cntr.get()->fid, FI_WRITE);
-	if (ret != 0)
-		throw std::runtime_error("data_endpoint fi_ep_bind FI_WRITE counter failed: " +
-					 std::string(fi_strerror(-ret)));
+	base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
 
 	base.endpoint.enable();
 }
@@ -290,5 +297,72 @@ void gdaki_data_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
 	 * per-peer addressing, sq_size stash) to the inner endpoint. */
 	base.populate(gda_ops, peer_addrs, ep_addr_len, nranks);
+}
+
+void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
+			     struct fi_efa_ops_gda *gda_ops)
+{
+	/* Create hardware counters first; they will be bound to the inner
+	 * endpoint between open() and enable(). */
+	write_cntr.create(gda_ops, domain);
+	remote_write_cntr.create(gda_ops, domain);
+
+	/* Open the inner endpoint without enable. Use the same CQ sizing as
+	 * the data endpoint so callers get consistent capacity per env config. */
+	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size());
+
+	/* Bind counters before enabling. */
+	base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
+	base.endpoint.bind(&remote_write_cntr.get()->fid, FI_REMOTE_WRITE);
+
+	base.endpoint.enable();
+}
+
+void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+				 const std::vector<uint8_t> &peer_addrs,
+				 size_t ep_addr_len, int nranks)
+{
+	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
+	 * per-peer addressing) to the inner endpoint. */
+	base.populate(gda_ops, peer_addrs, ep_addr_len, nranks);
+
+	/*
+	 * Build the two device handles. They share QP / CQ / per-peer
+	 * addressing / sq_lock / sq_size / submitted_count layout — only
+	 * the (cntr_value, local_cntr_value) pair differs.
+	 *
+	 * - counter_dev_handle exposes the WRITE counter via cntr_value
+	 *   (FI_WRITE — local completion). Returned to the kernel through
+	 *   counter_handles[].
+	 * - signal_dev_handle exposes the REMOTE_WRITE counter via cntr_value
+	 *   (FI_REMOTE_WRITE — signal arrival), and the WRITE counter via
+	 *   local_cntr_value (used by the device for backpressure / Flush).
+	 *   Returned to the kernel through signal_handles[].
+	 *
+	 * Both `cntr_value` and `local_cntr_value` are set on the host before
+	 * commit() pushes the struct to GPU memory.
+	 */
+	auto fill_common = [&](nccl_ofi_gin_gdaki_dev_counter_handle &h) {
+		h.base.qp = base.gpu_qp.dev();
+		h.base.cq = base.gpu_cq.dev();
+		h.base.address_handles = base.peers.ahs.dev;
+		h.base.remote_qpns = base.peers.qpns.dev;
+		h.base.qkey = base.peers.qkeys.dev;
+		h.base.sq_lock = 0;
+		h.base.submitted_count = 0;
+		h.base.sq_size = base.sq_size;
+	};
+
+	counter_dev_handle.allocate(1);
+	fill_common(counter_dev_handle.host[0]);
+	counter_dev_handle.host[0].cntr_value = write_cntr.gpu_ptr();
+	counter_dev_handle.host[0].base.local_cntr_value = nullptr; /* unused on counter handles */
+	counter_dev_handle.commit();
+
+	signal_dev_handle.allocate(1);
+	fill_common(signal_dev_handle.host[0]);
+	signal_dev_handle.host[0].cntr_value = remote_write_cntr.gpu_ptr();
+	signal_dev_handle.host[0].base.local_cntr_value = write_cntr.gpu_ptr();
+	signal_dev_handle.commit();
 }
 
