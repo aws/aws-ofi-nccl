@@ -145,6 +145,62 @@ struct nccl_ofi_gin_gdaki_cq {
 };
 
 /**
+ * Common per-endpoint state.
+ * Holds the GPU-resident QP/CQ, per-peer addressing, the per-QP
+ * spinlock that serializes the device-side WQE-post sequence, and
+ * the counter-based completion tracking fields. Used directly as
+ * the `data` member of nccl_ofi_gin_gdaki_dev_handle.
+ *
+ * Layout is shared with the NCCL mirror in
+ * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
+ */
+struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
+	/* GPU-resident QP for this endpoint. */
+	struct nccl_ofi_gin_gdaki_qp *qp;
+
+	/* GPU-resident CQ for this endpoint. */
+	struct nccl_ofi_gin_gdaki_cq *cq;
+
+	/* Per-peer addressing for this endpoint's QP. [nranks] in GPU mem. */
+	uint16_t *address_handles;
+	uint16_t *remote_qpns;
+	uint32_t *qkey;
+
+	/* Per-QP spinlock used by the device-side WQE post path. efa-dp-direct's
+	 * start_sq_batch / sq_batch_place_wr / flush_sq_wrs sequence must be
+	 * serialized per QP (per the efa-dp-direct CUDA README). One lock here
+	 * lets multiple CTAs posting on different endpoints proceed in
+	 * parallel; only CTAs targeting the same endpoint contend. */
+	uint32_t sq_lock;
+
+	/* Counter-based completion tracking.
+	 *
+	 * `local_cntr_value` points at the FI_WRITE hardware counter for this
+	 * endpoint's QP. The NIC increments it on every locally-completed
+	 * outgoing WR (regardless of remote semantics). The kernel reads it
+	 * directly from GPU memory.
+	 *
+	 * `submitted_count` is incremented by the device under the sq_lock
+	 * after a successful flush_sq_wrs. The difference
+	 * (submitted_count - *local_cntr_value) gives the number of WRs
+	 * still in flight on this QP — used by the SQ-overflow backpressure
+	 * check and by Flush to wait for local completion.
+	 *
+	 * `local_cntr_value` is NULL when the endpoint has no hardware counter
+	 * bound. In that case the device-side Put / Flush silently skip the
+	 * counter operations on this endpoint. */
+	volatile uint64_t *local_cntr_value;
+	uint64_t submitted_count;
+
+	/* SQ ring size for this endpoint's QP. Used by the device-side Put
+	 * to gate new batches against in-flight WRs (efa-dp-direct's
+	 * start_sq_batch does not validate ring overflow on its own). The
+	 * kernel spins until (submitted_count - *local_cntr_value + batch_size)
+	 * <= sq_size before reserving slots. */
+	uint32_t sq_size;
+};
+
+/**
  * Device-visible handle returned from createContext.
  *
  * This struct is allocated in GPU memory. The pointer is stored in
@@ -154,24 +210,12 @@ struct nccl_ofi_gin_gdaki_cq {
  * All member pointers refer to GPU-accessible memory.
  */
 struct nccl_ofi_gin_gdaki_dev_handle {
-	/* GPU-resident QP descriptor (layout-compatible with efa_cuda_qp). */
-	struct nccl_ofi_gin_gdaki_qp *qp;
-
-	/* GPU-resident CQ descriptor (layout-compatible with efa_cuda_cq). */
-	struct nccl_ofi_gin_gdaki_cq *cq;
-
-	/* Per-peer address handle numbers, indexed by rank. [nranks] in GPU mem. */
-	uint16_t *address_handles;
-
-	/* Per-peer remote QP numbers, indexed by rank. [nranks] in GPU mem. */
-	uint16_t *remote_qpns;
-
-	/* Per-peer Q keys, indexed by rank. [nranks] in GPU mem. */
-	uint32_t *qkey;
-
-	/* Count of outstanding requests tracked on the device. Used by Flush.
-	 * Initialized to 0. */
-	uint64_t pending_reqs;
+	/* Data endpoint (qp / cq / addressing / sq_lock /
+	 * counter completion tracking via local_cntr_value /
+	 * submitted_count / sq_size). The data endpoint binds a
+	 * FI_WRITE counter and populates data.local_cntr_value at
+	 * createContext time. */
+	struct nccl_ofi_gin_gdaki_dev_endpoint_handle data;
 
 	/* Number of ranks participating in this context. */
 	int32_t nranks;

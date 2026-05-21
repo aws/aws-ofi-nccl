@@ -24,18 +24,18 @@
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <unistd.h>
 
 #include <rdma/fabric.h>
 #include <rdma/fi_domain.h>
 #include <rdma/fi_endpoint.h>
 #include <rdma/fi_ext_efa.h>
 
-#if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
-#endif
 #include "rdma/gin/nccl_ofi_gin_gdaki_dev.h"
 
 /**
@@ -189,12 +189,18 @@ public:
 	}
 
 	/*
-	 * Open EP + CQ + AV on `domain`, using ref_info to derive our own
-	 * fi_info via fi_getinfo. cq_size is the fi_cq_attr size passed
-	 * to fi_cq_open.
+	 * Open EP + CQ + AV on `domain`, bind CQ and AV.
+	 * Does NOT enable — caller must call enable() after any
+	 * additional binds (e.g. counters).
 	 */
 	void open(struct fid_domain *domain, struct fi_info *ref_info,
 		  size_t cq_size);
+
+	/*
+	 * Enable the endpoint. Must be called after open() and
+	 * any additional binds.
+	 */
+	void enable();
 };
 
 /**
@@ -269,6 +275,197 @@ public:
 };
 
 /**
+ * A hardware completion counter backed by GPU-accessible external memory.
+ *
+ * The NIC writes the counter value directly into GPU memory via
+ * cntr_open_ext with FI_EFA_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM.
+ * The GPU kernel reads *gpu_ptr to observe completions without any
+ * host round-trip.
+ *
+ * Destruction closes the counter and frees the GPU memory.
+ */
+class gdaki_hw_counter {
+public:
+	gdaki_hw_counter() = default;
+	gdaki_hw_counter(const gdaki_hw_counter &) = delete;
+	gdaki_hw_counter &operator=(const gdaki_hw_counter &) = delete;
+
+	/**
+	 * Create the hardware counter with GPU memory via DMA-BUF.
+	 *
+	 * Uses the CUDA VMM API (cuMemCreate + cuMemMap) with
+	 * gpuDirectRDMACapable so the allocation supports DMA-BUF export.
+	 * The NIC writes the counter value directly to GPU HBM.
+	 *
+	 * @param gda_ops  GDA ops handle (from fi_open_ops on the domain)
+	 * @param domain   libfabric domain to create counter on
+	 */
+	void create(struct fi_efa_ops_gda *gda_ops, struct fid_domain *domain)
+	{
+		void *gpu_mem = nullptr;
+		size_t actual_size = 0;
+		if (nccl_net_ofi_gpu_vmm_alloc(&gpu_mem, sizeof(uint64_t),
+					       &actual_size) != 0) {
+			throw std::runtime_error("gdaki_hw_counter: gpu_vmm_alloc failed");
+		}
+
+		/* Get DMA-BUF fd. The DMA-BUF must cover the full mapped region
+		 * (rounded to VMM granularity, typically 2 MB), not just the
+		 * 8 bytes we logically use. */
+		int fd = -1;
+		size_t offset = 0;
+		if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_mem, actual_size, &fd, &offset) != 0) {
+			nccl_net_ofi_gpu_vmm_free(gpu_mem, actual_size);
+			throw std::runtime_error("gdaki_hw_counter: get_dma_buf_fd failed");
+		}
+
+		struct fi_cntr_attr cntr_attr = {};
+		cntr_attr.events = FI_CNTR_EVENTS_COMP;
+
+		struct fi_efa_comp_cntr_init_attr efa_attr = {};
+		efa_attr.flags = FI_EFA_COMP_CNTR_INIT_WITH_COMP_EXTERNAL_MEM;
+		efa_attr.comp_cntr_ext_mem.type = FI_EFA_MEMORY_LOCATION_DMABUF;
+		efa_attr.comp_cntr_ext_mem.dmabuf.fd = fd;
+		efa_attr.comp_cntr_ext_mem.dmabuf.offset = offset;
+
+		struct fid_cntr *c = nullptr;
+		int ret = gda_ops->cntr_open_ext(domain, &cntr_attr, &c, nullptr, &efa_attr);
+		if (ret != 0) {
+			close(fd);
+			nccl_net_ofi_gpu_vmm_free(gpu_mem, actual_size);
+			throw std::runtime_error("gdaki_hw_counter: cntr_open_ext failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+
+		cntr = c;
+		d_mem = gpu_mem;
+		dmabuf_fd = fd;
+		alloc_size = actual_size;
+	}
+
+	/** The fid_cntr for binding to an endpoint. */
+	struct fid_cntr *get() const { return cntr; }
+
+	/** GPU pointer to the counter value (for kernel to read). */
+	volatile uint64_t *gpu_ptr() const
+	{
+		return static_cast<volatile uint64_t *>(d_mem);
+	}
+
+	~gdaki_hw_counter()
+	{
+		if (cntr) {
+			fi_close(&cntr->fid);
+		}
+		if (dmabuf_fd >= 0) {
+			close(dmabuf_fd);
+		}
+		if (d_mem) {
+			nccl_net_ofi_gpu_vmm_free(d_mem, alloc_size);
+		}
+	}
+
+private:
+	struct fid_cntr *cntr = nullptr;
+	void *d_mem = nullptr;
+	int dmabuf_fd = -1;
+	size_t alloc_size = 0;
+};
+
+/**
+ * Host-side state for a libfabric endpoint plus its GPU-side queue
+ * descriptors and per-peer addressing.
+ *
+ * Used as the inner state of gdaki_data_endpoint for the data (main)
+ * endpoint.
+ *
+ * Owns: fid_ep + fid_cq + fid_av (via gdaki_fi_endpoint), GPU-mapped
+ * SQ buffer + doorbell BAR regions, GPU-resident QP and CQ descriptors,
+ * per-peer ahn/qpn/qkey arrays in GPU memory.
+ *
+ * Destruction order (reverse declaration): peers, gpu_cq, gpu_qp,
+ * sq_doorbell, sq_buffer, endpoint. The libfabric EP closes last so any
+ * GPU mappings of its BAR regions are torn down before the EP itself.
+ * When this class is composed AFTER hardware counters in a wrapping
+ * class's declaration order, the inner EP additionally closes before
+ * the counters bound to it — required by libfabric.
+ */
+class gdaki_endpoint {
+public:
+	gdaki_fi_endpoint     endpoint;
+	gdaki_mmio_region     sq_buffer;
+	gdaki_mmio_region     sq_doorbell;
+	gdaki_gpu_qp          gpu_qp;
+	gdaki_gpu_cq          gpu_cq;
+	gdaki_peer_addressing peers;
+	uint32_t              sq_size = 0;       /* SQ ring depth, populated by populate() */
+
+	gdaki_endpoint() = default;
+	/* Implicit dtor: members destroy in reverse declaration order. */
+	gdaki_endpoint(const gdaki_endpoint &) = delete;
+	gdaki_endpoint &operator=(const gdaki_endpoint &) = delete;
+
+	/**
+	 * Open EP + CQ + AV on the proxy domain and enable.
+	 */
+	void open(struct fid_domain *domain, struct fi_info *ref_info, size_t cq_size);
+
+	/**
+	 * Query EFA QP/CQ attributes, map the SQ MMIO regions for GPU
+	 * access, build the GPU-resident QP/CQ descriptors, and populate
+	 * per-peer addressing from the allgathered peer addresses.
+	 * Must be called after open().
+	 */
+	void populate(struct fi_efa_ops_gda *gda_ops,
+		      const std::vector<uint8_t> &peer_addrs,
+		      size_t ep_addr_len, int nranks);
+};
+
+/**
+ * Host-side state for the data (main) endpoint.
+ *
+ * Composes a gdaki_endpoint plus a FI_WRITE hardware counter for
+ * tracking local completion of outgoing data-only writes. The kernel
+ * spins on this counter (instead of polling the CQ) to determine when
+ * Put has completed locally.
+ *
+ * Member declaration order is critical: write_cntr MUST be declared
+ * BEFORE base so the inner libfabric endpoint closes before the
+ * counter bound to it (closing a counter while it is still bound to
+ * an open endpoint returns EBUSY in libfabric).
+ *
+ * The SQ ring depth is exposed via base.sq_size after populate()
+ * returns; createContext uses it to populate the dev_handle.data field
+ * the device-side SQ-overflow backpressure check reads.
+ */
+class gdaki_data_endpoint {
+public:
+	gdaki_data_endpoint() = default;
+	gdaki_data_endpoint(const gdaki_data_endpoint &) = delete;
+	gdaki_data_endpoint &operator=(const gdaki_data_endpoint &) = delete;
+
+	gdaki_hw_counter write_cntr;        /* FI_WRITE (local completion) */
+	gdaki_endpoint   base;          /* AFTER counter → EP closes first */
+
+	/**
+	 * Open the inner endpoint, create the FI_WRITE counter, and bind
+	 * the counter before enabling.
+	 */
+	void open(struct fid_domain *domain, struct fi_info *ref_info,
+		  struct fi_efa_ops_gda *gda_ops);
+
+	/**
+	 * Populate the inner endpoint's GPU descriptors (QP/CQ attrs,
+	 * SQ MMIO BAR mapping, GPU-resident QP/CQ, per-peer addressing).
+	 * Must be called after open().
+	 */
+	void populate(struct fi_efa_ops_gda *gda_ops,
+		      const std::vector<uint8_t> &peer_addrs,
+		      size_t ep_addr_len, int nranks);
+};
+
+
+/**
  * The composed GDAKI context.
  *
  * All members are lifecycle-managed objects; the destructor is
@@ -282,22 +479,13 @@ struct nccl_ofi_gin_gdaki_context {
 	int nranks = 0;
 	int rank = 0;
 
-	/* libfabric endpoint on the reused proxy domain. Opened first;
-	 * destroyed last (after MMIO regions are unregistered). */
-	gdaki_fi_endpoint endpoint;
+	/* Data (main) endpoint: libfabric EP on the reused proxy domain plus
+	 * its GPU-side SQ buffer/doorbell mappings, GPU-resident QP/CQ
+	 * descriptors, per-peer addressing, and a FI_WRITE hardware counter
+	 * for completion tracking. The kernel polls the counter rather than
+	 * the CQ for data-EP Flush. */
+	gdaki_data_endpoint data;
 
-	/* EFA SQ buffer and doorbell mapped into GPU address space.
-	 * Both must be unregistered BEFORE endpoint teardown: the BAR
-	 * mapping is owned by the endpoint. */
-	gdaki_mmio_region sq_buffer;
-	gdaki_mmio_region sq_doorbell;
-
-	/* GPU-resident QP and CQ descriptors. */
-	gdaki_gpu_qp gpu_qp;
-	gdaki_gpu_cq gpu_cq;
-
-	/* Per-peer addressing tables in GPU memory. */
-	gdaki_peer_addressing peers;
 
 	/* GPU-resident device handle. Populated last; points into the
 	 * GPU buffers owned by the members above. */

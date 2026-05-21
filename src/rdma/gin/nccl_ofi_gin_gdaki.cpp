@@ -18,6 +18,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
+#include <algorithm>
 #include <memory>
 #include <vector>
 
@@ -77,12 +78,53 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 	return ncclSuccess;
 }
 
+/*
+ * Read this rank's libfabric EP address into a per-rank slot of an
+ * allgather buffer, then allgather across the team. Returns the buffer.
+ *
+ * Used by createContext for both the data endpoint and each
+ * signal/counter endpoint.
+ *
+ * Throws std::runtime_error on fi_getname / allgather failure.
+ */
+static std::vector<uint8_t> allgather_ep_addr(struct fid_ep *ep,
+					      nccl_ofi_rdma_gin_put_comm *put_comm,
+					      int nranks, int rank,
+					      size_t ep_addr_len)
+{
+	std::vector<uint8_t> all_addrs(nranks * ep_addr_len, 0);
+	size_t addrlen = ep_addr_len;
+	int ret = fi_getname(&ep->fid, &all_addrs[rank * ep_addr_len], &addrlen);
+	if (ret != 0) {
+		throw std::runtime_error("fi_getname failed: " +
+					 std::string(fi_strerror(-ret)));
+	}
+	if (put_comm->get_ag_comm().all_gather(all_addrs.data(), ep_addr_len) != 0) {
+		throw std::runtime_error("allgather of ep addresses failed");
+	}
+	return all_addrs;
+}
+
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
 						     void **ginCtx,
 						     ncclNetDeviceHandle_v11_t **devHandle)
 {
 	if (collComm == nullptr || config == nullptr || ginCtx == nullptr || devHandle == nullptr) {
 		NCCL_OFI_WARN("gin GDAKI: createContext received NULL argument");
+		return ncclInvalidArgument;
+	}
+
+	NCCL_OFI_INFO(NCCL_NET,
+		      "gin GDAKI: createContext request: nSignals=%d nCounters=%d "
+		      "nContexts=%d queueDepth=%d",
+		      config->nSignals, config->nCounters,
+		      config->nContexts, config->queueDepth);
+
+	if (config->nSignals > 0 || config->nCounters > 0) {
+		NCCL_OFI_WARN(
+			"gin GDAKI: caller requested nSignals=%d nCounters=%d "
+			"but signal/counter endpoints are not supported",
+			config->nSignals, config->nCounters);
 		return ncclInvalidArgument;
 	}
 
@@ -137,17 +179,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		}
 
 		/*
-		 * Step 2: Open the libfabric endpoint on the reused domain.
-		 * gdaki_fi_endpoint owns the EP, CQ, AV, and fi_info; it
-		 * derives its own fi_info via fi_getinfo with hints narrowed
-		 * to the proxy's fabric + domain name.
-		 */
-		ctx->endpoint.open(ofi_domain, proxy_info, ofi_nccl_cq_size());
-
-		/*
-		 * Step 3: Open FI_EFA_GDA_OPS on the reused domain and query
-		 * the SQ / RQ / CQ attributes needed to populate the
-		 * GPU-resident QP / CQ descriptors.
+		 * Step 2: Open FI_EFA_GDA_OPS on the reused domain. Used by
+		 * data.open() (to bind the FI_WRITE counter), data.populate(),
+		 * and the sc_endpoint loop below.
 		 */
 		struct fi_efa_ops_gda *gda_ops = nullptr;
 		int ret = fi_open_ops(&ofi_domain->fid, FI_EFA_GDA_OPS, 0,
@@ -159,80 +193,34 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				std::string(ret ? fi_strerror(-ret) : "no ops table"));
 		}
 
-		struct fi_efa_wq_attr sq_attr = {}, rq_attr = {};
-		ret = gda_ops->query_qp_wqs(ctx->endpoint.ep, &sq_attr, &rq_attr);
-		if (ret != 0) {
-			throw std::runtime_error("query_qp_wqs failed: " +
-						 std::string(fi_strerror(-ret)));
-		}
-
-		struct fi_efa_cq_attr efa_cq_attr = {};
-		ret = gda_ops->query_cq(ctx->endpoint.cq, &efa_cq_attr);
-		if (ret != 0) {
-			throw std::runtime_error("query_cq failed: " +
-						 std::string(fi_strerror(-ret)));
-		}
-
 		/*
-		 * Step 4: Map SQ BAR regions into the GPU address space.
-		 *
-		 * The SQ buffer and doorbell are device MMIO (BAR) regions
-		 * that require cuMemHostRegister with IOMEMORY | DEVICEMAP for
-		 * GPU kernels to write WQEs and ring the doorbell.
-		 *
-		 * The CQ buffer is not mapped for GPU access: attempts to
-		 * register it with cuMemHostRegister(IOMEMORY|DEVICEMAP) on
-		 * P5en fail, and the host pointer is usable from both the CPU
-		 * and CUDA kernels for CQ polling.
+		 * Step 3: Open the data endpoint on the reused domain.
 		 */
-		ctx->sq_buffer.map(sq_attr.buffer,
-				   (size_t)sq_attr.num_entries * sq_attr.entry_size);
+		ctx->data.open(ofi_domain, proxy_info, gda_ops);
 
 		/*
-		 * rdma-core mmaps the doorbell MMIO region with
-		 * sysconf(_SC_PAGESIZE) (see providers/efa/verbs.c). Use the
-		 * plugin's cached system_page_size so our GPU-side mapping
-		 * covers the same region rdma-core opened.
-		 */
-		ctx->sq_doorbell.map(sq_attr.doorbell, system_page_size);
-
-		/*
-		 * Step 5: Build GPU-resident QP and CQ descriptors.
-		 */
-		ctx->gpu_qp.build(sq_attr, rq_attr, ctx->sq_buffer.dev,
-				  ctx->sq_doorbell.dev);
-		ctx->gpu_cq.build(efa_cq_attr);
-
-		/*
-		 * Step 6: Exchange endpoint addresses and populate per-peer
-		 * addressing tables in GPU memory.
+		 * Step 4: Exchange endpoint addresses across the team, then
+		 * complete the data endpoint's GPU-side build.
 		 */
 		constexpr size_t ep_addr_len = MAX_EP_ADDR;
-		std::vector<uint8_t> all_addrs(nranks * ep_addr_len, 0);
-		size_t addrlen = ep_addr_len;
-		ret = fi_getname(&ctx->endpoint.ep->fid,
-				 &all_addrs[rank * ep_addr_len], &addrlen);
-		if (ret != 0) {
-			throw std::runtime_error("fi_getname failed: " +
-						 std::string(fi_strerror(-ret)));
-		}
-		ret = put_comm->get_ag_comm().all_gather(all_addrs.data(), ep_addr_len);
-		if (ret != 0) {
-			throw std::runtime_error("allgather of ep addresses failed");
-		}
-		ctx->peers.populate(ctx->endpoint, all_addrs, ep_addr_len, nranks, gda_ops);
+		std::vector<uint8_t> all_addrs = allgather_ep_addr(
+			ctx->data.base.endpoint.ep, put_comm, nranks, rank, ep_addr_len);
+		ctx->data.populate(gda_ops, all_addrs, ep_addr_len, nranks);
 
 		/*
 		 * Step 7: Populate and upload the device-visible handle.
 		 */
 		ctx->dev_handle.allocate(1);
 		nccl_ofi_gin_gdaki_dev_handle &h = *ctx->dev_handle.host;
-		h.qp = ctx->gpu_qp.dev();
-		h.cq = ctx->gpu_cq.dev();
-		h.address_handles = ctx->peers.ahs.dev;
-		h.remote_qpns = ctx->peers.qpns.dev;
-		h.qkey = ctx->peers.qkeys.dev;
-		h.pending_reqs = 0;
+		h.data.qp = ctx->data.base.gpu_qp.dev();
+		h.data.cq = ctx->data.base.gpu_cq.dev();
+		h.data.address_handles = ctx->data.base.peers.ahs.dev;
+		h.data.remote_qpns = ctx->data.base.peers.qpns.dev;
+		h.data.qkey = ctx->data.base.peers.qkeys.dev;
+		h.data.sq_lock = 0;
+		h.data.local_cntr_value = ctx->data.write_cntr.gpu_ptr();
+		h.data.submitted_count = 0;
+		h.data.sq_size = ctx->data.base.sq_size;
 		h.nranks = nranks;
 		h.rank = rank;
 		ctx->dev_handle.commit();
@@ -258,11 +246,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		dev_handle_out->needsProxyProgress = 0;
 
 		NCCL_OFI_INFO(NCCL_NET,
-			      "gin GDAKI: createContext done (nranks=%d rank=%d "
-			      "sq_entries=%u sq_entry_size=%u cq_entries=%u cq_entry_size=%u)",
-			      nranks, rank,
-			      sq_attr.num_entries, sq_attr.entry_size,
-			      efa_cq_attr.num_entries, efa_cq_attr.entry_size);
+			      "gin GDAKI: createContext done (nranks=%d rank=%d)",
+			      nranks, rank);
 
 		*ginCtx = ctx.release();
 		*devHandle = dev_handle_out;
@@ -297,15 +282,12 @@ static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
  *      on the GDAKI endpoint; no second registration is needed.
  *   2. Reach through the plugin mhandle to obtain the underlying fid_mr*.
  *   3. Query the local key via gda_ops->get_mr_lkey().
- *   4. Read the plugin's already-allgathered per-peer (base VA, rkey)
- *      from mhandle->remote_mr[i].address / mr_key[0] — no second MPI
- *      allgather needed.
- *   5. Package lkey + local_addr + peers[nranks] into an
- *      nccl_ofi_gin_gdaki_mr_handle (the layout declared in
- *      nccl_ofi_gin_gdaki_dev.h) and return it via ginHandle. The GPU
- *      kernel reads lkey for local SGEs and peers[peer].remote_addr +
- *      peers[peer].rkey to compute absolute remote VAs for RDMA writes
- *      (FI_MR_VIRT_ADDR mode).
+ *   4. Read the plugin's already-allgathered per-peer rkeys from
+ *      mhandle->remote_mr[i].mr_key[0] — no second MPI allgather needed.
+ *   5. Package lkey + rkeys[nranks] into an nccl_ofi_gin_gdaki_mr_handle
+ *      (the layout declared in nccl_ofi_gin_gdaki_dev.h) and return it via
+ *      ginHandle. The GPU kernel reads lkey for local SGEs and rkeys[peer]
+ *      for remote RDMA writes.
  *
  * The device-visible handle owns no libfabric resources — the underlying
  * fid_mr is owned by the proxy regMrSym path and torn down by its dereg.

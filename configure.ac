@@ -346,6 +346,8 @@ AS_IF([test "${enable_gdaki}" = "yes"],
              [AC_MSG_ERROR([--enable-gdaki requires a libfabric build with FI_EFA_GDA_OPS support (libfabric >= 2.3.0).])])
        AS_IF([test "${have_device_interface}" != "cuda"],
              [AC_MSG_ERROR([--enable-gdaki requires CUDA support.])])
+       AS_IF([test "${have_fi_efa_comp_cntr}" != "1"],
+             [AC_MSG_ERROR([--enable-gdaki requires libfabric with the fi_efa_ops_gda hardware-counter ABI (libfabric >= 2.5.0).])])
        have_gdaki=1],
       [have_gdaki=0])
 AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
