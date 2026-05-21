@@ -36,7 +36,7 @@ noinst_HEADERS = functional_test.h
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin grouped_recv gin_gdaki_misconfig_probe eager_multirecv
 if ENABLE_GDAKI
 if HAVE_NVCC
-bin_PROGRAMS += gin_put_gdaki_gpu
+bin_PROGRAMS += gin_put_gdaki_gpu gin_signal_gdaki_gpu
 endif
 endif
 
@@ -63,6 +63,9 @@ SUFFIXES = .cu
 
 gin_put_gdaki_gpu_SOURCES = $(base_sources) gin_put_gdaki_gpu.cu
 gin_put_gdaki_gpu_LDADD = $(LDADD) -lcuda
+
+gin_signal_gdaki_gpu_SOURCES = $(base_sources) gin_signal_gdaki_gpu.cu
+gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 
 .cu.o:
 	$(NVCC) -std=c++17 $(NVCC_GENCODE) \
