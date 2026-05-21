@@ -35,9 +35,20 @@
 #define EFA_IO_CDESC_COMMON_Q_TYPE_MASK     GENMASK(2, 1)
 #define EFA_IO_CDESC_COMMON_OP_TYPE_MASK    GENMASK(6, 4)
 
-/* MMIO helpers */
-#define mmio_flush_writes()      asm volatile("sfence" ::: "memory")
+/* MMIO helpers. Architecture-specific barriers match rdma-core's
+ * util/udma_barrier.h conventions so this test scaffolding builds on
+ * both x86_64 (Intel/AMD EFA hosts) and aarch64 (Grace/Graviton EFA
+ * hosts). */
+#if defined(__x86_64__) || defined(__i386__)
+#define mmio_flush_writes()        asm volatile("sfence" ::: "memory")
 #define udma_from_device_barrier() asm volatile("lfence" ::: "memory")
+#elif defined(__aarch64__)
+#define mmio_flush_writes()        asm volatile("dsb st" ::: "memory")
+#define udma_from_device_barrier() asm volatile("dmb oshld" ::: "memory")
+#else
+#define mmio_flush_writes()        __atomic_thread_fence(__ATOMIC_RELEASE)
+#define udma_from_device_barrier() __atomic_thread_fence(__ATOMIC_ACQUIRE)
+#endif
 
 static inline void mmio_write32(void *addr, uint32_t value)
 {
