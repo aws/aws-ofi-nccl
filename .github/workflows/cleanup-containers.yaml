@@ -1,0 +1,36 @@
+name: Cleanup old container images
+
+# Removes untagged container versions older than 90 days from GHCR.
+# The weekly container rebuild (update-containers.yaml) pushes new images
+# with fixed tags, leaving the previous digest as an untagged orphan.
+# Without cleanup these accumulate over time.
+
+on:
+  schedule:
+    # Run every Monday at 06:00 UTC (after Sunday's container rebuild)
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  packages: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        package:
+          - aws-ofi-nccl-al2023
+          - aws-ofi-nccl-ubuntu
+          - aws-ofi-nccl-ubuntu2404
+          - aws-ofi-nccl-codechecker
+    steps:
+      - name: Delete old untagged container versions
+        uses: actions/delete-package-versions@v5
+        with:
+          package-name: aws-ofi-nccl/${{ matrix.package }}
+          package-type: container
+          min-versions-to-keep: 0
+          delete-only-untagged-versions: true
+          # Keep untagged versions from the last 90 days
+          min-days-old: 90
