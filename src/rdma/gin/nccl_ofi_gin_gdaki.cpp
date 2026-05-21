@@ -105,6 +105,106 @@ static std::vector<uint8_t> allgather_ep_addr(struct fid_ep *ep,
 	return all_addrs;
 }
 
+/*
+ * Allocate the per-context signal-only scratch buffer, register it on the
+ * proxy domain, and allgather (addr, rkey) across ranks. The kernel uses
+ * this for net.signal()-style writes that have no payload (hasWins=false,
+ * bytes=0) — EFA still needs a registered remote address to bump the
+ * receiver's FI_REMOTE_WRITE counter.
+ *
+ * Throws std::runtime_error on any libfabric / allgather failure; the
+ * caller's catch handler unwinds via the ctx's RAII members.
+ */
+static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
+				 struct fid_domain *ofi_domain,
+				 nccl_ofi_rdma_gin_put_comm *put_comm,
+				 int nranks, int rank)
+{
+	constexpr size_t kScratchBytes = sizeof(uint64_t);
+	ctx->scratch_buf = calloc(1, kScratchBytes);
+	if (ctx->scratch_buf == nullptr) {
+		throw std::runtime_error("scratch calloc failed");
+	}
+
+	struct iovec iov = { .iov_base = ctx->scratch_buf,
+			     .iov_len = kScratchBytes };
+	struct fi_mr_attr mr_attr = {};
+	mr_attr.mr_iov = &iov;
+	mr_attr.iov_count = 1;
+	/* The buffer is only used as the source/target of RDMA WRITE on the
+	 * signal endpoints; FI_SEND / FI_RECV are not required. */
+	mr_attr.access = FI_REMOTE_WRITE | FI_WRITE;
+	mr_attr.iface = FI_HMEM_SYSTEM;
+
+	int mret = fi_mr_regattr(ofi_domain, &mr_attr, 0, &ctx->scratch_mr);
+	if (mret != 0) {
+		throw std::runtime_error(
+			"scratch fi_mr_regattr failed: " +
+			std::string(fi_strerror(-mret)));
+	}
+
+	ctx->scratch_lkey = (uint32_t)fi_mr_key(ctx->scratch_mr);
+	ctx->scratch_local_addr = (uint64_t)ctx->scratch_buf;
+
+	/* Allgather (local_addr, local_rkey) across ranks. */
+	std::vector<uint64_t> scratch_all_addrs(nranks, 0);
+	std::vector<uint32_t> scratch_all_rkeys(nranks, 0);
+	scratch_all_addrs[rank] = ctx->scratch_local_addr;
+	scratch_all_rkeys[rank] = ctx->scratch_lkey;
+
+	if (put_comm->get_ag_comm().all_gather(
+		    scratch_all_addrs.data(), sizeof(uint64_t)) != 0) {
+		throw std::runtime_error("scratch allgather addrs failed");
+	}
+	if (put_comm->get_ag_comm().all_gather(
+		    scratch_all_rkeys.data(), sizeof(uint32_t)) != 0) {
+		throw std::runtime_error("scratch allgather rkeys failed");
+	}
+
+	ctx->scratch_remote_addrs_buf.allocate(nranks);
+	ctx->scratch_remote_rkeys_buf.allocate(nranks);
+	for (int i = 0; i < nranks; i++) {
+		ctx->scratch_remote_addrs_buf.host[i] = scratch_all_addrs[i];
+		ctx->scratch_remote_rkeys_buf.host[i] = scratch_all_rkeys[i];
+	}
+	ctx->scratch_remote_addrs_buf.commit();
+	ctx->scratch_remote_rkeys_buf.commit();
+}
+
+/*
+ * Populate the GPU-resident device handle from the built context and
+ * upload it to GPU memory via commit().
+ */
+static void populate_dev_handle(nccl_ofi_gin_gdaki_context *ctx,
+				const ncclGinConfig_v13_t *config,
+				int nranks, int rank)
+{
+	ctx->dev_handle.allocate(1);
+	nccl_ofi_gin_gdaki_dev_handle &h = *ctx->dev_handle.host;
+	h.data.qp = ctx->data.base.gpu_qp.dev();
+	h.data.cq = ctx->data.base.gpu_cq.dev();
+	h.data.address_handles = ctx->data.base.peers.ahs.dev;
+	h.data.remote_qpns = ctx->data.base.peers.qpns.dev;
+	h.data.qkey = ctx->data.base.peers.qkeys.dev;
+	h.data.sq_lock = 0;
+	h.data.local_cntr_value = ctx->data.write_cntr.gpu_ptr();
+	h.data.submitted_count = 0;
+	h.data.sq_size = ctx->data.base.sq_size;
+	h.counter_handles = (config->nCounters > 0) ? ctx->d_counter_handles.dev : nullptr;
+	h.signal_handles  = (config->nSignals  > 0) ? ctx->d_signal_handles.dev  : nullptr;
+	h.nCounters = config->nCounters;
+	h.nSignals  = config->nSignals;
+	h.nranks = nranks;
+	h.rank = rank;
+	h.scratch_lkey         = ctx->scratch_lkey;
+	h.scratch_pad          = 0;
+	h.scratch_local_addr   = ctx->scratch_local_addr;
+	h.scratch_remote_addrs = ctx->scratch_remote_addrs_buf.dev;
+	h.scratch_remote_rkeys = ctx->scratch_remote_rkeys_buf.dev;
+	/* Upload the populated host-side struct to GPU memory. */
+	ctx->dev_handle.commit();
+}
+
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
 						     void **ginCtx,
 						     ncclNetDeviceHandle_v11_t **devHandle)
@@ -200,7 +300,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		ctx->data.populate(gda_ops, all_addrs, ep_addr_len, nranks);
 
 		/*
-		 * Step 7: Create signal/counter endpoints if requested.
+		 * Step 5: Create signal/counter endpoints if requested.
 		 *
 		 * Each endpoint has its own QP plus two hardware counters
 		 * (FI_WRITE for local completion, FI_REMOTE_WRITE for remote
@@ -243,26 +343,28 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		}
 
 		/*
-		 * Step 8: Populate and upload the device-visible handle.
+		 * Step 6: Allocate signal-only scratch buffer and allgather
+		 * (addr, rkey) per rank.
+		 *
+		 * net.signal(team, peer) (the path used by ncclBarrierSession)
+		 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA
+		 * still requires a registered remote address to bump the
+		 * receiver's FI_REMOTE_WRITE counter — even for a 0-byte write —
+		 * so we register a small per-rank buffer on the proxy domain and
+		 * allgather (addr, rkey) across ranks.
+		 *
+		 * Allocated unconditionally (not gated on n_sc > 0) so any
+		 * caller that creates a context — even one that doesn't request
+		 * signal/counter endpoints today but later issues a signal-only
+		 * Put — has a valid scratch destination. The cost is ~8 bytes
+		 * of host memory + one small MR registration; negligible.
 		 */
-		ctx->dev_handle.allocate(1);
-		nccl_ofi_gin_gdaki_dev_handle &h = *ctx->dev_handle.host;
-		h.data.qp = ctx->data.base.gpu_qp.dev();
-		h.data.cq = ctx->data.base.gpu_cq.dev();
-		h.data.address_handles = ctx->data.base.peers.ahs.dev;
-		h.data.remote_qpns = ctx->data.base.peers.qpns.dev;
-		h.data.qkey = ctx->data.base.peers.qkeys.dev;
-		h.data.sq_lock = 0;
-		h.data.local_cntr_value = ctx->data.write_cntr.gpu_ptr();
-		h.data.submitted_count = 0;
-		h.data.sq_size = ctx->data.base.sq_size;
-		h.counter_handles = (config->nCounters > 0) ? ctx->d_counter_handles.dev : nullptr;
-		h.signal_handles  = (config->nSignals  > 0) ? ctx->d_signal_handles.dev  : nullptr;
-		h.nCounters = config->nCounters;
-		h.nSignals  = config->nSignals;
-		h.nranks = nranks;
-		h.rank = rank;
-		ctx->dev_handle.commit();
+		setup_scratch_buffer(ctx.get(), ofi_domain, put_comm, nranks, rank);
+
+		/*
+		 * Step 7: Populate and upload the device-visible handle.
+		 */
+		populate_dev_handle(ctx.get(), config, nranks, rank);
 
 		/*
 		 * Step 8: Publish the host-side ncclNetDeviceHandle_v11_t.
