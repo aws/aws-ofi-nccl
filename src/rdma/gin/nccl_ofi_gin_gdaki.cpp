@@ -120,14 +120,6 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		      config->nSignals, config->nCounters,
 		      config->nContexts, config->queueDepth);
 
-	if (config->nSignals > 0 || config->nCounters > 0) {
-		NCCL_OFI_WARN(
-			"gin GDAKI: caller requested nSignals=%d nCounters=%d "
-			"but signal/counter endpoints are not supported",
-			config->nSignals, config->nCounters);
-		return ncclInvalidArgument;
-	}
-
 	auto *put_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	int nranks = put_comm->get_nranks();
 	int rank = put_comm->get_rank();
@@ -208,7 +200,50 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		ctx->data.populate(gda_ops, all_addrs, ep_addr_len, nranks);
 
 		/*
-		 * Step 7: Populate and upload the device-visible handle.
+		 * Step 7: Create signal/counter endpoints if requested.
+		 *
+		 * Each endpoint has its own QP plus two hardware counters
+		 * (FI_WRITE for local completion, FI_REMOTE_WRITE for remote
+		 * notification). Both counter values live in GPU memory
+		 * (DMA-BUF-mapped). We expose them through GPU-resident
+		 * arrays of nccl_ofi_gin_gdaki_dev_counter_handle pointers, one
+		 * per signal and one per counter.
+		 */
+		int n_sc = std::max(config->nSignals, config->nCounters);
+		if (n_sc > 0) {
+			ctx->nSignals = config->nSignals;
+			ctx->nCounters = config->nCounters;
+			ctx->sc_endpoints.reserve(n_sc);
+
+			for (int i = 0; i < n_sc; i++) {
+				ctx->sc_endpoints.push_back(std::make_unique<gdaki_sc_endpoint>());
+				ctx->sc_endpoints[i]->open(ofi_domain, proxy_info, gda_ops);
+
+				std::vector<uint8_t> sc_addrs = allgather_ep_addr(
+					ctx->sc_endpoints[i]->base.endpoint.ep,
+					put_comm, nranks, rank, ep_addr_len);
+
+				ctx->sc_endpoints[i]->populate(gda_ops, sc_addrs, ep_addr_len, nranks);
+			}
+
+			/* Build counter_handles and signal_handles GPU arrays. */
+			auto build_handle_array = [&](gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> &buf,
+						      int count, auto get_dev_handle) {
+				if (count > 0) {
+					buf.allocate(count);
+					for (int i = 0; i < count; i++)
+						buf.host[i] = get_dev_handle(i);
+					buf.commit();
+				}
+			};
+			build_handle_array(ctx->d_counter_handles, config->nCounters,
+				[&](int i) { return ctx->sc_endpoints[i]->counter_dev_handle.dev; });
+			build_handle_array(ctx->d_signal_handles, config->nSignals,
+				[&](int i) { return ctx->sc_endpoints[i]->signal_dev_handle.dev; });
+		}
+
+		/*
+		 * Step 8: Populate and upload the device-visible handle.
 		 */
 		ctx->dev_handle.allocate(1);
 		nccl_ofi_gin_gdaki_dev_handle &h = *ctx->dev_handle.host;
@@ -221,6 +256,10 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		h.data.local_cntr_value = ctx->data.write_cntr.gpu_ptr();
 		h.data.submitted_count = 0;
 		h.data.sq_size = ctx->data.base.sq_size;
+		h.counter_handles = (config->nCounters > 0) ? ctx->d_counter_handles.dev : nullptr;
+		h.signal_handles  = (config->nSignals  > 0) ? ctx->d_signal_handles.dev  : nullptr;
+		h.nCounters = config->nCounters;
+		h.nSignals  = config->nSignals;
 		h.nranks = nranks;
 		h.rank = rank;
 		ctx->dev_handle.commit();
@@ -246,8 +285,10 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		dev_handle_out->needsProxyProgress = 0;
 
 		NCCL_OFI_INFO(NCCL_NET,
-			      "gin GDAKI: createContext done (nranks=%d rank=%d)",
-			      nranks, rank);
+			      "gin GDAKI: createContext done (nranks=%d rank=%d "
+			      "nSignals=%d nCounters=%d)",
+			      nranks, rank,
+			      config->nSignals, config->nCounters);
 
 		*ginCtx = ctx.release();
 		*devHandle = dev_handle_out;

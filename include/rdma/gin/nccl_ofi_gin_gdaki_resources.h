@@ -201,6 +201,12 @@ public:
 	 * any additional binds.
 	 */
 	void enable();
+
+	/**
+	 * Bind a fid (e.g. counter) to the endpoint with the given flags.
+	 * Throws on failure.
+	 */
+	void bind(struct fid *fid, uint64_t flags);
 };
 
 /**
@@ -376,8 +382,8 @@ private:
  * Host-side state for a libfabric endpoint plus its GPU-side queue
  * descriptors and per-peer addressing.
  *
- * Used as the inner state of gdaki_data_endpoint for the data (main)
- * endpoint.
+ * Used directly for the data (main) endpoint, and composed inside
+ * gdaki_sc_endpoint for the signal/counter endpoints.
  *
  * Owns: fid_ep + fid_cq + fid_av (via gdaki_fi_endpoint), GPU-mapped
  * SQ buffer + doorbell BAR regions, GPU-resident QP and CQ descriptors,
@@ -386,9 +392,9 @@ private:
  * Destruction order (reverse declaration): peers, gpu_cq, gpu_qp,
  * sq_doorbell, sq_buffer, endpoint. The libfabric EP closes last so any
  * GPU mappings of its BAR regions are torn down before the EP itself.
- * When this class is composed AFTER hardware counters in a wrapping
- * class's declaration order, the inner EP additionally closes before
- * the counters bound to it — required by libfabric.
+ * When this class is composed inside gdaki_sc_endpoint AFTER the
+ * hardware counters in declaration order, the inner EP additionally
+ * closes before the counters bound to it — required by libfabric.
  */
 class gdaki_endpoint {
 public:
@@ -427,7 +433,9 @@ public:
  * Composes a gdaki_endpoint plus a FI_WRITE hardware counter for
  * tracking local completion of outgoing data-only writes. The kernel
  * spins on this counter (instead of polling the CQ) to determine when
- * Put has completed locally.
+ * Put has completed locally; same model as gdaki_sc_endpoint, just
+ * without the FI_REMOTE_WRITE counter (the data EP isn't a signal
+ * target).
  *
  * Member declaration order is critical: write_cntr MUST be declared
  * BEFORE base so the inner libfabric endpoint closes before the
@@ -464,6 +472,54 @@ public:
 		      size_t ep_addr_len, int nranks);
 };
 
+/**
+ * Host-side state for a single signal or counter endpoint.
+ *
+ * Composes a gdaki_endpoint plus two hardware counters (FI_WRITE for
+ * local completion, FI_REMOTE_WRITE for remote notification) and two
+ * per-EP device handles returned to the kernel through
+ * counter_handles[] / signal_handles[].
+ *
+ * Member declaration order is critical: counters MUST be declared
+ * BEFORE `ep` so the inner libfabric endpoint closes before the
+ * counters bound to it. Closing a counter while it is still bound to
+ * an open endpoint returns EBUSY in libfabric, which our destructors
+ * silently swallow today; getting this order wrong leaks the counter
+ * and (worse) hangs the kernel module on subsequent process exit.
+ */
+class gdaki_sc_endpoint {
+public:
+	gdaki_sc_endpoint() = default;
+	gdaki_sc_endpoint(const gdaki_sc_endpoint &) = delete;
+	gdaki_sc_endpoint &operator=(const gdaki_sc_endpoint &) = delete;
+
+	gdaki_hw_counter write_cntr;        /* FI_WRITE (local completion) */
+	gdaki_hw_counter remote_write_cntr; /* FI_REMOTE_WRITE (signal) */
+	gdaki_endpoint   base;          /* AFTER counters → EP closes first */
+	/* counter_dev_handle exposes the WRITE (local completion) counter via cntr_value.
+	 * Returned to the kernel through counter_handles[]. */
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle> counter_dev_handle;
+	/* signal_dev_handle exposes the REMOTE_WRITE (signal) counter via cntr_value.
+	 * Returned to the kernel through signal_handles[]. Same QP/CQ/addressing as
+	 * counter_dev_handle; only cntr_value differs. */
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle> signal_dev_handle;
+
+	/**
+	 * Open the inner endpoint with hardware counters bound. Creates
+	 * the counters, opens the inner EP without enable, binds the
+	 * counters, then enables.
+	 */
+	void open(struct fid_domain *domain, struct fi_info *ref_info,
+		  struct fi_efa_ops_gda *gda_ops);
+
+	/**
+	 * Populate the inner endpoint's GPU descriptors and build the
+	 * per-EP device handles. Must be called after open().
+	 */
+	void populate(struct fi_efa_ops_gda *gda_ops,
+		      const std::vector<uint8_t> &peer_addrs,
+		      size_t ep_addr_len, int nranks);
+};
 
 /**
  * The composed GDAKI context.
@@ -486,6 +542,14 @@ struct nccl_ofi_gin_gdaki_context {
 	 * the CQ for data-EP Flush. */
 	gdaki_data_endpoint data;
 
+	/* Signal/counter endpoints. Empty when nSignals == 0 && nCounters == 0. */
+	int nSignals = 0;
+	int nCounters = 0;
+	std::vector<std::unique_ptr<gdaki_sc_endpoint>> sc_endpoints;
+
+	/* GPU-resident arrays of device handle pointers for counter/signal. */
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> d_counter_handles;
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> d_signal_handles;
 
 	/* GPU-resident device handle. Populated last; points into the
 	 * GPU buffers owned by the members above. */
