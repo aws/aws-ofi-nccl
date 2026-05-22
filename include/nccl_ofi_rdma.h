@@ -876,10 +876,7 @@ public:
 		return num_rails;
 	}
 
-	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device()
-	{
-		return reinterpret_cast<nccl_net_ofi_rdma_device_t *>(device);
-	}
+	inline nccl_net_ofi_rdma_device_t *rdma_domain_get_device();
 
 	inline nccl_net_ofi_rdma_domain_rail_t *rdma_domain_get_rail(uint16_t rail_id)
 	{
@@ -1567,7 +1564,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_plugin_t *rdma_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
+		return static_cast<nccl_net_ofi_rdma_plugin_t*>(plugin);
 	}
 
 	/**
@@ -1606,7 +1603,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_send_comm *rdma_device_get_send_comm(uint32_t local_comm_id)
 	{
-		auto s_comm = reinterpret_cast<nccl_net_ofi_rdma_send_comm *>
+		auto s_comm = static_cast<nccl_net_ofi_rdma_send_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			/* Received a ctrl message for a non-existent send comm */
@@ -1621,7 +1618,7 @@ public:
 	 */
 	inline nccl_net_ofi_rdma_recv_comm *rdma_device_get_recv_comm(uint32_t local_comm_id)
 	{
-		auto r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>
+		auto r_comm = static_cast<nccl_net_ofi_rdma_recv_comm *>
 			(rdma_device_get_comm(local_comm_id));
 		if (OFI_UNLIKELY(r_comm == nullptr)) {
 			/* Received a message for a non-existent recv comm */
@@ -1699,5 +1696,14 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 			   nccl_net_ofi_plugin_t **plugin_p,
 			   bool *found_multi_rail,
 			   nccl_ofi_topo_t *topo);
+
+
+
+
+inline nccl_net_ofi_rdma_device_t *nccl_net_ofi_rdma_domain_t::rdma_domain_get_device()
+{
+	return static_cast<nccl_net_ofi_rdma_device_t *>(device);
+}
+
 
 #endif // End NCCL_OFI_RDMA_H_
