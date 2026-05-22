@@ -74,7 +74,7 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 				       nccl_net_ofi_domain_t *domain);
 
 
-int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
+int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props) const
 {
 	assert(this->plugin != nullptr);
 	

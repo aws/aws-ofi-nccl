@@ -187,12 +187,12 @@ public:
 		return domain;
 	}
 
-	inline uint16_t get_ofi_num_rails() override
+	inline uint16_t get_ofi_num_rails() const override
 	{
 		return 1;
 	}
 	
-	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device();
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device() const;
 
 	/* Caller must hold the device lock */
 	std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() override;
@@ -236,12 +236,12 @@ public:
 	/* Returns a raw pointer for downcasting to the transport-specific
 	 * domain type. Safe because the ep holds shared_ptr<domain>,
 	 * so the domain is alive as long as the ep exists. */
-	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain()
+	inline nccl_net_ofi_sendrecv_domain_t *sendrecv_endpoint_get_domain() const
 	{
 		return static_cast<nccl_net_ofi_sendrecv_domain_t *>(domain.get());
 	}
 
-	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device()
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_endpoint_get_device() const
 	{
 		return sendrecv_endpoint_get_domain()->sendrecv_domain_get_device();
 	}
@@ -251,7 +251,7 @@ public:
 	 *
 	 * @return	fid_domain for the device (P-series) or endpoint (Neuron).
 	 */
-	inline ofi_domain_ptr &sendrecv_endpoint_get_ofi_domain()
+	inline ofi_domain_ptr &sendrecv_endpoint_get_ofi_domain() const
 	{
 		return sendrecv_endpoint_get_domain()->domain;
 	}
@@ -363,7 +363,7 @@ public:
 				       int device_id,
 				       struct fi_info *info_arg);
 
-	int get_properties(nccl_ofi_properties_t *props) override;
+	int get_properties(nccl_ofi_properties_t *props) const override;
 
 	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
@@ -464,7 +464,7 @@ int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       const nccl_ofi_topo_t *topo);
 
 
-inline nccl_net_ofi_sendrecv_device_t *nccl_net_ofi_sendrecv_domain_t::sendrecv_domain_get_device()
+inline nccl_net_ofi_sendrecv_device_t *nccl_net_ofi_sendrecv_domain_t::sendrecv_domain_get_device() const
 {
 	return static_cast<nccl_net_ofi_sendrecv_device_t *>(device);
 }

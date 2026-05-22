@@ -181,7 +181,7 @@ static nccl_net_ofi_rdma_close_msg_t *rdma_send_close_get_msg
 }
 
 
-nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_send_comm::get_ep()
+nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_send_comm::get_ep() const
 {
 	return (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 }
@@ -195,7 +195,7 @@ nccl_net_ofi_rdma_recv_comm_rail_t *nccl_net_ofi_rdma_recv_comm::get_control_rai
 	return &this->control_rails[rail_id];
 }
 
-nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_recv_comm::get_ep()
+nccl_net_ofi_rdma_ep_t *nccl_net_ofi_rdma_recv_comm::get_ep() const
 {
 	return (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 }
@@ -400,7 +400,7 @@ static inline size_t ofi_info_list_length(struct fi_info *info_list)
 }
 
 
-int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
+int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props) const
 {
 	int ret;
 	const nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
