@@ -268,7 +268,14 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 		return nccl_net_ofi_retval_translate(ret);
 	}
 
-	ret = gin_comm->flush_stale_acks();
+	{
+		/* flush_stale_acks calls send_ack which touches freelist and
+		 * request pool. Must hold ep_lock since there an be multiple
+		 * NCCL threads calling ginProgress() concurrently */
+		auto &gin_ep = gin_comm->get_resources().get_ep();
+		std::lock_guard<std::mutex> lock(gin_ep.ep_lock);
+		ret = gin_comm->flush_stale_acks();
+	}
 	return nccl_net_ofi_retval_translate(ret);
 }
 
