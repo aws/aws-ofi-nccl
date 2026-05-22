@@ -14,11 +14,6 @@ nccl_ofi_mr_cache::nccl_ofi_mr_cache(size_t init_num_entries,
 				     size_t page_size_arg)
 	: page_size(page_size_arg)
 {
-	if (init_num_entries == 0) {
-		NCCL_OFI_WARN("MR cache: initial number of entries must be positive");
-		throw std::runtime_error("MR cache: initial number of entries must be positive");
-	}
-
 	if (page_size_arg == 0) {
 		NCCL_OFI_WARN("MR cache: page size must be positive");
 		throw std::runtime_error("MR cache: page size must be positive");

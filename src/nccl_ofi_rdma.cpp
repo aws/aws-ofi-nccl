@@ -2981,7 +2981,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 		return 0;
 	}
 
-	if (this->mr_cache) {
+	if (this->mr_cache_enabled) {
 		std::lock_guard cache_guard(this->mr_cache_lock);
 
 		/*
@@ -2989,7 +2989,7 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr(nccl_net_ofi_rdma_mr_handle_t *mr_handl
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		int ret = this->mr_cache->del_entry(mr_handle);
+		int ret = this->mr_cache.del_entry(mr_handle);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -3008,13 +3008,13 @@ int nccl_net_ofi_rdma_domain_t::dereg_mr_no_lock(nccl_net_ofi_rdma_mr_handle_t *
 		return 0;
 	}
 
-	if (this->mr_cache) {
+	if (this->mr_cache_enabled) {
 		/*
 		* Depending on the number of references on this handle and the cache
 		* itself, this call would either just decrement the refcnt, or delete
 		* the entry for this handle.
 		*/
-		int ret = this->mr_cache->del_entry(mr_handle);
+		int ret = this->mr_cache.del_entry(mr_handle);
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
 		} else if (ret == 0) {
@@ -3175,7 +3175,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
 	*mhandle = NULL;
 
-	if (this->mr_cache) {
+	if (this->mr_cache_enabled) {
 		/*
 		 * MR cache is locked between lookup and insert, to be sure we
 		 * insert a missing entry.
@@ -3183,7 +3183,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		std::lock_guard cache_guard(this->mr_cache_lock);
 
 		ret_handle = static_cast<nccl_net_ofi_rdma_mr_handle_t *>(
-			this->mr_cache->lookup_entry(ckey, endpoint_mr));
+			this->mr_cache.lookup_entry(ckey, endpoint_mr));
 		if (ret_handle) {
 			/* Cache hit */
 			*mhandle = ret_handle;
@@ -3196,7 +3196,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 
-		ret = this->mr_cache->insert_entry(ckey,
+		ret = this->mr_cache.insert_entry(ckey,
 						     endpoint_mr,
 						     ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {

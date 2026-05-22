@@ -840,15 +840,13 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_domain_t::get_ep(long endpoint_k
 
 nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 					     unsigned int domain_key_arg)
-	: device(device_arg),
+	: mr_cache(ofi_nccl_mr_cache_disable() ? 0 : NCCL_OFI_MR_CACHE_INIT_SIZE,
+		   system_page_size),
+	  mr_cache_enabled(!ofi_nccl_mr_cache_disable()),
+	  device(device_arg),
 	  domain_key(domain_key_arg)
 {
 	assert(this->device != nullptr);
-
-	if (!ofi_nccl_mr_cache_disable()) {
-		this->mr_cache.emplace(NCCL_OFI_MR_CACHE_INIT_SIZE,
-				       system_page_size);
-	}
 
 	if (this->device->need_mr_rkey_pool) {
 		/* The provider may return support for a larger key size. Use
