@@ -714,7 +714,7 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 		return;
 	}
 
-	if (domain && domain->mr_cache) {
+	if (domain && domain->mr_cache_enabled) {
 		/*
 		 * Depending on the number of references on this handle and the
 		 * cache itself, this call would either just decrement the
@@ -722,7 +722,7 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 		 */
 		{
 			std::lock_guard guard(domain->mr_cache_lock);
-			ret = domain->mr_cache->del_entry((void *)mr_handle);
+			ret = domain->mr_cache.del_entry((void *)mr_handle);
 		}
 		if (OFI_UNLIKELY(ret < 0)) {
 			NCCL_OFI_WARN("Failed to delete MR cache entry");
@@ -771,7 +771,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 
 	int ret = 0;
 	nccl_net_ofi_sendrecv_mr_handle_t *ret_handle = nullptr;
-	bool has_cache = domain->mr_cache.has_value();
+	bool has_cache = domain->mr_cache_enabled;
 
 	if (has_cache) {
 		/*
@@ -781,7 +781,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 		std::lock_guard cache_guard(domain->mr_cache_lock);
 
 		ret_handle = static_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(
-			domain->mr_cache->lookup_entry(ckey, endpoint_mr));
+			domain->mr_cache.lookup_entry(ckey, endpoint_mr));
 
 		if (ret_handle) {
 			/* Cache hit */
@@ -798,7 +798,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 			return ret;
 		}
 
-		ret = domain->mr_cache->insert_entry(ckey, endpoint_mr, ret_handle);
+		ret = domain->mr_cache.insert_entry(ckey, endpoint_mr, ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			/* MR cache insert failed. Deregister memory region without
 			 * trying to delete MR cache entry.
