@@ -192,10 +192,7 @@ public:
 		return 1;
 	}
 	
-	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device()
-	{
-		return reinterpret_cast<nccl_net_ofi_sendrecv_device_t *>(device);
-	}
+	inline nccl_net_ofi_sendrecv_device_t *sendrecv_domain_get_device();
 
 	/* Caller must hold the device lock */
 	std::shared_ptr<nccl_net_ofi_ep_t> create_endpoint() override;
@@ -381,7 +378,7 @@ public:
 
 	inline nccl_net_ofi_sendrecv_plugin_t *sendrecv_device_get_plugin()
 	{
-		return reinterpret_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
+		return static_cast<nccl_net_ofi_sendrecv_plugin_t*>(plugin);
 	}
 
 	/* Device provider */
@@ -465,5 +462,11 @@ public:
 int nccl_net_ofi_sendrecv_init(const char *provider_filter,
 			       nccl_net_ofi_plugin_t **plugin_p,
 			       const nccl_ofi_topo_t *topo);
+
+
+inline nccl_net_ofi_sendrecv_device_t *nccl_net_ofi_sendrecv_domain_t::sendrecv_domain_get_device()
+{
+	return static_cast<nccl_net_ofi_sendrecv_device_t *>(device);
+}
 
 #endif // End NCCL_OFI_SENDRECV_H_
