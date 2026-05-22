@@ -288,7 +288,7 @@ public:
 			      int device_index,
 			      struct fi_info *info);
 
-	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
+	virtual int get_properties(nccl_ofi_properties_t *props) const = 0;
 
 	/**
 	 * Retrieve an fi_info object associated with this device to be used for connection
@@ -439,7 +439,7 @@ public:
 	/**
 	 * @brief       Returns number of rails.
 	 */
-	virtual uint16_t get_ofi_num_rails() = 0;
+	virtual uint16_t get_ofi_num_rails() const = 0;
 
 	/* Create a new endpoint
 	 *
@@ -450,7 +450,7 @@ public:
 	/**
 	 * @brief	Returns the base domain's device back-pointer.
 	 */
-	inline nccl_net_ofi_device_t *get_device()
+	inline nccl_net_ofi_device_t *get_device() const
 	{
 		return device;
 	}
@@ -608,7 +608,7 @@ public:
 	 * Get reference to the back-pointed net domain object associated with
 	 * this endpoint
 	 */
-	inline nccl_net_ofi_domain_t &get_domain()
+	inline nccl_net_ofi_domain_t &get_domain() const
 	{
 		return *domain;
 	}
