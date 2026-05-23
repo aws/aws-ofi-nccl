@@ -95,6 +95,21 @@ AC_DEFUN([CHECK_PKG_CUDA], [
             [[#include <cuda.h>]])
       ])
 
+  dnl Extract the CUDA toolkit major / minor version into shell variables so
+  dnl downstream macros (e.g. CHECK_PKG_NVCC) can compute version-conditional
+  dnl flags such as NVCC_GENCODE.
+  CUDA_MAJOR=
+  CUDA_MINOR=
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_COMPUTE_INT([CUDA_MAJOR], [CUDA_VERSION/1000],
+                        [#include <cuda.h>],
+                        [CUDA_MAJOR=])
+         AC_COMPUTE_INT([CUDA_MINOR], [(CUDA_VERSION/10) % 100],
+                        [#include <cuda.h>],
+                        [CUDA_MINOR=])])
+  AC_SUBST([CUDA_MAJOR])
+  AC_SUBST([CUDA_MINOR])
+
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define=1
          $1],

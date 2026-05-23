@@ -34,6 +34,11 @@ if ENABLE_FUNC_TESTS
 noinst_HEADERS = functional_test.h
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin grouped_recv gin_gdaki_misconfig_probe eager_multirecv
+if ENABLE_GDAKI
+if HAVE_NVCC
+bin_PROGRAMS += gin_put_gdaki_gpu
+endif
+endif
 
 base_sources = functional_test.cpp
 
@@ -45,5 +50,34 @@ reuse_listen_comm_SOURCES = $(base_sources) reuse_listen_comm.cpp
 gin_SOURCES = $(base_sources) gin.cpp
 grouped_recv_SOURCES = $(base_sources) grouped_recv.cpp
 gin_gdaki_misconfig_probe_SOURCES = $(base_sources) gin_gdaki_misconfig_probe.cpp
-endif
+
+# GDAKI GPU smoke test. .cu compiles via the .cu.o suffix rule below,
+# .cpp via the existing CXXCOMPILE; the binary links via CXXLINK
+# (libtool / mpicxx), same as every other test, with -lcuda added.
+# nvcc -c (not -dc) fully resolves device code in the object file, so
+# no nvcc-driven device link step is required. -Wno-error works around
+# benign NCCL macro redefinitions that fire under -Werror.
+if ENABLE_GDAKI
+if HAVE_NVCC
+SUFFIXES = .cu
+
+gin_put_gdaki_gpu_SOURCES = $(base_sources) gin_put_gdaki_gpu.cu
+gin_put_gdaki_gpu_LDADD = $(LDADD) -lcuda
+
+.cu.o:
+	$(NVCC) -std=c++17 $(NVCC_GENCODE) \
+		-ccbin=$(MPICXX) \
+		-Xcompiler -fPIC \
+		-Xcompiler -Wno-error \
+		-I$(top_builddir)/include \
+		-I$(top_srcdir)/include \
+		-I$(top_srcdir)/3rd-party \
+		-I$(top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include \
+		-I$(top_srcdir)/3rd-party/efa-dp-direct/CUDA/src \
+		$(MPI_CPPFLAGS) $(CUDA_CPPFLAGS) \
+		-c -o $@ $<
+endif # HAVE_NVCC
+endif # ENABLE_GDAKI
+
+endif # ENABLE_FUNC_TESTS
 eager_multirecv_SOURCES = $(base_sources) eager_multirecv.cpp
