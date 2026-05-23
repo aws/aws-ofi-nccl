@@ -161,6 +161,12 @@ CHECK_PKG_HWLOC([],
 AC_DEFINE_UNQUOTED([HAVE_CUDA], [${do_cuda}], [Defined to 1 if CUDA is available])
 AM_CONDITIONAL([HAVE_CUDA], [test ${do_cuda} = 1])
 
+dnl nvcc is optional; only used to build the GDAKI GPU functional test.
+dnl Plugin compilation does not depend on it. CHECK_PKG_NVCC handles the
+dnl no-CUDA case internally so we always call it (AM_CONDITIONAL must be
+dnl defined unconditionally for automake).
+CHECK_PKG_NVCC([], [])
+
 CHECK_PKG_GDRCOPY()
 
 CHECK_PKG_VALGRIND()
