@@ -12,6 +12,7 @@
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
 #endif
+#include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_mr.h"
 #include "nccl_ofi_param.h"
@@ -334,10 +335,37 @@ static inline struct fi_info *get_gin_info(struct fi_info *info)
 	ofi_info_ptr gin_hints = ofi_info_ptr(fi_allocinfo());
 	get_gin_hints(*gin_hints.get(), info);
 
+	/*
+	 * Select libfabric API version.
+	 *   - GDAKI: hard requirements — CUDA, DMA-BUF, libfabric 2.5+ (the
+	 *     hardware-counter ABI). Fail loudly if any prerequisite is
+	 *     missing rather than silently degrading.
+	 *   - Proxy: works on any libfabric >= 1.18; the GIN endpoint hints
+	 *     (FI_RX_CQ_DATA, cq_data_size = 4) don't use any 1.20+ features,
+	 *     so 1.18 is sufficient and avoids requesting a contract we don't
+	 *     consume.
+	 */
+	uint32_t api_version;
+	if (ofi_nccl_gin_type.get() == GIN_TYPE::GDAKI) {
+#if !HAVE_CUDA
+		throw std::runtime_error(
+			"OFI_NCCL_GIN_TYPE=GDAKI set but plugin built without CUDA");
+#endif
+		if (!nccl_ofi_dmabuf_viable()) {
+			throw std::runtime_error(
+				"OFI_NCCL_GIN_TYPE=GDAKI set but DMA-BUF is not viable");
+		}
+		api_version = FI_VERSION(2, 5);
+	} else {
+		api_version = FI_VERSION(1, 18);
+	}
+
 	struct fi_info *results = nullptr;
-	int ret = fi_getinfo(FI_VERSION(1, 18), nullptr, nullptr, 0ULL, gin_hints.get(), &results);
+	int ret = fi_getinfo(api_version, nullptr, nullptr, 0ULL, gin_hints.get(), &results);
 	if (ret != 0) {
-		throw std::runtime_error("Failed to get gin_info");
+		throw std::runtime_error(
+			"fi_getinfo for GIN failed: " +
+			std::string(fi_strerror(-ret)));
 	};
 
 	/* There should only be exactly one result, that supports everything we asked for */
