@@ -31,12 +31,9 @@ CXXLINK = OMPI_CXX="$(CXX)" MPICH_CXX="$(CXX)" \
 
 
 if ENABLE_FUNC_TESTS
-noinst_HEADERS = functional_test.h efa_direct_wqe.h
+noinst_HEADERS = functional_test.h
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin grouped_recv gin_gdaki_misconfig_probe eager_multirecv
-if ENABLE_GDAKI
-bin_PROGRAMS += gin_put_gdaki
-endif
 
 base_sources = functional_test.cpp
 
@@ -48,8 +45,5 @@ reuse_listen_comm_SOURCES = $(base_sources) reuse_listen_comm.cpp
 gin_SOURCES = $(base_sources) gin.cpp
 grouped_recv_SOURCES = $(base_sources) grouped_recv.cpp
 gin_gdaki_misconfig_probe_SOURCES = $(base_sources) gin_gdaki_misconfig_probe.cpp
-if ENABLE_GDAKI
-gin_put_gdaki_SOURCES = $(base_sources) gin_put_gdaki.cpp efa_direct_wqe.cpp
-endif
 endif
 eager_multirecv_SOURCES = $(base_sources) eager_multirecv.cpp
