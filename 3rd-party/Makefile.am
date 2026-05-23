@@ -6,4 +6,5 @@
 
 EXTRA_DIST = \
 	boost \
+	efa-dp-direct \
 	nccl
