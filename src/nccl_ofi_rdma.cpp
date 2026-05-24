@@ -957,34 +957,55 @@ int nccl_net_ofi_rdma_recv_comm::eager_copy_to_sub_recv(
  */
 int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 {
-	while (!this->recv_eager_list.empty()) {
-		nccl_ofi_dlist_node *front = this->recv_eager_list.front();
+	bool skipping = false;
+	uint16_t tmp_last_msg_seq_num = this->last_eager_msg_seq_num;
+	uint8_t tmp_last_offset = this->last_eager_offset;
+	bool tmp_has_processed = this->has_processed_eager;
+	uint16_t tmp_drain_recv_seq = this->eager_drain_recv_seq;
+
+	nccl_ofi_dlist_node *node;
+	nccl_ofi_dlist_for_each_safe(&this->recv_eager_list, node) {
 		nccl_ofi_recv_eager_entry_t *entry =
-			nccl_ofi_dlist_entry(front, &nccl_ofi_recv_eager_entry_t::link);
+			nccl_ofi_dlist_entry(node, &nccl_ofi_recv_eager_entry_t::link);
 
 		/* Check if this entry is the next in sequence */
 		bool can_process;
-		if (!this->has_processed_eager) {
+		if (!tmp_has_processed) {
 			can_process = ((entry->eager_offset == 0) && (entry->prev_msg_seq_num == 0xFFFF));
 		} else if (entry->eager_offset == 0) {
-			/* New batch: previous batch must be complete */
-			can_process = (this->last_eager_msg_seq_num == entry->prev_msg_seq_num
-				    && this->last_eager_offset == entry->prev_batch_count - 1);
+			can_process = (tmp_last_msg_seq_num == entry->prev_msg_seq_num
+				    && tmp_last_offset == entry->prev_batch_count - 1);
 		} else {
-			/* Same batch: must be consecutive offset */
-			can_process = (this->last_eager_msg_seq_num == entry->msg_seq_num
-				    && this->last_eager_offset == entry->eager_offset - 1);
+			can_process = (tmp_last_msg_seq_num == entry->msg_seq_num
+				    && tmp_last_offset == entry->eager_offset - 1);
 		}
 
 		if (!can_process)
 			break;
 
-		if (entry->eager_offset == 0)
-			/* New batch starts at entry->msg_seq_num */
-			this->eager_drain_recv_seq = entry->msg_seq_num;
+		/* Advance temp tracking */
+		tmp_last_msg_seq_num = entry->msg_seq_num;
+		tmp_last_offset = entry->eager_offset;
+		tmp_has_processed = true;
 
-		/* Find the target recv, advancing past completed/non-matching recvs */
-		uint16_t recv_seq = this->eager_drain_recv_seq;
+		/* If already handled, just remove from front (if not skipping) or skip */
+		if (entry->handled) {
+			if (!skipping) {
+				node->remove();
+				this->recv_eager_free.push_back(&entry->link);
+				this->last_eager_msg_seq_num = entry->msg_seq_num;
+				this->last_eager_offset = entry->eager_offset;
+				this->has_processed_eager = true;
+				this->eager_drain_recv_seq = tmp_drain_recv_seq;
+			}
+			continue;
+		}
+
+		if (entry->eager_offset == 0)
+			tmp_drain_recv_seq = entry->msg_seq_num;
+
+		/* Find the target recv */
+		uint16_t recv_seq = tmp_drain_recv_seq;
 		bool resolved = false;
 		while (!resolved) {
 			void *elem;
@@ -994,7 +1015,6 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 				recv_seq, &elem, &elem_type, &stat);
 			if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS || elem_type != NCCL_OFI_MSGBUFF_REQ) {
 				if ((entry->eager_offset > 0) && (recv_seq == this->last_completed_seq)) {
-					/* We already handled ctrl msg with this seq num but it completed since then, skip to next*/
 					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
 					continue;
 				} else {
@@ -1006,21 +1026,16 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 			rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
 
 			if (recv_data->num_recvs <= 1) {
-				/* Single recv: consume this entry */
-				front->remove();
 				this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, 0);
-				this->recv_eager_free.push_back(&entry->link);
-				this->eager_drain_recv_seq =
-					(this->eager_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+				entry->handled = true;
+				tmp_drain_recv_seq =
+					(tmp_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
 				resolved = true;
 			} else {
-				/* Multi recv: match by tag */
-				int sub_idx = this->eager_match_recv(recv_req, entry->tag);
+				int sub_idx = eager_match_recv(recv_req, entry->tag);
 				if (sub_idx >= 0) {
-					front->remove();
 					this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, sub_idx);
-					this->recv_eager_free.push_back(&entry->link);
-					// Check if all sub-recvs are now consumed
+					entry->handled = true;
 					bool all_consumed = true;
 					for (int i = 0; i < recv_data->num_recvs; i++) {
 						if (!recv_data->recvs[i].consumed) {
@@ -1029,26 +1044,32 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 						}
 					}
 					if (all_consumed) {
-						this->eager_drain_recv_seq = (this->eager_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+						tmp_drain_recv_seq =
+							(tmp_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
 					}
 					resolved = true;
 				} else {
-					/* This eager message belongs in the next recv but don't advance eager_drain_recv_seq
-					 * in case there are additional eagers for this message
-					*/
 					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
 					continue;
 				}
 			}
 		}
 
-		if (!resolved)
-			break;  /* recv not posted, stop draining */
+		if (!resolved) {
+			/* Can't resolve this entry, enter skipping mode */
+			skipping = true;
+			continue;
+		}
 
-		/* Update last processed */
-		this->last_eager_msg_seq_num = entry->msg_seq_num;
-		this->last_eager_offset = entry->eager_offset;
-		this->has_processed_eager = true;
+		/* Successfully handled */
+		if (!skipping) {
+			node->remove();
+			this->recv_eager_free.push_back(&entry->link);
+			this->last_eager_msg_seq_num = entry->msg_seq_num;
+			this->last_eager_offset = entry->eager_offset;
+			this->has_processed_eager = true;
+			this->eager_drain_recv_seq = tmp_drain_recv_seq;
+		}
 	}
 	return 0;
 }
@@ -1096,6 +1117,7 @@ int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 	new_entry->prev_batch_count = prev_batch_count;
 	new_entry->prev_msg_seq_num = prev_msg_seq_num;
 	new_entry->recv_len = rx_data->recv_len;
+	new_entry->handled = false;
 	recv_eager_sorted_insert(&this->recv_eager_list, new_entry);
 
 	ret = this->drain_recv_eager_queue();
