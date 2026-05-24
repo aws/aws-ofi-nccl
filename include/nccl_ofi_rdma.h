@@ -800,6 +800,7 @@ typedef struct nccl_ofi_recv_eager_entry {
 	uint16_t prev_msg_seq_num;    /* from header, only meaningful when eager_offset == 0 */
 	int32_t tag;
 	size_t recv_len;  /* payload length (excluding header) */
+	bool handled;     /* true = data copied, awaiting removal at front */
 } nccl_ofi_recv_eager_entry_t;
 
 /*
