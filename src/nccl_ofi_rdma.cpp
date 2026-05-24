@@ -891,9 +891,6 @@ static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net
 int nccl_net_ofi_rdma_recv_comm::eager_match_recv(nccl_net_ofi_rdma_req *recv_req, int32_t eager_tag)
 {
 	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
-	if (recv_data->num_recvs <= 1) {
-		return 0;
-	}
 	for (int i = 0; i < recv_data->num_recvs; i++) {
 		if ((!recv_data->recvs[i].consumed) && (recv_data->recvs[i].tag == eager_tag)) {
 			recv_data->recvs[i].consumed = true;
@@ -1024,34 +1021,25 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 
 			nccl_net_ofi_rdma_req *recv_req = (nccl_net_ofi_rdma_req *)elem;
 			rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
-
-			if (recv_data->num_recvs <= 1) {
-				this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, 0);
+			int sub_idx = eager_match_recv(recv_req, entry->tag);
+			if (sub_idx >= 0) {
+				this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, sub_idx);
 				entry->handled = true;
-				tmp_drain_recv_seq =
-					(tmp_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+				bool all_consumed = true;
+				for (int i = 0; i < recv_data->num_recvs; i++) {
+					if (!recv_data->recvs[i].consumed) {
+						all_consumed = false;
+						break;
+					}
+				}
+				if (all_consumed) {
+					tmp_drain_recv_seq =
+						(tmp_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
+				}
 				resolved = true;
 			} else {
-				int sub_idx = eager_match_recv(recv_req, entry->tag);
-				if (sub_idx >= 0) {
-					this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, sub_idx);
-					entry->handled = true;
-					bool all_consumed = true;
-					for (int i = 0; i < recv_data->num_recvs; i++) {
-						if (!recv_data->recvs[i].consumed) {
-							all_consumed = false;
-							break;
-						}
-					}
-					if (all_consumed) {
-						tmp_drain_recv_seq =
-							(tmp_drain_recv_seq + 1) & MSG_SEQ_NUM_MASK;
-					}
-					resolved = true;
-				} else {
-					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
-					continue;
-				}
+				recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
+				continue;
 			}
 		}
 
