@@ -9,12 +9,16 @@
 #include "rdma/gin/nccl_ofi_gin_resources.h"
 #include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_dlist.h"
+#include "nccl_ofi_spsc_ring.h"
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_tracepoint.h"
 
 #include <bitset>
+#include <atomic>
+#include <cstdint>
+#include <thread>
 
 /**
  * Get singleton instance of the device copy context shared across all GIN communicators.
@@ -197,6 +201,33 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 	 * does not pass ginHandle to deregMrSym. Plain heap memory, no
 	 * libfabric resources. Null when the proxy path is used. */
 	void *gin_device_handle = nullptr;
+};
+
+/**
+ * Work descriptor enqueued by the proxy CQ-drain thread for the gdrcopy
+ * worker. The signal metadata is captured by value so the recv buffer
+ * can be re-armed without waiting for the worker to consume.
+ */
+struct gin_signal_work_entry {
+	nccl_net_ofi_gin_signal_metadata_msg_t metadata;
+	nccl_net_ofi_gin_iputsignal_recv_req *req;
+	uint32_t peer_rank;
+};
+
+/**
+ * Done descriptor pushed by the worker thread back to the proxy. The
+ * worker only does the gdrcopy read-modify-write; libfabric-side
+ * bookkeeping (rx_consumed advance, next_delivered_signal_seq_num,
+ * map erase, return_req_to_pool, ACK emission) stays on the proxy because
+ * libfabric EP affinity requires it. The proxy completes that bookkeeping
+ * when it drains the done queue, ensuring ACK and request reuse never race
+ * ahead of the gdrcopy that made the signal visible.
+ */
+struct gin_signal_done_entry {
+	nccl_net_ofi_gin_iputsignal_recv_req *req;
+	uint32_t peer_rank;
+	uint16_t seq_num;
+	int status;
 };
 
 /**
@@ -486,10 +517,10 @@ private:
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 
 	int do_gin_signal_and_trace(uint32_t peer_rank,
-				    nccl_net_ofi_gin_iputsignal_recv_req *req);
+				    nccl_net_ofi_gin_iputsignal_recv_req *req) REQUIRES(get_ep_lock());
 
 	int iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
-					    nccl_net_ofi_gin_iputsignal_recv_req *req);
+					    nccl_net_ofi_gin_iputsignal_recv_req *req) REQUIRES(get_ep_lock());
 
 	/**
 	 * Receiver-side: emit a standalone ACK if we have unsent rx_consumed
@@ -500,9 +531,32 @@ private:
 
 	int retire_completed_peer_iput_ops(uint32_t peer_rank) REQUIRES(get_ep_lock());
 
+	/* --- gdrcopy worker thread (signal delivery off proxy) ---
+	 * The proxy CQ-drain thread pushes completed signal recv reqs into
+	 * gdrcopy_work_queue; the worker pops, runs do_gin_signal (the gdrcopy
+	 * read-modify-write to/from device memory), and pushes results to
+	 * gdrcopy_done_queue. The proxy drains the done queue every progress
+	 * tick. The SPSC ring's FIFO guarantee preserves seq-num delivery
+	 * order under strong_signal_ordering. */
+	std::atomic<int> gdrcopy_thread_stop{0};
+	std::atomic<int> gdrcopy_thread_exited{0};
+	nccl_ofi_spsc_ring<gin_signal_work_entry> gdrcopy_work_queue;
+	nccl_ofi_spsc_ring<gin_signal_done_entry> gdrcopy_done_queue;
+	std::thread gdrcopy_thread;
+
+	void run_gdrcopy_worker_loop();
+	int enqueue_gdrcopy_work(uint32_t peer_rank,
+				 nccl_net_ofi_gin_iputsignal_recv_req *req) REQUIRES(get_ep_lock());
+
 	friend class nccl_ofi_rdma_gin_listen_comm;
 
 public:
+	/* Reap completed signal-delivery work from the gdrcopy worker. Called
+	 * from ginProgress every progress tick and from the destructor while
+	 * joining the worker; both hold the ep lock, which is why we advance
+	 * retire_completed_peer_iput_ops (and thus emit ACKs) from here. */
+	int drain_gdrcopy_done_queue() REQUIRES(get_ep_lock());
+
 	/* NVTX tracing support - public for macro access (parallel to RDMA struct pattern) */
 #if HAVE_NVTX_TRACING
 	nvtxDomainHandle_t nvtx_domain[NCCL_OFI_N_NVTX_DOMAIN_PER_COMM];

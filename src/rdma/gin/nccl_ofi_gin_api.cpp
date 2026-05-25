@@ -289,6 +289,13 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
 	int ret = gin_comm->get_resources().progress();
+	if (OFI_UNLIKELY(ret != 0)) {
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	/* Reap signal-delivery completions from the gdrcopy worker every
+	   progress tick so gdrcopy_in_flight clears and retire can advance. */
+	ret = gin_comm->drain_gdrcopy_done_queue();
 	return nccl_net_ofi_retval_translate(ret);
 }
 

@@ -16,4 +16,5 @@ param
 platform_manager
 gdrcopy
 spinlock
+spsc_ring
 ctrl_msg

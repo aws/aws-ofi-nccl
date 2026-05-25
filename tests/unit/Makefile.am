@@ -28,7 +28,8 @@ noinst_PROGRAMS = \
 	dlopen_c_test \
 	param \
 	platform_manager \
-	spinlock
+	spinlock \
+	spsc_ring
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -67,6 +68,7 @@ dlopen_c_test_SOURCES = $(base_sources) dlopen_c_test.c
 param_SOURCES = $(base_sources) param.cpp
 platform_manager_SOURCES = $(base_sources) platform_manager.cpp
 spinlock_SOURCES = $(base_sources) spinlock.cpp
+spsc_ring_SOURCES = $(base_sources) spsc_ring.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif
