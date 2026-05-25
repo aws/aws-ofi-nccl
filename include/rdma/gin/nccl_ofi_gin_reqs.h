@@ -339,6 +339,20 @@ private:
 	 */
 	nccl_net_ofi_gin_signal_metadata_msg_t metadata;
 
+	/**
+	 * True once the signal has been handed to the gdrcopy worker. Cleared
+	 * when the worker reports completion via the done queue. Retire skips
+	 * a req while this is set so ACK and pool return cannot run ahead of
+	 * the actual signal becoming visible to the local GPU.
+	 */
+	bool gdrcopy_in_flight = false;
+
+	/**
+	 * Final status from the gdrcopy worker. Only valid once
+	 * gdrcopy_in_flight transitions back to false.
+	 */
+	int gdrcopy_status = 0;
+
 	/* This request structure doesn't have any use outside of gin_comm.
 	   So, instead of adding a bunch of getters/setters, just add a
 	   friend class. */

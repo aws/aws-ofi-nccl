@@ -47,6 +47,7 @@ noinst_HEADERS = \
 	nccl_ofi_scheduler.h \
 	nccl_ofi_sendrecv.h \
 	nccl_ofi_spinlock.h \
+	nccl_ofi_spsc_ring.h \
 	nccl_ofi_system.h \
 	nccl_ofi_topo.h \
 	nccl_ofi_tracepoint.h \
