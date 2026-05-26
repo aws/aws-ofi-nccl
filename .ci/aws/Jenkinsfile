@@ -72,7 +72,7 @@ def download_all_testing_packages() {
 
 def get_persistent_cluster_name(build_tag, os, instance_type) {
     def instance_type_prefix = instance_type.split("\\.")[0]
-    return "PluginPRCI_PersistentManualCluster_${instance_type_prefix}"
+    return "PluginPRCI-PersistentManualCluster-${instance_type_prefix}"
 }
 
 def get_persistent_cluster_region(cluster_name) {
