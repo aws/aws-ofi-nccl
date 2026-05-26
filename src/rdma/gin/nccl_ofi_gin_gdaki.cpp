@@ -246,10 +246,139 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 }
 
 /*
+ * Set up the PutValue source slot pool, shared across every logical
+ * context's data endpoint and signal/counter (sc) endpoints.
+ *
+ * EFA's RDMA_WRITE WQE cannot use inline data, so PutValue stages each
+ * value through a registered local source slot then RDMA-writes the
+ * slot to the user's destination. The same WQE arrival on the receiver's
+ * sc_endpoint bumps that endpoint's FI_REMOTE_WRITE counter, giving us
+ * value-and-signal in one WQE; routing matches Put.
+ *
+ * No QP/EP is opened here: the WQE rides on whichever endpoint the
+ * kernel selects (data or sc). The pool is one contiguous GPU-VMM
+ * region registered as a single FI_HMEM_CUDA / FI_MR_DMABUF MR, sized
+ * to the sum over all contexts of (data.sq_size + sum sc_endpoints[i].
+ * sq_size) slots. Per-endpoint slice descriptors are uploaded so the
+ * kernel can locate its slot range without sharing an allocator across
+ * endpoints.
+ *
+ * Must be called after every context's data and sc_endpoints have been
+ * populated so each sq_size is finalized.
+ */
+static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
+				struct fid_domain *ofi_domain)
+{
+	const int nContexts = ctx->nContexts;
+
+	/* Total pool size = sum over all contexts of
+	 *   data[c].sq_size + sum_i(sc_endpoints[c][i].sq_size).
+	 * Per-endpoint slice sizes are implied by each endpoint's sq_size; we
+	 * don't need a separate size array. */
+	uint64_t total_slots = 0;
+	for (int c = 0; c < nContexts; c++) {
+		const uint32_t data_sq_size = ctx->data[c]->base.sq_size;
+		if (data_sq_size == 0) {
+			throw std::runtime_error(
+				"putvalue: data endpoint sq_size is zero (ctx " +
+				std::to_string(c) + ")");
+		}
+		total_slots += data_sq_size;
+		const int nSc = (int)ctx->sc_endpoints[c].size();
+		for (int i = 0; i < nSc; i++) {
+			uint32_t sz = ctx->sc_endpoints[c][i]->base.sq_size;
+			if (sz == 0) {
+				throw std::runtime_error(
+					"putvalue: sc_endpoint sq_size is zero (ctx " +
+					std::to_string(c) + ", sc " + std::to_string(i) + ")");
+			}
+			total_slots += sz;
+		}
+	}
+
+	ctx->putvalue_slot_size = NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE;
+	const size_t requested_bytes = (size_t)total_slots * ctx->putvalue_slot_size;
+
+	/* Allocate GPU memory via VMM (cuMemCreate + cuMemMap with
+	 * gpuDirectRDMACapable) so we can export a DMA-BUF for libfabric
+	 * MR registration. The actual size returned is rounded up to the
+	 * VMM granularity (typically 2 MiB on B200) — store that back so
+	 * vmm_free in the destructor passes the correct size. */
+	void *gpu_pool = nullptr;
+	size_t actual_size = 0;
+	if (nccl_net_ofi_gpu_vmm_alloc(&gpu_pool, requested_bytes, &actual_size) != 0) {
+		throw std::runtime_error("putvalue gpu_vmm_alloc failed");
+	}
+	ctx->putvalue_buf = gpu_pool;
+	ctx->putvalue_pool_bytes = actual_size;
+
+	/* Get DMA-BUF fd. The DMA-BUF must cover the full mapped region
+	 * (rounded to VMM granularity), not just the bytes we use. */
+	int pv_fd = -1;
+	size_t pv_fd_offset = 0;
+	if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_pool, actual_size, &pv_fd, &pv_fd_offset) != 0) {
+		nccl_net_ofi_gpu_vmm_free(gpu_pool, actual_size);
+		ctx->putvalue_buf = nullptr;
+		throw std::runtime_error("putvalue get_dma_buf_fd failed");
+	}
+	ctx->putvalue_dmabuf_fd = pv_fd;
+
+	/* CUDA device id for FI_HMEM_CUDA */
+	int cuda_dev = 0;
+	if (nccl_net_ofi_get_gpu_device_for_addr(gpu_pool, &cuda_dev) != 0) {
+		throw std::runtime_error("putvalue get_gpu_device_for_addr failed");
+	}
+
+	struct fi_mr_dmabuf pv_dmabuf = {};
+	pv_dmabuf.fd        = pv_fd;
+	pv_dmabuf.offset    = pv_fd_offset;
+	pv_dmabuf.len       = actual_size;
+	pv_dmabuf.base_addr = gpu_pool;
+
+	struct fi_mr_attr pv_mr_attr = {};
+	pv_mr_attr.dmabuf      = &pv_dmabuf;
+	pv_mr_attr.iov_count   = 1;
+	pv_mr_attr.access      = FI_REMOTE_WRITE | FI_WRITE | FI_SEND | FI_RECV;
+	pv_mr_attr.iface       = FI_HMEM_CUDA;
+	pv_mr_attr.device.cuda = cuda_dev;
+	pv_mr_attr.requested_key = 0;
+
+	int ret = fi_mr_regattr(ofi_domain, &pv_mr_attr, FI_MR_DMABUF, &ctx->putvalue_mr);
+	if (ret != 0) {
+		throw std::runtime_error(
+			"putvalue fi_mr_regattr (FI_MR_DMABUF, FI_HMEM_CUDA) failed: " +
+			std::string(fi_strerror(-ret)));
+	}
+	ctx->putvalue_lkey = (uint32_t)fi_mr_key(ctx->putvalue_mr);
+	ctx->putvalue_local_addr = (uint64_t)gpu_pool;
+
+	/* Assign per-endpoint slice bases across every context. Each
+	 * endpoint stores its slice base on its own GPU-resident
+	 * dev_endpoint_handle, so the kernel reads it from the same struct
+	 * it already selects for QP / sq_lock / etc. The data endpoint
+	 * stashes on host (uploaded later by populate_dev_handle); each
+	 * sc_endpoint commits both its counter_dev_handle and
+	 * signal_dev_handle inline. Slices are laid out context-major:
+	 * for each context, the data slice followed by its sc slices. */
+	uint64_t cursor = ctx->putvalue_local_addr;
+	for (int c = 0; c < nContexts; c++) {
+		ctx->data[c]->set_putvalue_slice_base(cursor);
+		cursor += (uint64_t)ctx->data[c]->base.sq_size * ctx->putvalue_slot_size;
+		const int nSc = (int)ctx->sc_endpoints[c].size();
+		for (int i = 0; i < nSc; i++) {
+			ctx->sc_endpoints[c][i]->set_putvalue_slice_base(cursor);
+			cursor += (uint64_t)ctx->sc_endpoints[c][i]->base.sq_size
+				* ctx->putvalue_slot_size;
+		}
+	}
+}
+
+
+/*
  * Fill one entry of the contiguous dev_handles[] GPU array for logical
- * context `ctx_id`. Caller (createContext) owns the GPU buffer; this function
- * only writes the host-side copy. The whole array is committed to GPU
- * memory once after every entry is filled.
+ * context `ctx_id`. Caller (createContext) owns the GPU buffer; this
+ * function only writes the host-side copy. The whole array is committed
+ * to GPU memory once after every entry is filled.
  */
 static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 				const nccl_ofi_gin_gdaki_context *ctx,
@@ -276,6 +405,18 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.scratch_local_addr   = ctx->scratch_local_addr;
 	h.scratch_remote_addrs = ctx->scratch_remote_addrs_buf.dev;
 	h.scratch_remote_rkeys = ctx->scratch_remote_rkeys_buf.dev;
+	/* PutValue slot pool. The pool is allocated unconditionally
+	 * (sized off every context's data.sq_size, which is always
+	 * non-zero), so we always populate these fields. The lkey and
+	 * slot_size are shared across all contexts; the per-context data
+	 * slice base lives on ctx->data[ctx_id]. sc_endpoint slice bases
+	 * live on each sc_endpoint's counter_dev_handle / signal_dev_handle,
+	 * set by gdaki_sc_endpoint::set_putvalue_slice_base in
+	 * setup_putvalue_pool. No commit here — the caller commits the whole
+	 * dev_handles[] array once after every entry is filled. */
+	h.putvalue_lkey            = ctx->putvalue_lkey;
+	h.putvalue_slot_size       = (uint32_t)ctx->putvalue_slot_size;
+	h.data.putvalue_slice_base = ctx->data[ctx_id]->putvalue_slice_base;
 }
 
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
@@ -457,8 +598,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 
 		/*
 		 * Per-context loop: build (data EP + sc EPs + counter/signal
-		 * handle arrays) for each logical context, then fill that
-		 * context's slot in dev_handles[].
+		 * handle arrays) for each logical context. The dev_handles[]
+		 * slots are filled in a second loop below, after the PutValue
+		 * pool is allocated and slice bases are assigned.
 		 */
 		constexpr size_t ep_addr_len = MAX_EP_ADDR;
 		const int n_sc = std::max(config->nSignals, config->nCounters);
@@ -515,11 +657,26 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				build_handle_array(*ctx->d_signal_handles[ctx_id], config->nSignals,
 					[&](int i) { return ctx->sc_endpoints[ctx_id][i]->signal_dev_handle.dev; });
 			}
+		}
 
-			/*
-			 * Step 7: Fill this ctx's slot in dev_handles[]. Don't
-			 * commit yet — whole array committed once at end.
-			 */
+		/*
+		 * Step 7: PutValue source slot pool. Must run after every
+		 * context's data and sc endpoints are populated so their
+		 * sq_sizes are finalized. Allocates the shared GPU-VMM pool
+		 * and assigns each endpoint's slice base (the sc endpoints
+		 * commit their counter/signal dev handles inline; the data
+		 * endpoint's slice base is stashed for populate_dev_handle).
+		 */
+		setup_putvalue_pool(ctx.get(), ofi_domain);
+
+		/*
+		 * Step 8: Fill every context's slot in dev_handles[]. Done in
+		 * a second pass because populate_dev_handle reads the data
+		 * endpoint's putvalue_slice_base, which setup_putvalue_pool
+		 * only assigns once all sq_sizes are known. Don't commit per
+		 * entry — the whole array is committed once below.
+		 */
+		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
 			populate_dev_handle(ctx->dev_handles.host[ctx_id], ctx.get(),
 					    ctx_id, nranks, rank);
 		}
