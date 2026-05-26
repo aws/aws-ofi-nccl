@@ -470,6 +470,19 @@ public:
 	void populate(struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &peer_addrs,
 		      size_t ep_addr_len, int nranks);
+
+	/**
+	 * Stash the PutValue slot pool slice base for this endpoint.
+	 * Read by populate_dev_handle() when filling
+	 * dev_handle.data.putvalue_slice_base. No commit here — the data
+	 * endpoint is uploaded as part of the top-level dev_handle.commit()
+	 * at the end of createContext.
+	 */
+	void set_putvalue_slice_base(uint64_t slice_base) { putvalue_slice_base = slice_base; }
+
+	/* Host stash for the slice base; uploaded to GPU memory by
+	 * populate_dev_handle(). */
+	uint64_t putvalue_slice_base = 0;
 };
 
 /**
@@ -519,6 +532,15 @@ public:
 	void populate(struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &peer_addrs,
 		      size_t ep_addr_len, int nranks);
+
+	/**
+	 * Set the PutValue slot pool slice base on both
+	 * counter_dev_handle and signal_dev_handle (they alias the same
+	 * QP / sq_size / etc., and either may be selected by the kernel).
+	 * Re-commits both handles since populate() already uploaded their
+	 * initial host state.
+	 */
+	void set_putvalue_slice_base(uint64_t slice_base);
 };
 
 /**
@@ -591,8 +613,49 @@ struct nccl_ofi_gin_gdaki_context {
 	 * endpoint is built, then committed once. */
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handles;
 
+	/* PutValue source slot pool, shared across every logical context's
+	 * data endpoint and signal/counter endpoints.
+	 *
+	 * The pool lives in GPU memory allocated via the CUDA VMM API
+	 * (so DMA-BUF export is supported), registered with libfabric as
+	 * FI_HMEM_CUDA / FI_MR_DMABUF. The kernel writes srcVal to the
+	 * staging slot; the NIC DMAs it from GPU HBM directly.
+	 *
+	 * No dedicated PutValue endpoint: the WQE rides on whichever
+	 * endpoint matches the caller's signal request (data endpoint when
+	 * signal == NONE, sc_endpoints[signalId] otherwise). The pool is
+	 * sliced per endpoint, sized to the sum over every context of each
+	 * participating endpoint's sq_size; per-endpoint slice descriptors
+	 * are uploaded to the device via dev_handle->putvalue_slice_base.
+	 *
+	 * putvalue_buf         : GPU pointer (== putvalue_local_addr)
+	 * putvalue_pool_bytes  : VMM-rounded size; pass back to vmm_free
+	 * putvalue_dmabuf_fd   : DMA-BUF fd; close in dtor (-1 = unset)
+	 * putvalue_slot_size   : 8 bytes per slot (T <= 8 bytes)
+	 */
+	void *putvalue_buf = nullptr;
+	struct fid_mr *putvalue_mr = nullptr;
+	int putvalue_dmabuf_fd = -1;
+	uint32_t putvalue_lkey = 0;
+	uint64_t putvalue_local_addr = 0;
+	size_t putvalue_pool_bytes = 0;
+	size_t putvalue_slot_size = NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE;
+
+
 	~nccl_ofi_gin_gdaki_context()
 	{
+		if (putvalue_mr) {
+			fi_close(&putvalue_mr->fid);
+			putvalue_mr = nullptr;
+		}
+		if (putvalue_dmabuf_fd >= 0) {
+			close(putvalue_dmabuf_fd);
+			putvalue_dmabuf_fd = -1;
+		}
+		if (putvalue_buf) {
+			nccl_net_ofi_gpu_vmm_free(putvalue_buf, putvalue_pool_bytes);
+			putvalue_buf = nullptr;
+		}
 		if (scratch_mr) {
 			fi_close(&scratch_mr->fid);
 			scratch_mr = nullptr;
