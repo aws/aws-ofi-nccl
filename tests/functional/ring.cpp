@@ -205,7 +205,23 @@ int main(int argc, char *argv[])
 			}
 		}
 
+		/* Wait for all connections to be made before starting to post */
+		MPI_Barrier(MPI_COMM_WORLD);
 		NCCL_OFI_INFO(NCCL_NET, "Successfully accepted connection from rank %d", prev);
+
+		/* Receive NUM_REQUESTS from prev rank */
+		NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
+		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
+			OFINCCLCHECKGOTO(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res, exit);
+			OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
+					buffer_type, &recv_mhandle[idx]), res, exit);
+			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
+
+			while (recv_req[idx] == NULL) {
+				OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
+						sizes, tags, &recv_mhandle[idx], nullptr, (void **)&recv_req[idx]), res, exit);
+			}
+		}
 
 		/* Send NUM_REQUESTS to next rank */
 		NCCL_OFI_INFO(NCCL_NET, "Sending %d requests to rank %d", NUM_REQUESTS, next);
@@ -220,20 +236,6 @@ int main(int argc, char *argv[])
 			while (send_req[idx] == NULL) {
 				OFINCCLCHECKGOTO(extNet->isend((void *)sComm_next, (void *)send_buf[idx], SEND_SIZE, tag,
 						send_mhandle[idx], nullptr, (void **)&send_req[idx]), res, exit);
-			}
-		}
-
-		/* Receive NUM_REQUESTS from prev rank */
-		NCCL_OFI_INFO(NCCL_NET, "Rank %d posting %d receive buffers", rank, NUM_REQUESTS);
-		for (int idx = 0; idx < NUM_REQUESTS; idx++) {
-			OFINCCLCHECKGOTO(allocate_buff((void **)&recv_buf[idx], RECV_SIZE, buffer_type), res, exit);
-			OFINCCLCHECKGOTO(extNet->regMr((void *)rComm, (void *)recv_buf[idx], RECV_SIZE,
-					buffer_type, &recv_mhandle[idx]), res, exit);
-			NCCL_OFI_TRACE(NCCL_NET, "Successfully registered receive memory for request %d of rank %d", idx, rank);
-
-			while (recv_req[idx] == NULL) {
-				OFINCCLCHECKGOTO(extNet->irecv((void *)rComm, nrecv, (void **)&recv_buf[idx],
-						sizes, tags, &recv_mhandle[idx], nullptr, (void **)&recv_req[idx]), res, exit);
 			}
 		}
 
