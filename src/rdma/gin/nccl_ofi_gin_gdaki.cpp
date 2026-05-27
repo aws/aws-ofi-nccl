@@ -34,6 +34,7 @@ bool nccl_ofi_gin_gdaki_enabled()
 
 #include "cm/nccl_ofi_cm_types.h"
 #include "rdma/gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin_api.h"
 #include "rdma/gin/nccl_ofi_gin_gdaki_resources.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
