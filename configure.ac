@@ -181,6 +181,8 @@ AC_SUBST([DEVICE_INTERFACE])
 NCCL_OFI_PLATFORM="none"
 AS_IF([test "${NCCL_OFI_PLATFORM}" = "none"], [AX_CHECK_PLATFORM_AWS()])
 
+CHECK_ENABLE_NGC()
+
 AS_IF([test "${valgrind_enabled}" = "1" -a "${enable_asan}" = "yes"],
       [AC_MSG_ERROR([Enabling ASAN and valgrind at the same time is not permitted])])
 

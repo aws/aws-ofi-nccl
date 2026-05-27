@@ -137,6 +137,25 @@ endif
   libnccl_net_ofi_la_LIBTOOLFLAGS = --tag=CXX
   libnccl_net_ofi_la_LDFLAGS = -module -avoid-version
 
+if ENABLE_NGC
+# NOTE: For NGC older images (aka ngc-v1), where the NGC image uses libnccl-net-aws-ofi.so
+# library name, we are adding here another target for libnccl-net-aws-ofi.so so that we
+# could have the right name embedded in the SONAME of the target library, otherwise ldconfig
+# will add unwaned symlinks during EFA install.
+# This option is enabled by "configure --enable-ngc"
+  lib_LTLIBRARIES += libnccl-net-aws-ofi.la
+  libnccl_net_aws_ofi_la_SOURCES =
+  libnccl_net_aws_ofi_la_LIBADD = libinternal_plugin.la
+  libnccl_net_aws_ofi_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_net_aws_ofi_la_LDFLAGS = -module -avoid-version
+
+  lib_LTLIBRARIES += libnccl-tuner-aws-ofi.la
+  libnccl_tuner_aws_ofi_la_SOURCES =
+  libnccl_tuner_aws_ofi_la_LIBADD = libinternal_plugin.la
+  libnccl_tuner_aws_ofi_la_LIBTOOLFLAGS = --tag=CXX
+  libnccl_tuner_aws_ofi_la_LDFLAGS = -module -avoid-version
+endif
+
 
 if WANT_PLATFORM_AWS
 # The tuner is normally built into the net plugin shared library, supporting
