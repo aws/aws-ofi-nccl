@@ -211,6 +211,11 @@ public:
 		return resources;
 	}
 
+	uint32_t get_local_comm_id() const
+	{
+		return local_comm_id;
+	}
+
 	int get_rank() const
 	{
 		return rank;

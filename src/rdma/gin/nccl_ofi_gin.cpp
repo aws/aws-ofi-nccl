@@ -362,6 +362,10 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 {
 	auto *mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mr_handle_base);
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
+
+	auto &gin_ep = resources.get_ep();
+	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+
 	if (mr_handle->type == NCCL_PTR_CUDA) {
 		int ret = get_device_copy().deregister_region(mr_handle->gdr_handle);
 		if (ret != 0) {

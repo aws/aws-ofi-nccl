@@ -553,7 +553,6 @@ nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
 
 int nccl_ofi_gin_resources::progress()
 {
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	int ret = gin_ep.process_cq();
 	if (OFI_UNLIKELY(ret != 0)) {
 		return ret;

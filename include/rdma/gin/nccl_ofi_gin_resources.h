@@ -243,7 +243,7 @@ public:
 
 	/**
 	 * Set a GIN communicator with given comm_id in map. Throw exception if
-	 * comm_id already exists.
+	 * comm_id already exists. Caller must hold ep_lock.
 	 */
 	void set_comm(uint16_t comm_id, nccl_ofi_rdma_gin_put_comm &comm)
 	{
@@ -252,6 +252,19 @@ public:
 			throw std::runtime_error("Failed to insert comm_id");
 		}
 		gin_comms[comm_id] = &comm;
+	}
+
+	/**
+	 * Remove a GIN communicator with given comm_id from map. Throw exception if
+	 * comm_id does not exist. Caller must hold ep_lock.
+	 */
+	void remove_comm(uint16_t comm_id)
+	{
+		if (OFI_UNLIKELY(comm_id >= NCCL_GIN_MAX_COMMS || gin_comms[comm_id] == nullptr)) {
+			NCCL_OFI_WARN("Failed to remove comm_id %d (not found or out of range)", comm_id);
+			throw std::runtime_error("Failed to remove comm_id");
+		}
+		gin_comms[comm_id] = nullptr;
 	}
 
 	nccl_ofi_rdma_gin_ep_t &get_ep()
@@ -354,7 +367,8 @@ public:
 	}
 
 	/**
-	 * Progress completion queue and retry any pending requests
+	 * Progress completion queue and retry any pending requests.
+	 * Caller must hold ep_lock.
 	 */
 	int progress();
 

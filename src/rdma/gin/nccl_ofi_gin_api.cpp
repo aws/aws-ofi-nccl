@@ -275,6 +275,7 @@ ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
 ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
+	std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
 	int ret = gin_comm->get_resources().progress();
 	return nccl_net_ofi_retval_translate(ret);
 }
@@ -282,12 +283,18 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
+	auto &gin_ep = gin_comm->get_resources().get_ep();
+	std::lock_guard<std::mutex> lock(gin_ep.ep_lock);
 
 	int ret = gin_comm->await_pending_requests();
+	if (OFI_UNLIKELY(ret != 0)) {
+		return nccl_net_ofi_retval_translate(ret);
+	}
 
+	gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
 	delete gin_comm;
 
-	return nccl_net_ofi_retval_translate(ret);
+	return ncclSuccess;
 }
 
 ncclResult_t nccl_ofi_gin_closeListen(void *listenComm)
