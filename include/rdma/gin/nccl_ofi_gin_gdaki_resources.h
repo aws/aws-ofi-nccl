@@ -21,8 +21,6 @@
 
 #include "config.h"
 
-#if HAVE_DECL_FI_EFA_GDA_OPS
-
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -305,7 +303,5 @@ struct nccl_ofi_gin_gdaki_context {
 	 * GPU buffers owned by the members above. */
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handle;
 };
-
-#endif /* HAVE_DECL_FI_EFA_GDA_OPS */
 
 #endif /* NCCL_OFI_GIN_GDAKI_RESOURCES_H_ */

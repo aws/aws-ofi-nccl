@@ -62,18 +62,6 @@ struct proc_handle {
 
 int main(int argc, char *argv[])
 {
-#if !HAVE_DECL_FI_EFA_GDA_OPS
-	int rank = 0;
-	MPI_Init(&argc, &argv);
-	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-	if (rank == 0) {
-		NCCL_OFI_INFO(NCCL_NET,
-			      "FI_EFA_GDA_OPS not declared in libfabric "
-			      "headers; gin_put_gdaki test skipped");
-	}
-	MPI_Finalize();
-	return 0;
-#else
 	ncclResult_t res = ncclSuccess;
 	int rank, nranks, proc_name_len, local_rank = 0;
 
@@ -309,5 +297,4 @@ int main(int argc, char *argv[])
 
 	NCCL_OFI_INFO(NCCL_NET, "Test completed successfully for rank %d", rank);
 	return res;
-#endif /* HAVE_DECL_FI_EFA_GDA_OPS */
 }

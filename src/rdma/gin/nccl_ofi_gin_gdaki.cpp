@@ -17,14 +17,6 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
-#include "nccl_ofi_param.h"
-
-bool nccl_ofi_gin_gdaki_enabled()
-{
-	return ofi_nccl_gin_gdaki.get();
-}
-
-#if HAVE_DECL_FI_EFA_GDA_OPS
 
 #include <memory>
 #include <vector>
@@ -40,6 +32,7 @@ bool nccl_ofi_gin_gdaki_enabled()
 #include "nccl_ofi_cuda.h"
 #endif
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_param.h"
 
 static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties_v12_t *props)
 {
@@ -423,4 +416,3 @@ ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.finalize = nccl_ofi_gin_finalize
 };
 
-#endif /* HAVE_DECL_FI_EFA_GDA_OPS */
