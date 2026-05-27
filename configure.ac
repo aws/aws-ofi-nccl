@@ -330,6 +330,15 @@ AS_IF([test -e "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CXXFLAGS.])
        CXXFLAGS="${werror_flags} ${CXXFLAGS} "])
 
+AC_ARG_ENABLE([gdaki],
+   [AS_HELP_STRING([--enable-gdaki],
+       [Build GDAKI (GPUDirect Async Kernel-Initiated) support for the GIN plugin. [default=no]])])
+AS_IF([test "${enable_gdaki}" = "yes"],
+      [have_gdaki=1],
+      [have_gdaki=0])
+AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
+AM_CONDITIONAL([ENABLE_GDAKI], [test "${have_gdaki}" = "1"])
+
 AC_ARG_ENABLE([nccl-net-library],
       [AS_HELP_STRING([--disable-nccl-net-library],
            [Do not create shared library libnccl-net.so that is the same as libnccl-net-ofi.so.

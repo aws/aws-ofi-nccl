@@ -7,8 +7,11 @@
 #include <cstring>
 
 #include "rdma/gin/nccl_ofi_gin.h"
+#include "rdma/gin/nccl_ofi_gin_api.h"
 #include "rdma/gin/nccl_ofi_gin_types.h"
+#if HAVE_GDAKI
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
+#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
@@ -84,6 +87,7 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 	 * libfabric without FI_EFA_GDA_OPS, fail init rather than silently
 	 * fall back to the proxy path: GDAKI was an explicit opt-in.
 	 */
+#if HAVE_GDAKI
 	if (nccl_ofi_gin_gdaki_enabled()) {
 #if !HAVE_DECL_FI_EFA_GDA_OPS
 		NCCL_OFI_WARN("OFI_NCCL_GIN_GDAKI=1 set but plugin was built "
@@ -95,6 +99,14 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 		memcpy(&ncclGinPlugin_v13, &nccl_ofi_gin_gdaki_plugin, sizeof(ncclGinPlugin_v13));
 #endif
 	}
+#else
+	if (ofi_nccl_gin_gdaki.get()) {
+		NCCL_OFI_WARN("OFI_NCCL_GIN_GDAKI=1 set but plugin was built "
+			      "without GDAKI support (configure with --enable-gdaki); "
+			      "failing init");
+		return ncclInvalidUsage;
+	}
+#endif
 
 	return ncclSuccess;
 }

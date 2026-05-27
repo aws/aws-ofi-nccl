@@ -11,12 +11,10 @@ noinst_HEADERS = \
 	cm/nccl_ofi_cm.h \
 	rdma/gin/nccl_ofi_gin.h \
 	rdma/gin/nccl_ofi_gin_allgather.h \
+	rdma/gin/nccl_ofi_gin_api.h \
 	rdma/gin/nccl_ofi_gin_reqs.h \
 	rdma/gin/nccl_ofi_gin_resources.h \
 	rdma/gin/nccl_ofi_gin_types.h \
-	rdma/gin/nccl_ofi_gin_gdaki.h \
-	rdma/gin/nccl_ofi_gin_gdaki_dev.h \
-	rdma/gin/nccl_ofi_gin_gdaki_resources.h \
 	nccl_ofi_gin_base.h \
 	nccl_ofi.h \
 	nccl_ofi_api.h \
@@ -64,3 +62,10 @@ noinst_HEADERS = \
 	tuner/nccl_ofi_tuner_process_config.h \
 	tuner/nccl_ofi_tuner_region.h \
 	tuner/nccl_ofi_tuner_model.h
+
+if ENABLE_GDAKI
+noinst_HEADERS += \
+	rdma/gin/nccl_ofi_gin_gdaki.h \
+	rdma/gin/nccl_ofi_gin_gdaki_dev.h \
+	rdma/gin/nccl_ofi_gin_gdaki_resources.h
+endif
