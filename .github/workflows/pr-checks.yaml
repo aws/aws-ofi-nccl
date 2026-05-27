@@ -1,0 +1,11 @@
+name: DCO Check
+
+on: [pull_request]
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: tisonkun/actions-dco@v1.1
