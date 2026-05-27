@@ -95,6 +95,8 @@ int nccl_net_ofi_sendrecv_device_t::get_properties(nccl_ofi_properties_t *props)
 		props->max_communicators = std::min(this->max_tag, static_cast<uint64_t>(INT_MAX));
 	}
 
+	/* Override max_group_receives in sendrecv to 1 */
+	props->max_group_receives = 1;
 	props->rma_supported = 0;
 	props->max_write_inline_size = info->tx_attr->inject_size;
 
