@@ -283,8 +283,7 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	auto &gin_ep = gin_comm->get_resources().get_ep();
-	std::lock_guard<std::mutex> lock(gin_ep.ep_lock);
+	std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
 
 	int ret = gin_comm->await_pending_requests();
 	if (OFI_UNLIKELY(ret != 0)) {
