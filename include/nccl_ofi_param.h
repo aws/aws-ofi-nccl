@@ -375,10 +375,18 @@ OFI_NCCL_PARAM_VALUE_SET(NVTX_TRACE_DIMENSION, (PER_COMM)(PER_DEV))
 OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSION", NVTX_TRACE_DIMENSION::PER_COMM)
 
 /*
- * Enable GDAKI (GPUDirect Async) mode for the GIN plugin.
- * Not yet supported — stub implementation only.
+ * Selects the GIN plugin variant exported to NCCL.
+ *
+ *   PROXY: proxy-mode GIN (GDAKI disabled)
+ *   GDAKI: kernel-initiated GDAKI mode; requires plugin built with
+ *          --enable-gdaki
+ *
+ * Default is proxy mode. Setting this to GDAKI on a plugin built without
+ * GDAKI support causes plugin init to fail with ncclInvalidUsage rather
+ * than silently falling back.
  */
-OFI_NCCL_PARAM(bool, gin_gdaki, "GIN_GDAKI", false);
+OFI_NCCL_PARAM_VALUE_SET(GIN_TYPE, (PROXY)(GDAKI))
+OFI_NCCL_PARAM(GIN_TYPE, gin_type, "GIN_TYPE", GIN_TYPE::PROXY)
 
 /*
  * Enable strong-signal semantics for the GIN plugin.

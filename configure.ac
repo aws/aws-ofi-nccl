@@ -334,7 +334,11 @@ AC_ARG_ENABLE([gdaki],
    [AS_HELP_STRING([--enable-gdaki],
        [Build GDAKI (GPUDirect Async Kernel-Initiated) support for the GIN plugin. [default=no]])])
 AS_IF([test "${enable_gdaki}" = "yes"],
-      [have_gdaki=1],
+      [AS_IF([test "${ac_cv_have_decl_FI_EFA_GDA_OPS}" != "yes"],
+             [AC_MSG_ERROR([--enable-gdaki requires a libfabric build with FI_EFA_GDA_OPS support (libfabric >= 2.3.0).])])
+       AS_IF([test "${have_device_interface}" != "cuda"],
+             [AC_MSG_ERROR([--enable-gdaki requires CUDA support.])])
+       have_gdaki=1],
       [have_gdaki=0])
 AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
 AM_CONDITIONAL([ENABLE_GDAKI], [test "${have_gdaki}" = "1"])

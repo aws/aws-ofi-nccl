@@ -7,8 +7,6 @@
 
 #include "config.h"
 
-#if HAVE_DECL_FI_EFA_GDA_OPS
-
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
@@ -219,4 +217,3 @@ void gdaki_peer_addressing::populate(gdaki_fi_endpoint &endpoint,
 	qkeys.commit();
 }
 
-#endif /* HAVE_DECL_FI_EFA_GDA_OPS */

@@ -8,11 +8,6 @@
 #include "nccl_ofi.h"
 
 /*
- * Return true if GDAKI mode is requested via OFI_NCCL_GIN_GDAKI=1 env var.
- */
-bool nccl_ofi_gin_gdaki_enabled();
-
-/*
  * The GDAKI plugin. Shared plugin APIs (declared in nccl_ofi_gin.h) are
  * assigned into this plugin at compile time; GDAKI-specific APIs live in
  * nccl_ofi_gin_gdaki.cpp.

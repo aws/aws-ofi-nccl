@@ -79,34 +79,34 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 	}
 
 	/*
-	 * Morph the exported plugin to GDAKI if requested. Shared plugin APIs
-	 * are wired into nccl_ofi_gin_gdaki_plugin at compile time, so we just
-	 * overwrite the exported symbol.
+	 * Choose the GIN plugin variant based on OFI_NCCL_GIN_TYPE.
+	 *   GIN_TYPE::PROXY: keep the default (proxy) plugin.
+	 *   GIN_TYPE::GDAKI: morph the exported v13 plugin to GDAKI.
 	 *
-	 * If the user requested GDAKI but the plugin was built against a
-	 * libfabric without FI_EFA_GDA_OPS, fail init rather than silently
-	 * fall back to the proxy path: GDAKI was an explicit opt-in.
+	 * Shared plugin APIs are wired into nccl_ofi_gin_gdaki_plugin at
+	 * compile time, so to engage GDAKI we just overwrite the exported
+	 * symbol.
+	 *
+	 * If the user requested GDAKI but the plugin was built without
+	 * --enable-gdaki, fail init rather than silently falling back: GDAKI
+	 * was an explicit opt-in.
 	 */
+	switch (ofi_nccl_gin_type.get()) {
+	case GIN_TYPE::PROXY:
+		break;
+	case GIN_TYPE::GDAKI:
 #if HAVE_GDAKI
-	if (nccl_ofi_gin_gdaki_enabled()) {
-#if !HAVE_DECL_FI_EFA_GDA_OPS
-		NCCL_OFI_WARN("OFI_NCCL_GIN_GDAKI=1 set but plugin was built "
-			      "without libfabric FI_EFA_GDA_OPS support "
-			      "(requires libfabric >= 2.3.0); failing init");
-		return ncclInvalidUsage;
-#else
-		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: GDAKI mode enabled (OFI_NCCL_GIN_GDAKI=1)");
+		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT,
+			      "gin: GDAKI mode enabled (OFI_NCCL_GIN_TYPE=GDAKI)");
 		memcpy(&ncclGinPlugin_v13, &nccl_ofi_gin_gdaki_plugin, sizeof(ncclGinPlugin_v13));
-#endif
-	}
+		break;
 #else
-	if (ofi_nccl_gin_gdaki.get()) {
-		NCCL_OFI_WARN("OFI_NCCL_GIN_GDAKI=1 set but plugin was built "
-			      "without GDAKI support (configure with --enable-gdaki); "
-			      "failing init");
+		NCCL_OFI_WARN("OFI_NCCL_GIN_TYPE=GDAKI requested but plugin "
+			      "was built without GDAKI support (configure with "
+			      "--enable-gdaki); failing init");
 		return ncclInvalidUsage;
-	}
 #endif
+	}
 
 	return ncclSuccess;
 }
