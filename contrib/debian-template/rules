@@ -47,7 +47,8 @@ override_dh_auto_configure:
 		--without-lttng \
 		--without-valgrind \
 		--disable-werror \
-		--disable-nccl-net-library
+		--disable-nccl-net-library \
+		--enable-ngc
 	dh_auto_configure \
 		--builddirectory=build/libnccl-ofi-ngc-v2 -- \
 		--with-libfabric=/opt/amazon/efa \
@@ -87,10 +88,6 @@ override_dh_auto_install:
 	dh_auto_install --builddirectory=build/libnccl-ofi-ngc-v2 --destdir=debian/tmp-ngc-v2
 	dh_auto_install --builddirectory=build/libnccl-ofi-ngc-v3 --destdir=debian/tmp-ngc-v3
 	mkdir -p debian/tmp/etc/ld.so.conf.d && echo "${OFI_NCCL_PREFIX}/lib" >> debian/tmp/etc/ld.so.conf.d/100_ofinccl.conf
-	mv $(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-net-ofi.so \
-		$(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-net-aws-ofi.so
-	mv $(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-tuner-ofi.so \
-		$(CURDIR)/debian/tmp-ngc-v1/opt/amazon/aws-ofi-nccl/lib/libnccl-tuner-aws-ofi.so
 	find debian/tmp -name *.la -delete
 	find debian/tmp-ngc-v1 -name *.la -delete
 	find debian/tmp-ngc-v2 -name *.la -delete
