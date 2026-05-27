@@ -211,6 +211,11 @@ public:
 		return resources;
 	}
 
+	std::mutex &get_ep_lock() RETURN_CAPABILITY(resources.get_ep().ep_lock)
+	{
+		return resources.get_ep().ep_lock;
+	}
+
 	uint32_t get_local_comm_id() const
 	{
 		return local_comm_id;
@@ -284,8 +289,8 @@ public:
 	}
 
 	/* Wait for any outstanding requests as necessary. Should be called before
-	   the GIN comm is destructed. */
-	int await_pending_requests() override;
+	   the GIN comm is destructed. Caller must hold resources.get_ep().ep_lock. */
+	int await_pending_requests() REQUIRES(get_ep_lock()) override;
 
 	/**
 	 * iputSignal API. Transfers some user data (determined by memory registrations
@@ -344,7 +349,7 @@ public:
 	 */
 	int handle_signal_metadata_completion(
 		const nccl_net_ofi_gin_signal_metadata_msg_t *metadata_msg,
-		fi_addr_t src_addr, uint16_t rail_id);
+		fi_addr_t src_addr, uint16_t rail_id) REQUIRES(get_ep_lock());
 
 	/**
 	 * Callback for write completion (data signals only).
@@ -354,7 +359,7 @@ public:
 	 * @param rail_id: rail ID of the signal
 	 */
 	int handle_signal_write_completion(struct fi_cq_data_entry * cq_entry,
-					   fi_addr_t src_addr, uint16_t rail_id);
+					   fi_addr_t src_addr, uint16_t rail_id) REQUIRES(get_ep_lock());
 
 	/**
 	 * Callback for ACK message received via fi_recv.
@@ -469,7 +474,7 @@ private:
 	 * @param rx_consumed receiver's rx_consumed cursor at this moment
 	 */
 	int send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
-		     uint32_t rx_consumed);
+		     uint32_t rx_consumed) REQUIRES(get_ep_lock());
 
 	int do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata);
 
@@ -484,9 +489,9 @@ private:
 	 * progress and either the sender requested it or we've crossed the
 	 * flush threshold. Idempotent and cheap when there's nothing to do.
 	 */
-	int maybe_send_ack(uint32_t peer_rank, bool sender_requested);
+	int maybe_send_ack(uint32_t peer_rank, bool sender_requested) REQUIRES(get_ep_lock());
 
-	int retire_completed_peer_iput_ops(uint32_t peer_rank);
+	int retire_completed_peer_iput_ops(uint32_t peer_rank) REQUIRES(get_ep_lock());
 
 	friend class nccl_ofi_rdma_gin_listen_comm;
 

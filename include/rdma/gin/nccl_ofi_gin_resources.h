@@ -19,6 +19,7 @@
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_rdma.h"
 #include "nccl_ofi_scheduler.h"
+#include "nccl_ofi_tsa.h"
 
 static inline void freelist_deleter(nccl_ofi_freelist *fl)
 {

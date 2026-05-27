@@ -72,6 +72,18 @@ nccl_net_ofi_gin_recv_req_t::~nccl_net_ofi_gin_recv_req_t()
 
 int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
 						 fi_addr_t src_addr, uint16_t rail_id_arg)
+	/* ep_lock is held by the process_cq() caller, but TSA cannot verify
+	   this for two reasons:
+	   1. Virtual dispatch: the base class handle_cq_entry() has no
+	      REQUIRES annotation (would need a mutex ref in the base context).
+	   2. Lock alias: this function accesses ep_lock as
+	      resources.get_ep().ep_lock, while callees (e.g.
+	      handle_signal_write_completion) require it as
+	      gin_comm.resources.get_ep().ep_lock. These are the same mutex
+	      at runtime (all comms on an endpoint share one resources object),
+	      but TSA does syntactic expression matching and cannot prove the
+	      alias through the dynamic get_comm() lookup. */
+	NO_THREAD_SAFETY_ANALYSIS
 {
 	assert(this->rail.rail_id == rail_id_arg);
 
