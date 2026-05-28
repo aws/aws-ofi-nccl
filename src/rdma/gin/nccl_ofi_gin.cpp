@@ -411,6 +411,29 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 		}
 	}
 
+	/* Drain inbound ACKs we are still waiting on. The NCCL proxy may
+	   have already stopped polling test() by the time we get here, so
+	   closeColl()/the destructor would otherwise tear the EP down with
+	   peers' inflight ACKs still bound for our QP. Pump the CQ until
+	   tx_tail == tx_head on every peer, i.e. every op we ever sent has
+	   been retired by its receiver. */
+	while (true) {
+		bool any_outstanding = false;
+		for (auto &rank_comm : rank_comms) {
+			if (gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail) != 0) {
+				any_outstanding = true;
+				break;
+			}
+		}
+		if (!any_outstanding) {
+			break;
+		}
+		ret = resources.progress();
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+	}
+
 	return ret;
 }
 
