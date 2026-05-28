@@ -7075,9 +7075,8 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 				      sizeof(nccl_net_ofi_rdma_close_msg_t)});
 	this->eager_send_size = device->eager_support ? ofi_nccl_eager_max_size() : 0;
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
-	   posting 0 byte rx buffers.  Note that if eager_send_size is -1
-	   (disabled), eager_rx_buff_size will also be -1. */
-	this->eager_rx_buff_size = (this->eager_send_size == 0) ?
+	   posting 0 byte rx buffers */
+	this->eager_rx_buff_size = (this->eager_send_size <= 0) ?
 		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
 
 	ret = this->init_rail_ofi_resources(device, domain_arg.get());
