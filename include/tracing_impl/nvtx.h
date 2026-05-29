@@ -56,7 +56,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_send_comm*)comm) \
 			->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(request)->send_data.trace_id = nvtx_start_domain(true, handle, "Send", 0xeb9234); \
+		(request)->trace_id = nvtx_start_domain(true, handle, "Send", 0xeb9234); \
 	} \
 } while (0)
 
@@ -64,7 +64,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_send_comm*)(request->comm)) \
 			->nvtx_domain[request->msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, (request)->send_data.trace_id); \
+		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
 
@@ -72,11 +72,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_send_comm*)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(request)->send_data.seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
+		(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = (static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device())->nvtx_domain[rail_id]; \
-		(request)->send_data.seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
+		(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_eager", 0x0000FF); \
 	} \
 } while (0)
 
@@ -84,11 +84,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_send_comm*)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, (request)->send_data.seg_trace_id[rail_id]); \
+		nvtx_end_domain(handle, (request)->seg_trace_id[rail_id]); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = (static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device())->nvtx_domain[rail_id]; \
-		nvtx_end_domain(handle, (request)->send_data.seg_trace_id[rail_id]); \
+		nvtx_end_domain(handle, (request)->seg_trace_id[rail_id]); \
 	} \
 } while(0)
 
@@ -108,11 +108,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_recv_comm *)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(req)->recv_data.write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
+		(req)->write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		(req)->recv_data.write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
+		(req)->write_ctrl_trace_id = nvtx_start_domain(true, handle, "Write_ctrl_start", 0x00ffff); \
 	} \
 } while (0)
 
@@ -120,11 +120,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_recv_comm *)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, (req)->recv_data.write_ctrl_trace_id); \
+		nvtx_end_domain(handle, (req)->write_ctrl_trace_id); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		nvtx_end_domain(handle, (req)->recv_data.write_ctrl_trace_id);\
+		nvtx_end_domain(handle, (req)->write_ctrl_trace_id);\
 	} \
 } while (0)
 
@@ -132,11 +132,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_send_comm*)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(request)->send_data.seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
+		(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		(request)->send_data.seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
+		(request)->seg_trace_id[rail_id] = nvtx_start_domain(true, handle, "Send_write_seg", 0xff0000); \
 	} \
 } while(0)
 
@@ -144,11 +144,11 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		handle = ((nccl_net_ofi_rdma_send_comm*)comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, (request)->send_data.seg_trace_id[rail_id]); \
+		nvtx_end_domain(handle, (request)->seg_trace_id[rail_id]); \
 	} \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_DEV) { \
 		handle = static_cast<nccl_net_ofi_rdma_ep_t *>(comm->ep.get())->rdma_endpoint_get_device()->nvtx_domain[rail_id]; \
-		nvtx_end_domain(handle, (request)->send_data.seg_trace_id[rail_id]); \
+		nvtx_end_domain(handle, (request)->seg_trace_id[rail_id]); \
 	} \
 } while(0)
 
@@ -156,7 +156,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_recv_comm *)request->comm) \
 			->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		(request)->recv_data.trace_id = nvtx_start_domain(true, handle, "Recv", 0x34EB37); \
+		(request)->trace_id = nvtx_start_domain(true, handle, "Recv", 0x34EB37); \
 	} \
 } while(0)
 
@@ -164,7 +164,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_recv_comm *)request->comm) \
 			->nvtx_domain[request->msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
-		nvtx_end_domain(handle, (request)->recv_data.trace_id); \
+		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
 
