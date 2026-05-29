@@ -545,6 +545,10 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req *req)
  */
 static inline int inc_recv_seg_completion(rdma_req_recv_data_t *recv_data, size_t size);
 
+/* TODO: Convert inc_req_completion to a member method
+ * (req->inc_completion(size, total_ncompls)) for consistency with the
+ * rest of the C++ refactor.  Deferred because it has many callers and
+ * the conversion is orthogonal to the current commit's goals. */
 static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 				     size_t size, int total_ncompls)
 {
@@ -566,92 +570,6 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 	}
 
 	return -ret;
-}
-
-/*
- * @brief	Set eager copy request to completed
- *
- * Set eager copy ctrl request to completed. Furthermore, increment
- * completions of parent request (receive request).
- *
- * Modifications of the eager copy request are guarded by the eager copy req's
- * lock.  Modifications of the receive request are guarded by the receive
- * request's lock.
- *
- * @param	req
- *		Eager copy request
- *		size
- *		Size of received eager data
- * @return	0, on success
- *		non-zero, on error
- */
-static inline int set_eager_copy_completed(nccl_net_ofi_rdma_req *req)
-{
-	assert(req->type == NCCL_OFI_RDMA_EAGER_COPY);
-	int ret = 0;
-	rdma_req_eager_copy_data_t *eager_copy_data = get_eager_copy_data(req);
-	nccl_net_ofi_rdma_req *recv_req = eager_copy_data->recv_req;
-	rdma_req_recv_data_t *recv_data = get_recv_data(recv_req);
-
-	req->req_lock.lock();
-
-	/* Set send ctrl request completed */
-	req->ncompls = 1;
-	req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
-
-	req->req_lock.unlock();
-
-	/* Get size of received data */
-	rdma_req_rx_buff_data_t *rx_buff_data = get_rx_buff_data(eager_copy_data->eager_rx_buff_req);
-	size_t size = rx_buff_data->recv_len;
-
-	/* Check posted count and re-post rx buffer if needed */
-	ret = check_post_rx_buff_req(eager_copy_data->eager_rx_buff_req);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
-		return ret;
-	}
-
-	/* Record per-sub-receive size for eager completion */
-	recv_data->recvs[eager_copy_data->sub_recv_idx].recv_size += size;
-	/* Add completion to parent request */
-	if (recv_data->num_recvs > 1) {
-		ret = inc_recv_seg_completion(recv_data, size);
-	} else {
-		ret = inc_req_completion(recv_req, size, recv_data->total_num_compls);
-	}
-
-	return ret;
-}
-
-/*
- * @brief Set control write for receive request to completed
- *
- * Control write for receive request is completed so increment
- * completions.
- *
- * Modifications of the send control request are guarded by the send
- * control request's lock.  Modifications of the receive request are
- * guarded by the receive request's lock.
- *
- * @param	req
- *		Receive request
- * @return	0, on success
- *		non-zero, on error
- */
-static inline int set_write_ctrl_completed(nccl_net_ofi_rdma_req *req)
-{
-	assert(req->type == NCCL_OFI_RDMA_RECV);
-	rdma_req_recv_data_t *recv_data = get_recv_data(req);
-
-	assert(req->comm->type == NCCL_NET_OFI_RECV_COMM);
-	nccl_net_ofi_rdma_recv_comm *r_comm =
-		(nccl_net_ofi_rdma_recv_comm *)req->comm;
-
-	r_comm->n_ctrl_delivered += 1;
-
-	/* Add completion to receive request */
-	return inc_req_completion(req, 0, recv_data->total_num_compls);
 }
 
 /*
@@ -1285,49 +1203,6 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	return 0;
 }
 
-/**
- * @brief	Handle completion for a flush request
- */
-static inline int handle_flush_comp(nccl_net_ofi_rdma_req *req)
-{
-	int ret = 0;
-
-
-#if HAVE_NEURON
-	rdma_req_flush_data_t *flush_data = get_flush_data(req);
-	ret = inc_req_completion(req, 0, flush_data->total_num_compls);
-#endif
-
-#if HAVE_GPU
-
-	rdma_req_flush_data_t *flush_data = get_flush_data(req);
-	int num_completions = ++(req->ncompls);
-	/* Check if the number of completions is equal to total completions
-	 * and if the req has not errored.
-	 */
-	if (num_completions == flush_data->total_num_compls &&
-		OFI_LIKELY(req->state != NCCL_OFI_RDMA_REQ_ERROR)) {
-
-		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->type, req, req);
-
-		/* If the state is already marked complete (before getting the completion event),
-		 * decrement num_pending_flush_comps to indicate we've received the completion
-		 * event. Otherwise, test() has not yet been called on the request, so only
-		 * update request state.
-		 */
-		if (req->state == NCCL_OFI_RDMA_REQ_COMPLETED) {
-			auto *r_comm = reinterpret_cast<nccl_net_ofi_rdma_recv_comm *>(req->comm);
-			r_comm->num_pending_flush_comps--;
-			req->free(true);
-		} else {
-			req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
-		}
-	}
-#endif
-
-	return ret;
-}
-
 static const char *req_state_str(nccl_net_ofi_rdma_req_state_t state)
 {
 	switch(state) {
@@ -1435,9 +1310,6 @@ int nccl_net_ofi_rdma_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base
 	auto cq_entry = reinterpret_cast<fi_cq_data_entry *>(cq_entry_base);
 	uint64_t comp_flags = cq_entry->flags;
 
-	rdma_req_send_data_t *send_data = NULL;
-	rdma_req_rma_op_data_t *rma_op_data = NULL;
-
 	/* The context for these operations is req. */
 	nccl_net_ofi_rdma_req *req = this->get_req(rail_id);
 	if (OFI_UNLIKELY(req == NULL)) {
@@ -1454,29 +1326,7 @@ int nccl_net_ofi_rdma_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base
 	 * 6. READ: flush, eager copy, or RMA read
 	 */
 
-	if (comp_flags & FI_SEND) {
-		/* Send completions */
-
-		if (req->type == NCCL_OFI_RDMA_SEND) {
-			/* Eager message send completion */
-			NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num, req);
-			send_data = get_send_data(req);
-			assert(send_data->eager);
-			/* Return eager header buffer to freelist */
-			if (send_data->eager_hdr_fl_entry) {
-				nccl_net_ofi_rdma_send_comm *sc = (nccl_net_ofi_rdma_send_comm *)req->comm;
-				sc->eager_hdr_fl->entry_free(send_data->eager_hdr_fl_entry);
-				send_data->eager_hdr_fl_entry = nullptr;
-			}
-
-			ret = inc_req_completion(req, 0, send_data->total_num_compls);
-		} else if (req->type == NCCL_OFI_RDMA_SEND_CLOSE) {
-			ret = inc_req_completion(req, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
-		} else {
-			NCCL_OFI_WARN("Send completion from unexpected request type %d", req->type);
-			ret = -EINVAL;
-		}
-	} else if (comp_flags & FI_RECV) {
+	if (comp_flags & FI_RECV) {
 
 		nccl_net_ofi_rdma_device_t *device =
 		get_rx_buff_data(req)->ep->rdma_endpoint_get_device();
@@ -1484,72 +1334,11 @@ int nccl_net_ofi_rdma_context::handle_cq_entry(struct fi_cq_entry *cq_entry_base
 		ret = handle_rx_buff_recv(device, rail_id, cq_entry, req,
 					  comp_flags & FI_REMOTE_CQ_DATA);
 
-	} else if (comp_flags & FI_WRITE) {
-		switch (req->type) {
-		case NCCL_OFI_RDMA_SEND: {
-			/* Local-initiated write of send operation is complete */
-			NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(req->dev_id, rail_id, req->comm, req->msg_seq_num,
-								req);
-
-			send_data = get_send_data(req);
-			ret = inc_req_completion(req, 0, send_data->total_num_compls);
-			break;
-		}
-		case NCCL_OFI_RDMA_WRITE: {
-			/* Local-initiated RMA write is complete */
-
-			rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_WRITE);
-			ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-			break;
-		}
-		case NCCL_OFI_RDMA_RECV: {
-			/* Recv ctrl message write completion */
-			NCCL_OFI_TRACE_WRITE_CTRL_END(req->dev_id, rail_id, req->comm, req, req->msg_seq_num);
-			ret = set_write_ctrl_completed(req);
-			break;
-		}
-		case NCCL_OFI_RDMA_READ:
-		case NCCL_OFI_RDMA_SEND_CLOSE:
-		case NCCL_OFI_RDMA_RECV_SEGMS:
-		case NCCL_OFI_RDMA_EAGER_COPY:
-		case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-		case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-		case NCCL_OFI_RDMA_FLUSH:
-		case NCCL_OFI_RDMA_INVALID_TYPE:
-		default:
-			NCCL_OFI_WARN("Write complete from unexpected request type!");
-			ret = -EINVAL;
-		}
-	} else if (comp_flags & FI_READ) {
-		switch (req->type) {
-		case NCCL_OFI_RDMA_FLUSH: {
-			/* fi_read flush is complete */
-			ret = handle_flush_comp(req);
-			break;
-		}
-		case NCCL_OFI_RDMA_EAGER_COPY: {
-			ret = set_eager_copy_completed(req);
-			break;
-		}
-		case NCCL_OFI_RDMA_READ: {
-			/* Local-initiated RMA read is complete */
-
-			rma_op_data = req_get_rma_op_data(req, NCCL_OFI_RDMA_READ);
-			ret = inc_req_completion(req, 0, rma_op_data->total_num_compls);
-			break;
-		}
-		case NCCL_OFI_RDMA_SEND:
-		case NCCL_OFI_RDMA_WRITE:
-		case NCCL_OFI_RDMA_RECV:
-		case NCCL_OFI_RDMA_SEND_CLOSE:
-		case NCCL_OFI_RDMA_RECV_SEGMS:
-		case NCCL_OFI_RDMA_CTRL_RX_BUFF:
-		case NCCL_OFI_RDMA_EAGER_RX_BUFF:
-		case NCCL_OFI_RDMA_INVALID_TYPE:
-		default:
-			NCCL_OFI_WARN("Read complete from unexpected request type!");
-			ret = -EINVAL;
-		}
+	} else if (comp_flags & (FI_SEND | FI_WRITE | FI_READ)) {
+		/* All other completion types dispatch to a single virtual
+		 * handler on the request; the subclass branches internally
+		 * on comp_flags as needed. */
+		ret = req->handle_completion(comp_flags, rail_id);
 	} else {
 		NCCL_OFI_WARN("Unexpected comp_flags on cq event 0x%016" PRIX64, comp_flags);
 		ret = -EINVAL;
@@ -2666,6 +2455,13 @@ int rdma_recv_segms_req::post()
 	return -EINVAL;
 }
 
+int nccl_net_ofi_rdma_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
+{
+	NCCL_OFI_WARN("CQ completion (flags 0x%016" PRIx64 ") from unexpected request type %d",
+		      comp_flags, this->type);
+	return -EINVAL;
+}
+
 int rdma_send_req::post()
 {
 	nccl_net_ofi_rdma_send_comm *s_comm = this->get_send_comm();
@@ -3044,6 +2840,191 @@ int rdma_eager_copy_req::post()
 			      rc, fi_strerror(-rc));
 	}
 	return rc;
+}
+
+
+/*
+ * Completion handler overrides.  Each subclass overrides only the
+ * completion flag types it expects from libfabric.  Unexpected
+ * completions fall through to the base class handlers above which log
+ * a warning and return -EINVAL.
+ */
+
+int rdma_send_req::handle_completion(uint64_t comp_flags, uint16_t rail_id)
+{
+	rdma_req_send_data_t *data = get_send_data(this);
+
+	if (comp_flags & FI_SEND) {
+		/* Eager message send completion */
+		NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(this->dev_id, rail_id, this->comm, this->msg_seq_num, this);
+		assert(data->eager);
+		/* Return eager header buffer to freelist */
+		if (data->eager_hdr_fl_entry) {
+			nccl_net_ofi_rdma_send_comm *sc = this->get_send_comm();
+			sc->eager_hdr_fl->entry_free(data->eager_hdr_fl_entry);
+			data->eager_hdr_fl_entry = nullptr;
+		}
+		return inc_req_completion(this, 0, data->total_num_compls);
+	}
+
+	if (comp_flags & FI_WRITE) {
+		/* Local-initiated write of send operation is complete */
+		NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(this->dev_id, rail_id, this->comm, this->msg_seq_num, this);
+		return inc_req_completion(this, 0, data->total_num_compls);
+	}
+
+	NCCL_OFI_WARN("Unexpected completion flags 0x%016" PRIx64 " for rdma_send_req", comp_flags);
+	return -EINVAL;
+}
+
+int rdma_send_close_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
+{
+	assert(comp_flags & FI_SEND);
+	return inc_req_completion(this, sizeof(nccl_net_ofi_rdma_close_msg_t), 1);
+}
+
+/*
+ * Control write for receive request is completed, so increment
+ * completions.
+ *
+ * Modifications of the send control request are guarded by the send
+ * control request's lock.  Modifications of the receive request are
+ * guarded by the receive request's lock.
+ *
+ * @return	0, on success
+ *		non-zero, on error
+ */
+int rdma_recv_req::handle_completion([[maybe_unused]] uint64_t comp_flags, uint16_t rail_id)
+{
+	/* Recv ctrl message write completion */
+	assert(comp_flags & FI_WRITE);
+	NCCL_OFI_TRACE_WRITE_CTRL_END(this->dev_id, rail_id, this->comm, this, this->msg_seq_num);
+
+	rdma_req_recv_data_t *data = get_recv_data(this);
+	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
+	nccl_net_ofi_rdma_recv_comm *r_comm = this->get_recv_comm();
+
+	r_comm->n_ctrl_delivered += 1;
+
+	/* Add completion to receive request */
+	return inc_req_completion(this, 0, data->total_num_compls);
+}
+
+int rdma_rma_op_req::handle_completion(uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
+{
+	if (comp_flags & FI_WRITE) {
+		/* Local-initiated RMA write is complete.  Only the WRITE
+		 * direction should observe FI_WRITE completions; a READ
+		 * request receiving a write completion is a programming error. */
+		assert(this->dir == direction::WRITE);
+		rdma_req_rma_op_data_t *data = req_get_rma_op_data(this, NCCL_OFI_RDMA_WRITE);
+		return inc_req_completion(this, 0, data->total_num_compls);
+	}
+
+	if (comp_flags & FI_READ) {
+		/* Local-initiated RMA read is complete.  Only the READ
+		 * direction should observe FI_READ completions. */
+		assert(this->dir == direction::READ);
+		rdma_req_rma_op_data_t *data = req_get_rma_op_data(this, NCCL_OFI_RDMA_READ);
+		return inc_req_completion(this, 0, data->total_num_compls);
+	}
+
+	NCCL_OFI_WARN("Unexpected completion flags 0x%016" PRIx64 " for rdma_rma_op_req", comp_flags);
+	return -EINVAL;
+}
+
+/*
+ * Handle completion for a flush request.  For Neuron, all flush
+ * completions simply increment the request's completion count.  For
+ * GPU, check whether all expected completions have arrived and mark
+ * the request complete (managing num_pending_flush_comps so that
+ * test() can coordinate with the completion event).
+ */
+int rdma_flush_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
+{
+	assert(comp_flags & FI_READ);
+	int ret = 0;
+
+#if HAVE_NEURON
+	rdma_req_flush_data_t *data = get_flush_data(this);
+	ret = inc_req_completion(this, 0, data->total_num_compls);
+#endif
+
+#if HAVE_GPU
+	rdma_req_flush_data_t *data = get_flush_data(this);
+	int num_completions = ++(this->ncompls);
+	/* Check if the number of completions is equal to total completions
+	 * and if the req has not errored.
+	 */
+	if (num_completions == data->total_num_compls &&
+		OFI_LIKELY(this->state != NCCL_OFI_RDMA_REQ_ERROR)) {
+
+		NCCL_OFI_TRACE_COMPLETIONS(this->dev_id, this->type, this, this);
+
+		/* If the state is already marked complete (before getting the completion event),
+		 * decrement num_pending_flush_comps to indicate we've received the completion
+		 * event. Otherwise, test() has not yet been called on the request, so only
+		 * update request state.
+		 */
+		if (this->state == NCCL_OFI_RDMA_REQ_COMPLETED) {
+			auto *r_comm = this->get_recv_comm();
+			r_comm->num_pending_flush_comps--;
+			this->free(true);
+		} else {
+			this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+		}
+	}
+#endif
+
+	return ret;
+}
+
+/*
+ * Set eager copy ctrl request to completed.  Furthermore, increment
+ * completions of parent request (receive request).
+ *
+ * Modifications of the eager copy request are guarded by the eager
+ * copy req's lock.  Modifications of the receive request are guarded
+ * by the receive request's lock.
+ *
+ * @return	0, on success
+ *		non-zero, on error
+ */
+int rdma_eager_copy_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[maybe_unused]] uint16_t rail_id)
+{
+	assert(comp_flags & FI_READ);
+	int ret = 0;
+	rdma_req_eager_copy_data_t *eager_data = get_eager_copy_data(this);
+	nccl_net_ofi_rdma_req *recv_req = eager_data->recv_req;
+	rdma_req_recv_data_t *parent_recv_data = get_recv_data(recv_req);
+
+	this->req_lock.lock();
+
+	/* Set send ctrl request completed */
+	this->ncompls = 1;
+	this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+
+	this->req_lock.unlock();
+
+	/* Get size of received data */
+	rdma_req_rx_buff_data_t *rx_data = get_rx_buff_data(eager_data->eager_rx_buff_req);
+	size_t eager_size = rx_data->recv_len;
+
+	/* Check posted count and re-post rx buffer if needed */
+	ret = check_post_rx_buff_req(eager_data->eager_rx_buff_req);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed call to check_post_rx_buff_req");
+		return ret;
+	}
+
+	/* Add completion to parent request */
+	if (parent_recv_data->num_recvs > 1) {
+		ret = inc_recv_seg_completion(parent_recv_data, eager_size);
+	} else {
+		ret = inc_req_completion(recv_req, eager_size, parent_recv_data->total_num_compls);
+	}
+
+	return ret;
 }
 
 
