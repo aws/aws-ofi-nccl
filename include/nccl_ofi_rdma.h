@@ -348,127 +348,11 @@ class nccl_net_ofi_rdma_req;
 class nccl_net_ofi_rdma_send_comm;
 class nccl_net_ofi_rdma_recv_comm;
 
-typedef struct {
-	/* Rx buffer freelist item */
-	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem;
-	/* Length of rx buffer */
-	size_t buff_len;
-	/* Length of received data */
-	size_t recv_len;
 
-	/*
-	 * Keeps tracks of Rail ID which is used to post the rx buffer.
-	 * This is useful for re-posting the buffer on the same rail
-	 * when it gets completed.
-	 */
-	nccl_net_ofi_rdma_ep_rail_t *rail;
-	/*
-	 * Back-pointer to associated endpoint
-	 */
-	nccl_net_ofi_rdma_ep_t *ep;
-} rdma_req_rx_buff_data_t;
 
-typedef struct {
-	/* Remote destination buffer address */
-	uint64_t remote_buff;
-	/* Remote MR key */
-	uint64_t remote_mr_key;
-	/* Application-provided local src/dst buffer */
-	void *buff;
-	/* Length of application-provided buffer */
-	size_t buff_len;
-	/* First rail descriptor from memory registration of `buff' */
-	void *desc;
-	/* Additional flags */
-	uint64_t flags;
-	/* Total number of completions. Expect one completion for receiving the
-	 * control message and one completion for each send segment. */
-	int total_num_compls;
-	/* Number of rails where we have successfully posted the network xfer.
-	 * Used mostly when the network xfer is sliced across multiple rails */
-	uint16_t xferred_rail_id;
-} rdma_req_rma_op_data_t;
 
-typedef struct {
-	/* True for eager messages */
-	bool eager;
-	/* True if ctrl msg was received - Only valid if eager=true */
-	bool eager_ctrl_msg_received;
-	/* Remote destination buffer offset from base address */
-	uintptr_t remote_buff_offset;
-	/* Remote buffer length */
-	uint64_t remote_len;
-	/* Remote MR key */
-	uint64_t remote_mr_key[MAX_NUM_RAILS];
-	/* Write immediate data */
-	uint64_t wdata;
-	/* Application-provided local src/dst buffer */
-	void *buff;
-	/* Length of application-provided buffer */
-	size_t buff_len;
-	/* Memory region descriptors associated to `buff' */
-	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
-	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
-	int tag;
-	/* Eager offset within the sender's eager queue (only for eager sends) */
-	uint8_t eager_offset;
-	/* Freelist entry for the eager header buffer (returned on send completion) */
-	nccl_ofi_freelist::fl_entry *eager_hdr_fl_entry;
-	/* Sub-receive index from ctrl msg entry (for RDMA write immediate data) */
-	uint8_t recv_idx;
-	/* Previous batch's size (written to the header for an off==0 send) */
-	uint8_t prev_batch_count;
-	/* This batch's eager sequence number (chain identity) */
-	uint16_t eager_seq;
-	/* Schedule used to transfer this request. We save the pointer to
-	 * reference it when transferring the request over network. */
-	nccl_net_ofi_schedule_t *schedule;
-	/* Total number of completions. Expect one completion for receiving the
-	 * control message and one completion for each send segment. */
-	int total_num_compls;
-	/* Number of rails where we have successfully posted the network xfer.
-	 * Used mostly when the network xfer is sliced across multiple rails */
-	uint16_t xferred_rail_id;
-	/* 
-	 * Flag to indicate target side early completion, so that sender side
-	 * uses the corresponding RMA write operation.
-	 * True to use fi_write instead of fi_writedata in send() 
-	 */
-	bool no_target_completion;
-#if HAVE_NVTX_TRACING
-	nvtxRangeId_t trace_id;
-	nvtxRangeId_t seg_trace_id[MAX_NUM_RAILS];
-#endif
-} rdma_req_send_data_t;
 
-/*
- * @brief	Data of request responsible for sending the close message
- */
-typedef struct {
-	/* Pointer to the allocated control buffer from freelist */
-	nccl_ofi_freelist::fl_entry *ctrl_fl_elem;
-	/* Schedule used to transfer the close buffer. We save the
-	 * pointer to reference it when transferring the buffer over
-	 * network. */
-	nccl_net_ofi_schedule_t *ctrl_schedule;
-} rdma_req_send_close_data_t;
 
-typedef struct {
-	/* Pointer to rx buffer containing eager data */
-	nccl_net_ofi_rdma_req *eager_rx_buff_req;
-	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req *recv_req;
-	/* Sub-receive index within grouped receive (0 for single recv) */
-	int sub_recv_idx;
-} rdma_req_eager_copy_data_t;
-
-/*
- * @brief	Data of request responsible for receiving segments
- */
-typedef struct {
-	/* Pointer to recv parent request */
-	nccl_net_ofi_rdma_req *recv_req;
-} rdma_req_recv_segms_data_t;
 
 /*
  * @brief	Per-sub-receive metadata within a grouped receive
@@ -494,42 +378,7 @@ typedef struct rdma_req_recv_sub {
 	nccl_net_ofi_rdma_req *eager_copy_req;
 } rdma_req_recv_sub_t;
 
-/*
- * @brief	Data of request responsible for receive operation
- */
-typedef struct {
-	/* Number of sub-receives in this grouped receive */
-	int num_recvs;
-	/* Per-sub-receive metadata */
-	rdma_req_recv_sub_t recvs[NCCL_OFI_MAX_RECVS];
-	/* Pointer to receive segments child request */
-	nccl_net_ofi_rdma_req *recv_segms_req;
-	/* Total number of completions. Expect one send ctrl
-	 * completion and one completion that indicates that all
-	 * segments have arrived.
-	 *
-	 * For eager messages, the second completion will be received
-	 * when the local read into the destination buffer is complete */
-	int total_num_compls;
-#if HAVE_NVTX_TRACING
-	nvtxRangeId_t trace_id;
-	nvtxRangeId_t write_ctrl_trace_id;
-#endif
-} rdma_req_recv_data_t;
 
-/*
- * @brief	Data of request responsible for flush operatoin
- */
-typedef struct {
-	/* Buffer to read flush data from */
-	void *data;
-	/* MR handles for the data buffer */
-	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-	/* Pointer to allocated buffer from freelist */
-	nccl_ofi_freelist::fl_entry *flush_fl_elem;
-	/* Total number of completions. Expect completions from all NIC rail */
-	int total_num_compls;
-} rdma_req_flush_data_t;
 
 
 /**
@@ -676,7 +525,58 @@ public:
 	 * the subclass stays type-clean.  Asserted in debug builds. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
 	rdma_send_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND) {}
-	rdma_req_send_data_t send_data;
+
+	/* True for eager messages */
+	bool eager;
+	/* True if ctrl msg was received - Only valid if eager=true */
+	bool eager_ctrl_msg_received;
+	/* Remote destination buffer offset from base address */
+	uintptr_t remote_buff_offset;
+	/* Remote buffer length */
+	uint64_t remote_len;
+	/* Remote MR key */
+	uint64_t remote_mr_key[MAX_NUM_RAILS];
+	/* Write immediate data */
+	uint64_t wdata;
+	/* Application-provided local src/dst buffer */
+	void *buff;
+	/* Length of application-provided buffer */
+	size_t buff_len;
+	/* Memory region descriptors associated to `buff' */
+	nccl_net_ofi_rdma_mr_handle_t *buff_mr_handle;
+	/* Tag for matching to the correct sub-entry in a grouped receive ctrl msg */
+	int tag;
+	/* Eager offset within the sender's eager queue (only for eager sends) */
+	uint8_t eager_offset;
+	/* Freelist entry for the eager header buffer (returned on send completion) */
+	nccl_ofi_freelist::fl_entry *eager_hdr_fl_entry;
+	/* Sub-receive index within a grouped receive (encoded in immediate data) */
+	uint8_t recv_idx;
+	/* Previous batch's size (written to the header for an off==0 send) */
+	uint8_t prev_batch_count;
+	/* This batch's eager sequence number (chain identity). Counts only
+	 * eager batches, so it is wrap-safe against rendezvous traffic. */
+	uint16_t eager_seq;
+	/* Schedule used to transfer this request. We save the pointer to
+	 * reference it when transferring the request over network. */
+	nccl_net_ofi_schedule_t *schedule;
+	/* Total number of completions. Expect one completion for receiving the
+	 * control message and one completion for each send segment. */
+	int total_num_compls;
+	/* Number of rails where we have successfully posted the network xfer.
+	 * Used mostly when the network xfer is sliced across multiple rails */
+	uint16_t xferred_rail_id;
+	/* 
+	 * Flag to indicate target side early completion, so that sender side
+	 * uses the corresponding RMA write operation.
+	 * True to use fi_write instead of fi_writedata in send() 
+	 */
+	bool no_target_completion;
+#if HAVE_NVTX_TRACING
+	nvtxRangeId_t trace_id;
+	nvtxRangeId_t seg_trace_id[MAX_NUM_RAILS];
+#endif
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -686,7 +586,25 @@ class rdma_recv_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	rdma_recv_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV) {}
-	rdma_req_recv_data_t recv_data;
+
+	/* Number of sub-receives in this grouped receive */
+	int num_recvs;
+	/* Per-sub-receive metadata */
+	rdma_req_recv_sub_t recvs[NCCL_OFI_MAX_RECVS];
+	/* Pointer to receive segments child request */
+	nccl_net_ofi_rdma_req *recv_segms_req;
+	/* Total number of completions. Expect one send ctrl
+	 * completion and one completion that indicates that all
+	 * segments have arrived.
+	 *
+	 * For eager messages, the second completion will be received
+	 * when the local read into the destination buffer is complete */
+	int total_num_compls;
+#if HAVE_NVTX_TRACING
+	nvtxRangeId_t trace_id;
+	nvtxRangeId_t write_ctrl_trace_id;
+#endif
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -697,7 +615,16 @@ class rdma_flush_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	rdma_flush_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_FLUSH) {}
-	rdma_req_flush_data_t flush_data;
+
+	/* Buffer to read flush data from */
+	void *data;
+	/* MR handles for the data buffer */
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
+	/* Pointer to allocated buffer from freelist */
+	nccl_ofi_freelist::fl_entry *flush_fl_elem;
+	/* Total number of completions. Expect completions from all NIC rail */
+	int total_num_compls;
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -710,7 +637,26 @@ public:
 	explicit rdma_rma_op_req(direction d)
 		: nccl_net_ofi_rdma_req(d == direction::WRITE ? NCCL_OFI_RDMA_WRITE : NCCL_OFI_RDMA_READ),
 		  dir(d) {}
-	rdma_req_rma_op_data_t rma_op_data;
+
+	/* Remote destination buffer address */
+	uint64_t remote_buff;
+	/* Remote MR key */
+	uint64_t remote_mr_key;
+	/* Application-provided local src/dst buffer */
+	void *buff;
+	/* Length of application-provided buffer */
+	size_t buff_len;
+	/* First rail descriptor from memory registration of `buff' */
+	void *desc;
+	/* Additional flags */
+	uint64_t flags;
+	/* Total number of completions. Expect one completion for receiving the
+	 * control message and one completion for each send segment. */
+	int total_num_compls;
+	/* Number of rails where we have successfully posted the network xfer.
+	 * Used mostly when the network xfer is sliced across multiple rails */
+	uint16_t xferred_rail_id;
+
 	const direction dir;
 	/* RMA write requests use a send_comm; reads use a recv_comm.
 	 * Callers pick the appropriate accessor based on dir. */
@@ -727,7 +673,24 @@ public:
 	explicit rdma_rx_buff_req(kind k)
 		: nccl_net_ofi_rdma_req(k == kind::CTRL ? NCCL_OFI_RDMA_CTRL_RX_BUFF : NCCL_OFI_RDMA_EAGER_RX_BUFF),
 		  rx_kind(k) {}
-	rdma_req_rx_buff_data_t rx_buff_data;
+
+	/* Rx buffer freelist item */
+	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem;
+	/* Length of rx buffer */
+	size_t buff_len;
+	/* Length of received data */
+	size_t recv_len;
+	/*
+	 * Keeps tracks of Rail ID which is used to post the rx buffer.
+	 * This is useful for re-posting the buffer on the same rail
+	 * when it gets completed.
+	 */
+	nccl_net_ofi_rdma_ep_rail_t *rail;
+	/*
+	 * Back-pointer to associated endpoint
+	 */
+	nccl_net_ofi_rdma_ep_t *ep;
+
 	const kind rx_kind;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -740,7 +703,14 @@ public:
 	 * associated with a recv_comm. */
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	rdma_send_close_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_SEND_CLOSE) {}
-	rdma_req_send_close_data_t send_close_data;
+
+	/* Pointer to the allocated control buffer from freelist */
+	nccl_ofi_freelist::fl_entry *ctrl_fl_elem;
+	/* Schedule used to transfer the close buffer. We save the
+	 * pointer to reference it when transferring the buffer over
+	 * network. */
+	nccl_net_ofi_schedule_t *ctrl_schedule;
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -750,7 +720,14 @@ class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	rdma_eager_copy_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_EAGER_COPY) {}
-	rdma_req_eager_copy_data_t eager_copy_data;
+
+	/* Pointer to rx buffer containing eager data */
+	nccl_net_ofi_rdma_req *eager_rx_buff_req;
+	/* Pointer to recv parent request */
+	nccl_net_ofi_rdma_req *recv_req;
+	/* Sub-receive index within grouped receive (0 for single recv) */
+	int sub_recv_idx;
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -760,7 +737,10 @@ class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
 	rdma_recv_segms_req() : nccl_net_ofi_rdma_req(NCCL_OFI_RDMA_RECV_SEGMS) {}
-	rdma_req_recv_segms_data_t recv_segms_data;
+
+	/* Pointer to recv parent request */
+	nccl_net_ofi_rdma_req *recv_req;
+
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 };
