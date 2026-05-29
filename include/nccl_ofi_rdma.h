@@ -602,7 +602,35 @@ public:
 	 * in cases where cleanup fails. This function may also return
 	 * error if the owner of the request has to deallocate the
 	 * request by its own. */
-	virtual int free(bool dec_inflight_reqs);
+	virtual int free(bool dec_inflight_reqs) = 0;
+
+	/* Post this request to the network.  Each subclass overrides this
+	 * to perform the type-specific libfabric post operation. */
+	virtual int post() = 0;
+
+	/* Post this request to the network, and if the post fails with
+	 * -FI_EAGAIN, push the request onto the endpoint's pending requests
+	 * queue so it can be retried later.  Returns 0 on success (including
+	 * the queued case), or a negative errno on other errors.
+	 *
+	 * This is the common post-with-retry entry point for both send and
+	 * receive direction callers.  The pending queue lives on the
+	 * endpoint, which is reached via this->comm->ep, so it works for
+	 * send_comm and recv_comm requests alike. */
+	int post_with_pending_retry();
+
+	/* Push this request onto the endpoint's pending requests queue.
+	 *
+	 * The queue and its mutex live on the endpoint, but the two
+	 * callers that enqueue are a request method (post_with_pending_retry)
+	 * and an endpoint method (process_pending_reqs).  Centralise the
+	 * lock/push/unlock here so the pattern is not duplicated.
+	 *
+	 * TODO: The endpoint owns the pending queue and arguably should
+	 * own this method too.  Leaving it on the request for now because
+	 * the enqueue pattern lived here historically; revisit once the
+	 * ep/req relationship is redesigned. */
+	void enqueue_pending(bool push_front);
 
 };
 
@@ -627,16 +655,22 @@ public:
 	 * downcast from the base nccl_net_ofi_comm * here so the rest of
 	 * the subclass stays type-clean.  Asserted in debug builds. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
@@ -647,12 +681,16 @@ public:
 	 * Callers pick the appropriate accessor based on dir. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class kind { CTRL, EAGER };
 	kind rx_kind;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_send_close_req : public nccl_net_ofi_rdma_req {
@@ -661,16 +699,22 @@ public:
 	 * close control message to the sender), so this request is
 	 * associated with a recv_comm. */
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	int free(bool dec_inflight_reqs) override;
+	int post() override;
 };
 
 /* Maximum size across all request subclasses.  Used as the freelist
@@ -1040,42 +1084,34 @@ public:
 
 
 inline nccl_net_ofi_rdma_send_comm *rdma_send_req::get_send_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
 	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_recv_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_flush_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_send_comm *rdma_rma_op_req::get_send_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_SEND_COMM);
 	return static_cast<nccl_net_ofi_rdma_send_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_rma_op_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_send_close_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_eager_copy_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
 inline nccl_net_ofi_rdma_recv_comm *rdma_recv_segms_req::get_recv_comm() const {
-	assert(this->comm->type == NCCL_NET_OFI_RECV_COMM);
 	return static_cast<nccl_net_ofi_rdma_recv_comm *>(this->comm);
 }
 
