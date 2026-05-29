@@ -140,7 +140,10 @@ static ncclResult_t nccl_ofi_gin_getProperties(int dev, ncclNetProperties_v11_t 
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = NCCL_GIN_MAX_COMMS;
-	props->maxRecvs = ofi_properties.max_group_receives;
+	/* This should be set to ofi_properties.max_group_receives once
+	* the perf regression is resolved
+	*/
+	props->maxRecvs = 1;
 	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 	props->vProps.ndevs = 1;
@@ -401,7 +404,10 @@ static ncclResult_t nccl_ofi_gin_getProperties_v13(int dev, ncclNetProperties_v1
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = NCCL_GIN_MAX_COMMS;
-	props->maxRecvs = ofi_properties.max_group_receives;
+	/* This should be set to ofi_properties.max_group_receives once
+	* the perf regression is resolved.
+	*/
+	props->maxRecvs = 1;
 	props->netDeviceType = NCCL_NET_DEVICE_GIN_PROXY;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 	props->vProps.ndevs = 1;

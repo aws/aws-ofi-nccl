@@ -59,7 +59,11 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 	props->port = ofi_properties.port_number;
 	props->latency = ofi_properties.latency;
 	props->maxComms = ofi_properties.max_communicators;
-	props->maxRecvs = ofi_properties.max_group_receives;
+	/* This should not matter for GDAKI, but for completeness it should be set to
+	* ofi_properties.max_group_receives once the perf regression in proxy mode
+	* is resolved
+	*/
+	props->maxRecvs = 1;
 	props->netDeviceType = NCCL_NET_DEVICE_GIN_EFA_GDA;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 	props->vProps.ndevs = 1;
