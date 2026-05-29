@@ -574,17 +574,6 @@ public:
 	/* Number of arrived request completions */
 	int ncompls;
 
-	union {
-		rdma_req_rma_op_data_t rma_op_data;
-		rdma_req_send_data_t send_data;
-		rdma_req_recv_data_t recv_data;
-		rdma_req_send_close_data_t send_close_data;
-		rdma_req_eager_copy_data_t eager_copy_data;
-		rdma_req_recv_segms_data_t recv_segms_data;
-		rdma_req_flush_data_t flush_data;
-		rdma_req_rx_buff_data_t rx_buff_data;
-	};
-
 	/* Size of completed request */
 	size_t size;
 
@@ -663,18 +652,10 @@ public:
 };
 
 /*
- * RDMA request subclasses, one per request type.
- *
- * Type-specific data still lives in the anonymous union in the base
- * class and is accessed via the get_*_data() helpers.  The
- * subclasses only carry the fields that other parts of the
- * allocation and post paths need to consult directly: the direction
- * enum for WRITE vs READ and the kind enum for CTRL vs EAGER rx
- * buffers.
- *
- * TODO: Once the base class union is removed and per-type accessors
- * are retired, each subclass will take ownership of its type-specific
- * data struct as a named member.
+ * RDMA request subclasses, one per request type.  Each subclass owns
+ * its type-specific data struct as a named member.  Access goes
+ * through the get_*_data() helpers below, which static_cast to the
+ * subclass and return a pointer to the member.
  */
 
 class rdma_send_req : public nccl_net_ofi_rdma_req {
@@ -683,6 +664,7 @@ public:
 	 * downcast from the base nccl_net_ofi_comm * here so the rest of
 	 * the subclass stays type-clean.  Asserted in debug builds. */
 	inline nccl_net_ofi_rdma_send_comm *get_send_comm() const;
+	rdma_req_send_data_t send_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -691,6 +673,7 @@ public:
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_req_recv_data_t recv_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -700,6 +683,7 @@ public:
 class rdma_flush_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_req_flush_data_t flush_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -709,6 +693,7 @@ public:
 class rdma_rma_op_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class direction { WRITE, READ };
+	rdma_req_rma_op_data_t rma_op_data;
 	direction dir;
 	/* RMA write requests use a send_comm; reads use a recv_comm.
 	 * Callers pick the appropriate accessor based on dir. */
@@ -722,6 +707,7 @@ public:
 class rdma_rx_buff_req : public nccl_net_ofi_rdma_req {
 public:
 	enum class kind { CTRL, EAGER };
+	rdma_req_rx_buff_data_t rx_buff_data;
 	kind rx_kind;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
@@ -733,6 +719,7 @@ public:
 	 * close control message to the sender), so this request is
 	 * associated with a recv_comm. */
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_req_send_close_data_t send_close_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -741,6 +728,7 @@ public:
 class rdma_eager_copy_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_req_eager_copy_data_t eager_copy_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
@@ -749,17 +737,14 @@ public:
 class rdma_recv_segms_req : public nccl_net_ofi_rdma_req {
 public:
 	inline nccl_net_ofi_rdma_recv_comm *get_recv_comm() const;
+	rdma_req_recv_segms_data_t recv_segms_data;
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 };
 
 /* Maximum size across all request subclasses.  Used as the freelist
  * element size so that any subclass can be placement-new'd into any
- * slot.  While the base class still carries the anonymous union, each
- * subclass is the same size as the base (plus at most a small enum
- * field), so this resolves to sizeof(base) in practice.  Once the
- * union is removed and subclasses hold their own data, this constant
- * becomes the actual max-of-subclass-sizes. */
+ * slot. */
 static constexpr size_t rdma_req_max_subclass_size = std::max({
 	sizeof(rdma_send_req),
 	sizeof(rdma_recv_req),
