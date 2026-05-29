@@ -857,11 +857,13 @@ static inline int free_eager_copy_req(nccl_net_ofi_rdma_req *req, bool dec_infli
 static inline int alloc_eager_copy_req(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_recv_comm *r_comm, int sub_recv_idx,
 				       nccl_net_ofi_rdma_req *rx_buff_req)
 {
-	nccl_net_ofi_rdma_req *eager_copy_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
-	if (eager_copy_req == NULL) {
+	nccl_ofi_freelist::fl_entry *elem = r_comm->nccl_ofi_reqs_fl->entry_alloc();
+	if (elem == NULL) {
 		NCCL_OFI_WARN("Failed to allocate eager_copy_req");
 		return -ENOMEM;
 	}
+	nccl_net_ofi_rdma_req *eager_copy_req = new (elem->ptr) rdma_eager_copy_req();
+	eager_copy_req->elem = elem;
 
 	eager_copy_req->comm = r_comm;
 	eager_copy_req->dev_id = recv_req->dev_id;
@@ -3203,12 +3205,14 @@ static inline int insert_recv_segms_req(
 				nccl_net_ofi_rdma_req *recv_req)
 {
 	/* Allocate recv segms request */
-	nccl_net_ofi_rdma_req *recv_segms_req = allocate_req(r_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(recv_segms_req == NULL)) {
+	nccl_ofi_freelist::fl_entry *elem = r_comm->nccl_ofi_reqs_fl->entry_alloc();
+	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI receive segments request for device %d",
 						dev_id);
 		return -ENOENT;
 	}
+	nccl_net_ofi_rdma_req *recv_segms_req = new (elem->ptr) rdma_recv_segms_req();
+	recv_segms_req->elem = elem;
 
 	/* Init receive segments request */
 	recv_segms_req->comm = r_comm;
@@ -3241,12 +3245,14 @@ int nccl_net_ofi_rdma_recv_comm::allocate_recv_req(
 	rdma_req_recv_data_t *recv_data;
 
 	/* Allocate receive request */
-	nccl_net_ofi_rdma_req *req = allocate_req(this->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(req == NULL)) {
+	nccl_ofi_freelist::fl_entry *elem = this->nccl_ofi_reqs_fl->entry_alloc();
+	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI receive request for device %d",
 						dev_id_arg);
 		return -EINVAL;
 	}
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_recv_req();
+	req->elem = elem;
 
 	/* Init receive request */
 	req->comm = this;
@@ -4202,12 +4208,14 @@ static int rdma_comm_alloc_flush_req(nccl_net_ofi_rdma_recv_comm *r_comm,
 	*ret_req = NULL;
 
 	/* Allocate NCCL OFI request */
-	nccl_net_ofi_rdma_req *req = allocate_req(r_comm->nccl_ofi_reqs_fl);
-	if (OFI_UNLIKELY(req == NULL)) {
+	nccl_ofi_freelist::fl_entry *elem = r_comm->nccl_ofi_reqs_fl->entry_alloc();
+	if (OFI_UNLIKELY(elem == NULL)) {
 		NCCL_OFI_WARN("Unable to get NCCL OFI request for device %d",
 			      dev_id);
 		return -ENOMEM;
 	}
+	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_flush_req();
+	req->elem = elem;
 	req->comm = r_comm;
 	req->dev_id = dev_id;
 	req->type = NCCL_OFI_RDMA_FLUSH;
