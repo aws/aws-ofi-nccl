@@ -672,6 +672,10 @@ public:
 	 * as this comm exists. */
 	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	int dev_id;
+
+#if HAVE_LIBESP
+	uint64_t comm_id = 0;
+#endif
 };
 
 /**

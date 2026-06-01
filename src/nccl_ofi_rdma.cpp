@@ -515,6 +515,9 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 		NCCL_OFI_TRACE_COMPLETIONS(req->dev_id, req->get_type(), req, req);
 	}
 
+	/* Record completion, even if not all segments have arrived yet. */
+	ESP_RECORD_REQUEST_COMPLETE(req, ncompls, total_ncompls);
+
 	return -ret;
 }
 
@@ -566,6 +569,9 @@ static inline int inc_recv_seg_completion(rdma_recv_req *recv_data,
 
 		/* Total number of completions have arrived */
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
+
+		/* Record single request assembly event. */
+		ESP_RECORD_REQUEST_ASSEMBLY(req);
 
 		/* Release lock of receive segment request before
 		 * receive request is set to completed to avoid
@@ -863,6 +869,7 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 			rdma_recv_req *recv_data = static_cast<rdma_recv_req *>(recv_req);
 			int sub_idx = eager_match_recv(recv_req, entry->tag);
 			if (sub_idx >= 0) {
+				ESP_RECORD_EAGER_RECV_MATCH(entry, recv_data);
 				this->eager_copy_to_sub_recv(recv_req, entry->rx_buff_req, sub_idx);
 				entry->handled = true;
 				bool all_consumed = true;
@@ -1128,6 +1135,9 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 	recv_data->recvs[recv_idx].recv_size += cq_entry->len;
 	recv_data->recvs[recv_idx].total_segms = total_segms;
 	recv_data->recvs[recv_idx].ncompls++;
+
+	/* Record segment completed event (must be called before inc_recv_seg_completion()). */
+	ESP_RECORD_SEGMENT_COMPLETE(recv_data, recv_idx, total_segms, rail_id, cq_entry->len);
 
 	/* Only when entire sub recv completed, update parent req */
 	if (recv_data->recvs[recv_idx].ncompls == (int)total_segms) {
@@ -2097,6 +2107,10 @@ static int finish_connect(nccl_net_ofi_rdma_send_comm *s_comm)
 	/* Set remote comm ID to remote recv comm ID */
 	s_comm->remote_comm_id = conn_resp->comm_id;
 
+#if HAVE_LIBESP == 1
+	s_comm->remote_rank = conn_resp->rank;
+#endif
+
 	/* Initialize rails `1...num_rails-1' */
 	ret = init_send_comm_rails(s_comm, ep, dev_id,
 				   conn_resp->ep_names,
@@ -2424,7 +2438,9 @@ int rdma_send_req::post_eager(nccl_net_ofi_rdma_send_comm *s_comm,
 	msg.context = rdma_req_get_ofi_context(this, rail_id);
 	msg.data = this->wdata;
 
+	ESP_RECORD_FI_SENDMSG_START(s_comm, rail_id, xfer_info->msg_size);
 	ssize_t rc = fi_sendmsg(comm_rail->local_ep, &msg, FI_REMOTE_CQ_DATA);
+	ESP_RECORD_FI_SENDMSG_END(s_comm, rail_id, xfer_info->msg_size, (int)rc, this);
 
 	if ((rc != 0) && (rc != -FI_EAGAIN)) {
 		NCCL_OFI_WARN("fi_sendmsg (eager) failed; RC: %zd, Error: %s",
@@ -2470,6 +2486,7 @@ int rdma_send_req::post()
 		void *desc = fi_mr_desc(rail_mr_handle);
 
 		if (this->no_target_completion) {
+			ESP_RECORD_FI_WRITE_START(s_comm, rail_id, xfer_info->msg_size);
 			ret = fi_write(comm_rail->local_ep,
 				       (void *)((uintptr_t)this->buff + xfer_info->offset),
 				       xfer_info->msg_size, desc,
@@ -2477,7 +2494,9 @@ int rdma_send_req::post()
 				       this->remote_buff_offset + xfer_info->offset,
 				       this->remote_mr_key[rail_id],
 				       rdma_req_get_ofi_context(this, rail_id));
+			ESP_RECORD_FI_WRITE_END(s_comm, rail_id, xfer_info->msg_size, ret, this);
 		} else {
+			ESP_RECORD_FI_WRITE_DATA_START(s_comm, rail_id, xfer_info->msg_size);
 			ret = fi_writedata(comm_rail->local_ep,
 					   (void *)((uintptr_t)this->buff + xfer_info->offset),
 					   xfer_info->msg_size, desc, this->wdata,
@@ -2485,6 +2504,7 @@ int rdma_send_req::post()
 					   this->remote_buff_offset + xfer_info->offset,
 					   this->remote_mr_key[rail_id],
 					   rdma_req_get_ofi_context(this, rail_id));
+			ESP_RECORD_FI_WRITE_DATA_END(s_comm, rail_id, xfer_info->msg_size, ret, this);
 		}
 
 		if ((ret != 0) && (ret != -FI_EAGAIN)) {
@@ -2630,7 +2650,9 @@ int rdma_recv_req::post()
 
 	NCCL_OFI_TRACE(NCCL_NET, "Posting %zu-byte control message%s on rail %u",
 		       ctrl_msg_len, inject ? " with FI_INJECT" : "", rail_id);
+	ESP_RECORD_FI_WRITEMSG_START(this, rail_id, ctrl_msg_len);
 	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, inject ? FI_INJECT : 0);
+	ESP_RECORD_FI_WRITEMSG_END(this, rail_id, (int)rc);
 
 	if (rc == 0) {
 		NCCL_OFI_TRACE_WRITE_CTRL_START(this->dev_id, rail_id, this->comm, this, this->msg_seq_num);
@@ -2791,6 +2813,9 @@ int rdma_eager_copy_req::post()
 	}
 
 	/* Skip the eager header in the bounce buffer */
+#if HAVE_LIBESP
+	req_start_time = ESP_GET_WALL_CLOCK(); 
+#endif
 	uintptr_t buff_offset = (uintptr_t)rx_buff - rx_mr_handle->base_addr + NCCL_OFI_EAGER_HEADER_SIZE;
 	ssize_t rc = fi_read(comm_rail->local_ep, parent_recv_data->recvs[sub_idx].dst_buff,
 			     rx_data->recv_len, desc, comm_rail->local_addr,
@@ -2964,6 +2989,7 @@ int rdma_eager_copy_req::handle_completion([[maybe_unused]] uint64_t comp_flags,
 	/* Get size of received data */
 	rdma_rx_buff_req *rx_data = static_cast<rdma_rx_buff_req *>(this->eager_rx_buff_req);
 	size_t eager_size = rx_data->recv_len;
+	ESP_RECORD_EAGER_COPY_END(this, rail_id, eager_size);
 
 	/* Check posted count and re-post rx buffer if needed */
 	ret = check_post_rx_buff_req(this->eager_rx_buff_req);
@@ -4591,6 +4617,9 @@ nccl_net_ofi_rdma_recv_comm::nccl_net_ofi_rdma_recv_comm()
 	nccl_ofi_reqs_fl = nullptr;
 	local_comm_id = 0;
 	remote_comm_id = 0;
+#if HAVE_LIBESP == 1
+	remote_rank = UINT32_MAX;
+#endif
 	next_msg_seq_num = 0;
 	msgbuff = nullptr;
 	ctrl_buff_fl = nullptr;
@@ -4777,6 +4806,11 @@ nccl_net_ofi_rdma_req::nccl_net_ofi_rdma_req(nccl_net_ofi_rdma_req_type_t type)
 	this->size = 0;
 	this->state = NCCL_OFI_RDMA_REQ_CREATED;
 	this->elem = nullptr;
+#if HAVE_LIBESP == 1
+	this->req_start_time = 0;
+	this->req_assembly_start_time = 0;
+	this->req_first_rail_time = 0;
+#endif
 }
 
 
@@ -4873,6 +4907,10 @@ static nccl_net_ofi_rdma_recv_comm *prepare_recv_comm(nccl_net_ofi_rdma_domain_t
 
 	r_comm->remote_comm_id = conn_msg->comm_id;
 	r_comm->remote_mailbox_addr = conn_msg->ctrl_addr;
+
+#if HAVE_LIBESP == 1
+	r_comm->remote_rank = conn_msg->rank;
+#endif
 
 	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {
 		r_comm->remote_mr_key[rail_id] = conn_msg->ctrl_mr_key[rail_id];
@@ -5074,6 +5112,10 @@ void nccl_net_ofi_rdma_ep_t::prepare_conn_resp(nccl_net_ofi_rdma_recv_comm *r_co
 		       ep_rail->local_ep_name_len);
 		rdma_ep_name->ep_name_len = ep_rail->local_ep_name_len;
 	}
+
+#if HAVE_LIBESP == 1
+	conn_resp->rank = esp_get_local_rank();
+#endif
 }
 
 
@@ -5730,6 +5772,9 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		return ret;
 	}
 
+	/* Profile latency of isend callback. */
+	ESP_RECORD_ISEND();
+
 	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(endpoint != NULL);
 
@@ -5824,6 +5869,8 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	/* Check if the control message for the next message is present */
 	if (!have_ctrl) {
 		if (!eager) {
+			/* Profile plugin not ready to send event. */
+			ESP_RECORD_NOT_READY();
 			*base_req = NULL;
 			ret = 0;
 			goto error;
@@ -6020,6 +6067,10 @@ void nccl_net_ofi_rdma_ep_t::prepare_send_connect_message(uint32_t local_comm_id
 		conn_msg->ep_names[rail_id].ep_name_len =
 			this->rails[rail_id].local_ep_name_len;
 	}
+
+#if HAVE_LIBESP == 1
+	conn_msg->rank = esp_get_local_rank();
+#endif
 }
 
 /*
@@ -6036,6 +6087,9 @@ nccl_net_ofi_rdma_send_comm::nccl_net_ofi_rdma_send_comm()
 	nccl_ofi_reqs_fl = nullptr;
 	local_comm_id = 0;
 	remote_comm_id = 0;
+#if HAVE_LIBESP == 1
+	remote_rank = UINT32_MAX;
+#endif
 	next_msg_seq_num = 0;
 	num_rails = 0;
 	num_control_rails = 0;

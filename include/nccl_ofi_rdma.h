@@ -408,6 +408,10 @@ typedef struct rdma_req_recv_sub {
 	bool consumed;
 	/* (Eager) pointer to eager local copy request for this sub-recv */
 	nccl_net_ofi_rdma_req *eager_copy_req;
+
+#if HAVE_LIBESP == 1
+	uint64_t start_ticks = 0;
+#endif
 } rdma_req_recv_sub_t;
 
 /**
@@ -453,6 +457,12 @@ public:
 
 	/* Size of completed request */
 	size_t size;
+
+#if HAVE_LIBESP == 1
+	uint64_t req_start_time = 0;
+	uint64_t req_assembly_start_time = 0; // from first segment
+	uint64_t req_first_rail_time = 0;     // from first full part
+#endif
 
 	/*
 	 * Protect updating critical fields such as size and ncompls when
@@ -589,6 +599,10 @@ public:
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
+#if HAVE_LIBESP == 1
+	uint32_t remote_rank;
+#endif
+
 	uint16_t next_msg_seq_num;
 
 	/* For grouped receives: how many sends remain for the current msg_seq_num */
@@ -698,6 +712,9 @@ typedef struct nccl_ofi_recv_eager_entry {
 	int32_t tag;
 	size_t recv_len;  /* payload length (excluding header) */
 	bool handled;     /* true = data copied, awaiting removal at front */
+#if HAVE_LIBESP == 1
+	uint64_t recv_tick_count;
+#endif
 } nccl_ofi_recv_eager_entry_t;
 
 /*
@@ -828,6 +845,10 @@ public:
 	/* Comm ID provided by remote endpoint */
 	uint32_t remote_comm_id;
 
+#if HAVE_LIBESP == 1
+	uint32_t remote_rank;
+#endif
+
 	uint16_t next_msg_seq_num;
 
 	nccl_ofi_msgbuff *msgbuff;
@@ -955,6 +976,9 @@ public:
 #if HAVE_NVTX_TRACING
 	nvtxRangeId_t trace_id;
 	nvtxRangeId_t seg_trace_id[MAX_NUM_RAILS];
+#endif
+#if HAVE_LIBESP == 1
+	uint64_t fi_write_start_time[MAX_NUM_RAILS];
 #endif
 
 	int free(bool dec_inflight_reqs) override;
@@ -1170,6 +1194,9 @@ typedef struct nccl_ofi_rdma_connection_info {
 	/* A comm identitifer that uniquely identifies the comm on the sender
 	   side. The receiver must use this ID when sending messages to sender */
 	uint32_t comm_id;
+#if HAVE_LIBESP == 1
+	uint32_t rank;
+#endif
 
 	/* Arrays of `MAX_NUM_RAILS` `nccl_ofi_rdma_ep_name_t`
 	 * structs. The member `num_rails` and `num_control_rails` indicate
@@ -1183,8 +1210,13 @@ typedef struct nccl_ofi_rdma_connection_info {
 
 } nccl_ofi_rdma_connection_info_t;
 /* Since this is a message on the wire, check that it has the expected size */
+#if HAVE_LIBESP ==1
+static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 568,
+			  "Wrong size for RDMA connect message");
+#else
 static_assert(sizeof(nccl_ofi_rdma_connection_info_t) == 560,
 			  "Wrong size for RDMA connect message");
+#endif
 
 class nccl_net_ofi_rdma_listen_comm : public nccl_net_ofi_listen_comm {
 public:

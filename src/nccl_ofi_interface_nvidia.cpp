@@ -9,6 +9,9 @@
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#if HAVE_LIBESP == 1
+#include "tracing_impl/nccl_ofi_profiling.h"
+#endif
 
 // With ncclNet_v11_t the NCCL core may initialize network plugin multiple times per
 // new NCCL API communicator. However, our current plugin implementation assumes the plugin
@@ -65,7 +68,11 @@ static ncclResult_t init_v11(void** ctx, uint64_t commId, ncclNetCommConfig_v11_
 	// being passed only once when each communicator is initialized. Before we support per communicator
 	// context, to be compatiable with ncclNet_v10 behavior, we store the config in the context pointer
 	// and pass it to the connect function.
+#if HAVE_LIBESP == 1
+	ncclNetCommConfig_v11_t *net_config = esp_alloc_net_ctx_v11(commId);
+#else
 	ncclNetCommConfig_v11_t* net_config = (ncclNetCommConfig_v11_t*)malloc(sizeof(ncclNetCommConfig_v11_t));
+#endif
 	if (net_config == NULL) return ncclSystemError;
 	net_config->trafficClass = config->trafficClass;
 	*ctx = net_config;
@@ -373,7 +380,13 @@ static ncclResult_t listen_v5(int dev_id, void *handle, void **lComm)
 static ncclResult_t listen_v11(void *ctx, int dev, void *handle, void **listenComm)
 {
 	/* use the default access and resource domains */
-	return nccl_net_ofi_listen(dev, handle, listenComm, 0, 0);
+	ncclResult_t res = nccl_net_ofi_listen(dev, handle, listenComm, 0, 0);
+#if HAVE_LIBESP == 1
+	if (res == ncclSuccess && *listenComm != nullptr) {
+		esp_assign_listen_comm_id_v11(ctx, *listenComm);
+	}
+#endif
+	return res;
 }
 
 
@@ -418,7 +431,13 @@ static ncclResult_t connect_v10(int dev, ncclNetCommConfig_v10_t* config,
 				ncclNetDeviceHandle_v10_t** sendDevComm)
 {
 	/* use the default access and resource domains */
-	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+	ncclResult_t res = nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+#if HAVE_LIBESP == 1
+	if (res == ncclSuccess && *sendComm != nullptr) {
+		esp_assign_send_comm_id_v10(config, *sendComm);
+	}
+#endif
+	return res;
 }
 
 
@@ -426,7 +445,13 @@ static ncclResult_t connect_v11(void* ctx, int dev, void* handle,
 				void** sendComm, ncclNetDeviceHandle_v11_t** sendDevComm)
 {
 	ncclNetCommConfig_v11_t* config = (ncclNetCommConfig_v11_t*)ctx;
-	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+	ncclResult_t res = nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+#if HAVE_LIBESP == 1
+	if (res == ncclSuccess && *sendComm != nullptr) {
+		esp_assign_send_comm_id_v11(config, *sendComm);
+	}
+#endif
+	return res;
 }
 
 
@@ -598,7 +623,11 @@ static ncclResult_t init_v12(void **ctx, uint64_t commId, ncclNetCommConfig_v12_
 			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
 	std::lock_guard lock(netMutex);
+#if HAVE_LIBESP == 1
+	ncclNetCommConfig_v12_t *net_config = esp_alloc_net_ctx_v12(commId);
+#else
 	ncclNetCommConfig_v12_t *net_config = (ncclNetCommConfig_v12_t *)malloc(sizeof(ncclNetCommConfig_v12_t));
+#endif
 	if (net_config == NULL) return ncclSystemError;
 	net_config->trafficClass = config->trafficClass;
 	*ctx = net_config;
@@ -652,7 +681,13 @@ static ncclResult_t connect_v12(void *ctx, int dev, void *handle,
 				void **sendComm, ncclNetDeviceHandle_v12_t **sendDevComm)
 {
 	ncclNetCommConfig_v12_t *config = (ncclNetCommConfig_v12_t *)ctx;
-	return nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+	ncclResult_t res = nccl_net_ofi_connect(dev, handle, sendComm, config->trafficClass, 0, 0);
+#if HAVE_LIBESP == 1
+	if (res == ncclSuccess && *sendComm != nullptr) {
+		esp_assign_send_comm_id_v12(config, *sendComm);
+	}
+#endif
+	return res;
 }
 
 

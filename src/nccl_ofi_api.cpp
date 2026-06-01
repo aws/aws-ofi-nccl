@@ -12,6 +12,10 @@
 #include "nccl_ofi_param.h"
 #include "stats/histogram.h"
 
+#if HAVE_LIBESP == 1
+#include "tracing_impl/nccl_ofi_profiling.h"
+#endif
+
 
 static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE,
 	       "Size of OFI Handle is too large");
@@ -85,6 +89,10 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 		ret = -EINVAL;
 	}
 
+#if HAVE_LIBESP == 1
+	esp_initialize();
+#endif
+
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -96,6 +104,9 @@ ncclResult_t nccl_net_ofi_fini()
 		NCCL_OFI_WARN("Finalizing already finalized plugin");
 		ret = check_return(ncclSystemError);
 	} else {
+#if HAVE_LIBESP == 1
+		esp_terminate();
+#endif
 		print_all_histograms();
 		delete plugin;
 		plugin = NULL;
@@ -311,6 +322,11 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 	int ret = 0;
 	try {
 		ret = listen_comm->accept(recv_comm);
+#if HAVE_LIBESP == 1
+		if (ret == 0 && *recv_comm != nullptr) {
+			(*recv_comm)->comm_id = listen_comm->comm_id;
+        }
+#endif
 	}
 	catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in plugin accept: %s", e.what());
