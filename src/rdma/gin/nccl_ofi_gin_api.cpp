@@ -41,6 +41,15 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 
 	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Initializing");
 
+	/* GIN requires the OFI NET plugin to be initialized first. If NCCL
+	   selected a different NET transport (e.g. NCCL_NET=Socket), the
+	   plugin will be NULL and GIN cannot operate. */
+	if (nccl_net_ofi_get_plugin() == NULL) {
+		NCCL_OFI_WARN("gin: OFI NET plugin has not been initialized. "
+		              "GIN requires the OFI NET plugin to be active.");
+		return ncclInternalError;
+	}
+
 	/* GIN only supports RDMA transport protocol */
 	if (ofi_nccl_protocol.get() != PROTOCOL::RDMA) {
 		NCCL_OFI_WARN("GIN only supports RDMA transport protocol.");
