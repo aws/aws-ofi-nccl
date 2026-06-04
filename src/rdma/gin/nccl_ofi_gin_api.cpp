@@ -295,15 +295,29 @@ ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
 
 	int ret = gin_comm->await_pending_requests();
 	if (OFI_UNLIKELY(ret != 0)) {
 		return nccl_net_ofi_retval_translate(ret);
 	}
 
-	gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
-	delete gin_comm;
+	/* Under ep_lock: drain any outbound ACK sends (their CQ handler
+	   references this comm), then atomically remove + delete so no new
+	   work can be dispatched to this comm in between. */
+	auto &ep_lock = gin_comm->get_ep_lock();
+	while (true) {
+		std::lock_guard<std::mutex> lock(ep_lock);
+		if (gin_comm->has_outstanding_ack_sends()) {
+			ret = gin_comm->get_resources().progress();
+			if (OFI_UNLIKELY(ret != 0)) {
+				return nccl_net_ofi_retval_translate(ret);
+			}
+			continue;
+		}
+		gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
+		delete gin_comm;
+		break;
+	}
 
 	return ncclSuccess;
 }

@@ -4,6 +4,9 @@
 
 #include "config.h"
 
+#include <mutex>
+#include <thread>
+
 #include "rdma/gin/nccl_ofi_gin.h"
 
 #include "nccl_ofi_assert.h"
@@ -390,52 +393,43 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 {
 	int ret = 0;
+	auto &ep_lock = resources.get_ep().ep_lock;
 
 	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
 
-	/* Flush any deferred bundled acks so remote senders can complete
-	   their outstanding requests. Walk all peers; if our rx_consumed has
-	   advanced past rx_acked (or there's no metadata going back to this
-	   peer to piggyback on), emit a standalone ACK. */
-	for (uint32_t peer = 0; peer < rank_comms.size(); peer++) {
-		auto &rank_comm = rank_comms[peer];
-		if (gin_cursor_delta(rank_comm.rx_consumed, rank_comm.rx_acked) > 0) {
-			ret = send_ack(*this, peer, rank_comm.rx_consumed);
-			if (OFI_UNLIKELY(ret != 0)) {
-				return ret;
-			}
-			rank_comm.rx_acked = rank_comm.rx_consumed;
-		}
-	}
+	/* Wait until all ACKs we requested have been received. Only ops
+	   that set is_ack_requested on the wire will generate a standalone
+	   ACK from the receiver. We track the sequence number of the last
+	   request and compare against the last received ACK's rx_consumed.
+	   If we never requested any ACKs, this loop is a no-op.
 
-	while (outstanding_ack_counter > 0) {
-		ret = resources.progress();
-		if (OFI_UNLIKELY(ret != 0)) {
-			return ret;
-		}
-	}
-
-	/* Drain inbound ACKs we are still waiting on. The NCCL proxy may
-	   have already stopped polling test() by the time we get here, so
-	   closeColl()/the destructor would otherwise tear the EP down with
-	   peers' inflight ACKs still bound for our QP. Pump the CQ until
-	   tx_tail == tx_head on every peer, i.e. every op we ever sent has
-	   been retired by its receiver. */
+	   This intentionally replaces the former outstanding_ack_counter
+	   progress loop: per-peer has_pending_ack_request gives precise
+	   drain semantics without requiring a global counter, avoiding the
+	   deadlock where sequential comm teardown within a single process
+	   would stall waiting for a peer whose progress cannot run. */
 	while (true) {
-		bool any_outstanding = false;
-		for (auto &rank_comm : rank_comms) {
-			if (gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail) != 0) {
-				any_outstanding = true;
-				break;
+		bool any_pending = false;
+		{
+			std::lock_guard<std::mutex> lock(ep_lock);
+			for (auto &rank_comm : rank_comms) {
+				if (rank_comm.has_pending_ack_request) {
+					any_pending = true;
+					break;
+				}
+			}
+			if (any_pending) {
+				ret = resources.progress();
+				if (OFI_UNLIKELY(ret != 0)) {
+					return ret;
+				}
 			}
 		}
-		if (!any_outstanding) {
+		if (!any_pending) {
 			break;
 		}
-		ret = resources.progress();
-		if (OFI_UNLIKELY(ret != 0)) {
-			return ret;
-		}
+		/* Let peer's progress thread run (single-process case shares EP). */
+		std::this_thread::yield();
 	}
 
 	return ret;
@@ -508,6 +502,12 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	}
 
 	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+
+	if (is_ack_requested) {
+		rank_comm.last_ack_requested_seq = rank_comm.tx_head;
+		rank_comm.has_pending_ack_request = true;
+	}
+
 	/* Determine how many segments to send */
 	uint16_t nseg = 0;
 	if (has_signal) {
@@ -635,12 +635,6 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		} else {
 			metadata_send->signal_value = 0;
 		}
-
-		/* Piggyback our latest rx_consumed cursor for this peer. The
-		   peer reads it via apply_rx_consumed() to advance its tx_tail
-		   without needing a separate ACK round-trip. */
-		metadata_send->header.rx_consumed = rank_comm.rx_consumed;
-		rank_comm.rx_acked = rank_comm.rx_consumed;
 
 		/* This send flushes the QP work queue on the first rail,
 		   issuing a doorbell that includes the coalesced writedata
@@ -930,10 +924,7 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_ra
 
    Emits a standalone ACK only when the sender explicitly requested one
    (the ack_req bit was set in either the data immediate or the metadata
-   header for any of this peer's in-flight ops). When the sender did not
-   request an ACK, rx_consumed gets piggybacked on outbound metadata in
-   the next iputSignal() to this peer; we never emit a standalone ACK
-   on the receiver's own initiative. */
+   header for any of this peer's in-flight ops). */
 int nccl_ofi_rdma_gin_put_comm::maybe_send_ack(uint32_t peer_rank, bool sender_requested)
 {
 	if (!sender_requested) {
@@ -945,7 +936,6 @@ int nccl_ofi_rdma_gin_put_comm::maybe_send_ack(uint32_t peer_rank, bool sender_r
 	if (OFI_UNLIKELY(ret != 0)) {
 		return ret;
 	}
-	rank_comm.rx_acked = rank_comm.rx_consumed;
 	return 0;
 }
 
@@ -955,9 +945,8 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 	bool ack_requested = false;
 
 	/* Walk in-order delivered ops, advancing rx_consumed as we go. The
-	   sender's flow-control window opens up as soon as we ack progress
-	   either via piggyback on outbound metadata (in iputSignal) or via
-	   a standalone ACK (maybe_send_ack at the end of this function). */
+	   sender's flow-control window opens once we send back a standalone
+	   ACK (maybe_send_ack at the end of this function). */
 	while (true) {
 		auto &rank_comm = this->rank_comms[peer_rank];
 		uint16_t next_seq_num = rank_comm.next_delivered_signal_seq_num;
@@ -985,9 +974,7 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 		this->resources.return_req_to_pool(req);
 	}
 
-	/* If the sender requested an ACK.
-	   emit a standalone ACK now. Otherwise rx_consumed will go out on
-	   the next outbound metadata to this peer via piggyback. */
+	/* If the sender requested an ACK, emit a standalone ACK now. */
 	return maybe_send_ack(peer_rank, ack_requested);
 }
 
@@ -1003,16 +990,7 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	uint32_t peer_rank = get_peer_rank(src_addr, rank_map[rail_id]);
 
 	NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(
-		dev, this, rail_id, peer_rank, msg_seq_num, num_segments,
-		metadata_msg->header.rx_consumed);
-
-	/* Apply piggybacked rx_consumed cursor from the peer. The peer's
-	   metadata is in essence a bundled ACK: it tells us how many of our
-	   ops the peer has already delivered to its application, so we can
-	   advance tx_tail and free up window slots. apply_rx_consumed() is
-	   wrap-safe and a no-op if the cursor doesn't represent forward
-	   progress (e.g. because metadata arrived out of order). */
-	apply_rx_consumed(peer_rank, metadata_msg->header.rx_consumed);
+		dev, this, rail_id, peer_rank, msg_seq_num, num_segments);
 
 	uint64_t map_key = get_req_map_key(peer_rank, msg_seq_num);
 
@@ -1078,6 +1056,14 @@ int nccl_ofi_rdma_gin_put_comm::handle_ack_completion(const gin_ack_msg_t *ack_m
 	   arriving after newer ones are no-ops because they don't move
 	   tx_tail forward. */
 	apply_rx_consumed(peer_rank, rx_consumed);
+	auto &rank_comm = rank_comms[peer_rank];
+	if (rank_comm.has_pending_ack_request) {
+		uint32_t delta = gin_cursor_delta(rx_consumed,
+						  rank_comm.last_ack_requested_seq);
+		if (delta <= GIN_RX_CONSUMED_HALF) {
+			rank_comm.has_pending_ack_request = false;
+		}
+	}
 
 	NCCL_OFI_TRACE_GIN_HANDLE_ACK_COMPLETION_FUNC_END(dev, this, rail_id, peer_rank,
 						  rx_consumed, 0);
