@@ -80,9 +80,8 @@ struct nccl_ofi_gin_resource_releaser {
  *
  *   tx_head     - sender: ops produced (advances on every iputSignal)
  *   tx_tail     - sender's local view of "ops the receiver has consumed"
- *                 (advances when an ACK -- bundled or standalone -- arrives)
+ *                 (advances when a standalone ACK arrives)
  *   rx_consumed - receiver: ops delivered upstream in seq order
- *   rx_acked    - receiver: last value of rx_consumed it sent back
  *
  * Wrap-safe forward delta is computed as
  *     ((b - a) & GIN_RX_CONSUMED_MASK)
@@ -112,12 +111,9 @@ struct nccl_ofi_gin_peer_rank_info {
 	uint32_t tx_head = 0;
 	uint32_t tx_tail = 0;
 
-	/* Receiver-side cursors. rx_consumed advances every time we retire
-	   an op in seq order (signal delivered upstream). rx_acked is the
-	   latest value of rx_consumed we transmitted back to the peer either
-	   via metadata piggyback or a standalone ACK. */
+	/* Receiver-side cursor. rx_consumed advances every time we retire
+	   an op in seq order (signal delivered upstream). */
 	uint32_t rx_consumed = 0;
-	uint32_t rx_acked = 0;
 
 	/* Hysteresis counter for the sender-side ack-request gate. Once
 	   outstanding crosses GIN_ACK_REQ_THRESHOLD this counts ops; only
@@ -125,6 +121,13 @@ struct nccl_ofi_gin_peer_rank_info {
 	   this, every op above threshold would request an ACK and we'd
 	   flood the receiver with standalone ACK packets. */
 	uint32_t consecutive_puts_without_ack = 0;
+
+	/* Sequence-number tracking for close-time drain.
+	   last_ack_requested_seq records tx_head at the time the most
+	   recent is_ack_requested was set on the wire.
+	   closeColl waits until a standalone ACK covers this sequence. */
+	uint32_t last_ack_requested_seq = 0;
+	bool has_pending_ack_request = false;
 
 	/**
 	 * Next-to-be-delivered sequence number, stored at target, from
@@ -267,11 +270,15 @@ public:
 	{
 		outstanding_ack_counter--;
 	}
+	bool has_outstanding_ack_sends() const
+	{
+		return outstanding_ack_counter > 0;
+	}
 
 	/**
-	 * Apply an inbound rx_consumed cursor from the peer (bundled on
-	 * metadata or on a standalone ACK). Wrap-safe: only advances tx_tail
-	 * when the cursor represents forward progress.
+	 * Apply an inbound rx_consumed cursor from the peer (from a standalone
+	 * ACK). Wrap-safe: only advances tx_tail when the cursor represents
+	 * forward progress.
 	 *
 	 * The wire value is already at the cursor width (GIN_RX_CONSUMED_BITS)
 	 * thanks to the bitfield bring-in. We compute the modular forward
@@ -289,8 +296,8 @@ public:
 	}
 
 	/* Wait for any outstanding requests as necessary. Should be called before
-	   the GIN comm is destructed. Caller must hold resources.get_ep().ep_lock. */
-	int await_pending_requests() REQUIRES(get_ep_lock()) override;
+	   the GIN comm is destructed. Acquires/releases ep_lock internally. */
+	int await_pending_requests() EXCLUDES(get_ep_lock()) override;
 
 	/**
 	 * iputSignal API. Transfers some user data (determined by memory registrations

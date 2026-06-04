@@ -195,8 +195,8 @@
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_write_completion_func_end, dev, comm, rail_id, peer_rank, msg_seq_num, ret); \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, consumed) do { \
-	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, num_segments, consumed); \
+#define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_START(dev, comm, rail_id, peer_rank, msg_seq_num, num_segments) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, gin_handle_signal_metadata_completion_func_start, dev, comm, rail_id, peer_rank, msg_seq_num, num_segments); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(dev, comm, rail_id, peer_rank, msg_seq_num, ret) do { \
