@@ -109,7 +109,6 @@ static_assert(GIN_ACK_INTERVAL <= (GIN_IMM_SEQ_MASK >> 1),
 
 /* Reserved bit computation for Metadata message header */
 #define GIN_MSG_HEADER_RESERVED_BITS (64 - GIN_MSG_TYPE_BITS - GIN_IMM_COMM_BITS \
-                                      - GIN_RX_CONSUMED_BITS                    \
                                       - GIN_IMM_SEQ_BITS - GIN_IMM_SEG_CNT_BITS \
                                       - 1 /* ack_req */)
 
@@ -126,10 +125,6 @@ struct nccl_net_ofi_gin_msg_header_t {
 	uint64_t msg_type        : GIN_MSG_TYPE_BITS;
 	/* Comm identifier on the receiver side */
 	uint64_t remote_comm_id  : GIN_IMM_COMM_BITS;
-	/* Receiver's rx_consumed cursor at the time this packet was queued.
-	   Wraps at 2x the seq window. The sender uses a wrap-safe forward
-	   delta against tx_tail (see apply_rx_consumed) to advance its tail. */
-	uint64_t rx_consumed     : GIN_RX_CONSUMED_BITS;
 	/* Message sequence number and count */
 	uint64_t seq_num         : GIN_IMM_SEQ_BITS;
 	uint64_t seq_seg_cnt     : GIN_IMM_SEG_CNT_BITS;
@@ -193,7 +188,7 @@ static_assert(offsetof(nccl_net_ofi_gin_signal_metadata_msg_t, header) == 0,
 #if !defined(__clang__) && defined(__GNUC__) && (__GNUC__ >= 9)
 static_assert(
 	__builtin_bit_cast(uint64_t,
-		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0, 0})
+		nccl_net_ofi_gin_msg_header_t{GIN_MSG_TYPE_MAX, 0, 0, 0, 0, 0})
 		== (uint64_t)GIN_MSG_TYPE_MAX,
 	"msg_type must be at LSB of nccl_net_ofi_gin_msg_header_t");
 static_assert(
@@ -205,9 +200,7 @@ static_assert(
 
 /* Sender requests an ACK once the outstanding window is at least half full
    (i.e. tx_head - tx_tail >= GIN_ACK_REQ_THRESHOLD). The receiver answers
-   either by piggybacking its `consumed` cursor on the next outbound
-   metadata to this peer, or via a standalone ACK packet when no metadata
-   is in flight back to us. */
+   via a standalone ACK packet carrying its rx_consumed cursor. */
 #define GIN_ACK_REQ_THRESHOLD ((GIN_IMM_SEQ_MASK + 1) / 2)
 
 #endif

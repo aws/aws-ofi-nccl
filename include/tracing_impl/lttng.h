@@ -745,8 +745,7 @@ LTTNG_UST_TRACEPOINT_EVENT(
             uint16_t, rail_id,
             uint32_t, peer_rank,
             uint16_t, msg_seq_num,
-            uint16_t, num_segments,
-            uint32_t, consumed
+            uint16_t, num_segments
     ),
     LTTNG_UST_TP_FIELDS(
             lttng_ust_field_integer(int, dev, dev)
@@ -755,7 +754,6 @@ LTTNG_UST_TRACEPOINT_EVENT(
             lttng_ust_field_integer(uint32_t, peer_rank, peer_rank)
             lttng_ust_field_integer(uint16_t, msg_seq_num, msg_seq_num)
             lttng_ust_field_integer(uint16_t, num_segments, num_segments)
-            lttng_ust_field_integer(uint32_t, consumed, consumed)
     )
 )
 
