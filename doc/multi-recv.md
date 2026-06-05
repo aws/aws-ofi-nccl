@@ -110,14 +110,22 @@ Each eager message prepends an 8-byte header to the bounce buffer data:
 ```
 struct nccl_ofi_eager_msg_header {
     uint8_t  eager_offset;       // position within the eager batch
-    uint8_t  prev_batch_count;   // count of previous batch (when offset == 0)
-    uint16_t prev_msg_seq_num;   // seq of previous batch (when offset == 0)
+    uint8_t  prev_batch_count;   // size of the previous batch (when offset == 0)
+    uint16_t eager_seq;          // per-batch eager sequence number (chain identity)
     int32_t  tag;                // NCCL tag for multi-recv routing
 };
 ```
 
 The sender transmits this via `fi_sendmsg` with two iovecs: the header (from a
 registered freelist buffer) and the payload (from the user buffer).
+
+`eager_seq` is a dedicated per-batch counter that is the **sole identity** used
+to chain eager batches on the receiver. Unlike `msg_seq_num` (which counts every
+message, eager and rendezvous, and is masked to 10 bits), `eager_seq` advances
+only for eager batches. This makes the chain wrap-safe; see
+[Eager Sequence Numbers and Wrap Safety](#eager-sequence-numbers-and-wrap-safety).
+Note that the recv-side target resolution still uses `msg_seq_num` (carried in
+the RDMA write/eager immediate data), not `eager_seq`.
 
 ### Sender-Side Eager Queue
 
@@ -137,6 +145,14 @@ outstanding eager sends. Key behaviors:
   `eager_offset_next` increments (0, 1, 2, ...). All eager sends in a batch
   share the same `msg_seq_num`.
 
+- **Per-batch eager sequence**: At the start of each eager batch (the
+  `eager_offset == 0` send), the sender assigns `cur_eager_seq` from a
+  monotonically increasing `eager_seq_next` counter (a 16-bit value that wraps
+  naturally). Every send in the batch carries this `cur_eager_seq` in its
+  header. `eager_seq_next` is incremented once per batch, so consecutive eager
+  batches get consecutive eager sequence numbers regardless of how much
+  rendezvous traffic flows in between.
+
 - **Drain**: When a ctrl msg arrives (detected in `send()` or `test()`), the
   drain function matches queued eager sends against ctrl msg entries:
   - **Single recv**: Pop the front entry, mark the send as having received its
@@ -145,23 +161,26 @@ outstanding eager sends. Key behaviors:
     consumed (`entry_used = 1`). Unmatched entries are pushed back. If all N
     sub-recvs are satisfied, advance `next_msg_seq_num`.
 
-- **Batch boundary tracking**: When `next_msg_seq_num` advances (in the drain
-  or in the non-eager send path) and `eager_offset_next > 0`, the sender
-  records `prev_eager_msg_seq_num` and `prev_eager_batch_count` from the
-  current state, then resets `eager_offset_next` to 0. These values are
-  stamped into the next batch's `offset == 0` header so the receiver can
-  verify batch boundaries. The sender initializes `prev_eager_msg_seq_num`
-  to `0xFFFF` (sentinel) so the receiver can distinguish the very first
-  eager batch from a later batch that arrives out of order.
+- **Batch boundary tracking**: When a batch closes (its `msg_seq_num` advances,
+  in the drain or in the non-eager send path) and `eager_offset_next > 0`, the
+  sender records `prev_eager_batch_count` (the size of the just-closed batch)
+  and resets `eager_offset_next` to 0. The next batch stamps that
+  `prev_batch_count` into its `offset == 0` header so the receiver can confirm
+  the previous batch was fully processed before starting the new one. Batch
+  ordering is established purely by the contiguity of `eager_seq` (see below), so
+  no first-batch sentinel is needed either (the first batch is simply
+  `eager_seq == 0`).
 
 ### Receiver-Side Eager Queue
 
 The receiver maintains a **sorted doubly-linked list** of pending eager messages,
-ordered by `(msg_seq_num, eager_offset)`. A pre-allocated pool of
-`NCCL_OFI_CTRL_MAILBOX_SIZE` entries avoids dynamic allocation.
+ordered by `(eager_seq, eager_offset)` using wrap-aware 16-bit comparison. A
+pre-allocated pool of `NCCL_OFI_CTRL_MAILBOX_SIZE` entries avoids dynamic
+allocation.
 
 When an eager message arrives (`handle_eager_recv`):
-1. Parse the 8-byte header to extract `eager_offset`, `tag`, and batch info.
+1. Parse the 8-byte header to extract `eager_offset`, `tag`, `prev_batch_count`,
+   and `eager_seq`.
 2. Subtract 8 from `recv_len` (the header is not part of the payload).
 3. Insert into the sorted list.
 4. Call `drain_recv_eager_queue()`.
@@ -180,26 +199,58 @@ drain matches by tag, ensuring each eager send is paired with the correct
 sub-receive.
 
 **Receiver ordering**: The drain processes entries in strict
-`(msg_seq_num, eager_offset)` order. Before processing an entry, it verifies
-continuity:
+`(eager_seq, eager_offset)` order. Before processing an entry, it verifies
+continuity (`eager_entry_can_process()`):
 
 - **First-ever batch** (`has_processed_eager == false`): The entry must have
-  `eager_offset == 0` and `prev_msg_seq_num == 0xFFFF` (the sentinel value).
-  This ensures that if a later batch arrives before the first batch (due to
-  out-of-order delivery), it is not mistakenly processed as the first batch.
+  `eager_offset == 0` and `eager_seq == 0`. This ensures that if a later batch
+  arrives before the first batch (due to out-of-order delivery), it is not
+  mistakenly processed as the first batch.
 
-- **offset == 0 (new batch)**: The previous batch must be complete. This is
-  verified by checking that `last_eager_msg_seq_num == prev_msg_seq_num` and
-  `last_eager_offset == prev_batch_count - 1`.
+- **offset == 0 (new batch)**: The new batch must be the contiguous successor of
+  the last processed batch, and the previous batch must be complete. This is
+  verified by `entry.eager_seq == (uint16_t)(last_eager_seq + 1)` (wrap-aware)
+  and `last_eager_offset == prev_batch_count - 1`.
 
-- **offset > 0 (same batch)**: Must be consecutive with the last processed
-  entry: `last_eager_msg_seq_num == entry.msg_seq_num` and
-  `last_eager_offset == entry.eager_offset - 1`.
+- **offset > 0 (same batch)**: Must be the next offset of the same batch:
+  `entry.eager_seq == last_eager_seq` and
+  `last_eager_offset == entry.eager_offset - 1`. The `eager_seq` match is what
+  rejects a *new* batch's `offset > 0` entry that arrives (out of order) before
+  that batch's `offset == 0` — without it, a stale `(last_seq, last_offset)`
+  could spuriously accept it and strand the queue.
 
+On success the drain advances its tracking to the entry's `(eager_seq, offset)`.
 If the check fails (e.g., an earlier offset hasn't arrived yet), the drain stops
 and retries later.
 
-### Target Recv Resolution
+### Eager Sequence Numbers and Wrap Safety
+
+Eager batches are chained by `eager_seq` rather than by `msg_seq_num`. This is
+required for correctness, not just convenience.
+
+`msg_seq_num` is a per-comm counter advanced by **every** message (eager and
+rendezvous) and masked to `NCCL_OFI_RDMA_SEQ_BITS` (10 bits), so it wraps every
+1024 messages. The eager chain trackers are persistent scalars updated only by
+eager activity. If the chain were keyed on `msg_seq_num`, a long run of
+rendezvous traffic (common in a size sweep that mixes small and large messages)
+could advance `msg_seq_num` through a full 1024-message wrap while no eager
+batch updated the trackers. Two eager batches landing on the same masked
+`msg_seq_num` — a wrap apart — then became indistinguishable: the receiver could
+mis-accept an out-of-order `offset > 0` entry of the new batch as a continuation
+of the old batch, or reject the new `offset == 0`, permanently stranding
+`drain_recv_eager_queue()` and hanging the collective.
+
+`eager_seq` removes this hazard by construction. Because it advances **only**
+for eager batches, it cannot be overrun by rendezvous traffic. The number of
+eager batches that can be "in play" at once is bounded by the eager inflight
+limit (`NCCL_OFI_MAX_EAGER_PENDING`) and the receiver's queue/window — far below
+the 16-bit `eager_seq` range. Therefore two *live* batches can never share an
+`eager_seq`, and the wrap-aware contiguity check (`eager_seq == last + 1`,
+`eager_seq == last` for continuations) remains unambiguous across the 16-bit
+wrap. This is the standard "sequence-number range exceeds the outstanding
+window" guarantee, applied to eager batches in isolation.
+
+
 
 Once an entry passes the continuity check, the drain resolves which recv it
 targets using `eager_drain_recv_seq`:
