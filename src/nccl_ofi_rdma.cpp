@@ -956,7 +956,7 @@ int nccl_net_ofi_rdma_recv_comm::eager_copy_to_sub_recv(
 int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 {
 	bool skipping = false;
-	uint16_t tmp_last_msg_seq_num = this->last_eager_msg_seq_num;
+	uint16_t tmp_last_eager_seq = this->last_eager_seq;
 	uint8_t tmp_last_offset = this->last_eager_offset;
 	bool tmp_has_processed = this->has_processed_eager;
 	uint16_t tmp_drain_recv_seq = this->eager_drain_recv_seq;
@@ -966,23 +966,15 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 		nccl_ofi_recv_eager_entry_t *entry =
 			nccl_ofi_dlist_entry(node, &nccl_ofi_recv_eager_entry_t::link);
 
-		/* Check if this entry is the next in sequence */
-		bool can_process;
-		if (!tmp_has_processed) {
-			can_process = ((entry->eager_offset == 0) && (entry->prev_msg_seq_num == 0xFFFF));
-		} else if (entry->eager_offset == 0) {
-			can_process = (tmp_last_msg_seq_num == entry->prev_msg_seq_num
-				    && tmp_last_offset == entry->prev_batch_count - 1);
-		} else {
-			can_process = (tmp_last_msg_seq_num == entry->msg_seq_num
-				    && tmp_last_offset == entry->eager_offset - 1);
-		}
+		/* Check if this entry is the next in sequence (wrap-safe via eager_seq) */
+		bool can_process = eager_entry_can_process(tmp_has_processed, tmp_last_eager_seq,
+							   tmp_last_offset, entry);
 
 		if (!can_process)
 			break;
 
 		/* Advance temp tracking */
-		tmp_last_msg_seq_num = entry->msg_seq_num;
+		tmp_last_eager_seq = entry->eager_seq;
 		tmp_last_offset = entry->eager_offset;
 		tmp_has_processed = true;
 
@@ -991,7 +983,7 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 			if (!skipping) {
 				node->remove();
 				this->recv_eager_free.push_back(&entry->link);
-				this->last_eager_msg_seq_num = entry->msg_seq_num;
+				this->last_eager_seq = entry->eager_seq;
 				this->last_eager_offset = entry->eager_offset;
 				this->has_processed_eager = true;
 				this->eager_drain_recv_seq = tmp_drain_recv_seq;
@@ -1054,7 +1046,7 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 		if (!skipping) {
 			node->remove();
 			this->recv_eager_free.push_back(&entry->link);
-			this->last_eager_msg_seq_num = entry->msg_seq_num;
+			this->last_eager_seq = entry->eager_seq;
 			this->last_eager_offset = entry->eager_offset;
 			this->has_processed_eager = true;
 			this->eager_drain_recv_seq = tmp_drain_recv_seq;
@@ -1086,7 +1078,7 @@ int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 	uint8_t eager_offset = eager_hdr->eager_offset;
 	int32_t eager_tag = eager_hdr->tag;
 	uint8_t prev_batch_count = eager_hdr->prev_batch_count;
-	uint16_t prev_msg_seq_num = eager_hdr->prev_msg_seq_num;
+	uint16_t eager_seq = eager_hdr->eager_seq;
 	/* Adjust recv_len to exclude header */
 	rx_data->recv_len -= NCCL_OFI_EAGER_HEADER_SIZE;
 
@@ -1104,7 +1096,7 @@ int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 	new_entry->eager_offset = eager_offset;
 	new_entry->tag = eager_tag;
 	new_entry->prev_batch_count = prev_batch_count;
-	new_entry->prev_msg_seq_num = prev_msg_seq_num;
+	new_entry->eager_seq = eager_seq;
 	new_entry->recv_len = rx_data->recv_len;
 	new_entry->handled = false;
 	recv_eager_sorted_insert(&this->recv_eager_list, new_entry);
@@ -4384,7 +4376,7 @@ nccl_net_ofi_rdma_recv_comm::nccl_net_ofi_rdma_recv_comm()
 		recv_eager_free.push_back(&recv_eager_pool[i].link);
 	}
 	has_processed_eager = false;
-	last_eager_msg_seq_num = 0;
+	last_eager_seq = 0;
 	last_eager_offset = 0;
 	eager_drain_recv_seq = NCCL_OFI_RDMA_MSG_SEQ_NUM_START;
 	last_completed_seq = NCCL_OFI_RDMA_MSG_SEQ_NUM_START - 1;
@@ -5359,7 +5351,7 @@ static int post_rdma_eager_send(nccl_net_ofi_rdma_req *req,
 	hdr->eager_offset = send_data->eager_offset;
 	hdr->tag = send_data->tag;
 	hdr->prev_batch_count = send_data->prev_batch_count;
-	hdr->prev_msg_seq_num = send_data->prev_msg_seq_num;
+	hdr->eager_seq = send_data->eager_seq;
 
 	/* Build 2-iovec message: [header][payload] */
 	struct iovec iov[2];
@@ -5864,7 +5856,6 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 			this->next_msg_seq_num = (seq + 1) & MSG_SEQ_NUM_MASK;
 			/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
 			if (this->eager_offset_next > 0) {
-				this->prev_eager_msg_seq_num = seq;
 				this->prev_eager_batch_count = this->eager_offset_next;
 				this->eager_offset_next = 0;
 			}
@@ -5905,7 +5896,6 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 			this->group_num_recvs = 0;
 			/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
 			if (this->eager_offset_next > 0) {
-				this->prev_eager_msg_seq_num = seq;
 				this->prev_eager_batch_count = this->eager_offset_next;
 				this->eager_offset_next = 0;
 			}
@@ -6055,10 +6045,18 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	if (eager) {
 		/* Set eager offset and enqueue */
 		rdma_req_send_data_t *eager_send_data = get_send_data(req);
+		/* At a batch start, assign this batch's eager sequence number. It
+		 * counts only eager batches, so it is never advanced by rendezvous
+		 * traffic; with the bounded eager inflight it is wrap-safe. All entries
+		 * of the batch carry the same cur_eager_seq. */
+		if (s_comm->eager_offset_next == 0) {
+			s_comm->cur_eager_seq = s_comm->eager_seq_next;
+			s_comm->eager_seq_next++;  /* uint16 wraps naturally */
+		}
 		eager_send_data->eager_offset = s_comm->eager_offset_next;
 		eager_send_data->eager_ctrl_msg_received = false;
 		eager_send_data->prev_batch_count = s_comm->prev_eager_batch_count;
-		eager_send_data->prev_msg_seq_num = s_comm->prev_eager_msg_seq_num;
+		eager_send_data->eager_seq = s_comm->cur_eager_seq;
 
 		uint8_t idx = s_comm->eager_queue_tail;
 		s_comm->eager_queue[idx].req = req;
@@ -6126,9 +6124,9 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 		} else {
 			s_comm->next_msg_seq_num = (s_comm->next_msg_seq_num + 1) & MSG_SEQ_NUM_MASK;
 		}
-		/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
+		/* A rendezvous send that advances the sequence closes any pending eager
+		 * batch; record its size for the next batch's prev_batch_count. */
 		if ((s_comm->eager_offset_next > 0) && (orig_seq != s_comm->next_msg_seq_num)) {
-			s_comm->prev_eager_msg_seq_num = orig_seq;
 			s_comm->prev_eager_batch_count = s_comm->eager_offset_next;
 			s_comm->eager_offset_next = 0;
 		}
@@ -6595,7 +6593,7 @@ int nccl_net_ofi_rdma_ep_t::create_send_comm(nccl_net_ofi_rdma_send_comm **s_com
 	ret_s_comm->eager_queue_tail = 0;
 	ret_s_comm->eager_queue_count = 0;
 	ret_s_comm->eager_offset_next = 0;
-	ret_s_comm->prev_eager_msg_seq_num = 0xFFFF;
+	ret_s_comm->eager_seq_next = 0;
 	ret_s_comm->prev_eager_batch_count = 0;
 
 	/* The connect() API function acquired the endpoint we are using via
