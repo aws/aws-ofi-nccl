@@ -213,8 +213,12 @@ public:
  */
 typedef struct nccl_ofi_eager_msg_header {
 	uint8_t eager_offset;
-	uint8_t prev_batch_count;     /* only meaningful when eager_offset == 0 */
-	uint16_t prev_msg_seq_num;    /* only meaningful when eager_offset == 0 */
+	uint8_t prev_batch_count;     /* previous batch's size (only meaningful when eager_offset == 0) */
+	/* Per-batch eager sequence number. This counts only eager batches (never
+	 * advanced by rendezvous traffic), so combined with the bounded number of
+	 * in-flight eager messages it is wrap-safe: two live batches can never
+	 * share an eager_seq. It is the sole identity used to chain eager batches. */
+	uint16_t eager_seq;
 	int32_t tag;
 } nccl_ofi_eager_msg_header_t;
 static_assert(sizeof(nccl_ofi_eager_msg_header_t) == NCCL_OFI_EAGER_HEADER_SIZE,
@@ -407,9 +411,10 @@ typedef struct {
 	nccl_ofi_freelist::fl_entry *eager_hdr_fl_entry;
 	/* Sub-receive index from ctrl msg entry (for RDMA write immediate data) */
 	uint8_t recv_idx;
-	/* Previous batch info */
+	/* Previous batch's size (written to the header for an off==0 send) */
 	uint8_t prev_batch_count;
-	uint16_t prev_msg_seq_num;
+	/* This batch's eager sequence number (chain identity) */
+	uint16_t eager_seq;
 	/* Schedule used to transfer this request. We save the pointer to
 	 * reference it when transferring the request over network. */
 	nccl_net_ofi_schedule_t *schedule;
@@ -713,9 +718,15 @@ public:
 	uint8_t eager_queue_count;
 	/* Next eager offset to assign */
 	uint8_t eager_offset_next;
-	/* Previous batch info (set when drain resets eager_offset_next) */
-	uint16_t prev_eager_msg_seq_num;
+	/* Size of the previous (closed) eager batch, written to the header of the
+	 * next batch's off==0 send so the receiver can confirm batch completion. */
 	uint8_t prev_eager_batch_count;
+	/* Per-batch eager sequence number. cur_eager_seq is the batch currently
+	 * being assembled; eager_seq_next is the value for the next new batch.
+	 * Counts only eager batches, so it is never overrun by rendezvous traffic;
+	 * combined with the bounded eager inflight it is wrap-safe. */
+	uint16_t cur_eager_seq{};
+	uint16_t eager_seq_next{};
 	/* Freelist of eager header buffers */
 	nccl_ofi_freelist *eager_hdr_fl;
 	/* Registration context for eager_hdr_fl. Freed in send_comm_destroy(). */
@@ -794,10 +805,10 @@ typedef struct nccl_net_ofi_rdma_flush_buffer {
 typedef struct nccl_ofi_recv_eager_entry {
 	nccl_ofi_dlist_node link;  /* intrusive list node */
 	nccl_net_ofi_rdma_req *rx_buff_req;
-	uint16_t msg_seq_num;
+	uint16_t msg_seq_num;         /* recv target seq (immediate data), for msgbuff lookup */
 	uint8_t eager_offset;
 	uint8_t prev_batch_count;     /* from header, only meaningful when eager_offset == 0 */
-	uint16_t prev_msg_seq_num;    /* from header, only meaningful when eager_offset == 0 */
+	uint16_t eager_seq;           /* from header: this batch's eager sequence (chain identity) */
 	int32_t tag;
 	size_t recv_len;  /* payload length (excluding header) */
 	bool handled;     /* true = data copied, awaiting removal at front */
@@ -813,12 +824,60 @@ inline bool seq_before(uint16_t a, uint16_t b)
 	uint16_t diff = (a - b) & MSG_SEQ_NUM_MASK; return diff > (MSG_SEQ_NUM_MASK >> 1);
 }
 
+/* Wrap-aware "a precedes b" for the 16-bit eager sequence. Correct as long as
+ * the number of in-flight eager batches stays below 2^15, which is guaranteed
+ * by NCCL's inflight limit (<= NCCL_OFI_MAX_EAGER_PENDING). */
+inline bool eager_seq_before(uint16_t a, uint16_t b)
+{
+	return (int16_t)(a - b) < 0;
+}
+
 inline bool eager_entry_less(const nccl_ofi_recv_eager_entry_t *a,
 			    const nccl_ofi_recv_eager_entry_t *b)
 {
-	if (a->msg_seq_num != b->msg_seq_num)
-		return seq_before(a->msg_seq_num, b->msg_seq_num);
+	if (a->eager_seq != b->eager_seq)
+		return eager_seq_before(a->eager_seq, b->eager_seq);
 	return a->eager_offset < b->eager_offset;
+}
+
+/*
+ * @brief	Decide whether an eager entry is the next in sequence and can be
+ *		processed by the receiver eager drain.
+ *
+ * Eager batches are chained by a dedicated per-batch eager sequence number
+ * (eager_seq) that advances only for eager batches. Because the number of
+ * in-flight eager messages is bounded (NCCL inflight limit /
+ * NCCL_OFI_MAX_EAGER_PENDING) and that bound is far below the 16-bit eager_seq
+ * range, two live batches can never share an eager_seq -- so the chain is
+ * wrap-safe regardless of how much rendezvous traffic flows in between.
+ * Factored out as a pure function so it can be unit tested without a comm.
+ *
+ * @param	has_processed	whether any eager batch has been processed yet
+ * @param	last_eager_seq	eager_seq of the last processed batch
+ * @param	last_offset	eager_offset of the last processed entry
+ * @param	entry		candidate entry at the front of the chain
+ */
+inline bool eager_entry_can_process(bool has_processed,
+				    uint16_t last_eager_seq,
+				    uint8_t last_offset,
+				    const nccl_ofi_recv_eager_entry_t *entry)
+{
+	if (!has_processed) {
+		/* First eager batch on this comm: eager_seq starts at 0. */
+		return (entry->eager_offset == 0) && (entry->eager_seq == 0);
+	} else if (entry->eager_offset == 0) {
+		/* New batch start: must be the next eager_seq (contiguous, wrap-safe),
+		 * and the previous batch must be complete (its last offset ==
+		 * prev_batch_count - 1). */
+		return (entry->eager_seq == (uint16_t)(last_eager_seq + 1))
+		    && (last_offset == entry->prev_batch_count - 1);
+	} else {
+		/* Continuation: the next offset of the same (eager_seq) batch. The
+		 * eager_seq match is what rejects a new batch's offset>0 that arrives
+		 * before its offset==0. */
+		return (entry->eager_seq == last_eager_seq)
+		    && (last_offset == entry->eager_offset - 1);
+	}
 }
 
 inline void recv_eager_sorted_insert(nccl_ofi_dlist *list,
@@ -907,8 +966,8 @@ public:
 	nccl_ofi_dlist recv_eager_list;
 	nccl_ofi_recv_eager_entry_t recv_eager_pool[NCCL_OFI_CTRL_MAILBOX_SIZE];
 	nccl_ofi_dlist recv_eager_free;
-	/* Last processed eager entry's coordinates */
-	uint16_t last_eager_msg_seq_num;
+	/* Last processed eager batch's coordinates (chain identity) */
+	uint16_t last_eager_seq{};
 	uint8_t last_eager_offset;
 	bool has_processed_eager;
 	/* Current recv seq being filled by the drain */
