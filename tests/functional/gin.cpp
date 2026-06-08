@@ -232,7 +232,7 @@ int main(int argc, char *argv[])
 			for (int i = 0; i < NUM_REQS_PER_PEER; ++i) {
 				void *request = nullptr;
 				OFINCCLCHECK(extGin->iput(proxyCtx, 0, 0, put_mhandle, SEND_SIZE, 0,
-							  put_mhandle, dst_rank, &request));
+							  put_mhandle, dst_rank, 0, &request));
 				assert(request != nullptr);
 				request_deque.push_back(request);
 			}
@@ -246,7 +246,7 @@ int main(int argc, char *argv[])
 								put_signal_mhandle, SEND_SIZE,
 								0, put_signal_mhandle,
 								dst_rank, 0, signal_mhandle, 1,
-								NCCL_NET_SIGNAL_OP_INC, &request));
+								NCCL_NET_SIGNAL_OP_INC, 0, &request));
 				assert(request != nullptr);
 				request_deque.push_back(request);
 			}

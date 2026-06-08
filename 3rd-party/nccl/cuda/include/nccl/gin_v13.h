@@ -46,11 +46,11 @@ typedef struct {
 
   // Put operations
   ncclResult_t (*iput)(void* ginCtx, int context, uint64_t srcOff, void* srcMhandle, size_t size,
-      uint64_t dstOff, void* dstMhandle, uint32_t rank, void** request);
+      uint64_t dstOff, void* dstMhandle, uint32_t rank, uint32_t flags, void** request);
   ncclResult_t (*iputSignal)(void* ginCtx, int context, uint64_t srcOff, void* srcMhandle,
       size_t size, uint64_t dstOff, void* dstMhandle,
       uint32_t rank, uint64_t signalOff, void *signalMhandle,
-      uint64_t signalValue, uint32_t signalOp, void** request);
+      uint64_t signalValue, uint32_t signalOp, uint32_t flags, void** request);
   ncclResult_t (*iget)(void* ginCtx, int context, uint64_t remoteOff, void* remoteMhandle, size_t size,
       uint64_t localOff, void* localMhandle, uint32_t rank, void** request);
 
