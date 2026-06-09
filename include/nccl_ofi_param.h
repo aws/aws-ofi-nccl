@@ -406,4 +406,21 @@ OFI_NCCL_PARAM(GIN_TYPE, gin_type, "GIN_TYPE", GIN_TYPE::PROXY)
  */
 OFI_NCCL_PARAM(bool, gin_strong_signal, "GIN_STRONG_SIGNAL", true);
 
+/*
+ * Number of GFDs the GIN proxy progress loop may drain per
+ * (context, peer) per tick. Advertised to NCCL through the
+ * getProperties() field ginProxyDispatchBatch; the proxy honors it
+ * instead of carrying an EFA-specific knob in its own tree.
+ *
+ * The proxy thread pays a fixed per-tick cost (completion drain, queue
+ * walks, yield) regardless of how many posts it makes. On a deep GIN
+ * workload such as DeepEP dispatch the GFD queue is rarely empty, so
+ * draining several GFDs per tick amortizes that cost across more posts.
+ *
+ * Default: 1, which keeps the single-pull behavior NCCL had before the
+ * property existed. Larger values trade a touch of fairness across peers
+ * for throughput.
+ */
+OFI_NCCL_PARAM(int, gin_proxy_dispatch_batch, "GIN_PROXY_DISPATCH_BATCH", 1);
+
 #endif // End NCCL_OFI_PARAM_H_

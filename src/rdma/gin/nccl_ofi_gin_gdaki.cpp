@@ -147,6 +147,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 	props->maxMultiRequestSize = 1;
 	props->railId = -1;
 	props->planeId = -1;
+	props->ginProxyDispatchBatch = (int)ofi_nccl_gin_proxy_dispatch_batch();
 
 	return ncclSuccess;
 }

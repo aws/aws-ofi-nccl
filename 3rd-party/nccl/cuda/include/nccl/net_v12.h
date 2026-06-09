@@ -45,6 +45,7 @@ typedef struct {
   int maxMultiRequestSize;         // Maximum number of requests supported in a single multi-request.
   int16_t railId;                  // rail ID associated with the netdev
   int16_t planeId;                 // plane ID associated with the netdev
+  int ginProxyDispatchBatch;       // GFDs GIN proxy may drain per peer per tick (<=1 means 1)
 } ncclNetProperties_v12_t;
 
 #define NCCL_NET_ATTR_UNDEF -1
