@@ -35,6 +35,7 @@ noinst_HEADERS = \
 	nccl_ofi_memcheck_asan.h \
 	nccl_ofi_memcheck_nop.h \
 	nccl_ofi_memcheck_valgrind.h \
+	nccl_ofi_mpsc_ring.h \
 	nccl_ofi_mr.h \
 	nccl_ofi_msgbuff.h \
 	nccl_ofi_ofiutils.h \

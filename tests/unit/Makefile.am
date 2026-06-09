@@ -29,7 +29,8 @@ noinst_PROGRAMS = \
 	param \
 	platform_manager \
 	spinlock \
-	spsc_ring
+	spsc_ring \
+	mpsc_ring
 
 if WANT_PLATFORM_AWS
 noinst_PROGRAMS += aws_platform_mapper
@@ -69,6 +70,7 @@ param_SOURCES = $(base_sources) param.cpp
 platform_manager_SOURCES = $(base_sources) platform_manager.cpp
 spinlock_SOURCES = $(base_sources) spinlock.cpp
 spsc_ring_SOURCES = $(base_sources) spsc_ring.cpp
+mpsc_ring_SOURCES = $(base_sources) mpsc_ring.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif
