@@ -239,7 +239,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN_NVTX(comm, rail_id, rank, msg_seq_num, request) do { \
+#define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN_NVTX(comm, rail_id, rank, msg_seq_num, size, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = (comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
 		(request)->trace_id = nvtx_start_domain(true, handle, "gin_metadata_send", 0x4169E1); \
