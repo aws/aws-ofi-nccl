@@ -233,9 +233,10 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_WRITE_END_NVTX(request) do { \
+#define NCCL_OFI_TRACE_GIN_WRITE_END_NVTX(comm, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
-		nvtx_end_domain(0, (request)->trace_id); \
+		nvtxDomainHandle_t handle = ((nccl_ofi_rdma_gin_put_comm *)(comm))->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
 
@@ -246,9 +247,10 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(request) do { \
+#define NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(comm, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
-		nvtx_end_domain(0, (request)->trace_id); \
+		nvtxDomainHandle_t handle = ((nccl_ofi_rdma_gin_put_comm *)(comm))->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
 
@@ -266,9 +268,10 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
-#define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(request) do { \
+#define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(comm, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
-		nvtx_end_domain(0, (request)->trace_id); \
+		nvtxDomainHandle_t handle = ((nccl_ofi_rdma_gin_put_comm *)(comm))->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
 

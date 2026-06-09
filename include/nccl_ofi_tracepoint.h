@@ -140,7 +140,7 @@
 
 #define NCCL_OFI_TRACE_GIN_WRITE_END(dev, rail_id, comm, rank, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_write_end, dev, rail_id, comm, rank, msg_seq_num, request); \
-	NCCL_OFI_TRACE_GIN_WRITE_END_NVTX(request); \
+	NCCL_OFI_TRACE_GIN_WRITE_END_NVTX(comm, msg_seq_num, request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
@@ -150,7 +150,7 @@
 
 #define NCCL_OFI_TRACE_GIN_METADATA_SEND_END(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_metadata_send_end, dev, rail_id, size, comm, rank, msg_seq_num, request); \
-	NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(request); \
+	NCCL_OFI_TRACE_GIN_METADATA_SEND_END_NVTX(comm, msg_seq_num, request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_RECV_WRITE(dev, rail_id, size, comm, rank, msg_seq_num, request) do { \
@@ -166,7 +166,7 @@
 
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, comm, rank, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, gin_signal_delivery_end, dev, comm, rank, msg_seq_num, request); \
-	NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(request); \
+	NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(comm, msg_seq_num, request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_GIN_ACK_RECV(dev, rail_id, comm, rank, msg_seq_num) do { \
