@@ -176,15 +176,23 @@ int main(int argc, char *argv[])
 		MPI_Finalize();
 		return ncclInternalError;
 	}
-	/* regMrSym returns a GPU-resident MR handle; copy it to a host
-	 * staging buffer before reading lkey / peers[] on the host
-	 * (dereferencing the GPU pointer on the host faults). Flex-array
-	 * struct: header + peers[nranks]. */
+	/* regMrSym returns a GPU-resident per-rail pointer array:
+	 *   [ mr_handle*[num_rails] ][ mr_handle_rail0 ][ ... ]
+	 * The kernel indexes it as ((mr_handle**)win)[rail_id].
+	 * For this test we use context 0 → rail_id = 0. Copy just the first
+	 * pointer to get the device address of rail 0's handle, then copy
+	 * that handle to host. */
 	const size_t mr_handle_bytes =
 		sizeof(nccl_ofi_gin_gdaki_mr_handle) +
 		(size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
+
+	nccl_ofi_gin_gdaki_mr_handle *sig_rail0_ptr = nullptr;
+	CUDACHECK(cudaMemcpy(&sig_rail0_ptr, sig_ginhandle,
+			     sizeof(nccl_ofi_gin_gdaki_mr_handle *),
+			     cudaMemcpyDeviceToHost));
+
 	std::vector<uint8_t> sig_mr_host(mr_handle_bytes);
-	CUDACHECK(cudaMemcpy(sig_mr_host.data(), sig_ginhandle, mr_handle_bytes,
+	CUDACHECK(cudaMemcpy(sig_mr_host.data(), sig_rail0_ptr, mr_handle_bytes,
 			     cudaMemcpyDeviceToHost));
 	auto *sig_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(sig_mr_host.data());
 	uint32_t sig_lkey = sig_mr->lkey;
