@@ -21,6 +21,7 @@
 
 #include "config.h"
 
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -575,6 +576,46 @@ public:
 };
 
 /**
+ * Per-rail registrations of the context's two SHARED local source buffers
+ * (the signal-only scratch buffer and the PutValue source slot pool). Both
+ * are only local sources for RDMA writes, never remote targets.
+ *
+ * The buffers are allocated once per createContext; each rail has its own
+ * domain, so each is registered per rail, giving a distinct local lkey. A
+ * logical context c bound to rail r reads its lkeys from rail_shared[r].
+ * Only the first effective_rails = min(nContexts, num_rails) are populated.
+ */
+struct gdaki_rail_shared {
+	gdaki_rail_shared() = default;
+	gdaki_rail_shared(const gdaki_rail_shared &) = delete;
+	gdaki_rail_shared &operator=(const gdaki_rail_shared &) = delete;
+
+	/* Scratch buffer MR on this rail (local source only; the signal-only
+	 * 0-byte write has a zero remote target, so no per-peer rkey table). */
+	struct fid_mr *scratch_mr = nullptr;
+	uint32_t scratch_lkey = 0;
+
+	/* PutValue pool MR on this rail. */
+	struct fid_mr *putvalue_mr = nullptr;
+	uint32_t putvalue_lkey = 0;
+
+	~gdaki_rail_shared()
+	{
+		/* Close MRs before the shared buffers they cover are freed
+		 * (the buffers live on the parent context, destroyed after
+		 * this array per reverse-declaration order). */
+		if (putvalue_mr) {
+			fi_close(&putvalue_mr->fid);
+			putvalue_mr = nullptr;
+		}
+		if (scratch_mr) {
+			fi_close(&scratch_mr->fid);
+			scratch_mr = nullptr;
+		}
+	}
+};
+
+/**
  * The composed GDAKI context.
  *
  * All members are lifecycle-managed objects; the destructor is
@@ -602,6 +643,16 @@ struct nccl_ofi_gin_gdaki_context {
 	 *                 poster's target table (total_slots =
 	 *                 1 + global_n_sc). */
 	int global_n_sc = 0;
+
+	/* Multi-rail. num_rails is the number of EFA NICs the gin endpoint
+	 * exposes for this GPU (capped at NCCL_OFI_GDAKI_MAX_RAILS).
+	 * effective_rails = min(nContexts, num_rails) is how many rails are
+	 * actually used: logical context c is bound to rail c % num_rails,
+	 * so with fewer contexts than rails some rails go idle.
+	 * The shared scratch / putvalue buffers are registered on each of
+	 * the first effective_rails rails. */
+	uint16_t num_rails = 0;
+	uint16_t effective_rails = 0;
 
 	/* Per-ctx data (main) endpoint: libfabric EP on the reused proxy
 	 * domain plus its GPU-side SQ buffer/doorbell mappings, GPU-
@@ -638,10 +689,11 @@ struct nccl_ofi_gin_gdaki_context {
 	 * FI_REMOTE_WRITE counter ticks on the receiver), and each ctx has
 	 * its own signal endpoint, so per-ctx isolation of "what got
 	 * signalled" is preserved.
-	 */
+	 *
+	 * The buffer VA is rail-independent and lives here; its per-rail MR
+	 * registration (lkey) lives in rail_shared[r] because each rail has
+	 * its own domain. */
 	void *scratch_buf = nullptr;
-	struct fid_mr *scratch_mr = nullptr;
-	uint32_t scratch_lkey = 0;
 	uint64_t scratch_local_addr = 0;
 
 	/* Contiguous GPU-resident array of device handles, one entry per
@@ -670,21 +722,29 @@ struct nccl_ofi_gin_gdaki_context {
 	 * putvalue_pool_bytes  : VMM-rounded size; pass back to vmm_free
 	 * putvalue_dmabuf_fd   : DMA-BUF fd; close in dtor (-1 = unset)
 	 * putvalue_slot_size   : 8 bytes per slot (T <= 8 bytes)
-	 */
+	 *
+	 * Like scratch, the pool is allocated once; its per-rail MR
+	 * registrations (lkey) live in rail_shared[r]. */
 	void *putvalue_buf = nullptr;
-	struct fid_mr *putvalue_mr = nullptr;
 	int putvalue_dmabuf_fd = -1;
-	uint32_t putvalue_lkey = 0;
 	uint64_t putvalue_local_addr = 0;
 	size_t putvalue_pool_bytes = 0;
 	size_t putvalue_slot_size = NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE;
 
+	/* Per-rail registrations of the two shared buffers above. Indexed
+	 * by rail id; only [0, effective_rails) are populated. Declared
+	 * after scratch_buf / putvalue_buf so the MRs (closed in
+	 * gdaki_rail_shared's dtor) are torn down BEFORE the buffers they
+	 * cover are freed below — C++ destroys members in reverse
+	 * declaration order. */
+	std::array<std::unique_ptr<gdaki_rail_shared>, NCCL_OFI_GDAKI_MAX_RAILS> rail_shared;
 
 	~nccl_ofi_gin_gdaki_context()
 	{
-		if (putvalue_mr) {
-			fi_close(&putvalue_mr->fid);
-			putvalue_mr = nullptr;
+		/* Tear down per-rail MRs first (closes scratch/putvalue MRs on
+		 * each rail) before the shared buffers they cover are freed. */
+		for (auto &rs : rail_shared) {
+			rs.reset();
 		}
 		if (putvalue_dmabuf_fd >= 0) {
 			close(putvalue_dmabuf_fd);
@@ -693,10 +753,6 @@ struct nccl_ofi_gin_gdaki_context {
 		if (putvalue_buf) {
 			nccl_net_ofi_gpu_vmm_free(putvalue_buf, putvalue_pool_bytes);
 			putvalue_buf = nullptr;
-		}
-		if (scratch_mr) {
-			fi_close(&scratch_mr->fid);
-			scratch_mr = nullptr;
 		}
 		if (scratch_buf) {
 			free(scratch_buf);
