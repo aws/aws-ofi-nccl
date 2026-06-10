@@ -183,19 +183,33 @@ int main(int argc, char *argv[])
 		return ncclInternalError;
 	}
 
-	/* regMrSym returns a GPU-resident MR handle (the device-side Put
-	 * kernel dereferences it). Copy each handle to a host staging buffer
-	 * before reading lkey / peers[] on the host — dereferencing the GPU
-	 * pointer directly on the host faults. The handle is a flex-array
-	 * struct: header + peers[nranks]. */
+	/* regMrSym returns a GPU-resident per-rail pointer array:
+	 *   [ mr_handle*[num_rails] ][ mr_handle_rail0 ][ mr_handle_rail1 ] ...
+	 * The kernel indexes it as ((mr_handle**)win)[rail_id].
+	 * For this test we use context 0 → rail_id = 0. Copy just the first
+	 * pointer to get the device address of rail 0's handle, then copy
+	 * that handle to host. */
 	const size_t mr_handle_bytes =
 		sizeof(nccl_ofi_gin_gdaki_mr_handle) +
 		(size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
+
+	/* Step A: copy rail 0's pointer from the pointer-array header */
+	nccl_ofi_gin_gdaki_mr_handle *src_rail0_ptr = nullptr;
+	nccl_ofi_gin_gdaki_mr_handle *dst_rail0_ptr = nullptr;
+	CUDACHECK(cudaMemcpy(&src_rail0_ptr, src_ginhandle,
+			     sizeof(nccl_ofi_gin_gdaki_mr_handle *),
+			     cudaMemcpyDeviceToHost));
+	CUDACHECK(cudaMemcpy(&dst_rail0_ptr, dst_ginhandle,
+			     sizeof(nccl_ofi_gin_gdaki_mr_handle *),
+			     cudaMemcpyDeviceToHost));
+
+	/* Step B: copy rail 0's handle from GPU to host */
 	std::vector<uint8_t> src_mr_host(mr_handle_bytes), dst_mr_host(mr_handle_bytes);
-	CUDACHECK(cudaMemcpy(src_mr_host.data(), src_ginhandle, mr_handle_bytes,
-			     cudaMemcpyDeviceToHost));
-	CUDACHECK(cudaMemcpy(dst_mr_host.data(), dst_ginhandle, mr_handle_bytes,
-			     cudaMemcpyDeviceToHost));
+	CUDACHECK(cudaMemcpy(src_mr_host.data(), src_rail0_ptr,
+			     mr_handle_bytes, cudaMemcpyDeviceToHost));
+	CUDACHECK(cudaMemcpy(dst_mr_host.data(), dst_rail0_ptr,
+			     mr_handle_bytes, cudaMemcpyDeviceToHost));
+
 	auto *src_gin_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(src_mr_host.data());
 	auto *dst_gin_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(dst_mr_host.data());
 	uint32_t src_lkey = src_gin_mr->lkey;
