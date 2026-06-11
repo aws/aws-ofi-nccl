@@ -261,6 +261,28 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
+/* When NCCL_OFI_TRACE_GIN_SIGNAL_END_MARK_ONLY is 1, signal delivery uses a
+ * lightweight mark at END instead of a start/end range pair. This avoids an
+ * Nsight Systems limitation where nvtxDomainRangeStartEx / nvtxDomainRangeEnd
+ * across different threads causes ~60% of ranges to appear unclosed.
+ * Set to 0 to restore the range-based version (e.g., when the threading model
+ * ensures same-thread BEGIN/END). */
+#define NCCL_OFI_TRACE_GIN_SIGNAL_END_MARK_ONLY (1)
+
+#if NCCL_OFI_TRACE_GIN_SIGNAL_END_MARK_ONLY
+
+#define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN_NVTX(comm, rank, msg_seq_num, request) do { \
+} while(0)
+
+#define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END_NVTX(comm, msg_seq_num, request) do { \
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
+		nvtxDomainHandle_t handle = ((nccl_ofi_rdma_gin_put_comm *)(comm))->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_mark_domain(handle, "gin_signal_delivery_end", 0x9932CC); \
+	} \
+} while(0)
+
+#else /* Range-based version */
+
 #define NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN_NVTX(comm, rank, msg_seq_num, request) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
 		nvtxDomainHandle_t handle = (comm)->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
@@ -274,6 +296,8 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 		nvtx_end_domain(handle, (request)->trace_id); \
 	} \
 } while(0)
+
+#endif /* NCCL_OFI_TRACE_GIN_SIGNAL_END_MARK_ONLY */
 
 #define NCCL_OFI_TRACE_GIN_ACK_RECV_NVTX(comm, rail_id, rank, msg_seq_num) do { \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
