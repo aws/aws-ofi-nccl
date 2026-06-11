@@ -6717,14 +6717,19 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 		if (OFI_UNLIKELY(s_comm == nullptr)) {
 			return -ENOMEM;
 		}
-		comm_state->comm = s_comm;
 
 		nccl_ofi_rdma_connection_info_t conn_msg;
 
 		this->prepare_send_connect_message(s_comm->local_comm_id, s_comm->ctrl_mailbox, s_comm->ctrl_mr_handle, &conn_msg);
 
 		/* Create connector */
-		s_comm->connector = this->cm->connect(*handle, &conn_msg, sizeof(conn_msg));
+		try {
+			s_comm->connector = this->cm->connect(*handle, &conn_msg, sizeof(conn_msg));
+		} catch (const std::exception &e) {
+			NCCL_OFI_WARN("CM connect failed: %s", e.what());
+			goto error;
+		}
+		comm_state->comm = s_comm;
 	}
 
 	/* Progress our engine to get completions */
