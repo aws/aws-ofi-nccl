@@ -1613,20 +1613,7 @@ int nccl_net_ofi_rdma_context::handle_error_entry(struct fid_cq *cq,
 						  struct fi_cq_err_entry *err_entry,
 						  uint16_t rail_id)
 {
-	int ret = 0;
 	nccl_net_ofi_rdma_req *req = NULL;
-
-	if (err_entry->err == FI_ECANCELED) {
-		/* Closing an EP with posted receives will (erroneously) generate
-		   cancellation events for the posted receives with the EFA provider
-		   in Libfabric versions prior to 1.22. These events are harmless
-		   and can be ignored.
-
-		   With Libfabric 1.22 and later, we shouldn't get these cancel
-		   events at all. The plugin does not explicitly call fi_cancel. */
-		ret = -(err_entry->err);
-		goto exit;
-	}
 
 	req = this->get_req(rail_id);
 	assert(req);
@@ -1653,9 +1640,7 @@ int nccl_net_ofi_rdma_context::handle_error_entry(struct fid_cq *cq,
 	 * how to deal with these, so it is safe to pass up the err as-is.
 	 * However, any special-handling for prov_errno should be handled here.
 	 */
-	ret = -(err_entry->err);
-exit:
-	return ret;
+	return -(err_entry->err);
 }
 
 
@@ -1822,14 +1807,7 @@ static inline int rdma_process_error_entry(struct fi_cq_err_entry *err_entry, st
 	nccl_net_ofi_context *ctx = cpp_container_of(op_ctx,
 						     &nccl_net_ofi_context::ofi_ctx);
 
-	int ret = ctx->handle_error_entry(cq, err_entry, rail_id);
-	if (ret == -FI_ECANCELED) {
-		/* Non-fatal cancellation event -- see comment in
-		   nccl_net_ofi_rdma_context::handle_error_entry. Ignore. */
-		return 0;
-	} else {
-		return ret;
-	}
+	return ctx->handle_error_entry(cq, err_entry, rail_id);
 }
 
 
