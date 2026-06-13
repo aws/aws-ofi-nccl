@@ -38,6 +38,11 @@ extern "C" {
 #define NCCL_OFI_GDAKI_RQ_INITIAL_PHASE 1
 #define NCCL_OFI_GDAKI_CQ_INITIAL_PHASE 1
 
+/* Per-slot stride (bytes) of the PutValue source pool. PutValue's T
+ * is asserted by the kernel template to be <= 8 bytes; using 8 lets
+ * any T fit in one slot regardless of alignment. */
+#define NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE 8
+
 /**
  * Per-peer MR metadata used by EFA GDA WQE construction.
  *
@@ -199,6 +204,19 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	 * kernel spins until (submitted_count - *local_cntr_value + batch_size)
 	 * <= sq_size before reserving slots. */
 	uint32_t sq_size;
+
+	uint32_t putvalue_pad;
+
+	/* Base address of this endpoint's slice of the shared PutValue source
+	 * slot pool. The pool itself is one contiguous GPU-VMM region
+	 * registered as a single FI_HMEM_CUDA / FI_MR_DMABUF MR (see
+	 * dev_handle->putvalue_lkey). Slice size is implied by sq_size; per-call
+	 * slot byte offset is
+	 *     (submitted_count % sq_size) * dev_handle->putvalue_slot_size.
+	 * Set by setup_putvalue_pool; valid for the lifetime of the context.
+	 * Zero on endpoints that don't host PutValue traffic, but every
+	 * endpoint participating in the slot pool gets a unique non-zero base. */
+	uint64_t putvalue_slice_base;
 };
 
 /**
@@ -291,6 +309,42 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 
 	/* Per-peer remote scratch rkeys, indexed by rank. [nranks] in GPU mem. */
 	uint32_t *scratch_remote_rkeys;
+
+	/* PutValue source slot pool, shared across the data endpoint and
+	 * every signal/counter (sc) endpoint.
+	 *
+	 * EFA's RDMA_WRITE WQE cannot use inline data (efa-dp-direct's
+	 * wr_set_inline_data only supports SEND opcode), so PutValue stages
+	 * srcVal through a registered local slot, then posts an RDMA_WRITE
+	 * from the slot to the user's destination. The same WQE arrival on
+	 * the receiver's chosen sc_endpoint bumps that endpoint's
+	 * FI_REMOTE_WRITE counter — i.e. value-and-signal in one WQE.
+	 *
+	 * Routing mirrors Put:
+	 *   signal != NONE  -> sc_endpoints[signalId]
+	 *   signal == NONE  -> data endpoint
+	 *
+	 * Each participating endpoint owns a slice of the pool; the slice
+	 * base lives on its dev_endpoint_handle (see putvalue_slice_base
+	 * above). The pool is one contiguous GPU-VMM region registered as
+	 * a single FI_HMEM_CUDA / FI_MR_DMABUF MR, so a single lkey covers
+	 * every slice. Slot stride is uniform
+	 * (== NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE — the maximum sizeof(T)
+	 * PutValue accepts). Per-endpoint slot reuse uses each endpoint's
+	 * existing (submitted_count - *local_cntr_value) backpressure;
+	 * slot index inside a slice is (ep.submitted_count % ep.sq_size).
+	 *
+	 * That backpressure does double duty for PutValue. For Put it only
+	 * bounds SQ-ring capacity, but PutValue additionally relies on it
+	 * for source-slot lifetime: an RDMA_WRITE's source SGE is DMA-read
+	 * by the NIC before the WR completes, and *local_cntr_value (the
+	 * FI_WRITE counter) ticks on completion. So gating reuse of slot N
+	 * on completion of the WR sq_size posts earlier transitively
+	 * guarantees the NIC has already consumed that slot's prior value
+	 * before we overwrite it — no separate source-buffer fence needed.
+	 */
+	uint32_t putvalue_lkey;
+	uint32_t putvalue_slot_size;
 };
 
 #ifdef __cplusplus

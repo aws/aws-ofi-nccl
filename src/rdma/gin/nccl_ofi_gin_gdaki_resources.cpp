@@ -366,3 +366,17 @@ void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 	signal_dev_handle.commit();
 }
 
+void gdaki_sc_endpoint::set_putvalue_slice_base(uint64_t slice_base)
+{
+	/* Both counter_dev_handle and signal_dev_handle alias the same QP /
+	 * sq_lock / sq_size / submitted_count layout — only their cntr_value
+	 * differs. Either may be selected by the kernel (counter_handles[]
+	 * for Counter ops, signal_handles[] for Signal ops). PutValue uses
+	 * signal_handles[] when a signal is requested; we write both for
+	 * consistency so a future Counter-only PutValue path would also
+	 * find a valid slice. */
+	counter_dev_handle.host[0].base.putvalue_slice_base = slice_base;
+	signal_dev_handle.host[0].base.putvalue_slice_base = slice_base;
+	counter_dev_handle.commit();
+	signal_dev_handle.commit();
+}

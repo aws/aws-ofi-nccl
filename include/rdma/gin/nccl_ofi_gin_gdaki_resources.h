@@ -470,6 +470,19 @@ public:
 	void populate(struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &peer_addrs,
 		      size_t ep_addr_len, int nranks);
+
+	/**
+	 * Stash the PutValue slot pool slice base for this endpoint.
+	 * Read by populate_dev_handle() when filling
+	 * dev_handle.data.putvalue_slice_base. No commit here — the data
+	 * endpoint is uploaded as part of the top-level dev_handle.commit()
+	 * at the end of createContext.
+	 */
+	void set_putvalue_slice_base(uint64_t slice_base) { putvalue_slice_base = slice_base; }
+
+	/* Host stash for the slice base; uploaded to GPU memory by
+	 * populate_dev_handle(). */
+	uint64_t putvalue_slice_base = 0;
 };
 
 /**
@@ -519,6 +532,15 @@ public:
 	void populate(struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &peer_addrs,
 		      size_t ep_addr_len, int nranks);
+
+	/**
+	 * Set the PutValue slot pool slice base on both
+	 * counter_dev_handle and signal_dev_handle (they alias the same
+	 * QP / sq_size / etc., and either may be selected by the kernel).
+	 * Re-commits both handles since populate() already uploaded their
+	 * initial host state.
+	 */
+	void set_putvalue_slice_base(uint64_t slice_base);
 };
 
 /**
@@ -532,35 +554,50 @@ public:
  */
 struct nccl_ofi_gin_gdaki_context {
 	/* Set first (stateless). */
+	int nContexts = 0;
 	int nranks = 0;
 	int rank = 0;
-
-	/* Data (main) endpoint: libfabric EP on the reused proxy domain plus
-	 * its GPU-side SQ buffer/doorbell mappings, GPU-resident QP/CQ
-	 * descriptors, per-peer addressing, and a FI_WRITE hardware counter
-	 * for completion tracking. The kernel polls the counter rather than
-	 * the CQ for data-EP Flush. */
-	gdaki_data_endpoint data;
-
-	/* Signal/counter endpoints. Empty when nSignals == 0 && nCounters == 0. */
 	int nSignals = 0;
 	int nCounters = 0;
-	std::vector<std::unique_ptr<gdaki_sc_endpoint>> sc_endpoints;
 
-	/* GPU-resident arrays of device handle pointers for counter/signal. */
-	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> d_counter_handles;
-	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> d_signal_handles;
+	/* Per-ctx data (main) endpoint: libfabric EP on the reused proxy
+	 * domain plus its GPU-side SQ buffer/doorbell mappings, GPU-
+	 * resident QP/CQ descriptors, per-peer addressing, and a
+	 * FI_WRITE hardware counter for completion tracking. One per
+	 * logical context. unique_ptr because gdaki_data_endpoint owns
+	 * non-movable members (libfabric/CUDA handles). */
+	std::vector<std::unique_ptr<gdaki_data_endpoint>> data;                            /* [nContexts]      */
 
-	/* Signal-only scratch buffer.
+	/* Per-ctx signal/counter endpoints. data[c]'s sibling: each
+	 * logical ctx c owns max(nSignals, nCounters) sc endpoints,
+	 * accessed as sc_endpoints[c][i]. */
+	std::vector<std::vector<std::unique_ptr<gdaki_sc_endpoint>>> sc_endpoints;        /* [nContexts][n_sc]*/
+
+	/* Per-ctx GPU-resident pointer arrays for the kernel's
+	 * dev->counter_handles[] and dev->signal_handles[]. unique_ptr
+	 * for the same reason as `data` — gdaki_gpu_buf<T> is
+	 * non-movable. */
+	std::vector<std::unique_ptr<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>> d_counter_handles; /* [nContexts] */
+	std::vector<std::unique_ptr<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>> d_signal_handles;  /* [nContexts] */
+
+	/* Shared signal-only scratch buffer.
 	 *
 	 * `net.signal(team, peer, ...)` (the path used by ncclBarrierSession)
-	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA needs
-	 * a real remote address to bump the receiver's FI_REMOTE_WRITE counter,
-	 * so we register a small per-rank buffer on the proxy domain and
-	 * allgather the (addr, rkey) pair across all ranks. The GPU kernel
-	 * issues a 4-byte RDMA write to the peer's scratch on the signal
-	 * endpoint when it needs a signal-only delivery. Cleanup is automatic:
-	 * fi_close on the MR before free of the host buffer.
+	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA
+	 * requires a registered remote address to bump the receiver's
+	 * FI_REMOTE_WRITE counter even for a 0-byte write, so we allocate
+	 * a small buffer per rank and allgather (addr, rkey) across the
+	 * team.
+	 *
+	 * One scratch buffer is shared by all nContexts on this rank,
+	 * because:
+	 *   - 0-byte RDMA writes never read or write buffer contents —
+	 *     only the per-EP FI_REMOTE_WRITE counter ticks on the
+	 *     receiver. The buffer is purely a registered destination
+	 *     address.
+	 *   - Each ctx has its own signal endpoint (with its own
+	 *     counter), so per-ctx isolation of "what got signalled" is
+	 *     preserved even though the destination address is shared.
 	 */
 	void *scratch_buf = nullptr;
 	struct fid_mr *scratch_mr = nullptr;
@@ -569,8 +606,56 @@ struct nccl_ofi_gin_gdaki_context {
 	gdaki_gpu_buf<uint64_t> scratch_remote_addrs_buf;
 	gdaki_gpu_buf<uint32_t> scratch_remote_rkeys_buf;
 
+	/* Contiguous GPU-resident array of device handles, one entry per
+	 * logical context. The kernel reads
+	 *   &((nccl_ofi_gin_gdaki_dev_handle*)ctx.handle)[ctx.contextId]
+	 * to pick its entry. Populated last, after every per-ctx
+	 * endpoint is built, then committed once. */
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handles;
+
+	/* PutValue source slot pool, shared across every logical context's
+	 * data endpoint and signal/counter endpoints.
+	 *
+	 * The pool lives in GPU memory allocated via the CUDA VMM API
+	 * (so DMA-BUF export is supported), registered with libfabric as
+	 * FI_HMEM_CUDA / FI_MR_DMABUF. The kernel writes srcVal to the
+	 * staging slot; the NIC DMAs it from GPU HBM directly.
+	 *
+	 * No dedicated PutValue endpoint: the WQE rides on whichever
+	 * endpoint matches the caller's signal request (data endpoint when
+	 * signal == NONE, sc_endpoints[signalId] otherwise). The pool is
+	 * sliced per endpoint, sized to the sum over every context of each
+	 * participating endpoint's sq_size; per-endpoint slice descriptors
+	 * are uploaded to the device via dev_handle->putvalue_slice_base.
+	 *
+	 * putvalue_buf         : GPU pointer (== putvalue_local_addr)
+	 * putvalue_pool_bytes  : VMM-rounded size; pass back to vmm_free
+	 * putvalue_dmabuf_fd   : DMA-BUF fd; close in dtor (-1 = unset)
+	 * putvalue_slot_size   : 8 bytes per slot (T <= 8 bytes)
+	 */
+	void *putvalue_buf = nullptr;
+	struct fid_mr *putvalue_mr = nullptr;
+	int putvalue_dmabuf_fd = -1;
+	uint32_t putvalue_lkey = 0;
+	uint64_t putvalue_local_addr = 0;
+	size_t putvalue_pool_bytes = 0;
+	size_t putvalue_slot_size = NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE;
+
+
 	~nccl_ofi_gin_gdaki_context()
 	{
+		if (putvalue_mr) {
+			fi_close(&putvalue_mr->fid);
+			putvalue_mr = nullptr;
+		}
+		if (putvalue_dmabuf_fd >= 0) {
+			close(putvalue_dmabuf_fd);
+			putvalue_dmabuf_fd = -1;
+		}
+		if (putvalue_buf) {
+			nccl_net_ofi_gpu_vmm_free(putvalue_buf, putvalue_pool_bytes);
+			putvalue_buf = nullptr;
+		}
 		if (scratch_mr) {
 			fi_close(&scratch_mr->fid);
 			scratch_mr = nullptr;
@@ -580,10 +665,6 @@ struct nccl_ofi_gin_gdaki_context {
 			scratch_buf = nullptr;
 		}
 	}
-
-	/* GPU-resident device handle. Populated last; points into the
-	 * GPU buffers owned by the members above. */
-	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handle;
 };
 
 #endif /* NCCL_OFI_GIN_GDAKI_RESOURCES_H_ */
