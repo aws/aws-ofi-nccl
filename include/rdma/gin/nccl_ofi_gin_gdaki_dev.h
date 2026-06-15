@@ -103,6 +103,7 @@ struct nccl_ofi_gin_gdaki_wq {
 	int phase;
 	uint8_t *buf;
 	uint32_t *db;
+	uint32_t db_pending;   /* mirror of efa_cuda_wq.db_pending */
 };
 
 /**
