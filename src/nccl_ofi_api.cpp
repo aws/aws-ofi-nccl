@@ -10,6 +10,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
+#include "stats/histogram.h"
 
 
 static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE,
@@ -95,6 +96,7 @@ ncclResult_t nccl_net_ofi_fini()
 		NCCL_OFI_WARN("Finalizing already finalized plugin");
 		ret = check_return(ncclSystemError);
 	} else {
+		print_all_histograms();
 		delete plugin;
 		plugin = NULL;
 	}

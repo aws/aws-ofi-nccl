@@ -57,7 +57,12 @@ noinst_HEADERS = \
 	platform-aws.h \
 	internal/tuner/nccl_defaults.h \
 	stats/histogram.h \
+	stats/histogram_impl.h \
 	stats/histogram_binner.h \
+	stats/histogram_bin.h \
+	stats/histogram_def.h \
+	stats/histogram_formatter.h \
+	stats/histogram_formatter_impl.h \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
 	tuner/nccl_ofi_tuner_common.h \
