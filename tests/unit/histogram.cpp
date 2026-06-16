@@ -17,119 +17,89 @@
 		exit(1);				      \
 	}
 
-// wrapper around histogram to get access to the results to verify
-template <typename T, class Binner>
-class test_histogram : public histogram<T, Binner> {
-public:
-	test_histogram(const std::string& description_arg, Binner binner_arg) :
-		histogram<T, Binner>(description_arg, binner_arg)
-	{
-	}
-
-	const std::vector<std::size_t> & get_results(void)
-	{
-		return this->bins;
-	}
-};
-
 
 static void check_histogram(void)
 {
-	using Binner = histogram_linear_binner<int>;
+	OFI_DECLARE_DATA_HISTOGRAM_EX(test_data_histogram,
+		OFI_LINEAR_BIN_GENERATOR(2, 5, 0), "", 1);
 
-	test_histogram<int, Binner> histogram("testing!",
-						   Binner(0, 2, 5));;
+	for (uint64_t i = 0; i <= 10; ++i) {
+		OFI_HISTOGRAM_ADD_SAMPLE(test_data_histogram, i);
+	}
+	OFI_HISTOGRAM_ADD_SAMPLE(test_data_histogram, 0);
 
-	histogram.insert(0);
-	histogram.insert(1);
-	histogram.insert(2);
-	histogram.insert(3);
-	histogram.insert(4);
-	histogram.insert(5);
-	histogram.insert(6);
-	histogram.insert(7);
-	histogram.insert(8);
-	histogram.insert(9);
-	histogram.insert(10);
-	histogram.insert(0);
+	auto h = OFI_HISTOGRAM_REF(test_data_histogram);
+	CHECK_AND_EXIT(h->getBinCount() == 5);
+	CHECK_AND_EXIT(h->getBinAt(0).getCount() == 3);
+	CHECK_AND_EXIT(h->getBinAt(1).getCount() == 2);
+	CHECK_AND_EXIT(h->getBinAt(2).getCount() == 2);
+	CHECK_AND_EXIT(h->getBinAt(3).getCount() == 2);
+	CHECK_AND_EXIT(h->getBinAt(4).getCount() == 3);
 
-	auto results = histogram.get_results();
-	CHECK_AND_EXIT(results.size() == 5);
-	CHECK_AND_EXIT(results[0] == 3);
-	CHECK_AND_EXIT(results[1] == 2);
-	CHECK_AND_EXIT(results[2] == 2);
-	CHECK_AND_EXIT(results[3] == 2);
-	CHECK_AND_EXIT(results[4] == 3);
+	h->print(PrintFormat::PF_TABLE);
 
-	histogram.print_stats();
+	// no need to dispose of histogram, it will be deleted during app tear down
 }
 
-
-class test_clock {
+class TestClock {
 public:
-	using rep = std::size_t;
-	using period = std::nano;
-	using duration = std::chrono::duration<rep, period>;
-	using time_point = std::chrono::time_point<test_clock>;
-	static constexpr bool is_steady = true;
-
-	static time_point now() noexcept
+	static uint64_t getSysTimeNS()
 	{
-		return time_point(duration(std::chrono::nanoseconds(clock)));
+		return sClockValue;
 	}
 
-	static void advance_time(rep inc_val)
+	static void advanceClock(uint64_t value)
 	{
-		clock += inc_val;
+		sClockValue = value;
 	}
 
 private:
-	static rep clock;
+	static uint64_t sClockValue;
 };
-test_clock::rep test_clock::clock = 0;
+
+uint64_t TestClock::sClockValue = 0;
 
 
 static void check_timer_histogram(void)
 {
-	using test_histogram = timer_histogram<histogram_linear_binner<std::size_t>,
-						test_clock>;
-	using Binner = histogram_linear_binner<test_histogram::rep>;
+	OFI_DECLARE_LATENCY_HISTOGRAM_EX(test_latency_histogram,
+		OFI_LINEAR_BIN_GENERATOR(10, 5, 0), TestClock, "ns", 1);
 
-	test_histogram::rep time;
+	// NOTE: we are testing that the histogram actually stores the time diff (rather than testing 
+	// different clock time representation, as everything is in nanoseconds now)
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(1);
+	uint64_t timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 1);
 
-	test_histogram timer_histogram("timers!", Binner(0, 10, 5));
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(1000);
+	timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 1000);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(1);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 0);
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(5000);
+	timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 5000);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(1000);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 1);
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(10000);
+	timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 10000);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(5000);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 5);
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(15000);
+	timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 15000);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(10000);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 10);
+	OFI_HISTORGRAM_START(test_latency_histogram);
+	TestClock::advanceClock(100000);
+	timePassedNanos = OFI_HISTOGRAM_REF(test_latency_histogram)->addSampleEnd();
+	CHECK_AND_EXIT(timePassedNanos == 100000);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(15000);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 15);
+	OFI_HISTOGRAM_REF(test_latency_histogram)->print(PrintFormat::PF_JSON);
 
-	timer_histogram.start_timer();
-	test_clock::advance_time(100000);
-	time = timer_histogram.stop_timer();
-	CHECK_AND_EXIT(time == 100);
-
-	timer_histogram.print_stats();
+	// no need to dispose of histogram, it will be deleted during app tear down
 }
 
 

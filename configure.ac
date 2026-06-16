@@ -150,6 +150,7 @@ AS_IF([test "${have_device_interface}" = "no"],
 
 CHECK_PKG_LTTNG()
 CHECK_PKG_NVTX()
+CHECK_ENABLE_HISTOGRAM()
 
 do_cuda=0
 do_rocm=0

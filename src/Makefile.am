@@ -74,6 +74,12 @@ if WANT_PLATFORM_AWS
 endif
 endif
 
+# histogram sources
+if ENABLE_HISTOGRAM
+  sources += \
+    stats/histogram.cpp
+endif
+
 # Build an internal-only library that can be used by unit tests as
 # well as the actual nccl_net.so / nccom_net.so libraries.  This saves
 # us writing dlopen() handlers for simple unit tests.

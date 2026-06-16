@@ -70,3 +70,8 @@ noinst_HEADERS += \
 	rdma/gin/nccl_ofi_gin_gdaki_dev.h \
 	rdma/gin/nccl_ofi_gin_gdaki_resources.h
 endif
+
+if ENABLE_HISTOGRAM
+noinst_HEADERS += \
+	stats/histogram.h
+endif
