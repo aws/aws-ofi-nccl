@@ -17,6 +17,8 @@
 		exit(1);				      \
 	}
 
+
+
 // wrapper around histogram to get access to the results to verify
 template <typename T, class Binner>
 class test_histogram : public histogram<T, Binner> {
@@ -26,7 +28,7 @@ public:
 	{
 	}
 
-	const std::vector<std::size_t> & get_results(void)
+	const std::vector<bin<T>> & get_results(void)
 	{
 		return this->bins;
 	}
@@ -35,6 +37,9 @@ public:
 
 static void check_histogram(void)
 {
+	// NOTE: this is required for testing in case --enable-histogram was not specified in build
+	enable_histograms(true);
+
 	using Binner = histogram_linear_binner<int>;
 
 	test_histogram<int, Binner> histogram("testing!",
@@ -55,11 +60,11 @@ static void check_histogram(void)
 
 	auto results = histogram.get_results();
 	CHECK_AND_EXIT(results.size() == 5);
-	CHECK_AND_EXIT(results[0] == 3);
-	CHECK_AND_EXIT(results[1] == 2);
-	CHECK_AND_EXIT(results[2] == 2);
-	CHECK_AND_EXIT(results[3] == 2);
-	CHECK_AND_EXIT(results[4] == 3);
+	CHECK_AND_EXIT(results[0].get_sample_count() == 3);
+	CHECK_AND_EXIT(results[1].get_sample_count() == 2);
+	CHECK_AND_EXIT(results[2].get_sample_count() == 2);
+	CHECK_AND_EXIT(results[3].get_sample_count() == 2);
+	CHECK_AND_EXIT(results[4].get_sample_count() == 3);
 
 	histogram.print_stats();
 }
