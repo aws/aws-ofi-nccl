@@ -348,6 +348,18 @@ AS_IF([test "${enable_gdaki}" = "yes"],
              [AC_MSG_ERROR([--enable-gdaki requires CUDA support.])])
        AS_IF([test "${have_fi_efa_comp_cntr}" != "1"],
              [AC_MSG_ERROR([--enable-gdaki requires libfabric with the fi_efa_ops_gda hardware-counter ABI (libfabric >= 2.5.0).])])
+       dnl The GDAKI GPU functional tests build against the EFA device-side
+       dnl (CUDA) datapath headers from the amzn/efa-dp-direct submodule. That
+       dnl submodule is the ONLY consumer of efa-dp-direct, so it is not
+       dnl required for a non-GDAKI build and is not bundled in the release
+       dnl tarball. When GDAKI tests will actually be built (func tests on and
+       dnl nvcc present), require the submodule to be checked out and tell the
+       dnl developer how to get it; we deliberately do NOT fetch it ourselves.
+       AS_IF([test "${build_func_tests}" = "yes" -a "${check_nvcc_found}" = "yes" \
+              -a ! -f "${srcdir}/3rd-party/efa-dp-direct/CUDA/src/efa_cuda_dp.cuh"],
+             [AC_MSG_ERROR([--enable-gdaki builds the GDAKI GPU functional tests, which require the
+efa-dp-direct submodule, but 3rd-party/efa-dp-direct is not checked out.
+Run: git submodule update --init 3rd-party/efa-dp-direct])])
        have_gdaki=1],
       [have_gdaki=0])
 AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
