@@ -335,6 +335,7 @@ protected:
 	std::vector<ThreadContext> thread_contexts;
 	std::vector<pthread_t> threads;
 	size_t iterations;
+	int local_rank = 0;
 
 };
 
