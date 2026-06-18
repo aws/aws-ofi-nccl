@@ -4,6 +4,7 @@ nccl_message_transfer
 reuse_listen_comm
 ring
 gin
+gin_duplicate_mr
 grouped_recv
 gin_gdaki_misconfig_probe
 eager_multirecv

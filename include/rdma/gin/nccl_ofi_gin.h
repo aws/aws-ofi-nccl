@@ -490,7 +490,11 @@ private:
 
 	   TODO: we could also just pass this in the handle to avoid a map
 	   lookup. Not sure yet if that is the right thing to do. */
-	std::unordered_map<void *, nccl_ofi_rdma_gin_symm_mr_handle *> mr_handle_map;
+	struct nccl_ofi_rdma_gin_mr_map_entry {
+		nccl_ofi_rdma_gin_symm_mr_handle *handle;
+		int refcnt;
+	};
+	std::unordered_map<void *, nccl_ofi_rdma_gin_mr_map_entry> mr_handle_map;
 
 	/* --- TIER 5: setup / teardown only --- */
 	uint32_t local_comm_id;
