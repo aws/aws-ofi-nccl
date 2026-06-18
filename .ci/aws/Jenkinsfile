@@ -63,7 +63,8 @@ def download_all_testing_packages() {
         ['elastic-collectives-nightly-tests', '/tmp/ElasticCollectivesNightlyTests'],
         ['samwise-test-runner', '/tmp/SamwiseTestRunner'],
         ['samwise-test-schema', '/tmp/SamwiseTestSchema'],
-        ['nccl-latency-tests', '/tmp/NcclLatencyTests']
+        ['nccl-latency-tests', '/tmp/NcclLatencyTests'],
+        ['deepep-efa-setup-script', '/tmp/DeepEPEFASetupScript']
     ]
     packages.each { pkg ->
         download_testing_package(pkg[0], pkg[1])
