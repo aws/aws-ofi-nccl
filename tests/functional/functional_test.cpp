@@ -783,6 +783,13 @@ ncclResult_t TestScenario::execute()
 	// Clear any stale contexts from previous test runs
 	thread_contexts.clear();
 
+	// Determine local_rank for CUDA device selection
+	MPI_Comm local_comm;
+	MPI_Comm_split_type(MPI_COMM_WORLD, MPI_COMM_TYPE_SHARED, 0,
+			    MPI_INFO_NULL, &local_comm);
+	MPI_Comm_rank(local_comm, &local_rank);
+	MPI_Comm_free(&local_comm);
+
 	// Single-threaded: create context and execute on main thread
 	if (threads.size() == 0) {
 		thread_contexts.emplace_back(0, ext_net, net_ctx, this, MPI_COMM_WORLD);
@@ -847,7 +854,7 @@ void *TestScenario::thread_function(void *arg)
 
 	// Initialize CUDA context for this thread
 	try {
-		CUDACHECKTHROW(cudaSetDevice(0));
+		CUDACHECKTHROW(cudaSetDevice(scenario->local_rank));
 		CUDACHECKTHROW(cudaFree(nullptr));
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Thread %zu CUDA init failed: %s",
@@ -938,6 +945,10 @@ ncclResult_t TestSuite::setup()
 	if (size != expected_num_ranks) {
 		throw std::runtime_error("Invalid rank count");
 	}
+	// Initialize CUDA context before initializing plugin which will
+	// make driver calls. Use local_rank to match NCCL's per-GPU mapping.
+	CUDACHECKTHROW(cudaSetDevice(local_rank));
+	CUDACHECKTHROW(cudaFree(nullptr));
 	return ncclSuccess;
 }
 
