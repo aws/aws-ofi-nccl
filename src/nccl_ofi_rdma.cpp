@@ -32,6 +32,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_memcheck.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_platform.h"
 #include "nccl_ofi_pthread.h"
 #include "nccl_ofi_dmabuf.h"
 #include "nccl_ofi_mr.h"
@@ -1618,11 +1619,8 @@ int nccl_net_ofi_rdma_context::handle_error_entry(struct fid_cq *cq,
 	req = this->get_req(rail_id);
 	assert(req);
 
-	NCCL_OFI_WARN("Request %p seq %d completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
-		      req, req->msg_seq_num, err_entry->err,
-		      err_entry->flags, err_entry->prov_errno,
-		      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
-		      (long)err_entry->len, nccl_net_ofi_req_str(req));
+	PlatformManager::get_global().get_platform().log_cq_error(req, cq, err_entry,
+								  nccl_net_ofi_req_str(req));
 
 	if ((req->type == NCCL_OFI_RDMA_CTRL_RX_BUFF) ||
 		(req->type == NCCL_OFI_RDMA_EAGER_RX_BUFF)) {

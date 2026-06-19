@@ -6,6 +6,7 @@
 #include <stdexcept>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_platform.h"
 
 #include "cm/nccl_ofi_cm_reqs.h"
 #include "cm/nccl_ofi_cm.h"
@@ -39,12 +40,7 @@ int nccl_net_ofi_cm_context::handle_error_entry(struct fid_cq *cq,
 	}
 
 	nccl_ofi_cm_req *req = cpp_container_of(this, &nccl_ofi_cm_req::ctx);
-
-	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld",
-		req, err_entry->err,
-		err_entry->flags, err_entry->prov_errno,
-		fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
-		(long)err_entry->len);
+	PlatformManager::get_global().get_platform().log_cq_error(req, cq, err_entry, "cm");
 
 	/*
 	 * Libfabric error codes directly map to ISO C errno values for standard

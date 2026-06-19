@@ -9,6 +9,7 @@
 #include <map>
 
 #include <rdma/fabric.h>
+#include <rdma/fi_eq.h>
 #include <rdma/fi_endpoint.h>
 
 #include "nccl_ofi_param.h"
@@ -105,6 +106,27 @@ public:
 	 * @param	device	Network device to set GUID for
 	 */
 	virtual uint64_t device_get_guid(struct fi_info *info, int dev_id) = 0;
+
+	/**
+	 * @brief	Platform-specific hook to print a custom CQ error warning
+	 *
+	 *              Translate Libfabric error to a warn-level log print.
+	 *              The base class prints the simple translation code, but
+	 *              some NICs have custom error messages (such as EFA's
+	 *              Security Group-related errors.
+	 *
+	 * @param	cq		Completion queue that reported the error
+	 * @param	err_entry	Error entry from the completion queue
+	 */
+	virtual void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+				  const char *req_type)
+	{
+		NCCL_OFI_WARN("Request %p (%s) completed with error: err: %d, flags: %ld, prov_errno: %d, strerror: %s, len: %ld",
+			      req_p, req_type,
+			      err_entry->err, err_entry->flags, err_entry->prov_errno,
+			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
+			      (long)err_entry->len);
+	}
 };
 
 using PlatformPtr = std::unique_ptr<Platform>;

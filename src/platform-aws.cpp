@@ -958,6 +958,31 @@ uint64_t PlatformAWS::device_get_guid(struct fi_info *info, int dev_id)
 	return guid;
 }
 
+
+void PlatformAWS::log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			       const char *req_type)
+{
+	if (err_entry->err == FI_EHOSTUNREACH) {
+		// FI_EHOSTUNREACH is only returned by EFA if packets are
+		// dropped due to security groups.  It would be better if there
+		// was a prov_errno that was more explicit, but the current
+		// prov_errno is not a constant exposed by the efa provider
+		NCCL_OFI_WARN("Request %p (%s) completed with error: err: %d, flags: %ld, prov_errno: %d, strerror: %s, len: %ld\n\n"
+			      "**********************************************************************\n"
+			      "* This error indicates that the security group on either this instance or the peer instance\n"
+			      "* is not setup correctly.  For more information, please see the AWS documentation at\n"
+			      "* https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-start-nccl.html#nccl-start-base-setup\n"
+			      "**********************************************************************",
+			      req_p, req_type,
+			      err_entry->err, err_entry->flags, err_entry->prov_errno,
+			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
+			      (long)err_entry->len);
+
+	} else {
+		Platform::log_cq_error(req_p, cq, err_entry, req_type);
+	}
+}
+
 /*
  * On P5/P5e, there are up to 32 EFA devices.  Each pair of EFA
  * devices shares some Nitro card resources, and there is a marginal

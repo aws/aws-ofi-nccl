@@ -30,6 +30,7 @@
 #include "nccl_ofi_sendrecv.h"
 #include "nccl_ofi_freelist.h"
 #include "nccl_ofi_ofiutils.h"
+#include "nccl_ofi_platform.h"
 #include "nccl_ofi_tracepoint.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_pthread.h"
@@ -212,16 +213,8 @@ int nccl_net_ofi_sendrecv_context::handle_error_entry(struct fid_cq *cq,
 	(void)rail_id;
 	nccl_net_ofi_sendrecv_req *req = cpp_container_of(this, &nccl_net_ofi_sendrecv_req::ctx);
 
-	NCCL_OFI_WARN("Request %p completed with error. RC: %d. Flags: %ld. Error: %d (%s). Completed length: %ld, Request: %s",
-		      req,
-		      err_entry->err,
-		      err_entry->flags,
-		      err_entry->prov_errno,
-		      fi_cq_strerror(cq,
-				     err_entry->prov_errno,
-				     err_entry->err_data, NULL, 0),
-		      (long)err_entry->len,
-		      nccl_net_ofi_req_str(req));
+	PlatformManager::get_global().get_platform().log_cq_error(req, cq, err_entry,
+								  nccl_net_ofi_req_str(req));
 
         sendrecv_req_update(req, NCCL_OFI_SENDRECV_REQ_ERROR, err_entry->len);
 
