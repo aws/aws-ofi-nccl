@@ -36,6 +36,8 @@ public:
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
 	uint64_t device_get_guid(struct fi_info *info, int dev_id) override;
+	void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
+			  const char *req_type) override;
 
 protected:
 	struct ec2_platform_data {
