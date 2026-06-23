@@ -331,6 +331,13 @@ public:
 	int await_pending_requests() EXCLUDES(get_ep_lock()) override;
 
 	/**
+	 * Spin-wait until the per-peer outstanding window has at least one free
+	 * slot. Drives CQ progress and gdrcopy drain each iteration so that
+	 * ACKs from the receiver advance tx_tail.
+	 */
+	int await_tx_window(nccl_ofi_gin_peer_rank_info &rank_comm) EXCLUDES(get_ep_lock());
+
+	/**
 	 * iputSignal API. Transfers some user data (determined by memory registrations
 	 * and offsets) via RDMA write. When the data transfer is complete, a signal
 	 * operation is performed at the destination, at location given by

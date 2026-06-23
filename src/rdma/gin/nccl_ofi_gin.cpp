@@ -488,6 +488,27 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 	return ret;
 }
 
+int nccl_ofi_rdma_gin_put_comm::await_tx_window(nccl_ofi_gin_peer_rank_info &rank_comm)
+{
+	uint32_t outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
+	while (OFI_UNLIKELY(outstanding >= (uint32_t)(GIN_IMM_SEQ_MASK + 1))) {
+		{
+			std::lock_guard<std::mutex> lock(get_ep_lock());
+			int ret = resources.progress();
+			if (OFI_UNLIKELY(ret != 0)) {
+				return ret;
+			}
+			ret = drain_gdrcopy_done_queue();
+			if (OFI_UNLIKELY(ret != 0)) {
+				return ret;
+			}
+		}
+		std::this_thread::yield();
+		outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
+	}
+	return 0;
+}
+
 static inline void clear_write_reqs_pending_back_pointers(
 	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> &write_reqs)
 {
@@ -525,14 +546,11 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	   get_next_rail() when there is no data to coalesce with. */
 	uint16_t rail_id = 0;
 
-	/* Outstanding window. Cursors live on the GIN_RX_CONSUMED_MASK ring,
-	   so all comparisons mask the modular subtraction. */
-	const uint32_t outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
-	if (OFI_UNLIKELY(outstanding >= (uint32_t)(GIN_IMM_SEQ_MASK + 1))) {
-		NCCL_OFI_WARN("Outstanding window full (head=%u tail=%u)",
-			      rank_comm.tx_head, rank_comm.tx_tail);
-		assert(false);
-		return -EBUSY;
+	/* Wait for a free slot in the TX window if full. */
+	{
+		int ret = await_tx_window(rank_comm);
+		if (OFI_UNLIKELY(ret != 0))
+			return ret;
 	}
 
 	/* Determine if this message needs an ACK.
@@ -546,6 +564,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	 * below the threshold, resetting the gate. */
 	bool has_signal = (signalOp != 0);
 	bool is_ack_requested = false;
+	const uint32_t outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
 
 	if (OFI_UNLIKELY(outstanding >= GIN_ACK_REQ_THRESHOLD)) {
 		if (OFI_UNLIKELY(rank_comm.consecutive_puts_without_ack++ >= GIN_ACK_INTERVAL)) {

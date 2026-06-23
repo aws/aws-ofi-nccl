@@ -4,6 +4,7 @@
 
 #include "config.h"
 
+#include <atomic>
 #include <cstring>
 
 #include "rdma/gin/nccl_ofi_gin.h"
@@ -19,18 +20,12 @@
 /* Forward declaration — defined at bottom of this file */
 extern ncclGin_v13_t ncclGinPlugin_v13;
 
-/**
- * Structure to hold GIN context data.
- * This is created once per NCCL communicator and passed to all listen() calls
- * for that communicator. It stores the comm_id which is used as the endpoint
- * key, ensuring different communicators get different endpoints even when
- * created on the same thread.
- */
 struct nccl_ofi_gin_context {
-	uint64_t comm_id; // Unique communicator identifier (from commHash)
-	
-	// Constructor to initialize comm_id
-	explicit nccl_ofi_gin_context(uint64_t id) : comm_id(id) {}
+	/* Per-init() sequence number used as endpoint cache key so that the
+	 * RMA and GIN proxy layers get separate endpoints. */
+	static inline std::atomic<uint64_t> next_seq{0};
+
+	uint64_t seq = next_seq.fetch_add(1, std::memory_order_relaxed);
 };
 
 ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
@@ -75,12 +70,9 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 		return ncclInternalError;
 	}
 
-	/* Create per-communicator context to store the comm_id.
-	   This allows listen() to use comm_id as the endpoint key for
-	   endpoint lookup, giving each NCCL communicator its own
-	   endpoint instead of sharing one per thread. */
+	/* Create per-communicator context with a unique endpoint key. */
 	try {
-		nccl_ofi_gin_context *context = new nccl_ofi_gin_context(commId);
+		nccl_ofi_gin_context *context = new nccl_ofi_gin_context();
 		*ctx = context;
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Failed to allocate GIN context: %s", e.what());
@@ -173,7 +165,7 @@ ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listen
 		return ncclInternalError;
 	}
 
-	uint64_t comm_id = context->comm_id;
+	long endpoint_key = static_cast<long>(context->seq);
 
 	auto plugin = nccl_net_ofi_get_plugin();
 	if (plugin == nullptr) {
@@ -188,17 +180,9 @@ ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listen
 	}
 
 	try {
-		/* Note: although the GIN plugin uses its own endpoint type, we still need
-		the transport endpoint to set up the bootstrap AG ring.
-
-		Use comm_id as endpoint_key to ensure all GIN contexts within the same
-		communicator share the same endpoint. This creates one endpoint per
-		communicator instead of one per thread.
-		
-		domain_key=0 uses the default domain, endpoint_key=comm_id caches endpoints
-		by communicator ID instead of thread ID. */
-
-		auto ep = device->get_ep(0, static_cast<long>(comm_id));
+		/* Use seq as endpoint key so that the RMA and GIN layers
+		   don't share one endpoint/lock. */
+		auto ep = device->get_ep(0, endpoint_key);
 
 		nccl_net_ofi_listen_comm *l_comm = nullptr;
 		int ret = ep->listen(static_cast<nccl_net_ofi_conn_handle_t *>(handle), &l_comm);
