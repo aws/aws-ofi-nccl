@@ -247,6 +247,14 @@ struct nccl_ofi_gin_gdaki_dev_counter_handle {
 	/* Pointer to the hardware counter value in GPU-accessible memory.
 	 * For signals: FI_REMOTE_WRITE count. For counters: FI_WRITE count. */
 	volatile uint64_t *cntr_value;
+
+	/* Reset baseline for offset-based (reset-without-zeroing) semantics.
+	 * The NIC counter cannot be written by software, so ResetSignal /
+	 * ResetCounter snapshot the current cntr_value into cntr_offset
+	 * instead of zeroing the counter. Reads/waits subtract cntr_offset,
+	 * making the signal/counter appear reset without modifying the
+	 * NIC-visible value. Initialized to 0 at populate() time. */
+	uint64_t cntr_offset;
 };
 
 /**

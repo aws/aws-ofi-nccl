@@ -351,6 +351,7 @@ void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 		h.base.sq_lock = 0;
 		h.base.submitted_count = 0;
 		h.base.sq_size = base.sq_size;
+		h.cntr_offset = 0;   /* offset-based reset baseline */
 	};
 
 	counter_dev_handle.allocate(1);
