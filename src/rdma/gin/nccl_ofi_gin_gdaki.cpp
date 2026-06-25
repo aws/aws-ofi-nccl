@@ -782,7 +782,18 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	uint32_t lkey = (uint32_t)gda_ops->get_mr_lkey(mr);
 
 	/* Step 4/5: allocate and populate the device-visible handle.
-	 * Layout: base struct + flex peers[nranks]. */
+	 * Layout: base struct + flex peers[nranks].
+	 *
+	 * The returned ginHandle is dereferenced by the device-side Put
+	 * kernel (ncclGinApi_Put<EFA_GDA>: srcMh->local_addr,
+	 * dstMh->peers[peer]...). It therefore MUST live in GPU-accessible
+	 * memory. Build the handle on a host staging buffer, then copy it
+	 * into a device allocation and return the DEVICE pointer.
+	 *
+	 * (Previously this returned a plain calloc() host pointer, which the
+	 * GPU could only read when the page happened to be mapped/cached —
+	 * causing intermittent illegal-address faults in the Put kernel and
+	 * the resulting waitSignal hangs.) */
 	size_t handle_size = sizeof(nccl_ofi_gin_gdaki_mr_handle) +
 			     (size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
 	auto *gdaki_handle = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(
@@ -803,23 +814,43 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 		gdaki_handle->peers[i].rkey        = (uint32_t)sym->remote_mr[i].mr_key[0];
 	}
 
-	/* Stash on the mhandle so deregMrSym can free it. The mhandle and
-	 * the gdaki_handle share a lifetime by construction. */
-	sym->gin_device_handle = gdaki_handle;
+	/* Allocate the GPU-accessible copy and stage the host handle into it. */
+	void *gdaki_handle_dev = nullptr;
+	if (nccl_net_ofi_gpu_mem_alloc(&gdaki_handle_dev, handle_size) != 0) {
+		NCCL_OFI_WARN("gin GDAKI: gpu_mem_alloc for gdaki_mr_handle failed");
+		free(gdaki_handle);
+		return ncclSystemError;
+	}
+	if (nccl_net_ofi_gpu_mem_copy_host_to_device(gdaki_handle_dev, gdaki_handle,
+						     handle_size) != 0) {
+		NCCL_OFI_WARN("gin GDAKI: h2d copy of gdaki_mr_handle failed");
+		nccl_net_ofi_gpu_mem_free(gdaki_handle_dev);
+		free(gdaki_handle);
+		return ncclSystemError;
+	}
 
-	*ginHandle = gdaki_handle;
+	/* Stash on the mhandle so deregMrSym can free both. The mhandle and
+	 * the gdaki_handle share a lifetime by construction. */
+	sym->gin_device_handle      = gdaki_handle_dev;  /* GPU-visible */
+	sym->gin_device_handle_host = gdaki_handle;      /* host staging */
+
+	*ginHandle = gdaki_handle_dev;
 	return ncclSuccess;
 }
 
 static ncclResult_t nccl_ofi_gin_gdaki_deregMrSym(void *collComm, void *mhandle)
 {
-	/* Free the device-visible handle first. The mhandle's
-	 * gin_device_handle points at plain heap memory owned by the
-	 * GDAKI regMrSym above; the underlying fid_mr is torn down by
-	 * the shared deregMrSym call that follows. */
+	/* Free the GDAKI device-visible handle and its host staging copy.
+	 * gin_device_handle is GPU memory (nccl_net_ofi_gpu_mem_alloc);
+	 * gin_device_handle_host is plain heap. The underlying fid_mr is
+	 * torn down by the shared deregMrSym call that follows. */
 	auto *sym = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mhandle);
-	free(sym->gin_device_handle);
-	sym->gin_device_handle = nullptr;
+	if (sym->gin_device_handle != nullptr) {
+		nccl_net_ofi_gpu_mem_free(sym->gin_device_handle);
+		sym->gin_device_handle = nullptr;
+	}
+	free(sym->gin_device_handle_host);
+	sym->gin_device_handle_host = nullptr;
 
 	return nccl_ofi_gin_deregMrSym(collComm, mhandle);
 }
