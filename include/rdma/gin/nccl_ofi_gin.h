@@ -196,11 +196,18 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 	std::vector<gin_remote_mr> remote_mr;
 
 	/* Optional device-visible handle owned by the GDAKI plugin wrapper
-	 * (nccl_ofi_gin_gdaki_mr_handle *). Stored here so deregMrSym can
-	 * free it with only the mhandle in hand — NCCL's ncclGinDeregister
-	 * does not pass ginHandle to deregMrSym. Plain heap memory, no
-	 * libfabric resources. Null when the proxy path is used. */
+	 * (nccl_ofi_gin_gdaki_mr_handle *). This is GPU-accessible memory
+	 * (allocated via nccl_net_ofi_gpu_mem_alloc) — it is the pointer
+	 * returned to NCCL as ginHandle and dereferenced by the device-side
+	 * Put kernel, so it MUST be device-readable. Stored here so
+	 * deregMrSym can free it with only the mhandle in hand — NCCL's
+	 * ncclGinDeregister does not pass ginHandle to deregMrSym. Null when
+	 * the proxy path is used. */
 	void *gin_device_handle = nullptr;
+	/* Host staging copy of the above (plain heap). The handle is built
+	 * on the host here, then copied to gin_device_handle. Freed by
+	 * deregMrSym. Null when the proxy path is used. */
+	void *gin_device_handle_host = nullptr;
 };
 
 /**
