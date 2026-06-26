@@ -367,18 +367,21 @@ static bool has_accel_at_same_level(hwloc_obj_t node)
 }
 
 /*
- * @brief	Return libfabric NIC info struct from info list that corresponds to input topology node
+ * @brief	Match a topology node to its libfabric NIC info struct by PCI address
+ *
+ * Pure matcher: performs no filtering, only compares the PCI address of the
+ * topology node against the info structs in the list.
  *
  * @param	node
  *		The topology node
  * @param	info_list
  *		List of Libfabric NIC info structs
- * @return	Info struct that corresponds to topology node if found in info list
- *		NULL, otherwise
+ * @param	ret_info
+ *		Set to the matching info struct if found, NULL otherwise
  * @return	0, on success
  *		non-zero, on error
  */
-static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct fi_info **ret_info)
+static int match_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct fi_info **ret_info)
 {
 	*ret_info = NULL;
 	union hwloc_obj_attr_u *node_attr;
@@ -389,21 +392,13 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
 		return -EINVAL;
 	}
 
-        node_attr = node->attr;
+	node_attr = node->attr;
 	if (!node_attr) {
 		NCCL_OFI_WARN("Failed to retrieve attributes from hwloc topology node");
 		return -EINVAL;
 	}
 
 	if (node->type != HWLOC_OBJ_PCI_DEVICE) {
-		return 0;
-	}
-
-	/*
-	 * Check if we want to skip nics which do not have accelerators at the
-	 * same pcie level
-	 */
-	if (ofi_nccl_skip_nics_without_accel.get() && !has_accel_at_same_level(node)) {
 		return 0;
 	}
 
@@ -435,6 +430,95 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
 }
 
 /*
+ * @brief	Determine whether at least one NIC has an accelerator at the
+ *		same PCI level.
+ *
+ * Depending on the platform topology, some NICs may have an accelerator at
+ * the same PCI level while others do not. The
+ * SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL filter drops the NICs that do
+ * not, which is only meaningful when at least one NIC that does is available
+ * to use instead. If no NIC has an accelerator at the same PCI level,
+ * applying the filter would remove every NIC, leaving NCCL with no network
+ * devices (and the rdma plugin constructor aborts with an "invalid topo
+ * group size" error). In that case the filter must be disabled so all NICs
+ * are provided to NCCL.
+ *
+ * @param	topo
+ *		Hwloc topology
+ * @param	info_list
+ *		List of Libfabric NIC info structs
+ * @param	result
+ *		Set to true if at least one NIC has an accelerator at the same
+ *		PCI level, false otherwise
+ * @return	0, on success
+ *		non-zero, on error
+ */
+static int any_nic_has_accel_at_same_level(hwloc_topology_t topo, struct fi_info *info_list,
+					   bool *result)
+{
+	hwloc_obj_t obj = NULL;
+
+	*result = false;
+
+	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
+		struct fi_info *info = NULL;
+		int ret = match_info_for_node(obj, info_list, &info);
+		if (ret != 0) {
+			return ret;
+		}
+
+		if (info != NULL && has_accel_at_same_level(obj)) {
+			*result = true;
+			return 0;
+		}
+	}
+
+	return 0;
+}
+
+/*
+ * @brief	Return libfabric NIC info struct from info list that corresponds to input topology node
+ *
+ * Optionally applies the SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL filter,
+ * which drops NICs that do not have an accelerator at the same PCI level.
+ * The caller passes apply_skip_filter, which must only be true when there is
+ * at least one NIC with an accelerator at the same PCI level to fall back on
+ * (see any_nic_has_accel_at_same_level).
+ *
+ * @param	node
+ *		The topology node
+ * @param	info_list
+ *		List of Libfabric NIC info structs
+ * @param	apply_skip_filter
+ *		Whether the skip-nics-without-accel filter should be applied
+ *		(true only when the param is enabled and at least one NIC with an
+ *		accelerator at the same PCI level exists to fall back on; see
+ *		any_nic_has_accel_at_same_level)
+ * @param	ret_info
+ *		Set to the matching info struct if found and not filtered, NULL otherwise
+ * @return	0, on success
+ *		non-zero, on error
+ */
+static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list,
+			     bool apply_skip_filter, struct fi_info **ret_info)
+{
+	*ret_info = NULL;
+
+	/*
+	 * Skip NICs which do not have an accelerator at the same PCI level when
+	 * the caller has determined the filter should be applied (i.e. the param
+	 * is enabled and there is at least one NIC with an accelerator at the
+	 * same PCI level to use instead). Otherwise skipping would remove every
+	 * NIC in the system.
+	 */
+	if (apply_skip_filter && !has_accel_at_same_level(node)) {
+		return 0;
+	}
+
+	return match_info_for_node(node, info_list, ret_info);
+}
+
+/*
  * @brief	Count number of topology nodes that have a NIC or Nvidia GPU in its subtree
  *
  *
@@ -442,12 +526,16 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list, struct
  *		Hwloc topology. Userdata pointers of topology nodes are expected to be set to NULL
  * @param	info_list
  *		Libfabric NIC info list to identify the NICs
+ * @param	apply_skip_filter
+ *		Whether the skip-nics-without-accel filter should be applied (computed
+ *		once by the caller and passed down so it matches the populate pass)
  * @return	Number of nodes
  * @return	0, on success
  *		non-zero, on error
  */
 static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 							   struct fi_info *info_list,
+							   bool apply_skip_filter,
 							   int *count)
 {
 	int ret = 0;
@@ -463,7 +551,7 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 			return ret;
 		}
 
-		ret = get_info_for_node(obj, info_list, &info);
+		ret = get_info_for_node(obj, info_list, apply_skip_filter, &info);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ret;
@@ -490,7 +578,7 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 	 * the topology nodes to avoid counting nodes
 	 * twice. Afterwards, invoke this function another time to
 	 * clear the user data pointers. */
-	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, NULL);
+	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, apply_skip_filter, NULL);
 	else return 0;
 }
 
@@ -646,9 +734,31 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	hwloc_obj_t obj = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
 
+	/* Determine whether the skip-nics-without-accel filter should be applied.
+	 * It is applied only when the param is enabled AND at least one NIC has
+	 * an accelerator at the same PCI level. Otherwise applying it would
+	 * remove every NIC in the system. Computed once here and passed down so
+	 * the counting pass and the populate pass below always use the same
+	 * value. The applicability scan is skipped entirely when the param is
+	 * disabled. */
+	bool skip_enabled = ofi_nccl_skip_nics_without_accel.get();
+	bool apply_skip_filter = false;
+	if (skip_enabled) {
+		ret = any_nic_has_accel_at_same_level(ofi_topo->topo, info_list, &apply_skip_filter);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Failed to determine whether any NIC has an accelerator at the same PCI level");
+			return ret;
+		}
+		if (!apply_skip_filter) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL is set but no NIC has an "
+				      "accelerator at the same PCI level; filter disabled so all NICs are used.");
+		}
+	}
+
 	/* Retrieve number of topology nodes that have a Nvidia GPU or a NIC in their subtree */
 	int num_nodes = 0;
-	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, &num_nodes);
+	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, apply_skip_filter, &num_nodes);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
 		return ret;
@@ -676,7 +786,7 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 			return ret;
 		}
 
-		ret = get_info_for_node(obj, info_list, &info);
+		ret = get_info_for_node(obj, info_list, apply_skip_filter, &info);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ret;
