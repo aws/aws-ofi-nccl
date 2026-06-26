@@ -6362,6 +6362,8 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 
 	delete this->rx_buff_reqs_fl;
 
+	delete this->rx_buff_regmr_ctx;
+
 	/* Deregister the flush buffer MR (always owned by this endpoint). */
 	if (this->flush_buff_mr_handle != nullptr) {
 		nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
