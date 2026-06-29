@@ -210,32 +210,59 @@ public:
 };
 
 /**
- * Per-peer addressing tables.
+ * Target addressing table.
  *
- * Three GPU-resident arrays indexed by rank, each populated by
- * fi_av_insert + gda_ops->query_addr during createContext. The kernel
+ * One GPU-resident table per poster endpoint, sized [total_slots * nranks]
+ * and laid out targetSlot-major: idx = targetSlot * nranks + peer.
+ *
+ * A "target slot" names which of the peer's endpoints a write addresses:
+ *     targetSlot 0          -> peer's DATA endpoint
+ *     targetSlot 1 + s      -> peer's sc endpoint s (signal id s)
+ * with total_slots = 1 + global_n_sc. The device side selects a slot per
+ * write:
+ *     - plain put / counter-only write  -> slot 0 (peer data EP, no
+ *       FI_REMOTE_WRITE bound, so it never fires a signal)
+ *     - signalling write (signal id s)  -> slot 1 + s (peer sc EP s,
+ *       whose FI_REMOTE_WRITE counter the GIN waitSignal observes)
+ *
+ * Every (slot, peer) tuple is resolved through THIS endpoint's own AV
+ * (an address handle is AV-local), so the data endpoint and every sc
+ * endpoint each build their own table. The plugin (createContext) writes
+ * this layout; NCCL's device code reads it — both must agree on the
+ * targetSlot-major convention and on slot 0 = data EP (see the dev-handle
+ * mirror).
+ *
+ * Three GPU-resident arrays indexed by (targetSlot, peer), each populated
+ * by fi_av_insert + gda_ops->query_addr during createContext. The kernel
  * dereferences them via the device-visible handle.
  */
-class gdaki_peer_addressing {
+class gdaki_target_addressing {
 public:
-	gdaki_gpu_buf<uint16_t> ahs;      /* address handle numbers */
-	gdaki_gpu_buf<uint16_t> qpns;     /* remote QP numbers */
-	gdaki_gpu_buf<uint32_t> qkeys;    /* remote QKeys */
+	gdaki_gpu_buf<uint16_t> ahs;      /* [total_slots*nranks] address handle numbers */
+	gdaki_gpu_buf<uint16_t> qpns;     /* [total_slots*nranks] remote QP numbers */
+	gdaki_gpu_buf<uint32_t> qkeys;    /* [total_slots*nranks] remote QKeys */
 
-	gdaki_peer_addressing() = default;
-	gdaki_peer_addressing(const gdaki_peer_addressing &) = delete;
-	gdaki_peer_addressing &operator=(const gdaki_peer_addressing &) = delete;
+	gdaki_target_addressing() = default;
+	gdaki_target_addressing(const gdaki_target_addressing &) = delete;
+	gdaki_target_addressing &operator=(const gdaki_target_addressing &) = delete;
 
 	/*
-	 * Insert each peer's EP address from `peer_addrs` into the AV,
-	 * query the (ahn, qpn, qkey) tuple, and commit the three tables
-	 * to GPU memory.
+	 * Build the [total_slots * nranks] target table for THIS endpoint.
 	 *
-	 * peer_addrs is a flat buffer of nranks * MAX_EP_ADDR bytes.
+	 * `all_addrs` is the batched-allgather buffer, peer-major:
+	 *     addr(peer, slot) = &all_addrs[(peer * total_slots + slot) * ep_addr_len]
+	 * with slot 0 = peer's data EP and slots 1..global_n_sc = peer's sc
+	 * EPs. For each (slot, peer) this inserts the address into THIS
+	 * endpoint's AV, queries the (ahn, qpn, qkey) tuple, and stores it
+	 * targetSlot-major at [slot * nranks + peer]. Absent slots (a peer
+	 * with fewer sc EPs leaves a zero address) are skipped; the entry
+	 * stays 0 and is never addressed (a correct caller never directs a
+	 * signalId at a peer that did not create it). Commits the three
+	 * tables to GPU memory.
 	 */
 	void populate(gdaki_fi_endpoint &endpoint,
-		      const std::vector<uint8_t> &peer_addrs,
-		      size_t ep_addr_len, int nranks,
+		      const std::vector<uint8_t> &all_addrs,
+		      size_t ep_addr_len, int total_slots, int nranks,
 		      struct fi_efa_ops_gda *gda_ops);
 };
 
@@ -380,16 +407,17 @@ private:
 
 /**
  * Host-side state for a libfabric endpoint plus its GPU-side queue
- * descriptors and per-peer addressing.
+ * descriptors and target addressing table.
  *
  * Used directly for the data (main) endpoint, and composed inside
  * gdaki_sc_endpoint for the signal/counter endpoints.
  *
  * Owns: fid_ep + fid_cq + fid_av (via gdaki_fi_endpoint), GPU-mapped
  * SQ buffer + doorbell BAR regions, GPU-resident QP and CQ descriptors,
- * per-peer ahn/qpn/qkey arrays in GPU memory.
+ * and the [total_slots*nranks] target ahn/qpn/qkey table in GPU
+ * memory.
  *
- * Destruction order (reverse declaration): peers, gpu_cq, gpu_qp,
+ * Destruction order (reverse declaration): targets, gpu_cq, gpu_qp,
  * sq_doorbell, sq_buffer, endpoint. The libfabric EP closes last so any
  * GPU mappings of its BAR regions are torn down before the EP itself.
  * When this class is composed inside gdaki_sc_endpoint AFTER the
@@ -398,13 +426,13 @@ private:
  */
 class gdaki_endpoint {
 public:
-	gdaki_fi_endpoint     endpoint;
-	gdaki_mmio_region     sq_buffer;
-	gdaki_mmio_region     sq_doorbell;
-	gdaki_gpu_qp          gpu_qp;
-	gdaki_gpu_cq          gpu_cq;
-	gdaki_peer_addressing peers;
-	uint32_t              sq_size = 0;       /* SQ ring depth, populated by populate() */
+	gdaki_fi_endpoint       endpoint;
+	gdaki_mmio_region       sq_buffer;
+	gdaki_mmio_region       sq_doorbell;
+	gdaki_gpu_qp            gpu_qp;
+	gdaki_gpu_cq            gpu_cq;
+	gdaki_target_addressing targets;   /* [total_slots*nranks] target table */
+	uint32_t                sq_size = 0;       /* SQ ring depth, populated by populate() */
 
 	gdaki_endpoint() = default;
 	/* Implicit dtor: members destroy in reverse declaration order. */
@@ -418,13 +446,13 @@ public:
 
 	/**
 	 * Query EFA QP/CQ attributes, map the SQ MMIO regions for GPU
-	 * access, build the GPU-resident QP/CQ descriptors, and populate
-	 * per-peer addressing from the allgathered peer addresses.
-	 * Must be called after open().
+	 * access, build the GPU-resident QP/CQ descriptors, and build the
+	 * [total_slots*nranks] target table from the batched
+	 * allgather buffer. Must be called after open().
 	 */
 	void populate(struct fi_efa_ops_gda *gda_ops,
-		      const std::vector<uint8_t> &peer_addrs,
-		      size_t ep_addr_len, int nranks);
+		      const std::vector<uint8_t> &all_addrs,
+		      size_t ep_addr_len, int total_slots, int nranks);
 };
 
 /**
@@ -464,12 +492,13 @@ public:
 
 	/**
 	 * Populate the inner endpoint's GPU descriptors (QP/CQ attrs,
-	 * SQ MMIO BAR mapping, GPU-resident QP/CQ, per-peer addressing).
-	 * Must be called after open().
+	 * SQ MMIO BAR mapping, GPU-resident QP/CQ) and build the
+	 * [total_slots*nranks] target table from the batched allgather
+	 * buffer. Must be called after open().
 	 */
 	void populate(struct fi_efa_ops_gda *gda_ops,
-		      const std::vector<uint8_t> &peer_addrs,
-		      size_t ep_addr_len, int nranks);
+		      const std::vector<uint8_t> &all_addrs,
+		      size_t ep_addr_len, int total_slots, int nranks);
 
 	/**
 	 * Stash the PutValue slot pool slice base for this endpoint.
@@ -526,12 +555,14 @@ public:
 		  struct fi_efa_ops_gda *gda_ops);
 
 	/**
-	 * Populate the inner endpoint's GPU descriptors and build the
-	 * per-EP device handles. Must be called after open().
+	 * Populate the inner endpoint's GPU descriptors, build the
+	 * [total_slots*nranks] target table (from the batched allgather
+	 * buffer), and build the per-EP device handles. Must be called
+	 * after open().
 	 */
 	void populate(struct fi_efa_ops_gda *gda_ops,
-		      const std::vector<uint8_t> &peer_addrs,
-		      size_t ep_addr_len, int nranks);
+		      const std::vector<uint8_t> &all_addrs,
+		      size_t ep_addr_len, int total_slots, int nranks);
 
 	/**
 	 * Set the PutValue slot pool slice base on both
@@ -549,20 +580,32 @@ public:
  * All members are lifecycle-managed objects; the destructor is
  * implicit. Declaration order is creation order; C++ destroys members
  * in reverse declaration order, which matches the required teardown
- * order (GPU mappings and per-peer arrays before MMIO mappings before
- * the endpoint).
+ * order (GPU mappings and the target addressing table before MMIO
+ * mappings before the endpoint).
  */
 struct nccl_ofi_gin_gdaki_context {
 	/* Set first (stateless). */
 	int nContexts = 0;
 	int nranks = 0;
 	int rank = 0;
-	int nSignals = 0;
-	int nCounters = 0;
+	int nSignals = 0;   /* this rank's local signal count  */
+	int nCounters = 0;  /* this rank's local counter count */
+
+	/* Asymmetric-count support. Ranks are NOT required to request the
+	 * same nSignals/nCounters for a context, so createContext allgathers
+	 * each rank's counts and derives:
+	 *   global_n_sc = max over ranks of max(nSignals, nCounters)
+	 *               = number of sc-endpoint slots every rank's batched
+	 *                 endpoint-address allgather must cover (a rank with
+	 *                 fewer sc EPs contributes a zero address in the
+	 *                 surplus slots), and the sc-endpoint span of every
+	 *                 poster's target table (total_slots =
+	 *                 1 + global_n_sc). */
+	int global_n_sc = 0;
 
 	/* Per-ctx data (main) endpoint: libfabric EP on the reused proxy
 	 * domain plus its GPU-side SQ buffer/doorbell mappings, GPU-
-	 * resident QP/CQ descriptors, per-peer addressing, and a
+	 * resident QP/CQ descriptors, target addressing, and a
 	 * FI_WRITE hardware counter for completion tracking. One per
 	 * logical context. unique_ptr because gdaki_data_endpoint owns
 	 * non-movable members (libfabric/CUDA handles). */

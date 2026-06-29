@@ -151,9 +151,10 @@ struct nccl_ofi_gin_gdaki_cq {
 
 /**
  * Common per-endpoint state shared by the data, counter, and signal
- * device handles. Holds the GPU-resident QP/CQ, per-peer addressing,
- * the per-QP spinlock that serializes the device-side WQE-post
- * sequence, and the counter-based completion tracking fields.
+ * device handles. Holds the GPU-resident QP/CQ, the target
+ * addressing table, the per-QP spinlock that serializes the
+ * device-side WQE-post sequence, and the counter-based completion
+ * tracking fields.
  * Used directly as the `data` member of nccl_ofi_gin_gdaki_dev_handle,
  * and embedded as a `base` member in nccl_ofi_gin_gdaki_dev_counter_handle.
  *
@@ -167,10 +168,35 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	/* GPU-resident CQ for this endpoint. */
 	struct nccl_ofi_gin_gdaki_cq *cq;
 
-	/* Per-peer addressing for this endpoint's QP. [nranks] in GPU mem. */
-	uint16_t *address_handles;
-	uint16_t *remote_qpns;
-	uint32_t *qkey;
+	/* Target addressing for this (poster) endpoint's QP.
+	 *
+	 * One GPU-resident table, sized [total_slots * nranks] and laid out
+	 * targetSlot-major: idx = targetSlot * nranks + peer, where
+	 *     targetSlot 0       -> peer's DATA endpoint
+	 *     targetSlot 1 + s   -> peer's sc endpoint s (signal id s)
+	 * and total_slots = 1 + (max over peers of their sc-endpoint count).
+	 *
+	 * The device side selects the slot per write:
+	 *     plain put / counter-only write -> slot 0 (peer data EP, which
+	 *       binds no FI_REMOTE_WRITE, so the write ticks the local
+	 *       FI_WRITE counter without firing a signal on the receiver)
+	 *     signalling write (signal id s) -> slot 1 + s (peer sc EP s,
+	 *       whose FI_REMOTE_WRITE counter the GIN waitSignal observes)
+	 * The local poster QP is chosen by counterId (which endpoint owns
+	 * this handle); the remote target QP is chosen by the slot.
+	 *
+	 * Every (slot, peer) tuple is resolved through THIS endpoint's own
+	 * AV (an address handle is AV-local), so the data endpoint and every
+	 * sc endpoint each carry their own table. A (slot, peer) a peer does
+	 * not expose (asymmetric counts) is a zero entry, never addressed (a
+	 * correct caller never directs a signalId at a peer that did not
+	 * create it).
+	 *
+	 * Layout is shared with the NCCL mirror in
+	 * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync. */
+	uint16_t *target_address_handles;   /* [total_slots * nranks] */
+	uint16_t *target_remote_qpns;       /* [total_slots * nranks] */
+	uint32_t *target_qkey;              /* [total_slots * nranks] */
 
 	/* Per-QP spinlock used by the device-side WQE post path. efa-dp-direct's
 	 * start_sq_batch / sq_batch_place_wr / flush_sq_wrs sequence must be
@@ -229,8 +255,8 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
  * counter value lives in GPU memory and is updated by the NIC directly.
  *
  * For signals: the GPU kernel reads *cntr_value to detect remote writes
- *              (FI_REMOTE_WRITE counter). The per-peer arrays let the
- *              sender target this QP on the remote rank.
+ *              (FI_REMOTE_WRITE counter). The target table lets
+ *              the sender target this QP on the remote rank.
  *
  * For counters: the GPU kernel reads *cntr_value to track local write
  *               completions (FI_WRITE counter). The QP is used by the

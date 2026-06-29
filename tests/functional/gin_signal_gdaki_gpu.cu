@@ -39,6 +39,7 @@ struct proc_handle {
  */
 __global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle *sig,
 				      int peer,
+				      int nranks,
 				      uint64_t dst_addr,
 				      uint32_t dst_rkey,
 				      uint64_t src_addr,
@@ -59,10 +60,14 @@ __global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle *sig
 	efa_io_tx_wqe wr;
 	efa_cuda_init_rdma_write_wr(&wr, /*wr_id=*/0, dst_rkey, dst_addr);
 	efa_cuda_wr_set_sge(&wr, src_lkey, src_addr, bytes);
+	/* Target peer's signal endpoint 0. In the unified target table,
+	 * signal id s lives at slot (1 + s); this test uses signal 0, so
+	 * slot 1 -> target idx = 1*nranks + peer. (Slot 0 is the peer data EP.) */
+	const uint32_t targetIdx = (uint32_t)nranks + (uint32_t)peer;
 	efa_cuda_wr_set_remote(&wr,
-			       sig->base.address_handles[peer],
-			       (uint32_t)sig->base.remote_qpns[peer],
-			       sig->base.qkey[peer]);
+			       sig->base.target_address_handles[targetIdx],
+			       (uint32_t)sig->base.target_remote_qpns[targetIdx],
+			       sig->base.target_qkey[targetIdx]);
 
 	efa_cuda_start_sq_batch(qp, 1);
 	efa_cuda_sq_batch_place_wr(qp, 0, &wr);
@@ -249,7 +254,7 @@ int main(int argc, char *argv[])
 		CUDACHECK(cudaMemset(d_result, 0, sizeof(kernel_result)));
 
 		gin_signal_gpu_kernel<<<1, 1>>>(
-			sig_dev_gpu, tgt,
+			sig_dev_gpu, tgt, nranks,
 			all_dst_addrs[tgt], all_rkeys[tgt],
 			(uint64_t)sig_buf_gpu, sig_lkey,
 			(uint32_t)SIG_BUF_SIZE,
