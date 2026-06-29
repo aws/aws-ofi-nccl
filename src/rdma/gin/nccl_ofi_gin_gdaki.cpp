@@ -153,30 +153,82 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
 }
 
 /*
- * Read this rank's libfabric EP address into a per-rank slot of an
- * allgather buffer, then allgather across the team. Returns the buffer.
+ * Allgather every endpoint address of one context in a SINGLE collective.
  *
- * Used by createContext for both the data endpoint and each
- * signal/counter endpoint.
+ * `eps` lists this rank's endpoints for the context in slot order
+ * (slot 0 = data EP, slots 1..global_n_sc = sc EPs). A nullptr slot is an
+ * endpoint this rank does not have (asymmetric counts): it contributes a
+ * zero-filled address so peers that DO have an endpoint at that slot still
+ * exchange correctly. The collective is called once with a per-rank record
+ * of all slots, instead of one allgather per endpoint.
+ *
+ * Returns a buffer of nranks * total_slots * ep_addr_len bytes laid out
+ * rank-major then slot-major:
+ *   addr(peer, slot) = &buf[(peer * total_slots + slot) * ep_addr_len]
+ * Each poster endpoint's gdaki_target_addressing::populate() consumes this
+ * buffer directly to build its [total_slots * nranks] target table.
  *
  * Throws std::runtime_error on fi_getname / allgather failure.
  */
-static std::vector<uint8_t> allgather_ep_addr(struct fid_ep *ep,
-					      nccl_ofi_rdma_gin_put_comm *put_comm,
-					      int nranks, int rank,
-					      size_t ep_addr_len)
+static std::vector<uint8_t> allgather_ep_addrs_batched(
+	const std::vector<struct fid_ep *> &eps,
+	nccl_ofi_rdma_gin_put_comm *put_comm,
+	int nranks, int rank, size_t ep_addr_len)
 {
-	std::vector<uint8_t> all_addrs(nranks * ep_addr_len, 0);
-	size_t addrlen = ep_addr_len;
-	int ret = fi_getname(&ep->fid, &all_addrs[rank * ep_addr_len], &addrlen);
-	if (ret != 0) {
-		throw std::runtime_error("fi_getname failed: " +
-					 std::string(fi_strerror(-ret)));
+	const size_t total_slots = eps.size();
+	const size_t rec_len = total_slots * ep_addr_len;
+	std::vector<uint8_t> all(nranks * rec_len, 0);
+
+	uint8_t *my_rec = all.data() + (size_t)rank * rec_len;
+	for (size_t s = 0; s < total_slots; s++) {
+		if (eps[s] == nullptr) {
+			continue; /* absent slot stays zero-filled */
+		}
+		size_t addrlen = ep_addr_len;
+		int ret = fi_getname(&eps[s]->fid, my_rec + s * ep_addr_len, &addrlen);
+		if (ret != 0) {
+			throw std::runtime_error("fi_getname failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
 	}
-	if (put_comm->get_ag_comm().all_gather(all_addrs.data(), ep_addr_len) != 0) {
-		throw std::runtime_error("allgather of ep addresses failed");
+
+	if (put_comm->get_ag_comm().all_gather(all.data(), rec_len) != 0) {
+		throw std::runtime_error("batched allgather of ep addresses failed");
 	}
-	return all_addrs;
+	return all;
+}
+
+/*
+ * Exchange each rank's (nSignals, nCounters) for this context across the
+ * team and derive the asymmetric-count quantities the rest of
+ * createContext needs. Ranks are NOT required to request the same counts.
+ *
+ * Fills ctx->global_n_sc = max over ranks of max(nSignals, nCounters),
+ * which sizes the per-poster target table (total_slots = 1 +
+ * global_n_sc) and the per-context endpoint-address allgather.
+ *
+ * Throws std::runtime_error on allgather failure.
+ */
+static void exchange_signal_counter_counts(nccl_ofi_gin_gdaki_context *ctx,
+					    nccl_ofi_rdma_gin_put_comm *put_comm,
+					    int nranks, int rank)
+{
+	/* allGather a 2-int record {nSignals, nCounters} per rank. Each rank
+	 * fills its own slot; the collective fills the rest. */
+	std::vector<int32_t> counts(nranks * 2, 0);
+	counts[rank * 2 + 0] = ctx->nSignals;
+	counts[rank * 2 + 1] = ctx->nCounters;
+	if (put_comm->get_ag_comm().all_gather(counts.data(), 2 * sizeof(int32_t)) != 0) {
+		throw std::runtime_error("allgather of signal/counter counts failed");
+	}
+
+	ctx->global_n_sc = 0;
+	for (int p = 0; p < nranks; p++) {
+		const int p_nSignals = counts[p * 2 + 0];
+		const int p_nCounters = counts[p * 2 + 1];
+		ctx->global_n_sc = std::max(ctx->global_n_sc,
+					    std::max(p_nSignals, p_nCounters));
+	}
 }
 
 /*
@@ -389,9 +441,9 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 {
 	h.data.qp = ctx->data[ctx_id]->base.gpu_qp.dev();
 	h.data.cq = ctx->data[ctx_id]->base.gpu_cq.dev();
-	h.data.address_handles = ctx->data[ctx_id]->base.peers.ahs.dev;
-	h.data.remote_qpns = ctx->data[ctx_id]->base.peers.qpns.dev;
-	h.data.qkey = ctx->data[ctx_id]->base.peers.qkeys.dev;
+	h.data.target_address_handles = ctx->data[ctx_id]->base.targets.ahs.dev;
+	h.data.target_remote_qpns     = ctx->data[ctx_id]->base.targets.qpns.dev;
+	h.data.target_qkey            = ctx->data[ctx_id]->base.targets.qkeys.dev;
 	h.data.sq_lock = 0;
 	h.data.local_cntr_value = ctx->data[ctx_id]->write_cntr.gpu_ptr();
 	h.data.submitted_count = 0;
@@ -562,66 +614,116 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		setup_scratch_buffer(ctx.get(), ofi_domain, put_comm, nranks, rank);
 
 		/*
+		 * Step 3b: Exchange each rank's (nSignals, nCounters) so we can
+		 * support asymmetric counts. Derives global_n_sc (max over ranks
+		 * of max(nSignals, nCounters)).
+		 */
+		exchange_signal_counter_counts(ctx.get(), put_comm, nranks, rank);
+
+		/*
 		 * Per-context loop: build (data EP + sc EPs + counter/signal
 		 * handle arrays) for each logical context. The dev_handles[]
 		 * slots are filled in a second loop below, after the PutValue
 		 * pool is allocated and slice bases are assigned.
+		 *
+		 * local_n_sc  = this rank's sc-endpoint count.
+		 * global_n_sc = max over ranks; every rank must run this many
+		 *               collective allgather rounds (a surplus round
+		 *               contributes a zero address), and it is the
+		 *               sc-endpoint span of every poster's target
+		 *               target table.
 		 */
 		constexpr size_t ep_addr_len = MAX_EP_ADDR;
-		const int n_sc = std::max(config->nSignals, config->nCounters);
+		const int local_n_sc = std::max(config->nSignals, config->nCounters);
+		const int global_n_sc = ctx->global_n_sc;
+		/* Endpoint slot layout within one context's batched allgather:
+		 * slot 0 = data EP, slots [1, 1+global_n_sc) = sc EPs. A rank
+		 * with fewer than global_n_sc sc EPs leaves the surplus slots
+		 * as nullptr (zero address). This is also the target-slot layout
+		 * of each poster's target addressing table. */
+		const size_t total_slots = 1 + (size_t)global_n_sc;
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
 			/*
-			 * Step 4: Open this ctx's data endpoint on the reused
-			 * domain.
+			 * Step 4: Open this ctx's endpoints — data EP (slot 0) and
+			 * this rank's local sc EPs (slots 1..local_n_sc). Surplus sc
+			 * slots have no local endpoint.
 			 */
 			ctx->data[ctx_id]->open(ofi_domain, proxy_info, gda_ops);
-
-			/*
-			 * Step 5: Exchange this ctx's data-EP address across the
-			 * team, then complete the data EP's GPU-side build.
-			 * Each ctx's data EP is its own libfabric EP, so each
-			 * needs its own allgather — ctx ctx_id on rank A pairs with
-			 * ctx ctx_id on rank B for cross-rank symmetric communication.
-			 */
-			std::vector<uint8_t> all_addrs = allgather_ep_addr(
-				ctx->data[ctx_id]->base.endpoint.ep, put_comm, nranks, rank, ep_addr_len);
-			ctx->data[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len, nranks);
-
-			/*
-			 * Step 6: Create this ctx's signal/counter endpoints
-			 * (one per max(nSignals, nCounters)) and build the GPU
-			 * pointer arrays the kernel reads as
-			 * dev[ctx.contextId].counter_handles[] /
-			 * .signal_handles[].
-			 */
-			if (n_sc > 0) {
-				ctx->sc_endpoints[ctx_id].reserve(n_sc);
-				for (int i = 0; i < n_sc; i++) {
-					ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
-					ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
-
-					std::vector<uint8_t> sc_addrs = allgather_ep_addr(
-						ctx->sc_endpoints[ctx_id][i]->base.endpoint.ep,
-						put_comm, nranks, rank, ep_addr_len);
-
-					ctx->sc_endpoints[ctx_id][i]->populate(gda_ops, sc_addrs,
-									  ep_addr_len, nranks);
-				}
-
-				auto build_handle_array = [&](gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> &buf,
-							      int count, auto get_dev_handle) {
-					if (count > 0) {
-						buf.allocate(count);
-						for (int i = 0; i < count; i++)
-							buf.host[i] = get_dev_handle(i);
-						buf.commit();
-					}
-				};
-				build_handle_array(*ctx->d_counter_handles[ctx_id], config->nCounters,
-					[&](int i) { return ctx->sc_endpoints[ctx_id][i]->counter_dev_handle.dev; });
-				build_handle_array(*ctx->d_signal_handles[ctx_id], config->nSignals,
-					[&](int i) { return ctx->sc_endpoints[ctx_id][i]->signal_dev_handle.dev; });
+			if (local_n_sc > 0) {
+				ctx->sc_endpoints[ctx_id].reserve(local_n_sc);
 			}
+			for (int i = 0; i < local_n_sc; i++) {
+				ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
+				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
+			}
+
+			/*
+			 * Step 5: Exchange ALL of this ctx's endpoint addresses in a
+			 * SINGLE collective (data EP + every sc slot), instead of one
+			 * allgather per endpoint. The allgather is collective, so the
+			 * per-rank record covers global_n_sc sc slots even when this
+			 * rank created fewer; surplus slots are nullptr (zero address)
+			 * and peers skip them. ctx ctx_id on rank A pairs with ctx
+			 * ctx_id on rank B for cross-rank symmetric communication.
+			 */
+			std::vector<struct fid_ep *> eps;
+			eps.reserve(total_slots);
+			eps.push_back(ctx->data[ctx_id]->base.endpoint.ep); /* slot 0 = data EP */
+			for (int i = 0; i < global_n_sc; i++) {
+				/* slots 1..global_n_sc: this rank's sc EP if it has one
+				 * at this index, else nullptr (surplus / absent slot). */
+				eps.push_back(i < local_n_sc
+					? ctx->sc_endpoints[ctx_id][i]->base.endpoint.ep
+					: nullptr);
+			}
+			std::vector<uint8_t> all_addrs = allgather_ep_addrs_batched(
+				eps, put_comm, nranks, rank, ep_addr_len);
+
+			/*
+			 * Step 6: Target addressing. Every poster endpoint
+			 * (the data EP and all local sc EPs — any may post a
+			 * Put/PutValue) builds one [total_slots * nranks] table that
+			 * resolves, through its OWN AV, every peer endpoint slot:
+			 *     slot 0       -> peer's data EP (plain put / counter-only
+			 *                     "quiet sink" target — no FI_REMOTE_WRITE)
+			 *     slot 1 + s   -> peer's sc EP s (signal id s target,
+			 *                     whose FI_REMOTE_WRITE the GIN waitSignal
+			 *                     observes)
+			 * The device side selects the slot per write: 0 for a plain
+			 * or counter-only put, 1+signalId for a signalling put. A
+			 * (slot, peer) a peer doesn't expose (asymmetric counts) is a
+			 * zero address, skipped by populate(); a correct caller never
+			 * directs a signalId at a peer that did not create it.
+			 *
+			 * populate() consumes the peer-major all_addrs buffer
+			 * directly (addr(peer, slot) = all_addrs[(peer*total_slots +
+			 * slot)...]) and transposes it into the targetSlot-major
+			 * device table.
+			 */
+			ctx->data[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len,
+						    (int)total_slots, nranks);
+			for (int i = 0; i < local_n_sc; i++) {
+				ctx->sc_endpoints[ctx_id][i]->populate(
+					gda_ops, all_addrs, ep_addr_len,
+					(int)total_slots, nranks);
+			}
+
+			/* Build this rank's own counter/signal handle arrays from
+			 * its LOCAL counts (these are the endpoints this rank
+			 * exposes as targets / uses as counters). */
+			auto build_handle_array = [&](gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> &buf,
+						      int count, auto get_dev_handle) {
+				if (count > 0) {
+					buf.allocate(count);
+					for (int i = 0; i < count; i++)
+						buf.host[i] = get_dev_handle(i);
+					buf.commit();
+				}
+			};
+			build_handle_array(*ctx->d_counter_handles[ctx_id], config->nCounters,
+				[&](int i) { return ctx->sc_endpoints[ctx_id][i]->counter_dev_handle.dev; });
+			build_handle_array(*ctx->d_signal_handles[ctx_id], config->nSignals,
+				[&](int i) { return ctx->sc_endpoints[ctx_id][i]->signal_dev_handle.dev; });
 		}
 
 		/*
@@ -692,8 +794,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 static ncclResult_t nccl_ofi_gin_gdaki_destroyContext(void *ginCtx)
 {
 	/* The ctx's member destructors tear down every owned resource in
-	 * reverse construction order: device handle + per-peer tables +
-	 * GPU QP/CQ first, then the MMIO BAR mappings, finally the
+	 * reverse construction order: device handle + target addressing
+	 * table + GPU QP/CQ first, then the MMIO BAR mappings, finally the
 	 * libfabric endpoint (after the BAR mappings are gone, as
 	 * required). */
 	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);

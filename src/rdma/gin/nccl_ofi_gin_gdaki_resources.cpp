@@ -189,39 +189,87 @@ void gdaki_gpu_cq::build(const struct fi_efa_cq_attr &cq_attr)
 	buf.commit();
 }
 
-void gdaki_peer_addressing::populate(gdaki_fi_endpoint &endpoint,
-				     const std::vector<uint8_t> &peer_addrs,
-				     size_t ep_addr_len, int nranks,
-				     struct fi_efa_ops_gda *gda_ops)
+/*
+ * Sentinel for "this peer has no endpoint at this slot". A rank that did
+ * not create an endpoint for a given (collective) allgather round leaves
+ * its slot zero-filled; ranks are NOT required to request the same number
+ * of signal/counter endpoints, so some (slot, peer) pairs have no remote
+ * endpoint. A real EFA address (FI_ADDR_EFA: AH + QPN + QKEY-derived bytes)
+ * is never all-zero, so an all-zero slot unambiguously means "absent" and
+ * is skipped during addressing — the corresponding table entry stays 0 and
+ * is never used by a correct caller (the kernel bounds each post by the
+ * target's advertised count).
+ */
+static bool gdaki_ep_addr_is_absent(const uint8_t *addr, size_t len)
 {
-	ahs.allocate(nranks);
-	qpns.allocate(nranks);
-	qkeys.allocate(nranks);
-
-	for (int i = 0; i < nranks; i++) {
-		fi_addr_t fi_addr;
-		int ret = fi_av_insert(endpoint.av,
-				       peer_addrs.data() + i * ep_addr_len,
-				       1, &fi_addr, 0, nullptr);
-		if (ret != 1) {
-			throw std::runtime_error(
-				"fi_av_insert failed for rank " +
-				std::to_string(i));
+	for (size_t i = 0; i < len; i++) {
+		if (addr[i] != 0) {
+			return false;
 		}
+	}
+	return true;
+}
 
-		uint16_t ahn = 0, remote_qpn = 0;
-		uint32_t remote_qkey = 0;
-		ret = gda_ops->query_addr(endpoint.ep, fi_addr, &ahn,
-					  &remote_qpn, &remote_qkey);
-		if (ret != 0) {
-			throw std::runtime_error(
-				"query_addr failed for rank " +
-				std::to_string(i));
+void gdaki_target_addressing::populate(gdaki_fi_endpoint &endpoint,
+				       const std::vector<uint8_t> &all_addrs,
+				       size_t ep_addr_len, int total_slots, int nranks,
+				       struct fi_efa_ops_gda *gda_ops)
+{
+	if (total_slots <= 0 || nranks <= 0) {
+		return;
+	}
+
+	const size_t n = (size_t)total_slots * (size_t)nranks;
+	ahs.allocate(n);
+	qpns.allocate(n);
+	qkeys.allocate(n);
+
+	/* Build the targetSlot-major table: idx = slot * nranks + peer.
+	 *
+	 * `all_addrs` is the batched-allgather buffer, peer-major:
+	 *     addr(peer, slot) = &all_addrs[(peer * total_slots + slot) * ep_addr_len]
+	 * with slot 0 = peer's data EP and slots 1..(total_slots-1) = peer's
+	 * sc EPs. We resolve every (slot, peer) through THIS endpoint's own AV
+	 * (an address handle is AV-local) and store it at [slot * nranks + peer].
+	 *
+	 * A (slot, peer) whose peer has no endpoint at that slot (asymmetric
+	 * counts leave a zero address) is skipped; the entry stays 0 and is
+	 * never addressed — the kernel bounds each signalling post by the
+	 * target peer's advertised signal count. */
+	for (int slot = 0; slot < total_slots; slot++) {
+		for (int peer = 0; peer < nranks; peer++) {
+			const size_t dst_idx = (size_t)slot * (size_t)nranks + (size_t)peer;
+			const size_t src_idx = (size_t)peer * (size_t)total_slots + (size_t)slot;
+			const uint8_t *addr = all_addrs.data() + src_idx * ep_addr_len;
+
+			if (gdaki_ep_addr_is_absent(addr, ep_addr_len)) {
+				continue;
+			}
+
+			fi_addr_t fi_addr;
+			int ret = fi_av_insert(endpoint.av, addr, 1, &fi_addr, 0, nullptr);
+			if (ret != 1) {
+				throw std::runtime_error(
+					"target fi_av_insert failed (slot " +
+					std::to_string(slot) + ", rank " +
+					std::to_string(peer) + ")");
+			}
+
+			uint16_t ahn = 0, remote_qpn = 0;
+			uint32_t remote_qkey = 0;
+			ret = gda_ops->query_addr(endpoint.ep, fi_addr, &ahn,
+						  &remote_qpn, &remote_qkey);
+			if (ret != 0) {
+				throw std::runtime_error(
+					"target query_addr failed (slot " +
+					std::to_string(slot) + ", rank " +
+					std::to_string(peer) + ")");
+			}
+
+			ahs.host[dst_idx] = ahn;
+			qpns.host[dst_idx] = remote_qpn;
+			qkeys.host[dst_idx] = remote_qkey;
 		}
-
-		ahs.host[i] = ahn;
-		qpns.host[i] = remote_qpn;
-		qkeys.host[i] = remote_qkey;
 	}
 
 	ahs.commit();
@@ -237,8 +285,8 @@ void gdaki_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
 }
 
 void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
-			      const std::vector<uint8_t> &peer_addrs,
-			      size_t ep_addr_len, int nranks)
+			      const std::vector<uint8_t> &all_addrs,
+			      size_t ep_addr_len, int total_slots, int nranks)
 {
 	/* Query QP and map SQ MMIO for GPU access. */
 	struct fi_efa_wq_attr sq_attr = {}, rq_attr = {};
@@ -271,8 +319,8 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 
 	gpu_cq.build(efa_cq_attr);
 
-	/* Populate per-peer addressing tables in GPU memory. */
-	peers.populate(endpoint, peer_addrs, ep_addr_len, nranks, gda_ops);
+	/* Build the [total_slots*nranks] target table in GPU memory. */
+	targets.populate(endpoint, all_addrs, ep_addr_len, total_slots, nranks, gda_ops);
 }
 
 void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
@@ -291,12 +339,12 @@ void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_in
 }
 
 void gdaki_data_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
-				   const std::vector<uint8_t> &peer_addrs,
-				   size_t ep_addr_len, int nranks)
+				   const std::vector<uint8_t> &all_addrs,
+				   size_t ep_addr_len, int total_slots, int nranks)
 {
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
-	 * per-peer addressing, sq_size stash) to the inner endpoint. */
-	base.populate(gda_ops, peer_addrs, ep_addr_len, nranks);
+	 * target table, sq_size stash) to the inner endpoint. */
+	base.populate(gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
 }
 
 void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
@@ -319,15 +367,15 @@ void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info
 }
 
 void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
-				 const std::vector<uint8_t> &peer_addrs,
-				 size_t ep_addr_len, int nranks)
+				 const std::vector<uint8_t> &all_addrs,
+				 size_t ep_addr_len, int total_slots, int nranks)
 {
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
-	 * per-peer addressing) to the inner endpoint. */
-	base.populate(gda_ops, peer_addrs, ep_addr_len, nranks);
+	 * target table) to the inner endpoint. */
+	base.populate(gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
 
 	/*
-	 * Build the two device handles. They share QP / CQ / per-peer
+	 * Build the two device handles. They share QP / CQ / target
 	 * addressing / sq_lock / sq_size / submitted_count layout — only
 	 * the (cntr_value, local_cntr_value) pair differs.
 	 *
@@ -345,9 +393,9 @@ void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 	auto fill_common = [&](nccl_ofi_gin_gdaki_dev_counter_handle &h) {
 		h.base.qp = base.gpu_qp.dev();
 		h.base.cq = base.gpu_cq.dev();
-		h.base.address_handles = base.peers.ahs.dev;
-		h.base.remote_qpns = base.peers.qpns.dev;
-		h.base.qkey = base.peers.qkeys.dev;
+		h.base.target_address_handles = base.targets.ahs.dev;
+		h.base.target_remote_qpns = base.targets.qpns.dev;
+		h.base.target_qkey = base.targets.qkeys.dev;
 		h.base.sq_lock = 0;
 		h.base.submitted_count = 0;
 		h.base.sq_size = base.sq_size;
