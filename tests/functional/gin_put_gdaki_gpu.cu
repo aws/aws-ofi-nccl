@@ -182,8 +182,21 @@ int main(int argc, char *argv[])
 		return ncclInternalError;
 	}
 
-	auto *src_gin_mr = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(src_ginhandle);
-	auto *dst_gin_mr = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(dst_ginhandle);
+	/* regMrSym returns a GPU-resident MR handle (the device-side Put
+	 * kernel dereferences it). Copy each handle to a host staging buffer
+	 * before reading lkey / peers[] on the host — dereferencing the GPU
+	 * pointer directly on the host faults. The handle is a flex-array
+	 * struct: header + peers[nranks]. */
+	const size_t mr_handle_bytes =
+		sizeof(nccl_ofi_gin_gdaki_mr_handle) +
+		(size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
+	std::vector<uint8_t> src_mr_host(mr_handle_bytes), dst_mr_host(mr_handle_bytes);
+	CUDACHECK(cudaMemcpy(src_mr_host.data(), src_ginhandle, mr_handle_bytes,
+			     cudaMemcpyDeviceToHost));
+	CUDACHECK(cudaMemcpy(dst_mr_host.data(), dst_ginhandle, mr_handle_bytes,
+			     cudaMemcpyDeviceToHost));
+	auto *src_gin_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(src_mr_host.data());
+	auto *dst_gin_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(dst_mr_host.data());
 	uint32_t src_lkey = src_gin_mr->lkey;
 	std::vector<uint32_t> all_rkeys(nranks);
 	for (int i = 0; i < nranks; i++) all_rkeys[i] = dst_gin_mr->peers[i].rkey;

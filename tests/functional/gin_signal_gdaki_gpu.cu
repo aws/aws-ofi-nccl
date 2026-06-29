@@ -171,7 +171,17 @@ int main(int argc, char *argv[])
 		MPI_Finalize();
 		return ncclInternalError;
 	}
-	auto *sig_mr = static_cast<nccl_ofi_gin_gdaki_mr_handle *>(sig_ginhandle);
+	/* regMrSym returns a GPU-resident MR handle; copy it to a host
+	 * staging buffer before reading lkey / peers[] on the host
+	 * (dereferencing the GPU pointer on the host faults). Flex-array
+	 * struct: header + peers[nranks]. */
+	const size_t mr_handle_bytes =
+		sizeof(nccl_ofi_gin_gdaki_mr_handle) +
+		(size_t)nranks * sizeof(nccl_ofi_gin_gdaki_mr_peer);
+	std::vector<uint8_t> sig_mr_host(mr_handle_bytes);
+	CUDACHECK(cudaMemcpy(sig_mr_host.data(), sig_ginhandle, mr_handle_bytes,
+			     cudaMemcpyDeviceToHost));
+	auto *sig_mr = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle *>(sig_mr_host.data());
 	uint32_t sig_lkey = sig_mr->lkey;
 	std::vector<uint32_t> all_rkeys(nranks);
 	for (int i = 0; i < nranks; i++) all_rkeys[i] = sig_mr->peers[i].rkey;
