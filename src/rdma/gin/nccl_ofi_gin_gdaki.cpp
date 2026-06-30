@@ -17,6 +17,7 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#include "nccl_ofi_platform.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -480,6 +481,28 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 	if (collComm == nullptr || config == nullptr || ginCtx == nullptr || devHandle == nullptr) {
 		NCCL_OFI_WARN("gin GDAKI: createContext received NULL argument");
 		return ncclInvalidArgument;
+	}
+
+	/*
+	 * Firmware-rollout gate. The GDAKI data path relies on the EFA
+	 * hardware completion counter in GPU memory (fi_efa_ops_gda::
+	 * cntr_open_ext, see gdaki_hw_counter). That counter is gated by NIC
+	 * firmware whose fleet rollout is gradual, so we only use it where the
+	 * running platform has declared it fleet-wide available
+	 * (PlatformFeature::EFA_HW_COMP_CNTR). Refusing here -- before any
+	 * resources are built -- gives a deterministic, fleet-uniform answer
+	 * (consistent across all ranks under SPMD) instead of failing partway
+	 * through context creation when cntr_open_ext returns an error on a
+	 * not-yet-upgraded host. OFI_NCCL_FORCE_FEATURES=EFA_HW_COMP_CNTR can
+	 * force-enable it on a known-upgraded (test) fleet.
+	 */
+	if (!PlatformManager::get_global().get_platform().platform_has_feature(
+		    PlatformFeature::EFA_HW_COMP_CNTR)) {
+		NCCL_OFI_WARN("gin GDAKI: EFA hardware completion counter not enabled "
+			      "for this platform; refusing createContext "
+			      "(set OFI_NCCL_FORCE_FEATURES=EFA_HW_COMP_CNTR to override "
+			      "on a fleet known to have the firmware)");
+		return ncclInvalidUsage;
 	}
 
 	NCCL_OFI_INFO(NCCL_NET,
