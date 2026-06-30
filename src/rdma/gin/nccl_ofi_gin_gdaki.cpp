@@ -232,19 +232,19 @@ static void exchange_signal_counter_counts(nccl_ofi_gin_gdaki_context *ctx,
 }
 
 /*
- * Allocate the per-context signal-only scratch buffer, register it on the
- * proxy domain, and allgather (addr, rkey) across ranks. The kernel uses
- * this for net.signal()-style writes that have no payload (hasWins=false,
- * bytes=0) — EFA still needs a registered remote address to bump the
- * receiver's FI_REMOTE_WRITE counter.
+ * Allocate the per-context signal-only scratch buffer and register it on
+ * the proxy domain. The kernel uses this for net.signal()-style writes that
+ * have no payload (hasWins=false, bytes=0): it posts a 0-byte RDMA write
+ * whose arrival bumps the receiver's FI_REMOTE_WRITE counter. A 0-byte
+ * write touches no remote memory, so the target (addr, rkey) is zero and
+ * only this LOCAL source buffer is required — no per-peer (addr, rkey)
+ * exchange is needed.
  *
- * Throws std::runtime_error on any libfabric / allgather failure; the
- * caller's catch handler unwinds via the ctx's RAII members.
+ * Throws std::runtime_error on any libfabric failure; the caller's catch
+ * handler unwinds via the ctx's RAII members.
  */
 static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
-				 struct fid_domain *ofi_domain,
-				 nccl_ofi_rdma_gin_put_comm *put_comm,
-				 int nranks, int rank)
+				 struct fid_domain *ofi_domain)
 {
 	constexpr size_t kScratchBytes = sizeof(uint64_t);
 	ctx->scratch_buf = calloc(1, kScratchBytes);
@@ -257,9 +257,10 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 	struct fi_mr_attr mr_attr = {};
 	mr_attr.mr_iov = &iov;
 	mr_attr.iov_count = 1;
-	/* The buffer is only used as the source/target of RDMA WRITE on the
-	 * signal endpoints; FI_SEND / FI_RECV are not required. */
-	mr_attr.access = FI_REMOTE_WRITE | FI_WRITE;
+	/* The buffer is only ever a LOCAL source for the signal-only 0-byte
+	 * RDMA write (never a remote target, send, or recv), so FI_WRITE
+	 * alone is sufficient. */
+	mr_attr.access = FI_WRITE;
 	mr_attr.iface = FI_HMEM_SYSTEM;
 
 	int mret = fi_mr_regattr(ofi_domain, &mr_attr, 0, &ctx->scratch_mr);
@@ -271,30 +272,6 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 
 	ctx->scratch_lkey = (uint32_t)fi_mr_key(ctx->scratch_mr);
 	ctx->scratch_local_addr = (uint64_t)ctx->scratch_buf;
-
-	/* Allgather (local_addr, local_rkey) across ranks. */
-	std::vector<uint64_t> scratch_all_addrs(nranks, 0);
-	std::vector<uint32_t> scratch_all_rkeys(nranks, 0);
-	scratch_all_addrs[rank] = ctx->scratch_local_addr;
-	scratch_all_rkeys[rank] = ctx->scratch_lkey;
-
-	if (put_comm->get_ag_comm().all_gather(
-		    scratch_all_addrs.data(), sizeof(uint64_t)) != 0) {
-		throw std::runtime_error("scratch allgather addrs failed");
-	}
-	if (put_comm->get_ag_comm().all_gather(
-		    scratch_all_rkeys.data(), sizeof(uint32_t)) != 0) {
-		throw std::runtime_error("scratch allgather rkeys failed");
-	}
-
-	ctx->scratch_remote_addrs_buf.allocate(nranks);
-	ctx->scratch_remote_rkeys_buf.allocate(nranks);
-	for (int i = 0; i < nranks; i++) {
-		ctx->scratch_remote_addrs_buf.host[i] = scratch_all_addrs[i];
-		ctx->scratch_remote_rkeys_buf.host[i] = scratch_all_rkeys[i];
-	}
-	ctx->scratch_remote_addrs_buf.commit();
-	ctx->scratch_remote_rkeys_buf.commit();
 }
 
 /*
@@ -457,8 +434,6 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.scratch_lkey         = ctx->scratch_lkey;
 	h.scratch_pad          = 0;
 	h.scratch_local_addr   = ctx->scratch_local_addr;
-	h.scratch_remote_addrs = ctx->scratch_remote_addrs_buf.dev;
-	h.scratch_remote_rkeys = ctx->scratch_remote_rkeys_buf.dev;
 	/* PutValue slot pool. The pool is allocated unconditionally
 	 * (sized off every context's data.sq_size, which is always
 	 * non-zero), so we always populate these fields. The lkey and
@@ -605,13 +580,12 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 
 		/*
 		 * Step 3: Allocate the signal-only scratch buffer once per
-		 * createContext (not per logical ctx). Shared across all
-		 * ctxs on this rank because the buffer's contents are never
-		 * read or written — 0-byte RDMA writes only tick the per-EP
-		 * FI_REMOTE_WRITE counter on the receiver, and the buffer is
-		 * just a registered destination address.
+		 * createContext (not per logical ctx). Shared across all ctxs
+		 * on this rank: it is only the LOCAL source for the 0-byte
+		 * signal write (whose zero remote target needs no per-peer
+		 * exchange), and each ctx has its own signal endpoint.
 		 */
-		setup_scratch_buffer(ctx.get(), ofi_domain, put_comm, nranks, rank);
+		setup_scratch_buffer(ctx.get(), ofi_domain);
 
 		/*
 		 * Step 3b: Exchange each rank's (nSignals, nCounters) so we can
