@@ -163,6 +163,9 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 			{ "NCCL_NETDEVS_POLICY", "max:1" },
 		},
+		/* EFA hardware completion counter firmware is deployed on the
+		 * P5en and P6-B200 fleets. */
+		.enabled_features = static_cast<uint64_t>(PlatformFeature::EFA_HW_COMP_CNTR),
 	},
 	{
 		.name = "p-series",
