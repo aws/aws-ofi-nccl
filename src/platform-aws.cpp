@@ -346,6 +346,87 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 
 
 /*
+ * Parse OFI_NCCL_FORCE_FEATURES and OFI_NCCL_DISABLE_FEATURES (each a
+ * comma- or space-separated list of feature tokens) into bitmasks. Done
+ * once and cached. Unknown tokens are warned about and ignored.
+ */
+void PlatformAWS::init_feature_overrides()
+{
+	if (feature_overrides_init_) {
+		return;
+	}
+	feature_overrides_init_ = true;
+
+	struct {
+		const char *env;
+		uint64_t *mask;
+	} lists[] = {
+		{ "OFI_NCCL_FORCE_FEATURES", &force_features_ },
+		{ "OFI_NCCL_DISABLE_FEATURES", &disable_features_ },
+	};
+
+	for (auto &l : lists) {
+		const char *val = getenv(l.env);
+		if (val == nullptr) {
+			continue;
+		}
+		std::string s(val);
+		size_t start = 0;
+		while (start < s.size()) {
+			size_t end = s.find_first_of(", ", start);
+			if (end == std::string::npos) {
+				end = s.size();
+			}
+			std::string tok = s.substr(start, end - start);
+			start = end + 1;
+			if (tok.empty()) {
+				continue;
+			}
+			bool matched = false;
+			for (PlatformFeature f : platform_all_features) {
+				const char *name = platform_feature_name(f);
+				if (name != nullptr && tok == name) {
+					*l.mask |= static_cast<uint64_t>(f);
+					matched = true;
+					break;
+				}
+			}
+			if (!matched) {
+				NCCL_OFI_WARN("Ignoring unknown feature token \"%s\" in %s",
+					      tok.c_str(), l.env);
+			}
+		}
+	}
+}
+
+
+bool PlatformAWS::platform_has_feature(PlatformFeature feature)
+{
+	uint64_t bit = static_cast<uint64_t>(feature);
+	if (bit == 0) {
+		return false;
+	}
+
+	init_feature_overrides();
+
+	/* 1. Explicit disable wins (kill switch). */
+	if (disable_features_ & bit) {
+		return false;
+	}
+	/* 2. Explicit force enables regardless of platform default. */
+	if (force_features_ & bit) {
+		return true;
+	}
+	/* 3. Fall back to the matched platform's static, fleet-uniform default. */
+	const ec2_platform_data *data = get_platform_data();
+	if (data == nullptr) {
+		return false;
+	}
+	return (data->enabled_features & bit) != 0;
+}
+
+
+/*
  * validate that EFA is using RDMA write natively and not in an
  * emulated fashion.
  */

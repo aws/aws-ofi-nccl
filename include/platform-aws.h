@@ -10,6 +10,7 @@
 #ifndef PLATFORM_AWS_H_
 #define PLATFORM_AWS_H_
 
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -39,6 +40,21 @@ public:
 	void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
 			  const char *req_type) override;
 
+	/*
+	 * Return true if `feature` should be treated as enabled on the
+	 * platform this process is running on.
+	 *
+	 * Decision order (highest precedence first):
+	 *   1. OFI_NCCL_DISABLE_FEATURES env  -> force OFF (kill switch)
+	 *   2. OFI_NCCL_FORCE_FEATURES env    -> force ON  (testing/early enable)
+	 *   3. the matched platform's enabled_features bitmask (static default)
+	 *
+	 * This is a fleet-uniform, per-platform decision by design: under SPMD
+	 * every rank must answer identically, so it deliberately does not probe
+	 * the local host's live firmware capability.
+	 */
+	bool platform_has_feature(PlatformFeature feature) override;
+
 protected:
 	struct ec2_platform_data {
 		const char* name;
@@ -49,6 +65,12 @@ protected:
 		bool gdr_required;
 		PROTOCOL default_protocol;
 		std::map<std::string, std::string> env;
+		/* OR of PlatformFeature bits whose backing firmware is
+		 * confirmed deployed fleet-wide for this platform. The default
+		 * member initializer (0 == PlatformFeature::NONE) means a
+		 * platform entry that does not set it has all features off,
+		 * and is exempt from -Wmissing-field-initializers. */
+		uint64_t enabled_features = 0;
 	};
 
 	struct platform_aws_node_guid {
@@ -66,6 +88,10 @@ protected:
 	static const ec2_platform_data *get_platform_entry(const char *platform_type,
 					      const ec2_platform_data *platform_data_list,
 					      size_t platform_data_len);
+
+	// Feature-flag helpers
+	/* Parse the force/disable env vars into bitmasks (once, cached). */
+	void init_feature_overrides();
 
 	// Endpoint configuration functions
 	int validate_rdma_write(struct fid_ep *ep);
@@ -90,6 +116,11 @@ private:
 	// Platform data state
 	bool platform_data_init_ = false;
 	const ec2_platform_data *cached_platform_data_ = nullptr;
+
+	// Feature-override state (parsed from env once)
+	bool feature_overrides_init_ = false;
+	uint64_t force_features_ = 0;    // OFI_NCCL_FORCE_FEATURES
+	uint64_t disable_features_ = 0;  // OFI_NCCL_DISABLE_FEATURES
 
 	// Endpoint config state
 	bool nccl_proto_configured_ = false;
