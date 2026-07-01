@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_PLATFORM_H_
 #define NCCL_OFI_PLATFORM_H_
 
+#include <cstdint>
 #include <memory>
 #include <map>
 
@@ -14,6 +15,79 @@
 
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_system.h"
+
+/*
+ * Per-platform firmware-feature flags for staged rollouts.
+ *
+ * A capability may exist in EFA NIC firmware before that firmware has
+ * reached 100% of a platform's fleet. Because NCCL is SPMD, every rank in
+ * a job must make the same enable decision or a collective can
+ * desynchronize, so a per-host runtime capability probe is unsafe during a
+ * rollout (it answers differently on upgraded vs not-yet-upgraded hosts).
+ * Instead a platform statically declares which firmware features are known
+ * to be deployed fleet-wide; a feature is turned on for a platform (and the
+ * plugin recompiled) only once its rollout is confirmed complete.
+ *
+ * Lives on the base Platform interface so any transport can query it via
+ * PlatformManager::get_platform().platform_has_feature(...) without
+ * depending on a concrete platform's header.
+ *
+ * Single source of truth: add a feature by adding ONE line to the
+ * NCCL_OFI_PLATFORM_FEATURES X-macro below (name, bit position, doc). The
+ * enum, the env-token name lookup (platform_feature_name) and the
+ * iteration over all features are all generated from it, so they cannot
+ * drift apart. Bit positions index a uint64_t mask; keep them distinct.
+ *
+ *   X(EnumName, bit, "description")
+ */
+#define NCCL_OFI_PLATFORM_FEATURES(X)                                          \
+	/* EFA hardware completion counter in GPU memory, used by the GDAKI    \
+	 * GIN data path (libfabric fi_efa_ops_gda::cntr_open_ext). Gated by   \
+	 * NIC firmware support advertised via efadv. */                       \
+	X(EFA_HW_COMP_CNTR, 0, "EFA hardware completion counter (GDAKI)")
+
+enum class PlatformFeature : uint64_t {
+	NONE = 0,
+#define NCCL_OFI_PF_ENUM(NAME, BIT, DESC) NAME = (1ULL << (BIT)),
+	NCCL_OFI_PLATFORM_FEATURES(NCCL_OFI_PF_ENUM)
+#undef NCCL_OFI_PF_ENUM
+};
+
+/*
+ * Map a feature to the token accepted in OFI_NCCL_FORCE_FEATURES /
+ * OFI_NCCL_DISABLE_FEATURES (the token is the enum spelling). Returns
+ * nullptr for NONE or an unrecognized value. Defined inline next to the
+ * enum so the two stay in lock-step.
+ */
+inline const char *platform_feature_name(PlatformFeature feature)
+{
+	switch (feature) {
+#define NCCL_OFI_PF_NAME(NAME, BIT, DESC) \
+	case PlatformFeature::NAME: return #NAME;
+	NCCL_OFI_PLATFORM_FEATURES(NCCL_OFI_PF_NAME)
+#undef NCCL_OFI_PF_NAME
+	case PlatformFeature::NONE:
+		break;
+	}
+	return nullptr;
+}
+
+/* Iterate every non-NONE feature: for (PlatformFeature f : platform_all_features) */
+static constexpr PlatformFeature platform_all_features[] = {
+#define NCCL_OFI_PF_LIST(NAME, BIT, DESC) PlatformFeature::NAME,
+	NCCL_OFI_PLATFORM_FEATURES(NCCL_OFI_PF_LIST)
+#undef NCCL_OFI_PF_LIST
+};
+
+/* Combine PlatformFeature bits into a uint64_t mask. */
+inline constexpr uint64_t operator|(PlatformFeature a, PlatformFeature b)
+{
+	return static_cast<uint64_t>(a) | static_cast<uint64_t>(b);
+}
+inline constexpr uint64_t operator|(uint64_t a, PlatformFeature b)
+{
+	return a | static_cast<uint64_t>(b);
+}
 
 /**
  * @brief Abstract base class representing a platform implementation for NCCL OFI plugin
@@ -126,6 +200,25 @@ public:
 			      err_entry->err, err_entry->flags, err_entry->prov_errno,
 			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 			      (long)err_entry->len);
+	}
+
+	/**
+	 * @brief	Query whether a firmware-gated feature is enabled for the
+	 *		running platform.
+	 *
+	 *		Returns a fleet-uniform, per-platform answer (not a per-host
+	 *		probe): under SPMD every rank must agree or a collective can
+	 *		desynchronize during a firmware rollout. The base
+	 *		implementation conservatively returns false (no platform =>
+	 *		no firmware features assumed); concrete platforms override.
+	 *
+	 * @param	feature	The PlatformFeature to query
+	 * @return	true if the feature should be treated as enabled
+	 */
+	virtual bool platform_has_feature(PlatformFeature feature)
+	{
+		(void)feature;
+		return false;
 	}
 };
 

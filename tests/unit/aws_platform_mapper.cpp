@@ -19,6 +19,7 @@ public:
 	using PlatformAWS::get_platform_map;
 	using PlatformAWS::get_platform_entry;
 	using PlatformAWS::ec2_platform_data;
+	using PlatformAWS::platform_has_feature;
 };
 
 /* check that we get the expected response for all our known platforms */
@@ -92,6 +93,117 @@ static int check_known_platforms(void)
 	return ret;
 }
 
+/* Feature-flag tests
+ *
+ * These exercise PlatformAWS::platform_has_feature() and its env-override
+ * precedence. The env-override paths (FORCE / DISABLE) short-circuit before
+ * the platform-table lookup, so they are deterministic regardless of which
+ * instance type the test happens to run on.
+ */
+
+/* platform_feature_name() must round-trip every non-NONE feature and return
+ * NULL for NONE, so the FORCE/DISABLE token parser stays in sync with the enum. */
+static int check_feature_name(void)
+{
+	int ret = 0;
+
+	if (platform_feature_name(PlatformFeature::NONE) != NULL) {
+		printf("platform_feature_name(NONE) should be NULL\n");
+		ret += 1;
+	}
+
+	const char *n = platform_feature_name(PlatformFeature::EFA_HW_COMP_CNTR);
+	if (n == NULL || 0 != strcmp(n, "EFA_HW_COMP_CNTR")) {
+		printf("feature_name(EFA_HW_COMP_CNTR) wrong: %s\n", n ? n : "(null)");
+		ret += 1;
+	}
+
+	return ret;
+}
+
+/* OFI_NCCL_FORCE_FEATURES forces a feature ON regardless of platform default;
+ * OFI_NCCL_DISABLE_FEATURES forces OFF and wins over FORCE. NONE is always
+ * false. Each PlatformAWS instance parses the env once, so use a fresh
+ * instance per env configuration.
+ *
+ * These cases isolate the env-override logic from the platform table: we pin
+ * OFI_NCCL_FORCE_PRODUCT_NAME to an instance type that matches no
+ * feature-enabling entry, so platform_has_feature() reflects only the env
+ * overrides under test. (Without this the test would behave differently
+ * depending on the instance type it runs on -- e.g. on p5en, where the table
+ * natively enables EFA_HW_COMP_CNTR.) */
+static int check_feature_overrides(void)
+{
+	int ret = 0;
+
+	/* Neutralize the platform-table default for the duration of this test
+	 * so only the env overrides decide the outcome. c5.xlarge matches no
+	 * feature-enabled platform entry. */
+	setenv("OFI_NCCL_FORCE_PRODUCT_NAME", "c5.xlarge", 1);
+
+	/* NONE is never enabled. */
+	{
+		unsetenv("OFI_NCCL_FORCE_FEATURES");
+		unsetenv("OFI_NCCL_DISABLE_FEATURES");
+		TestablePlatformAWS p;
+		if (p.platform_has_feature(PlatformFeature::NONE)) {
+			printf("platform_has_feature(NONE) must be false\n");
+			ret += 1;
+		}
+	}
+
+	/* FORCE turns the feature on even on a platform that does not enable it. */
+	{
+		setenv("OFI_NCCL_FORCE_FEATURES", "EFA_HW_COMP_CNTR", 1);
+		unsetenv("OFI_NCCL_DISABLE_FEATURES");
+		TestablePlatformAWS p;
+		if (!p.platform_has_feature(PlatformFeature::EFA_HW_COMP_CNTR)) {
+			printf("FORCE_FEATURES did not enable EFA_HW_COMP_CNTR\n");
+			ret += 1;
+		}
+	}
+
+	/* DISABLE wins over FORCE. */
+	{
+		setenv("OFI_NCCL_FORCE_FEATURES", "EFA_HW_COMP_CNTR", 1);
+		setenv("OFI_NCCL_DISABLE_FEATURES", "EFA_HW_COMP_CNTR", 1);
+		TestablePlatformAWS p;
+		if (p.platform_has_feature(PlatformFeature::EFA_HW_COMP_CNTR)) {
+			printf("DISABLE_FEATURES did not override FORCE_FEATURES\n");
+			ret += 1;
+		}
+	}
+
+	/* Unknown tokens are ignored (and must not enable anything). With the
+	 * platform default neutralized above, an unknown FORCE token leaves the
+	 * feature off. */
+	{
+		setenv("OFI_NCCL_FORCE_FEATURES", "NOT_A_REAL_FEATURE", 1);
+		unsetenv("OFI_NCCL_DISABLE_FEATURES");
+		TestablePlatformAWS p;
+		if (p.platform_has_feature(PlatformFeature::EFA_HW_COMP_CNTR)) {
+			printf("unknown FORCE token must not enable a feature\n");
+			ret += 1;
+		}
+	}
+
+	/* Comma/space separated lists parse correctly. */
+	{
+		setenv("OFI_NCCL_FORCE_FEATURES", "FOO, EFA_HW_COMP_CNTR BAR", 1);
+		unsetenv("OFI_NCCL_DISABLE_FEATURES");
+		TestablePlatformAWS p;
+		if (!p.platform_has_feature(PlatformFeature::EFA_HW_COMP_CNTR)) {
+			printf("list-form FORCE_FEATURES did not enable EFA_HW_COMP_CNTR\n");
+			ret += 1;
+		}
+	}
+
+	unsetenv("OFI_NCCL_FORCE_PRODUCT_NAME");
+	unsetenv("OFI_NCCL_FORCE_FEATURES");
+	unsetenv("OFI_NCCL_DISABLE_FEATURES");
+	return ret;
+}
+
 static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 	{
 		.name = "first",
@@ -126,6 +238,10 @@ int main(int argc, char *argv[]) {
 	/* make sure we maintain ordering */
 	ret += check_value(test_map_1, 2, "platform-x", "first");
 	ret += check_value(test_map_1, 2, "platform-xy", "second");
+
+	/* feature-flag mechanism */
+	ret += check_feature_name();
+	ret += check_feature_overrides();
 
 	return ret;
 }
