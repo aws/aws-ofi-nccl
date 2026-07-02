@@ -195,6 +195,18 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 	/* Remote MR information for each peer rank */
 	std::vector<gin_remote_mr> remote_mr;
 
+	/* Set when NCCL registered this MR with NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET,
+	 * guaranteeing the signal values in this region are monotonic (never reset
+	 * to zero by the device). This lets do_gin_signal maintain a host-side
+	 * shadow of the signal values and skip the device read in the
+	 * read-modify-write. Only ever true for NCCL_PTR_CUDA registrations. */
+	bool signal_never_reset = false;
+	/* Host-authoritative copy of the signal values, indexed by
+	 * signal_offset / sizeof(uint64_t). Non-empty only when signal_never_reset
+	 * is set. Written exclusively by the gdrcopy worker thread in
+	 * do_gin_signal, which is the sole owner of the signal update path. */
+	std::vector<uint64_t> signal_shadow;
+
 	/* Optional device-visible handle owned by the GDAKI plugin wrapper
 	 * (nccl_ofi_gin_gdaki_mr_handle *). This is GPU-accessible memory
 	 * (allocated via nccl_net_ofi_gpu_mem_alloc) — it is the pointer

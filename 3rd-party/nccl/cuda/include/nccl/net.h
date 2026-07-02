@@ -24,6 +24,7 @@
 #define NCCL_PTR_DMABUF 0x4
 
 #define NCCL_NET_MR_FLAG_FORCE_SO (1 << 0)
+#define NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET (1 << 1)
 #define NCCL_NET_SIGNAL_OP_INC 0x1
 #define NCCL_NET_SIGNAL_OP_ADD 0x2
 
@@ -50,6 +51,9 @@ typedef ncclResult_t (*ncclProfilerCallback_t)(void** eHandle, int type, void* p
 #include "net_v3.h"
 #include "net_v2.h"
 
+#include "gin_v14.h"
 #include "gin_v13.h"
+
+#include "rma_v14.h"
 
 #endif // end include guard
