@@ -298,6 +298,13 @@ public:
 	int regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
 			   uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out) override;
 
+	/* Shared core behind the proxy regMrSymDmaBuf and the GDAKI regMrSymDmaBuf
+	 * entry point: duplicate detection/refcount, local EFA registration, MR-map
+	 * insertion, and the per-rank key all-gather. Leaves gdr_handle == nullptr;
+	 * GDRCopy (proxy only) is layered on top by the caller. Caller holds ep_lock. */
+	int regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
+				 nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out);
+
 	int deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle) override;
 
 	void increment_outstanding_ack_counter()

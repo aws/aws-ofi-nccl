@@ -316,8 +316,38 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 				      int type, uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out)
 {
 	auto &gin_ep = resources.get_ep();
-
 	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+
+	/* Shared core: dedup/refcount, local EFA registration, MR-map insert,
+	   per-rank key all-gather. */
+	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
+	int ret = regMrSymDmaBufCommon(ckey, data_ptr, size, type, &mr_handle);
+	if (ret != 0) {
+		return ret;
+	}
+
+	/* Proxy path only: for CUDA memory, also register with GDRCopy so the
+	   proxy can perform CPU-driven signal updates. On a duplicate hit the
+	   handle already carries a gdr_handle, so register only the first time. */
+	if (type == NCCL_PTR_CUDA && mr_handle->gdr_handle == nullptr) {
+		ret = get_device_copy().register_region(mr_handle->input_address, mr_handle->size,
+							mr_handle->gdr_handle);
+		if (ret != 0) {
+			NCCL_OFI_WARN("GDRCopy registration failed: %d", ret);
+			mr_handle_map.erase(mr_handle->input_address);
+			delete mr_handle;
+			return ret;
+		}
+	}
+
+	*mr_handle_out = mr_handle;
+	return 0;
+}
+
+int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+{
+	auto &gin_ep = resources.get_ep();
 
 	/* Check for duplicate registration */
 	auto it = mr_handle_map.find(data_ptr);
@@ -337,8 +367,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 
 	auto *mr_handle = new nccl_ofi_rdma_gin_symm_mr_handle {};
 
-	NCCL_OFI_TRACE(NCCL_NET, "regMrSymDmaBuf ptr %p size %zu type %d flags %lu handle %p",
-		       data_ptr, size, type, mrFlags, mr_handle);
+	NCCL_OFI_TRACE(NCCL_NET, "regMrSymDmaBuf ptr %p size %zu type %d handle %p",
+		       data_ptr, size, type, mr_handle);
 
 	/**
 	 * Local registration with the endpoint
@@ -368,24 +398,12 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 	my_remote_mr.num_rails = gin_ep.get_num_rails();
 
 	auto *local_handle = mr_handle->local_handle;
-	if (type == NCCL_PTR_CUDA) {
-		/* For CUDA registrations, we also register the memory with
-		   GDRCopy, in case we are asked to do a signal update to this
-		   region. */
-		ret = get_device_copy().register_region(mr_handle->input_address, mr_handle->size,
-							mr_handle->gdr_handle);
-		if (ret != 0) {
-			NCCL_OFI_WARN("GDRCopy registration failed: %d", ret);
-			goto err;
-		}
-	}
-
 	for (unsigned i = 0; i < gin_ep.get_num_rails(); ++i) {
 		my_remote_mr.mr_key[i] = fi_mr_key(local_handle->get_mr(i));
 		if (my_remote_mr.mr_key[i] == FI_KEY_NOTAVAIL) {
 			NCCL_OFI_WARN("Memory registration key is not available");
-			ret = -EIO;
-			goto err;
+			delete mr_handle;
+			return -EIO;
 		}
 	}
 
@@ -401,10 +419,6 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 
 	*mr_handle_out = mr_handle;
 	return 0;
-
-err:
-	delete mr_handle;
-	return ret;
 }
 
 int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle_base)
@@ -425,7 +439,7 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 		return 0;
 	}
 
-	if (mr_handle->type == NCCL_PTR_CUDA) {
+	if (mr_handle->type == NCCL_PTR_CUDA && mr_handle->gdr_handle != nullptr) {
 		int ret = get_device_copy().deregister_region(mr_handle->gdr_handle);
 		if (ret != 0) {
 			NCCL_OFI_WARN("GDRCopy deregister failed: %d", ret);
