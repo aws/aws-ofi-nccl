@@ -852,10 +852,10 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 						int type, uint64_t mrFlags,
 						void **mhandle, void **ginHandle)
 {
-	/* Step 1: delegate to the shared proxy regMrSym for the actual
-	 * memory registration and per-peer rkey allgather. */
-	ncclResult_t nret = nccl_ofi_gin_regMrSym(collComm, data, size, type,
-						  mrFlags, mhandle, ginHandle);
+	/* Step 1: delegate to the GDAKI regMrSymDmaBuf (skips GDRCopy) for the
+	 * actual memory registration and per-peer rkey allgather. */
+	ncclResult_t nret = nccl_ofi_gin_gdaki_regMrSymDmaBuf(collComm, data, size, type,
+						  0, -1, mrFlags, mhandle, ginHandle);
 	if (nret != ncclSuccess) {
 		return nret;
 	}
@@ -977,7 +977,7 @@ ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.connect = nccl_ofi_gin_connect,
 	.createContext = nccl_ofi_gin_gdaki_createContext,
 	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
-	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.regMrSymDmaBuf = nccl_ofi_gin_gdaki_regMrSymDmaBuf,
 	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
 	.closeColl = nccl_ofi_gin_gdaki_closeColl,
