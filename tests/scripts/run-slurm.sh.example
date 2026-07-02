@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+#
+# Slurm batch template for running tests.
+# Copy this file, adjust the SBATCH directives and SCRIPT_DIR below,
+# then submit with: sbatch run-slurm.sh
+#
+# Control what runs via RUN_TYPE (default: functional):
+#   RUN_TYPE=functional sbatch run-slurm.sh
+#   RUN_TYPE=nccl-tests sbatch run-slurm.sh
+#
+#SBATCH --time=00:10:00
+#SBATCH --exclusive
+#SBATCH --output=slurm-%j.txt
+#
+# Adjust these for your cluster:
+#SBATCH --partition=CHANGEME
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+
+set -euo pipefail
+
+# Set this to the absolute path of tests/scripts/ in your checkout
+SCRIPT_DIR=${SCRIPT_DIR:-/path/to/aws-ofi-nccl/tests/scripts}
+
+RUN_TYPE=${RUN_TYPE:-functional}
+
+case "$RUN_TYPE" in
+    functional)
+        export MODE=${MODE:-regular}
+        export PROTOCOL=${PROTOCOL:-RDMA}
+        export TEST=${TEST:-nccl_message_transfer}
+        export NRANKS=${NRANKS:-2}
+        exec "${SCRIPT_DIR}/run-functional-tests.sh"
+        ;;
+    nccl-tests)
+        export BENCHMARK=${BENCHMARK:-all_reduce_perf}
+        export NCCL_TESTS_SPLIT_MASK=${NCCL_TESTS_SPLIT_MASK:-0x0}
+        export NUM_NODES=${SLURM_JOB_NUM_NODES}
+        export RANKS_PER_NODE=${SLURM_NTASKS_PER_NODE}
+        HOSTFILE=$(mktemp)
+        scontrol show hostnames > "$HOSTFILE"
+        export HOSTFILE
+        exec "${SCRIPT_DIR}/run-nccl-tests.sh"
+        ;;
+    *)
+        echo "Error: RUN_TYPE must be 'functional' or 'nccl-tests' (got: $RUN_TYPE)"
+        exit 1
+        ;;
+esac
