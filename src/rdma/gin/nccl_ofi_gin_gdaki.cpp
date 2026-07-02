@@ -904,6 +904,40 @@ static ncclResult_t nccl_ofi_gin_gdaki_closeColl(void *collComm)
 }
 
 /*
+ * GDAKI regMrSymDmaBuf: build the registration cache key, then run the shared
+ * core registration (comm->regMrSymDmaBufCommon) under the endpoint lock with
+ * no GDRCopy — signals are delivered GPU-side via HW counters, and GDRCopy
+ * cannot pin multi-segment VMM allocations. (The proxy path adds GDRCopy on top
+ * of the same core.)
+ */
+static ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data, size_t size,
+						int type, uint64_t offset, int fd, uint64_t mrFlags,
+						void **mhandle, void **ginHandle)
+{
+	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
+
+	nccl_ofi_mr_ckey_t cache_key;
+	ncclResult_t cret = nccl_ofi_gin_make_ckey(data, size, offset, fd, &cache_key);
+	if (cret != ncclSuccess) {
+		return cret;
+	}
+
+	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
+	int ret;
+	{
+		std::lock_guard scoped_ep_lock(comm->get_ep_lock());
+		ret = comm->regMrSymDmaBufCommon(&cache_key, data, size, type, &mr_handle);
+	}
+	if (ret != 0) {
+		return nccl_net_ofi_retval_translate(ret);
+	}
+
+	*mhandle = mr_handle;
+	*ginHandle = mr_handle;
+	return ncclSuccess;
+}
+
+/*
  * GDAKI regMrSym:
  *
  *   1. Call the shared proxy regMrSym. Because createContext opens the
@@ -929,10 +963,10 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 						int type, uint64_t mrFlags,
 						void **mhandle, void **ginHandle)
 {
-	/* Step 1: delegate to the shared proxy regMrSym for the actual
-	 * memory registration and per-peer rkey allgather. */
-	ncclResult_t nret = nccl_ofi_gin_regMrSym(collComm, data, size, type,
-						  mrFlags, mhandle, ginHandle);
+	/* Step 1: delegate to the GDAKI regMrSymDmaBuf (skips GDRCopy) for the
+	 * actual memory registration and per-peer rkey allgather. */
+	ncclResult_t nret = nccl_ofi_gin_gdaki_regMrSymDmaBuf(collComm, data, size, type,
+						  0, -1, mrFlags, mhandle, ginHandle);
 	if (nret != ncclSuccess) {
 		return nret;
 	}
@@ -1112,7 +1146,7 @@ ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.connect = nccl_ofi_gin_connect,
 	.createContext = nccl_ofi_gin_gdaki_createContext,
 	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
-	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.regMrSymDmaBuf = nccl_ofi_gin_gdaki_regMrSymDmaBuf,
 	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
 	.closeColl = nccl_ofi_gin_gdaki_closeColl,

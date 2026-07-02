@@ -25,6 +25,10 @@ ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int 
 ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
 					 uint64_t offset, int fd, uint64_t mrFlags,
 					 void **mhandle, void **ginHandle);
+/* Build a registration cache key (VA or DMA-BUF), shared by the proxy and
+   GDAKI regMrSymDmaBuf entry points. */
+ncclResult_t nccl_ofi_gin_make_ckey(void *data, size_t size, uint64_t offset, int fd,
+				    nccl_ofi_mr_ckey_t *ckey_out);
 ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle);
 ncclResult_t nccl_ofi_gin_closeColl(void *collComm);
 ncclResult_t nccl_ofi_gin_closeListen(void *listenComm);

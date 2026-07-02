@@ -219,25 +219,35 @@ ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int ra
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
-						uint64_t offset, int fd, uint64_t mrFlags,
-						void **mhandle, void **ginHandle)
+ncclResult_t nccl_ofi_gin_make_ckey(void *data, size_t size, uint64_t offset, int fd,
+				    nccl_ofi_mr_ckey_t *ckey_out)
 {
-	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	nccl_ofi_gin_symm_mr_handle_t *mr_handle = nullptr;
-
 #if HAVE_DECL_FI_MR_DMABUF
-	const nccl_ofi_mr_ckey_t cache_key =
-		(fd == -1) ? nccl_ofi_mr_ckey_mk_vec(data, size, nullptr)
-			   : nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, nullptr);
+	*ckey_out = (fd == -1) ? nccl_ofi_mr_ckey_mk_vec(data, size, nullptr)
+			       : nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, nullptr);
 #else
 	if (fd != -1) {
 		NCCL_OFI_WARN("Passed fd handle, but not compiled with DMA-BUF support.");
 		return nccl_net_ofi_retval_translate(-EINVAL);
 	}
-	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
+	*ckey_out = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 #endif
+	return ncclSuccess;
+}
 
+ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+						uint64_t offset, int fd, uint64_t mrFlags,
+						void **mhandle, void **ginHandle)
+{
+	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
+
+	nccl_ofi_mr_ckey_t cache_key;
+	ncclResult_t cret = nccl_ofi_gin_make_ckey(data, size, offset, fd, &cache_key);
+	if (cret != ncclSuccess) {
+		return cret;
+	}
+
+	nccl_ofi_gin_symm_mr_handle_t *mr_handle = nullptr;
 	int ret = comm->regMrSymDmaBuf(&cache_key, data, size, type, mrFlags, &mr_handle);
 	if (ret != 0) {
 		return nccl_net_ofi_retval_translate(ret);
