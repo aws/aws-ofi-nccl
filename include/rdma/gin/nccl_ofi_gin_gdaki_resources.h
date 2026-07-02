@@ -626,23 +626,28 @@ struct nccl_ofi_gin_gdaki_context {
 	/* Shared signal-only scratch buffer.
 	 *
 	 * `net.signal(team, peer, ...)` (the path used by ncclBarrierSession)
-	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. The
-	 * kernel posts a 0-byte RDMA write whose arrival bumps the receiver's
-	 * FI_REMOTE_WRITE counter on the signal endpoint. A 0-byte write
-	 * touches no remote memory, so the target (addr, rkey) is zero and
-	 * only a valid LOCAL source is required — this buffer. No per-peer
-	 * remote (addr, rkey) exchange is needed.
+	 * routes through ncclGinApi_Put with hasWins=false, bytes=0. EFA
+	 * requires a registered remote address to bump the receiver's
+	 * FI_REMOTE_WRITE counter even for a 0-byte write, so we allocate
+	 * a small buffer per rank and allgather (addr, rkey) across the
+	 * team.
 	 *
-	 * One scratch buffer is shared by all nContexts on this rank: the
-	 * 0-byte writes never touch its contents (only the per-EP
-	 * FI_REMOTE_WRITE counter ticks on the receiver), and each ctx has
-	 * its own signal endpoint, so per-ctx isolation of "what got
-	 * signalled" is preserved.
+	 * One scratch buffer is shared by all nContexts on this rank,
+	 * because:
+	 *   - 0-byte RDMA writes never read or write buffer contents —
+	 *     only the per-EP FI_REMOTE_WRITE counter ticks on the
+	 *     receiver. The buffer is purely a registered destination
+	 *     address.
+	 *   - Each ctx has its own signal endpoint (with its own
+	 *     counter), so per-ctx isolation of "what got signalled" is
+	 *     preserved even though the destination address is shared.
 	 */
 	void *scratch_buf = nullptr;
 	struct fid_mr *scratch_mr = nullptr;
 	uint32_t scratch_lkey = 0;
 	uint64_t scratch_local_addr = 0;
+	gdaki_gpu_buf<uint64_t> scratch_remote_addrs_buf;
+	gdaki_gpu_buf<uint32_t> scratch_remote_rkeys_buf;
 
 	/* Contiguous GPU-resident array of device handles, one entry per
 	 * logical context. The kernel reads
