@@ -219,9 +219,9 @@ ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int ra
 	return nccl_net_ofi_retval_translate(ret);
 }
 
-ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+static ncclResult_t gin_regMrSymDmaBuf_common(void *collComm, void *data, size_t size, int type,
 						uint64_t offset, int fd, uint64_t mrFlags,
-						void **mhandle, void **ginHandle)
+						void **mhandle, void **ginHandle, bool register_gdrcopy)
 {
 	auto *comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	nccl_ofi_gin_symm_mr_handle_t *mr_handle = nullptr;
@@ -238,7 +238,9 @@ ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size
 	const nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 #endif
 
-	int ret = comm->regMrSymDmaBuf(&cache_key, data, size, type, mrFlags, &mr_handle);
+	int ret = register_gdrcopy
+			  ? comm->regMrSymDmaBuf(&cache_key, data, size, type, mrFlags, &mr_handle)
+			  : comm->regMrSymDmaBufGdaki(&cache_key, data, size, type, mrFlags, &mr_handle);
 	if (ret != 0) {
 		return nccl_net_ofi_retval_translate(ret);
 	}
@@ -246,6 +248,22 @@ ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size
 	*mhandle = mr_handle;
 	*ginHandle = mr_handle;
 	return ncclSuccess;
+}
+
+ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+						uint64_t offset, int fd, uint64_t mrFlags,
+						void **mhandle, void **ginHandle)
+{
+	return gin_regMrSymDmaBuf_common(collComm, data, size, type, offset, fd, mrFlags,
+					 mhandle, ginHandle, /*register_gdrcopy=*/true);
+}
+
+ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+						uint64_t offset, int fd, uint64_t mrFlags,
+						void **mhandle, void **ginHandle)
+{
+	return gin_regMrSymDmaBuf_common(collComm, data, size, type, offset, fd, mrFlags,
+					 mhandle, ginHandle, /*register_gdrcopy=*/false);
 }
 
 ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int type,

@@ -25,6 +25,10 @@ ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int 
 ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
 					 uint64_t offset, int fd, uint64_t mrFlags,
 					 void **mhandle, void **ginHandle);
+/* GDAKI variant: skips GDRCopy registration (see regMrSymDmaBufGdaki). */
+ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,
+					       uint64_t offset, int fd, uint64_t mrFlags,
+					       void **mhandle, void **ginHandle);
 ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle);
 ncclResult_t nccl_ofi_gin_closeColl(void *collComm);
 ncclResult_t nccl_ofi_gin_closeListen(void *listenComm);
