@@ -564,15 +564,6 @@ public:
 	void populate(struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &all_addrs,
 		      size_t ep_addr_len, int total_slots, int nranks);
-
-	/**
-	 * Set the PutValue slot pool slice base on both
-	 * counter_dev_handle and signal_dev_handle (they alias the same
-	 * QP / sq_size / etc., and either may be selected by the kernel).
-	 * Re-commits both handles since populate() already uploaded their
-	 * initial host state.
-	 */
-	void set_putvalue_slice_base(uint64_t slice_base);
 };
 
 /**
@@ -663,6 +654,12 @@ struct nccl_ofi_gin_gdaki_context {
 	 * logical context. unique_ptr because gdaki_data_endpoint owns
 	 * non-movable members (libfabric/CUDA handles). */
 	std::vector<std::unique_ptr<gdaki_data_endpoint>> data;                            /* [nContexts]      */
+
+	/* Per-ctx DEDICATED PutValue poster endpoint. PutValue posts only from
+	 * here (never the data EP or an sc EP). Costs one extra QP per context.
+	 * Same class as `data`; its target table resolves the same target slots
+	 * (peer data EP = slot 0, peer sc EP = slot 1+s). */
+	std::vector<std::unique_ptr<gdaki_data_endpoint>> pvdata;                          /* [nContexts]      */
 
 	/* Per-ctx signal/counter endpoints. data[c]'s sibling: each
 	 * logical ctx c owns max(nSignals, nCounters) sc endpoints,

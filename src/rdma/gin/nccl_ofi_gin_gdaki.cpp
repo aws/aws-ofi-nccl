@@ -336,29 +336,16 @@ static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 {
 	const int nContexts = ctx->nContexts;
 
-	/* Total pool size = sum over all contexts of
-	 *   data[c].sq_size + sum_i(sc_endpoints[c][i].sq_size).
-	 * Per-endpoint slice sizes are implied by each endpoint's sq_size; we
-	 * don't need a separate size array. */
+	/* One pool slice per context, holding pvdata[c].sq_size slots. Total =
+	 * sum over contexts of pvdata[c].sq_size. */
 	uint64_t total_slots = 0;
 	for (int c = 0; c < nContexts; c++) {
-		const uint32_t data_sq_size = ctx->data[c]->base.sq_size;
-		if (data_sq_size == 0) {
+		if (ctx->pvdata[c]->base.sq_size == 0) {
 			throw std::runtime_error(
-				"putvalue: data endpoint sq_size is zero (ctx " +
+				"putvalue: pvdata endpoint sq_size is zero (ctx " +
 				std::to_string(c) + ")");
 		}
-		total_slots += data_sq_size;
-		const int nSc = (int)ctx->sc_endpoints[c].size();
-		for (int i = 0; i < nSc; i++) {
-			uint32_t sz = ctx->sc_endpoints[c][i]->base.sq_size;
-			if (sz == 0) {
-				throw std::runtime_error(
-					"putvalue: sc_endpoint sq_size is zero (ctx " +
-					std::to_string(c) + ", sc " + std::to_string(i) + ")");
-			}
-			total_slots += sz;
-		}
+		total_slots += ctx->pvdata[c]->base.sq_size;
 	}
 
 	ctx->putvalue_slot_size = NCCL_OFI_GDAKI_PUTVALUE_SLOT_SIZE;
@@ -435,24 +422,14 @@ static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 		rs.putvalue_lkey = (uint32_t)fi_mr_key(rs.putvalue_mr);
 	}
 
-	/* Assign per-endpoint slice bases across every context. Each
-	 * endpoint stores its slice base on its own GPU-resident
-	 * dev_endpoint_handle, so the kernel reads it from the same struct
-	 * it already selects for QP / sq_lock / etc. The data endpoint
-	 * stashes on host (uploaded later by populate_dev_handle); each
-	 * sc_endpoint commits both its counter_dev_handle and
-	 * signal_dev_handle inline. Slices are laid out context-major:
-	 * for each context, the data slice followed by its sc slices. */
+	/* Assign each context's pool slice to its dedicated PutValue endpoint
+	 * (pvdata). The slice base is stashed on pvdata's host state and uploaded
+	 * later by populate_dev_handle into dev_handle.pvdata.putvalue_slice_base.
+	 * Slices are laid out context-major, each pvdata[c].sq_size slots. */
 	uint64_t cursor = ctx->putvalue_local_addr;
 	for (int c = 0; c < nContexts; c++) {
-		ctx->data[c]->set_putvalue_slice_base(cursor);
-		cursor += (uint64_t)ctx->data[c]->base.sq_size * ctx->putvalue_slot_size;
-		const int nSc = (int)ctx->sc_endpoints[c].size();
-		for (int i = 0; i < nSc; i++) {
-			ctx->sc_endpoints[c][i]->set_putvalue_slice_base(cursor);
-			cursor += (uint64_t)ctx->sc_endpoints[c][i]->base.sq_size
-				* ctx->putvalue_slot_size;
-		}
+		ctx->pvdata[c]->set_putvalue_slice_base(cursor);
+		cursor += (uint64_t)ctx->pvdata[c]->base.sq_size * ctx->putvalue_slot_size;
 	}
 }
 
@@ -477,6 +454,20 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.data.local_cntr_value = ctx->data[ctx_id]->write_cntr.gpu_ptr();
 	h.data.submitted_count = 0;
 	h.data.sq_size = ctx->data[ctx_id]->base.sq_size;
+
+	/* Dedicated PutValue poster endpoint: same field set as data. Its target
+	 * table resolves the same peer target slots (built in populate above). */
+	h.pvdata.qp = ctx->pvdata[ctx_id]->base.gpu_qp.dev();
+	h.pvdata.cq = ctx->pvdata[ctx_id]->base.gpu_cq.dev();
+	h.pvdata.target_address_handles = ctx->pvdata[ctx_id]->base.targets.ahs.dev;
+	h.pvdata.target_remote_qpns     = ctx->pvdata[ctx_id]->base.targets.qpns.dev;
+	h.pvdata.target_qkey            = ctx->pvdata[ctx_id]->base.targets.qkeys.dev;
+	h.pvdata.sq_lock = 0;
+	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->write_cntr.gpu_ptr();
+	h.pvdata.submitted_count = 0;
+	h.pvdata.sq_size = ctx->pvdata[ctx_id]->base.sq_size;
+	h.pvdata.putvalue_slice_base = ctx->pvdata[ctx_id]->putvalue_slice_base;
+
 	h.counter_handles = (ctx->nCounters > 0) ? ctx->d_counter_handles[ctx_id]->dev : nullptr;
 	h.signal_handles  = (ctx->nSignals  > 0) ? ctx->d_signal_handles[ctx_id]->dev  : nullptr;
 	h.nCounters = ctx->nCounters;
@@ -497,19 +488,14 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.scratch_local_addr   = ctx->scratch_local_addr;
 	h.scratch_remote_addrs = rs.scratch_remote_addrs_buf.dev;
 	h.scratch_remote_rkeys = rs.scratch_remote_rkeys_buf.dev;
-	/* PutValue slot pool. The pool is allocated unconditionally
-	 * (sized off every context's data.sq_size, which is always
-	 * non-zero), so we always populate these fields. The slot_size and
-	 * slice base are rail-independent (one pool, same GPU VA on every
-	 * rail); only the lkey is per-rail (from rail_shared[rail_id]).
-	 * sc_endpoint slice bases live on each sc_endpoint's
-	 * counter_dev_handle / signal_dev_handle, set by
-	 * gdaki_sc_endpoint::set_putvalue_slice_base in setup_putvalue_pool.
-	 * No commit here — the caller commits the whole dev_handles[] array
-	 * once after every entry is filled. */
+	/* PutValue slot pool. slot_size and the pool base are rail-independent
+	 * (one pool, same GPU VA on every rail); the per-context pool base lives
+	 * on pvdata (set above from ctx->pvdata[ctx_id]->putvalue_slice_base).
+	 * Only the lkey is per-rail (from rail_shared[rail_id]). No commit here —
+	 * the caller commits the whole dev_handles[] array once after every entry
+	 * is filled. */
 	h.putvalue_lkey            = rs.putvalue_lkey;
 	h.putvalue_slot_size       = (uint32_t)ctx->putvalue_slot_size;
-	h.data.putvalue_slice_base = ctx->data[ctx_id]->putvalue_slice_base;
 }
 
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
@@ -663,6 +649,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		ctx->data.resize(nContexts);
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++)
 			ctx->data[ctx_id] = std::make_unique<gdaki_data_endpoint>();
+		ctx->pvdata.resize(nContexts);
+		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++)
+			ctx->pvdata[ctx_id] = std::make_unique<gdaki_data_endpoint>();
 		ctx->sc_endpoints.resize(nContexts);
 		ctx->d_counter_handles.resize(nContexts);
 		ctx->d_signal_handles.resize(nContexts);
@@ -735,6 +724,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
 				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
 			}
+			/* Dedicated PutValue poster endpoint. */
+			ctx->pvdata[ctx_id]->open(ofi_domain, proxy_info, gda_ops);
 
 			/*
 			 * Step 5: Exchange ALL of this ctx's endpoint addresses in a
@@ -781,6 +772,11 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 */
 			ctx->data[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len,
 						    (int)total_slots, nranks);
+			/* pvdata's target table resolves the same peer target slots as
+			 * data (through its own AV), so signalled PutValue can address the
+			 * peer sc EP and no-signal PutValue the peer data EP. */
+			ctx->pvdata[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len,
+						      (int)total_slots, nranks);
 			for (int i = 0; i < local_n_sc; i++) {
 				ctx->sc_endpoints[ctx_id][i]->populate(
 					gda_ops, all_addrs, ep_addr_len,
