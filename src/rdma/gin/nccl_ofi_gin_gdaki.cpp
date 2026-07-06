@@ -1161,3 +1161,47 @@ ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
 	.finalize = nccl_ofi_gin_finalize
 };
 
+/* v14 GIN op-table: control-plane + device handle only (host data path is in
+ * the RMA op-table). Exported as the GDAKI backend; built only with GDAKI. */
+
+static ncclResult_t nccl_ofi_gin_gdaki_getGinProperties_v14(ncclGinProperties_v14_t *ginProps)
+{
+	ginProps->supportsStrongSignals = false;
+	ginProps->supportsVASignals = false;
+	return ncclSuccess;
+}
+
+static ncclResult_t nccl_ofi_gin_gdaki_createContext_v14(void *collComm, ncclGinConfig_v14_t *config,
+							 void **ginCtx,
+							 ncclNetDeviceHandle_v11_t **devHandle)
+{
+	ncclGinConfig_v13_t config_v13;
+	memset(&config_v13, 0, sizeof(config_v13));
+	config_v13.nSignals = config->nSignals;
+	config_v13.nCounters = config->nCounters;
+	config_v13.nContexts = config->nContexts;
+	config_v13.queueDepth = config->queueDepth;
+	config_v13.trafficClass = config->trafficClass;
+	return nccl_ofi_gin_gdaki_createContext(collComm, &config_v13, ginCtx, devHandle);
+}
+
+NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
+	.name = "Libfabric_GDAKI",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getGinProperties = nccl_ofi_gin_gdaki_getGinProperties_v14,
+	.getProperties = nccl_ofi_gin_gdaki_get_properties,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
+	.createContext = nccl_ofi_gin_gdaki_createContext_v14,
+	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
+	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
+	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
+	.closeColl = nccl_ofi_gin_gdaki_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.ginProgress = nccl_ofi_gin_ginProgress,
+	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
+	.finalize = nccl_ofi_gin_finalize
+};
+
