@@ -39,6 +39,17 @@ public:
 	void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
 			  const char *req_type) override;
 
+	/*
+	 * Return true if the EFA hardware completion counter should be used on
+	 * the platform this process is running on.
+	 *
+	 * Resolves OFI_NCCL_GDAKI_HW_COUNTER:
+	 *   ON   -> force enabled
+	 *   OFF  -> force disabled (kill switch)
+	 *   AUTO -> whether the matched platform supports it (efa_hw_comp_cntr)
+	 */
+	bool platform_has_efa_hw_comp_cntr() override;
+
 protected:
 	struct ec2_platform_data {
 		const char* name;
@@ -49,6 +60,10 @@ protected:
 		bool gdr_required;
 		PROTOCOL default_protocol;
 		std::map<std::string, std::string> env;
+		/* True on platforms that support the EFA hardware completion
+		 * counter. Consulted only in the AUTO case of
+		 * OFI_NCCL_GDAKI_HW_COUNTER. */
+		bool efa_hw_comp_cntr;
 	};
 
 	struct platform_aws_node_guid {

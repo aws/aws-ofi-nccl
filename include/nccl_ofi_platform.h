@@ -127,6 +127,20 @@ public:
 			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 			      (long)err_entry->len);
 	}
+
+	/**
+	 * @brief	Query whether the running platform supports the EFA
+	 *		hardware completion counter used by the GDAKI GIN data path.
+	 *
+	 *		The base implementation returns false (a platform that does
+	 *		not support the feature); concrete platforms override.
+	 *
+	 * @return	true if the platform supports the feature
+	 */
+	virtual bool platform_has_efa_hw_comp_cntr()
+	{
+		return false;
+	}
 };
 
 using PlatformPtr = std::unique_ptr<Platform>;

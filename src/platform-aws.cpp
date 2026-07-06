@@ -91,6 +91,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p4de.24xlarge",
@@ -104,6 +105,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p3dn.24xlarge",
@@ -114,6 +116,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p5.4xlarge",
@@ -124,6 +127,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p5/p5e",
@@ -140,6 +144,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p5en/p6-b200",
@@ -163,6 +168,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 			{ "NCCL_NETDEVS_POLICY", "max:1" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "p-series",
@@ -189,6 +195,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "g5.48xlarge",
@@ -199,6 +206,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "g7e.8xlarge",
@@ -212,6 +220,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "g7e",
@@ -225,6 +234,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
 		},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "Trainium Family",
@@ -235,6 +245,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "inf",
@@ -245,6 +256,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 };
 
@@ -342,6 +354,25 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 
 	cached_platform_data_ = get_platform_entry(platform_type, platform_data_list, platform_data_len);
 	return cached_platform_data_;
+}
+
+
+/*
+ * Resolve OFI_NCCL_GDAKI_HW_COUNTER for the running platform:
+ *   ON   -> force enabled
+ *   OFF  -> force disabled (kill switch)
+ *   AUTO -> whether the matched platform supports it (efa_hw_comp_cntr),
+ *           false on an unknown platform.
+ */
+bool PlatformAWS::platform_has_efa_hw_comp_cntr()
+{
+	GDAKI_HW_COUNTER mode = ofi_nccl_gdaki_hw_counter.get();
+	if (mode != GDAKI_HW_COUNTER::AUTO) {
+		return mode == GDAKI_HW_COUNTER::ON;
+	}
+
+	const ec2_platform_data *data = get_platform_data();
+	return data != nullptr && data->efa_hw_comp_cntr;
 }
 
 

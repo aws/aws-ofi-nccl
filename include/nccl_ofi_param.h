@@ -389,6 +389,17 @@ OFI_NCCL_PARAM_VALUE_SET(GIN_TYPE, (PROXY)(GDAKI))
 OFI_NCCL_PARAM(GIN_TYPE, gin_type, "GIN_TYPE", GIN_TYPE::PROXY)
 
 /*
+ * Controls use of the EFA hardware completion counter on the GDAKI GIN
+ * data path, which is only usable on platforms that support it.
+ *
+ *   AUTO: use it where the running platform supports it (the safe default).
+ *   ON:   force enabled, e.g. for development and validation.
+ *   OFF:  force disabled (kill switch).
+ */
+OFI_NCCL_PARAM_VALUE_SET(GDAKI_HW_COUNTER, (AUTO)(ON)(OFF))
+OFI_NCCL_PARAM(GDAKI_HW_COUNTER, gdaki_hw_counter, "GDAKI_HW_COUNTER", GDAKI_HW_COUNTER::AUTO)
+
+/*
  * Enable strong-signal semantics for the GIN plugin.
  *
  * When true, completed requests are delivered to the application in
