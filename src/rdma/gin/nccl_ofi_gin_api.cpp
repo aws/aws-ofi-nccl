@@ -564,3 +564,74 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v13_t ncclGinPlugin_v13 = {
 	.queryLastError = nullptr,
 	.finalize = nccl_ofi_gin_finalize
 };
+
+/* v14 moves the host data path to the RMA op-table, exported here as
+   ncclRmaPlugin_v14. The GIN v14 op-table is GDAKI-only and lives in
+   nccl_ofi_gin_gdaki.cpp. */
+
+static ncclResult_t nccl_ofi_rma_createContext_v14(void *collComm, ncclRmaConfig_v14_t *config,
+						   void **rmaCtx)
+{
+	/* config->rankStride is unused by the proxy path. */
+	ncclGinConfig_v13_t config_v13;
+	memset(&config_v13, 0, sizeof(config_v13));
+	config_v13.nContexts = config->nContexts;
+	config_v13.trafficClass = config->trafficClass;
+	return nccl_ofi_gin_createContext_v13(collComm, &config_v13, rmaCtx, /*devHandle*/ nullptr);
+}
+
+/* RMA regMrSym* have no ginHandle out-param; discard it. */
+static ncclResult_t nccl_ofi_rma_regMrSym_v14(void *collComm, void *data, size_t size, int type,
+					      uint64_t mrFlags, void **mhandle)
+{
+	void *unusedGinHandle = nullptr;
+	return nccl_ofi_gin_regMrSym(collComm, data, size, type, mrFlags, mhandle, &unusedGinHandle);
+}
+
+static ncclResult_t nccl_ofi_rma_regMrSymDmaBuf_v14(void *collComm, void *data, size_t size,
+						    int type, uint64_t offset, int fd,
+						    uint64_t mrFlags, void **mhandle)
+{
+	void *unusedGinHandle = nullptr;
+	return nccl_ofi_gin_regMrSymDmaBuf(collComm, data, size, type, offset, fd, mrFlags, mhandle,
+					   &unusedGinHandle);
+}
+
+/* v14 iputSignal adds a trailing isStrongSignal; the plugin's signals are always strong. */
+static ncclResult_t nccl_ofi_rma_iputSignal_v14(void *rmaCtx, int context, uint64_t srcOff,
+						void *srcMhandle, size_t size, uint64_t dstOff,
+						void *dstMhandle, uint32_t rank, uint64_t signalOff,
+						void *signalMhandle, uint64_t signalValue,
+						uint32_t signalOp, bool isStrongSignal,
+						void **request)
+{
+	(void)isStrongSignal;
+	return nccl_ofi_gin_iputSignal_v13(rmaCtx, context, srcOff, srcMhandle, size, dstOff,
+					   dstMhandle, rank, signalOff, signalMhandle, signalValue,
+					   signalOp, request);
+}
+
+/* RMA v14 export. NCCL's GIN proxy binds this directly (via rma_v14.cc). */
+NCCL_OFI_EXPORT_SYMBOL ncclRma_v14_t ncclRmaPlugin_v14 = {
+	.name = "Libfabric",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getProperties = nccl_ofi_gin_getProperties_v13,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
+	.createContext = nccl_ofi_rma_createContext_v14,
+	.regMrSym = nccl_ofi_rma_regMrSym_v14,
+	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
+	.deregMrSym = nccl_ofi_gin_deregMrSym,
+	.destroyContext = nccl_ofi_gin_destroyContext_v13,
+	.closeColl = nccl_ofi_gin_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.iput = nccl_ofi_gin_iput_v13,
+	.iputSignal = nccl_ofi_rma_iputSignal_v14,
+	.iget = nccl_ofi_gin_iget_v13,
+	.iflush = nccl_ofi_gin_iflush_v13,
+	.test = nccl_ofi_gin_test,
+	.rmaProgress = nccl_ofi_gin_ginProgress,
+	.queryLastError = nullptr,
+	.finalize = nccl_ofi_gin_finalize
+};
