@@ -17,6 +17,7 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#include "nccl_ofi_platform.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -455,6 +456,22 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 	if (collComm == nullptr || config == nullptr || ginCtx == nullptr || devHandle == nullptr) {
 		NCCL_OFI_WARN("gin GDAKI: createContext received NULL argument");
 		return ncclInvalidArgument;
+	}
+
+	/*
+	 * Platform-support gate. The GDAKI data path relies on the EFA
+	 * hardware completion counter in GPU memory (fi_efa_ops_gda::
+	 * cntr_open_ext, see gdaki_hw_counter), which is only usable on
+	 * platforms that support it (or when forced via
+	 * OFI_NCCL_GDAKI_HW_COUNTER). Refusing here, before any resources are
+	 * built, gives a clear error instead of failing partway through context
+	 * creation when cntr_open_ext returns an error.
+	 */
+	if (!PlatformManager::get_global().get_platform().platform_has_efa_hw_comp_cntr()) {
+		NCCL_OFI_WARN("gin GDAKI: EFA hardware completion counter not supported "
+			      "on this platform; refusing createContext "
+			      "(set OFI_NCCL_GDAKI_HW_COUNTER=on to override)");
+		return ncclInvalidUsage;
 	}
 
 	NCCL_OFI_INFO(NCCL_NET,
