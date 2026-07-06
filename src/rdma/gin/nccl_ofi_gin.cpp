@@ -338,6 +338,14 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 			delete mr_handle;
 			return ret;
 		}
+		/* When NCCL marks this signal MR as never-reset, keep a host-side
+		   shadow of the signal values so do_gin_signal can skip the device
+		   read (see do_gin_signal). Zero-initialized to match the freshly
+		   registered device buffer. */
+		if (mrFlags & NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET) {
+			mr_handle->signal_never_reset = true;
+			mr_handle->signal_shadow.assign(size / sizeof(uint64_t), 0);
+		}
 	}
 
 	*mr_handle_out = mr_handle;
@@ -927,22 +935,38 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = it->second.handle;
 
 	if (mr_handle->type == NCCL_PTR_CUDA) {
-		uint64_t old_value;
+		uint64_t new_value;
 
-		int ret = get_device_copy().copy_from_device(*mr_handle->gdr_handle,
-							     metadata.signal_offset, &old_value,
-							     sizeof(old_value));
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to read current signal value");
-			return -ret;
+		if (mr_handle->signal_never_reset) {
+			/* Fast path: the signal is never reset, so our host-side
+			   shadow is authoritative. Add to the shadow and do a
+			   one-way write to the device, skipping the device read.
+			   do_gin_signal only ever runs on the gdrcopy worker
+			   thread, so the shadow needs no additional locking. */
+			uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
+			assert(idx < mr_handle->signal_shadow.size());
+			new_value = (mr_handle->signal_shadow[idx] += add_value);
+		} else {
+			/* Slow path: the signal may have been reset out from under
+			   us (e.g. VA signals), so read the current value back from
+			   the device before adding. */
+			uint64_t old_value;
+
+			int ret = get_device_copy().copy_from_device(*mr_handle->gdr_handle,
+								     metadata.signal_offset, &old_value,
+								     sizeof(old_value));
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Failed to read current signal value");
+				return -ret;
+			}
+
+			/* We only support addition */
+			new_value = old_value + add_value;
 		}
 
-		/* We only support addition */
-		uint64_t new_value = old_value + add_value;
-
 		/* Write using GDRcopy. */
-		ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
-						       metadata.signal_offset, sizeof(new_value));
+		int ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
+							   metadata.signal_offset, sizeof(new_value));
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to update signal value");
 			return -ret;
