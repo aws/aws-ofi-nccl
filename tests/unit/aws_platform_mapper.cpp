@@ -19,6 +19,7 @@ public:
 	using PlatformAWS::get_platform_map;
 	using PlatformAWS::get_platform_entry;
 	using PlatformAWS::ec2_platform_data;
+	using PlatformAWS::platform_has_efa_hw_comp_cntr;
 };
 
 /* check that we get the expected response for all our known platforms */
@@ -92,6 +93,40 @@ static int check_known_platforms(void)
 	return ret;
 }
 
+/* GDAKI hardware-completion-counter platform gate.
+ *
+ * platform_has_efa_hw_comp_cntr() answers whether the running platform
+ * supports the EFA hardware completion counter: OFI_NCCL_GDAKI_HW_COUNTER on or
+ * off overrides the platform, and auto defers to whether the platform supports
+ * it. The param is read once and cached, so a single process can only observe
+ * one value; here we cover the base default (off) and the on override forcing
+ * the counter on even where the platform would not support it. */
+static int check_hw_cntr_gate(void)
+{
+	int ret = 0;
+
+	/* The base Platform default is off, so a platform that does not support
+	 * the feature reports it as unsupported. */
+	Default def;
+	if (def.platform_has_efa_hw_comp_cntr()) {
+		printf("base Platform platform_has_efa_hw_comp_cntr() must be false\n");
+		ret += 1;
+	}
+
+	/* OFI_NCCL_GDAKI_HW_COUNTER=on forces the counter on regardless of the
+	 * platform. The param is read once and cached, so set it before the
+	 * first query. */
+	ofi_nccl_gdaki_hw_counter.set(GDAKI_HW_COUNTER::ON);
+	TestablePlatformAWS p;
+	if (!p.platform_has_efa_hw_comp_cntr()) {
+		printf("OFI_NCCL_GDAKI_HW_COUNTER=on did not force the counter on\n");
+		ret += 1;
+	}
+
+	return ret;
+}
+
+
 static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 	{
 		.name = "first",
@@ -102,6 +137,7 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 	{
 		.name = "second",
@@ -112,6 +148,7 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::RDMA,
 		.env = {},
+		.efa_hw_comp_cntr = false,
 	},
 };
 
@@ -126,6 +163,9 @@ int main(int argc, char *argv[]) {
 	/* make sure we maintain ordering */
 	ret += check_value(test_map_1, 2, "platform-x", "first");
 	ret += check_value(test_map_1, 2, "platform-xy", "second");
+
+	/* feature-flag mechanism */
+	ret += check_hw_cntr_gate();
 
 	return ret;
 }
