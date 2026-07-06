@@ -87,6 +87,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -100,6 +101,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -113,6 +115,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 150.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 	{
@@ -123,6 +126,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 	{
@@ -133,6 +137,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -149,6 +154,9 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
+		/* EFA hardware completion counter (GDAKI) is supported on
+		 * P5en and P6-B200. */
+		.efa_hw_comp_cntr = true,
 		/*
 		 * Note: Based on empirical testing, setting the
 		 * NCCL_NETDEVS_POLICY=max:1 gives optimal performance
@@ -182,6 +190,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -198,6 +207,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 	{
@@ -208,6 +218,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -221,6 +232,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
@@ -234,6 +246,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 	{
@@ -244,6 +257,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.latency = 75.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 };
@@ -342,6 +356,30 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 
 	cached_platform_data_ = get_platform_entry(platform_type, platform_data_list, platform_data_len);
 	return cached_platform_data_;
+}
+
+
+/*
+ * On AWS, GDAKI support is determined by the availability of the EFA
+ * hardware completion counter that the GDAKI data path requires. The
+ * decision is made per platform:
+ *
+ *   OFI_NCCL_GDAKI_HW_COUNTER=on/off  explicit override
+ *   OFI_NCCL_GDAKI_HW_COUNTER=auto    defer to the platform declaration
+ *                                     (ec2_platform_data::efa_hw_comp_cntr)
+ */
+bool PlatformAWS::gdaki_supported()
+{
+	GDAKI_HW_COUNTER mode = ofi_nccl_gdaki_hw_counter.get();
+
+	if (mode != GDAKI_HW_COUNTER::AUTO) {
+		/* Explicit on/off override. */
+		return mode == GDAKI_HW_COUNTER::ON;
+	}
+
+	/* auto: use it where this platform declares support. */
+	const ec2_platform_data *data = get_platform_data();
+	return data != NULL && data->efa_hw_comp_cntr;
 }
 
 

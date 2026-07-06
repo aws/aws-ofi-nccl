@@ -17,6 +17,7 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#include "nccl_ofi_platform.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -512,6 +513,19 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		      "nContexts=%d queueDepth=%d",
 		      config->nSignals, config->nCounters,
 		      config->nContexts, config->queueDepth);
+
+	/*
+	 * Per-platform gate. Ask the platform up front, before any resources
+	 * are built, whether the GDAKI data path may run here, so we get a
+	 * single deterministic answer per platform instead of failing partway
+	 * through context creation. A platform that reports support but still
+	 * cannot bring the data path up surfaces as ncclSystemError below.
+	 */
+	if (!PlatformManager::get_global().get_platform().gdaki_supported()) {
+		NCCL_OFI_WARN("gin GDAKI: not supported on this platform; refusing "
+			      "createContext (set OFI_NCCL_GDAKI_HW_COUNTER=on to override)");
+		return ncclInvalidUsage;
+	}
 
 	auto *put_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	int nranks = put_comm->get_nranks();
