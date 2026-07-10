@@ -1,0 +1,11 @@
+# User-specific environment (contains local paths. Copied from .example)
+env.sh
+
+# User's local slurm script (copied from .example)
+run-slurm.sh
+
+# Slurm output files
+slurm-*.txt
+
+# Test output directories
+outputs/
