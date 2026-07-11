@@ -353,6 +353,14 @@ private:
 	 */
 	int gdrcopy_status = 0;
 
+	/**
+	 * Set by retire when the signal was re-enqueued to the gdrcopy
+	 * worker; the req is pool-returned by drain once the worker is done,
+	 * not by retire (which would recycle it while the worker still
+	 * holds it via done.req).
+	 */
+	bool gdrcopy_pool_return_deferred = false;
+
 	/* This request structure doesn't have any use outside of gin_comm.
 	   So, instead of adding a bunch of getters/setters, just add a
 	   friend class. */
