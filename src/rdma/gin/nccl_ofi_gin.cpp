@@ -1068,6 +1068,11 @@ int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 			}
 		}
 
+		if (req->gdrcopy_pool_return_deferred) {
+			req->gdrcopy_pool_return_deferred = false;
+			this->resources.return_req_to_pool(req);
+		}
+
 		int retire_ret = retire_completed_peer_iput_ops(done.peer_rank);
 		if (OFI_UNLIKELY(retire_ret != 0) && ret == 0) {
 			ret = retire_ret;
@@ -1199,6 +1204,10 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 		ret = iput_signal_recv_req_completion(peer_rank, map_key, req);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
+		}
+		if (req->gdrcopy_in_flight) {
+			req->gdrcopy_pool_return_deferred = true;
+			break;
 		}
 		this->resources.return_req_to_pool(req);
 	}
