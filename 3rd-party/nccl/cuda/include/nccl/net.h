@@ -33,6 +33,10 @@
 
 #define NCCL_NET_MAX_DEVS_PER_NIC 4
 
+/* Maximum number of GIN connections (collComms) per communicator.
+   Must match NCCL's NCCL_GIN_MAX_CONNECTIONS in core__types.h. */
+#define NCCL_GIN_MAX_CONNECTIONS 4
+
 typedef enum {NCCL_LOG_NONE=0, NCCL_LOG_VERSION=1, NCCL_LOG_WARN=2, NCCL_LOG_INFO=3, NCCL_LOG_ABORT=4, NCCL_LOG_TRACE=5} ncclDebugLogLevel;
 typedef enum {NCCL_INIT=1, NCCL_COLL=2, NCCL_P2P=4, NCCL_SHM=8, NCCL_NET=16, NCCL_GRAPH=32, NCCL_TUNING=64, NCCL_ENV=128, NCCL_ALLOC=256, NCCL_CALL=512, NCCL_ALL=~0} ncclDebugLogSubSys;
 
