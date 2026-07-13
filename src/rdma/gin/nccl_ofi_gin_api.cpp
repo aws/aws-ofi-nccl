@@ -26,6 +26,13 @@ struct nccl_ofi_gin_context {
 	static inline std::atomic<uint64_t> next_seq{0};
 
 	uint64_t seq = next_seq.fetch_add(1, std::memory_order_relaxed);
+
+	/* Per-connection listen counter; listen_seq incremented in each listen()
+	 * call gives the connection index within this context. */
+	int listen_count = 0;
+
+	/* Number of NCCL GIN proxy progress threads. Set once in init(). */
+	int nthreads = 1;
 };
 
 ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t logFunction)
@@ -73,6 +80,14 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 	/* Create per-communicator context with a unique endpoint key. */
 	try {
 		nccl_ofi_gin_context *context = new nccl_ofi_gin_context();
+
+		/* Read NCCL_GIN_PROXY_NTHREADS (default 1) for per-thread
+		 * EP assignment in listen(). */
+		const char *env = getenv("NCCL_GIN_PROXY_NTHREADS");
+		static constexpr int default_nthreads = 1;
+		int n = (env && atoi(env) > 0) ? atoi(env) : default_nthreads;
+		context->nthreads = std::min(n, NCCL_GIN_MAX_CONNECTIONS);
+
 		*ctx = context;
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Failed to allocate GIN context: %s", e.what());
@@ -165,7 +180,30 @@ ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listen
 		return ncclInternalError;
 	}
 
-	long endpoint_key = static_cast<long>(context->seq);
+	/* Bucket connections across endpoints by their owning GIN progress
+	   thread, so each progress thread drives its own endpoint instead of
+	   contending on a shared completion queue.
+
+	   NCCL calls listen() ginCommCount times (once per collComm).
+	   listen_seq % NCCL_GIN_PROXY_NTHREADS maps each connection to its
+	   owning thread's endpoint:
+	   - When ginCommCount == NTHREADS (typical): each listen gets a unique
+	     thread_idx, yielding one dedicated EP per thread.
+	   - When ginCommCount > NTHREADS: multiple connections share an EP
+	     (thread t round-robins connections t, t+T, t+2T, ... and they all
+	     land on the same endpoint_key).
+	   - NCCL_GIN_PROXY_NTHREADS=1 (default): all connections share the
+	     single per-init seq endpoint (legacy behavior). */
+	const int listen_seq = context->listen_count++;
+	int thread_idx = listen_seq % context->nthreads;
+
+	const long endpoint_key = static_cast<long>(context->seq)
+				^ (static_cast<long>(thread_idx) << 32);
+
+	NCCL_OFI_TRACE(NCCL_NET, "gin listen(): seq=%lu listen_seq=%d nthreads=%d "
+		      "thread_idx=%d ep_key=0x%lx",
+		      (unsigned long)context->seq, listen_seq, context->nthreads,
+		      thread_idx, endpoint_key);
 
 	auto plugin = nccl_net_ofi_get_plugin();
 	if (plugin == nullptr) {
