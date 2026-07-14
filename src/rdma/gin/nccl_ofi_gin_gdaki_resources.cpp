@@ -404,8 +404,10 @@ void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 
 	counter_dev_handle.allocate(1);
 	fill_common(counter_dev_handle.host[0]);
+	/* TODO: Refactor counter_dev_handle so the same gpu memory is not
+	 * being used by multiple fields */
 	counter_dev_handle.host[0].cntr_value = write_cntr.gpu_ptr();
-	counter_dev_handle.host[0].base.local_cntr_value = nullptr; /* unused on counter handles */
+	counter_dev_handle.host[0].base.local_cntr_value = write_cntr.gpu_ptr();
 	counter_dev_handle.commit();
 
 	signal_dev_handle.allocate(1);
