@@ -75,6 +75,9 @@ gin_put_gdaki_gpu_LDADD = $(LDADD) -lcuda
 gin_signal_gdaki_gpu_SOURCES = $(base_sources) gin_signal_gdaki_gpu.cu
 gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 
+# efa-dp-direct splits shared definitions from GPU device helpers. These
+# kernel-only functional tests use common/device APIs and deliberately do not
+# include the CUDA host API.
 .cu.o:
 	$(NVCC) -std=c++17 $(NVCC_GENCODE) \
 		-ccbin=$(MPICXX) \
@@ -84,7 +87,8 @@ gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 		-I$(top_srcdir)/include \
 		-I$(top_srcdir)/3rd-party \
 		-I$(top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include \
-		-I$(top_srcdir)/3rd-party/efa-dp-direct/CUDA/src \
+		-isystem $(top_srcdir)/3rd-party/efa-dp-direct/CUDA/common \
+		-isystem $(top_srcdir)/3rd-party/efa-dp-direct/CUDA/device \
 		$(MPI_CPPFLAGS) $(CUDA_CPPFLAGS) \
 		-c -o $@ $<
 endif # HAVE_NVCC
