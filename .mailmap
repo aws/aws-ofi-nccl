@@ -40,3 +40,6 @@ ilya minkin <imminkin@amazon.com>
 <raghunch@amazon.com> <rajachan@users.noreply.github.com>
 <rashika@amazon.com> <42682819+rashikakheria@users.noreply.github.com>
 <rashika@amazon.com> <rashika@f4d4888cbd16.ant.amazon.com>
+# Fix up a commit landed with the wrong author email (not current work
+# email).
+<xuanj@amazon.com> <xuanjiang@google.com>
