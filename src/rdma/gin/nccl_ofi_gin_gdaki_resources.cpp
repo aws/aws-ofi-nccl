@@ -26,12 +26,12 @@
  *
  * GDAKI does not register memory on this EP — the proxy's regMrSym
  * registers on the shared domain — and does not do fi_cq_readfrom,
- * so FI_HMEM and FI_SOURCE are not requested. efa-direct requires
- * FI_CONTEXT2 per fi_efa(7).
+ * so FI_SOURCE is not requested. FI_HMEM is still needed because the endpoint
+ * is used to access GPU memory. efa-direct requires FI_CONTEXT2 per fi_efa(7).
  */
 static void get_gdaki_hints(struct fi_info &hints, struct fi_info *ref_info)
 {
-	hints.caps = FI_MSG | FI_RMA;
+	hints.caps = FI_MSG | FI_RMA | FI_HMEM;
 	hints.mode = FI_CONTEXT2;
 
 	hints.ep_attr->type = FI_EP_RDM;
