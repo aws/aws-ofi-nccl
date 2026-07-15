@@ -82,6 +82,44 @@ libinternal_plugin_la_SOURCES = $(sources)
 libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS) $(ROCM_LDFLAGS)
 libinternal_plugin_la_LIBADD  = $(CUDA_LIBS) $(ROCM_LIBS)
 
+if ENABLE_GDAKI
+# TODO: Pinned efa-dp-direct submodule commit 81c4dc7 has a bug that causes a 
+# "sign-compare" error. To avoid relaxing the sign-compare compilation check
+# when building the entire OFI NCCL plugin library, we separately build a
+# libefa_cuda_dp.la library with "-Wno-error=sign-compare" set. Once we 
+# digest an efa-dp-direct version with the sign-compare error bug fixed, we 
+# should stop building a separate libefa_cuda_dp.la library and instead just
+# ingest the efa-dp-direct files directly as sources for the libinternal_plugin.la
+# library.
+
+noinst_LTLIBRARIES += libefa_cuda_dp.la
+
+libefa_cuda_dp_la_SOURCES = \
+	$(top_srcdir)/3rd-party/efa-dp-direct/CUDA/host/efa_cuda_dp.cpp
+
+libefa_cuda_dp_la_CPPFLAGS = \
+	$(CUDA_CPPFLAGS) \
+	-isystem $(abs_top_srcdir)/3rd-party/efa-dp-direct/CUDA/common \
+	-isystem $(abs_top_srcdir)/3rd-party/efa-dp-direct/CUDA/host
+
+# The pinned host source compares its `int` loop index with a `size_t` length.
+# Scope this temporary warning-as-error exception to third-party code so
+# plugin-owned sources remain subject to the project warning policy.
+libefa_cuda_dp_la_CXXFLAGS = \
+	-Wno-error=sign-compare
+
+AM_CPPFLAGS += \
+	-isystem $(abs_top_srcdir)/3rd-party/efa-dp-direct/CUDA/common \
+	-isystem $(abs_top_srcdir)/3rd-party/efa-dp-direct/CUDA/host
+
+# Make the private host implementation available to the internal plugin for
+# later GDAKI integration. It uses CUDA Runtime APIs, so add CUDART only for
+# GDAKI builds and preserve the existing non-GDAKI dependency set.
+libinternal_plugin_la_LIBADD += \
+	libefa_cuda_dp.la \
+	$(CUDA_RUNTIME_LIBS)
+endif
+
 lib_LTLIBRARIES =
 
 if ENABLE_NEURON
