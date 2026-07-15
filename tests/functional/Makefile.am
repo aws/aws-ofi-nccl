@@ -34,6 +34,12 @@ if ENABLE_FUNC_TESTS
 noinst_HEADERS = functional_test.h
 
 bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_listen_comm gin gin_duplicate_mr grouped_recv gin_gdaki_misconfig_probe eager_multirecv
+
+# gin_multiseg_signal exercises the GIN host proxy on multi-segment CUDA VMM
+# memory. GIN is not supported on all CI platforms (e.g. g4dn / Turing), and
+# it is not part of the CI functional run-list, so keep it out of the default
+# build: it is an EXTRA_PROGRAM, built on demand with `make gin_multiseg_signal`.
+EXTRA_PROGRAMS = gin_multiseg_signal
 if ENABLE_GDAKI
 if HAVE_NVCC
 bin_PROGRAMS += gin_put_gdaki_gpu gin_signal_gdaki_gpu
@@ -48,6 +54,7 @@ ring_SOURCES = $(base_sources) ring.cpp
 inflight_close_SOURCES = $(base_sources) inflight_close.cpp
 reuse_listen_comm_SOURCES = $(base_sources) reuse_listen_comm.cpp
 gin_SOURCES = $(base_sources) gin.cpp
+gin_multiseg_signal_SOURCES = $(base_sources) gin_multiseg_signal.cpp
 gin_duplicate_mr_SOURCES = $(base_sources) gin_duplicate_mr.cpp
 grouped_recv_SOURCES = $(base_sources) grouped_recv.cpp
 gin_gdaki_misconfig_probe_SOURCES = $(base_sources) gin_gdaki_misconfig_probe.cpp

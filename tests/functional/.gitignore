@@ -5,6 +5,7 @@ reuse_listen_comm
 ring
 gin
 gin_duplicate_mr
+gin_multiseg_signal
 grouped_recv
 gin_gdaki_misconfig_probe
 eager_multirecv
