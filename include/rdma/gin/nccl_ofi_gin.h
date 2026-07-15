@@ -18,6 +18,7 @@
 #include <bitset>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <thread>
 
 /**
@@ -176,6 +177,19 @@ struct gin_remote_mr {
 };
 
 /**
+ * A discovered signal segment within a CUDA registration. Populated lazily on
+ * the first signal that lands in the segment, then cached for reuse.
+ */
+struct signal_seg_t {
+	uintptr_t seg_base;   /* pinned base VA (clamped to the MR range) */
+	size_t seg_size;      /* pinned length */
+	/* GDRCopy pin for a device segment, or null for a host-NUMA segment
+	   (which cannot be pinned and is updated with a CPU atomic instead). A
+	   null handle is how we distinguish the two. */
+	nccl_ofi_device_copy::RegHandle *gdr_handle;
+};
+
+/**
  * A symmetric memory registration handle. This is the result of GIN API's
  * regMrSym() family of functions.
  */
@@ -189,8 +203,9 @@ struct nccl_ofi_rdma_gin_symm_mr_handle : public nccl_ofi_gin_symm_mr_handle_t {
 	nccl_ofi_gin_mr_handle_t *local_handle;
 	/* Type of registration (NCCL_PTR_HOST, NCCL_PTR_CUDA) */
 	int type;
-	/* GDRCopy handle */
-	nccl_ofi_device_copy::RegHandle *gdr_handle;
+	/* GDRCopy pins for the signal region, discovered lazily per-segment in
+	   ensure_signal_seg. Guarded by signal_segs_mtx. */
+	std::vector<signal_seg_t> signal_segs;
 
 	/* Remote MR information for each peer rank */
 	std::vector<gin_remote_mr> remote_mr;
@@ -580,6 +595,22 @@ private:
 	nccl_ofi_spsc_ring<gin_signal_work_entry> gdrcopy_work_queue;
 	nccl_ofi_spsc_ring<gin_signal_done_entry> gdrcopy_done_queue;
 	std::thread gdrcopy_thread;
+	int gdrcopy_cuda_dev = -1; /* CUDA device the worker binds to */
+
+	/* Protects mr_handle->signal_segs: the gdrcopy worker appends on first
+	   touch (ensure_signal_seg) and deregMrSym tears it down. */
+	std::mutex signal_segs_mtx;
+
+	/* Return the already-discovered signal segment containing signal_va, or
+	   null if none is cached yet. Lock-free; only ever called by the gdrcopy
+	   worker. */
+	signal_seg_t *find_signal_seg(nccl_ofi_rdma_gin_symm_mr_handle *mr,
+				      uintptr_t signal_va);
+	/* Return the signal segment containing signal_va, discovering, classifying
+	   and (for device memory) GDRCopy-pinning it on first touch. Caches the
+	   result in mr->signal_segs. Returns 0 and sets *out on success. */
+	int ensure_signal_seg(nccl_ofi_rdma_gin_symm_mr_handle *mr,
+			      uintptr_t signal_va, signal_seg_t **out);
 
 	void run_gdrcopy_worker_loop();
 	int enqueue_gdrcopy_work(uint32_t peer_rank,

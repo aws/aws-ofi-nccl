@@ -10,6 +10,7 @@
 #include "rdma/gin/nccl_ofi_gin.h"
 
 #include "nccl_ofi_assert.h"
+#include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_rdma.h"
@@ -78,6 +79,19 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 	 * running gdrcopy on the proxy thread, fail comm creation so we never
 	 * run in that degraded configuration. Undo the comm registration before
 	 * rethrowing so resources teardown does not see a dangling comm. */
+#if HAVE_CUDA
+	/* Capture the CUDA device on this (context-bearing) thread so the gdrcopy
+	 * worker can bind to it; the worker's lazy signal-segment discovery calls
+	 * cuMemGetAddressRange, which requires a current CUDA context. -1 means we
+	 * could not determine the device, in which case the worker skips binding
+	 * and falls back to whatever context it inherits (see
+	 * run_gdrcopy_worker_loop). cudaGetDevice failing here is unexpected. */
+	if (nccl_net_ofi_gpu_get_device(&gdrcopy_cuda_dev) != 0) {
+		NCCL_OFI_WARN("Could not query CUDA device for gdrcopy worker; "
+			      "it will not bind to a device");
+		gdrcopy_cuda_dev = -1;
+	}
+#endif
 	try {
 		gdrcopy_thread = std::thread(
 			&nccl_ofi_rdma_gin_put_comm::run_gdrcopy_worker_loop, this);
@@ -326,25 +340,18 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 		return ret;
 	}
 
-	/* Proxy path only: for CUDA memory, also register with GDRCopy so the
-	   proxy can perform CPU-driven signal updates. On a duplicate hit the
-	   handle already carries a gdr_handle, so register only the first time. */
-	if (type == NCCL_PTR_CUDA && mr_handle->gdr_handle == nullptr) {
-		ret = get_device_copy().register_region(mr_handle->input_address, mr_handle->size,
-							mr_handle->gdr_handle);
-		if (ret != 0) {
-			NCCL_OFI_WARN("GDRCopy registration failed: %d", ret);
-			mr_handle_map.erase(mr_handle->input_address);
-			delete mr_handle;
-			return ret;
-		}
-		/* When NCCL marks this signal MR as never-reset, keep a host-side
-		   shadow of the signal values so do_gin_signal can skip the device
-		   read (see do_gin_signal). Zero-initialized to match the freshly
-		   registered device buffer. */
+	/* Signal pins are taken lazily per-segment in ensure_signal_seg, not
+	   here. Only set up the never-reset shadow here. regMrSymDmaBuf can be
+	   called more than once for the same buffer (duplicate / refcounted
+	   registration -- see gin_duplicate_mr), so the empty() check makes this
+	   idempotent: a repeat call must not re-initialize the shadow. It is
+	   sized from the MR so a smaller duplicate registration cannot shrink
+	   it. */
+	if (type == NCCL_PTR_CUDA && mr_handle->signal_shadow.empty()) {
 		if (mrFlags & NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET) {
 			mr_handle->signal_never_reset = true;
-			mr_handle->signal_shadow.assign(mr_handle->size / sizeof(uint64_t), 0);
+			mr_handle->signal_shadow.assign(
+				mr_handle->size / sizeof(uint64_t), 0);
 		}
 	}
 
@@ -447,13 +454,23 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 		return 0;
 	}
 
-	if (mr_handle->type == NCCL_PTR_CUDA && mr_handle->gdr_handle != nullptr) {
-		int ret = get_device_copy().deregister_region(mr_handle->gdr_handle);
-		if (ret != 0) {
-			NCCL_OFI_WARN("GDRCopy deregister failed: %d", ret);
-			return ret;
+	if (mr_handle->type == NCCL_PTR_CUDA) {
+		/* Release the lazily-pinned segments under the worker's append
+		   lock. Best-effort: log and continue on error, never bail out. */
+		std::lock_guard<std::mutex> seg_lock(signal_segs_mtx);
+		for (auto &seg : mr_handle->signal_segs) {
+			if (seg.gdr_handle != nullptr) {
+				int ret = get_device_copy().deregister_region(
+					seg.gdr_handle);
+				if (ret != 0) {
+					NCCL_OFI_WARN("GDRCopy segment deregister "
+						      "failed: %d", ret);
+				}
+				delete seg.gdr_handle;
+				seg.gdr_handle = nullptr;
+			}
 		}
-		mr_handle->gdr_handle = nullptr;
+		mr_handle->signal_segs.clear();
 	}
 
 	mr_handle_map.erase(it);
@@ -919,6 +936,100 @@ static inline uint64_t get_req_map_key(uint32_t peer_rank, uint16_t msg_seq_num)
 	return (static_cast<uint64_t>(peer_rank) << 16) | static_cast<uint64_t>(msg_seq_num);
 }
 
+signal_seg_t *nccl_ofi_rdma_gin_put_comm::find_signal_seg(
+	nccl_ofi_rdma_gin_symm_mr_handle *mr, uintptr_t signal_va)
+{
+	/* Linear scan: a CUDA signal region spans one segment in the common case,
+	   a few at most. Steady-state signals hit an already-discovered segment.
+	   Testing only signal_va (the counter's start) is sufficient: the 8-byte
+	   counter cannot straddle a segment boundary because VMM segments are
+	   allocation-granularity aligned (>= 2 MiB, divisible by 8). */
+	for (auto &seg : mr->signal_segs) {
+		if (signal_va >= seg.seg_base &&
+		    signal_va < seg.seg_base + seg.seg_size) {
+			return &seg;
+		}
+	}
+	return nullptr;
+}
+
+int nccl_ofi_rdma_gin_put_comm::ensure_signal_seg(
+	nccl_ofi_rdma_gin_symm_mr_handle *mr, uintptr_t signal_va,
+	signal_seg_t **out)
+{
+	/* Fast path, no lock: the segment is already discovered. deregMrSym
+	   cannot run against a live signal (the req stays in_flight until the
+	   proxy reaps this work), so the lock-free read is safe. */
+	signal_seg_t *seg = find_signal_seg(mr, signal_va);
+	if (seg != nullptr) {
+		*out = seg;
+		return 0;
+	}
+
+	/* Slow path: first signal to this segment -- discover, classify, pin. */
+	std::lock_guard<std::mutex> lock(signal_segs_mtx);
+	seg = find_signal_seg(mr, signal_va);  /* re-check under lock */
+	if (seg != nullptr) {
+		*out = seg;
+		return 0;
+	}
+
+	void *seg_base_ptr = nullptr;
+	size_t seg_size = 0;
+	int ret = nccl_net_ofi_gpu_get_address_range(
+		reinterpret_cast<void *>(signal_va), &seg_base_ptr, &seg_size);
+	if (ret != 0) {
+		NCCL_OFI_WARN("cuMemGetAddressRange failed for signal VA %p: %d",
+			      reinterpret_cast<void *>(signal_va), ret);
+		return ret;
+	}
+
+	/* Clamp to the MR: cuMemGetAddressRange returns the whole containing
+	   allocation, which can be far larger than the registered region. */
+	uintptr_t seg_base = reinterpret_cast<uintptr_t>(seg_base_ptr);
+	uintptr_t seg_end = seg_base + seg_size;
+	uintptr_t mr_start = reinterpret_cast<uintptr_t>(mr->input_address);
+	uintptr_t mr_end = mr_start + mr->size;
+	uintptr_t pin_base = seg_base > mr_start ? seg_base : mr_start;
+	uintptr_t pin_end = seg_end < mr_end ? seg_end : mr_end;
+	if (pin_end <= pin_base) {
+		NCCL_OFI_WARN("Signal VA %p outside MR range",
+			      reinterpret_cast<void *>(signal_va));
+		return -EINVAL;
+	}
+	size_t pin_len = pin_end - pin_base;
+
+	/* Host-NUMA segments can't be GDRCopy-pinned and are updated with a CPU
+	   atomic instead (gdr_handle stays null). We only reach this for a
+	   NCCL_PTR_CUDA MR, so the memory is either a VMM allocation (classified
+	   here) or a plain cudaMalloc buffer. classification via
+	   cuMemRetainAllocationHandle only works for VMM allocations, so a
+	   failure means the latter -- device memory that is GDRCopy-pinnable --
+	   hence we treat classify-failure as device (not host). */
+	bool is_host = false;
+	if (nccl_net_ofi_gpu_seg_is_host(reinterpret_cast<void *>(seg_base),
+					 &is_host) != 0) {
+		is_host = false;
+	}
+
+	nccl_ofi_device_copy::RegHandle *gdr = nullptr;
+	if (!is_host) {
+		ret = get_device_copy().register_region(
+			reinterpret_cast<void *>(pin_base), pin_len, gdr);
+		if (ret != 0) {
+			NCCL_OFI_WARN("GDRCopy segment pin failed for %p (len %zu): %d",
+				      reinterpret_cast<void *>(pin_base), pin_len, ret);
+			return ret;
+		}
+	}
+
+	/* gdr is null for a host segment, non-null for a pinned device segment;
+	   that null-ness is what do_gin_signal keys off. */
+	mr->signal_segs.push_back(signal_seg_t{pin_base, pin_len, gdr});
+	*out = &mr->signal_segs.back();
+	return 0;
+}
+
 int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata)
 {
 	void *signal_base = reinterpret_cast<void *>(metadata.signal_base_address);
@@ -934,44 +1045,64 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 	}
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = it->second.handle;
 
+	/* Reject a peer-supplied offset that would place the 8-byte counter
+	   outside the MR (overflow- and underflow-safe) before we use it. */
+	if (OFI_UNLIKELY(metadata.signal_offset > mr_handle->size ||
+			 mr_handle->size - metadata.signal_offset < sizeof(uint64_t))) {
+		NCCL_OFI_WARN("Signal offset %lu out of range for MR of size %zu",
+			      metadata.signal_offset, mr_handle->size);
+		return -EINVAL;
+	}
+
 	if (mr_handle->type == NCCL_PTR_CUDA) {
-		uint64_t new_value;
+		uintptr_t signal_va = metadata.signal_base_address +
+				      metadata.signal_offset;
 
-		if (mr_handle->signal_never_reset) {
-			/* Fast path: the signal is never reset, so our host-side
-			   shadow is authoritative. Add to the shadow and do a
-			   one-way write to the device, skipping the device read.
-			   do_gin_signal only ever runs on the gdrcopy worker
-			   thread, so the shadow needs no additional locking. */
-			uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
-			assert(idx < mr_handle->signal_shadow.size());
-			new_value = (mr_handle->signal_shadow[idx] += add_value);
+		/* Lazily discover and pin the segment this signal lands in. */
+		signal_seg_t *seg = nullptr;
+		int ret = ensure_signal_seg(mr_handle, signal_va, &seg);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to ensure signal segment for VA %p",
+				      reinterpret_cast<void *>(signal_va));
+			return ret;
+		}
+
+		if (seg->gdr_handle == nullptr) {
+			/* Host-NUMA segment (not pinnable): update with a CPU
+			   atomic; the VA is host-accessible. */
+			auto *dest = reinterpret_cast<volatile uint64_t *>(signal_va);
+			__atomic_fetch_add(dest, add_value, __ATOMIC_RELAXED);
 		} else {
-			/* Slow path: the signal may have been reset out from under
-			   us (e.g. VA signals), so read the current value back from
-			   the device before adding. */
-			uint64_t old_value;
+			size_t off = signal_va - seg->seg_base;
+			uint64_t new_value;
 
-			int ret = get_device_copy().copy_from_device(*mr_handle->gdr_handle,
-								     metadata.signal_offset, &old_value,
-								     sizeof(old_value));
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Failed to read current signal value");
-				return -ret;
+			if (mr_handle->signal_never_reset) {
+				/* Never-reset: the host shadow is authoritative,
+				   so skip the device read. */
+				uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
+				assert(idx < mr_handle->signal_shadow.size());
+				new_value = (mr_handle->signal_shadow[idx] += add_value);
+			} else {
+				/* May have been reset (VA signals): read first. */
+				uint64_t old_value;
+				ret = get_device_copy().copy_from_device(
+					*seg->gdr_handle, off, &old_value,
+					sizeof(old_value));
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Failed to read current signal value");
+					return -ret;
+				}
+				new_value = old_value + add_value;
 			}
 
-			/* We only support addition */
-			new_value = old_value + add_value;
+			/* Write using GDRCopy. */
+			ret = get_device_copy().copy_to_device(
+				&new_value, *seg->gdr_handle, off, sizeof(new_value));
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Failed to update signal value");
+				return -ret;
+			}
 		}
-
-		/* Write using GDRcopy. */
-		int ret = get_device_copy().copy_to_device(&new_value, *mr_handle->gdr_handle,
-							   metadata.signal_offset, sizeof(new_value));
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed to update signal value");
-			return -ret;
-		}
-
 	} else {
 		/**
 		 * Notes:
@@ -1083,6 +1214,17 @@ int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 
 void nccl_ofi_rdma_gin_put_comm::run_gdrcopy_worker_loop()
 {
+#if HAVE_CUDA
+	/* Bind this worker to the comm's CUDA device so its lazy segment
+	   discovery (cuMemGetAddressRange) has a valid CUDA context. A failure
+	   here leaves the worker without the intended context, so warn -- lazy
+	   discovery would then fail on the first signal. */
+	if (gdrcopy_cuda_dev >= 0 &&
+	    nccl_net_ofi_gpu_set_device(gdrcopy_cuda_dev) != 0) {
+		NCCL_OFI_WARN("gdrcopy worker failed to bind CUDA device %d",
+			      gdrcopy_cuda_dev);
+	}
+#endif
 	gin_signal_work_entry work;
 	while (true) {
 		if (!gdrcopy_work_queue.pop(work)) {
