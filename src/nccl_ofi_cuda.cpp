@@ -96,6 +96,9 @@ DECLARE_CUDA_FUNCTION(cuMemMap, 10020);
 DECLARE_CUDA_FUNCTION(cuMemUnmap, 10020);
 DECLARE_CUDA_FUNCTION(cuMemSetAccess, 10020);
 DECLARE_CUDA_FUNCTION(cuMemGetAllocationGranularity, 10020);
+DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+DECLARE_CUDA_FUNCTION(cuMemRetainAllocationHandle, 11000);
+DECLARE_CUDA_FUNCTION(cuMemGetAllocationPropertiesFromHandle, 10020);
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -177,6 +180,9 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuMemUnmap, 10020);
 	RESOLVE_CUDA_FUNCTION(cuMemSetAccess, 10020);
 	RESOLVE_CUDA_FUNCTION(cuMemGetAllocationGranularity, 10020);
+	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemRetainAllocationHandle, 11000);
+	RESOLVE_CUDA_FUNCTION(cuMemGetAllocationPropertiesFromHandle, 10020);
 
 	cu_ret = pfn_cuDriverGetVersion(&driverVersion);
 	if (cu_ret != CUDA_SUCCESS) {
@@ -238,6 +244,62 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 {
 	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
+}
+
+/*
+ * Bind the calling thread to a CUDA device (and lazily its primary context).
+ * The gdrcopy worker thread is a bare std::thread with no CUDA context, so the
+ * lazy signal-segment discovery it performs (cuMemGetAddressRange) fails there
+ * unless we set one.
+ */
+int nccl_net_ofi_gpu_get_device(int *dev_id)
+{
+	return cudaGetDevice(dev_id) == cudaSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_gpu_set_device(int dev_id)
+{
+	return cudaSetDevice(dev_id) == cudaSuccess ? 0 : -EINVAL;
+}
+
+int nccl_net_ofi_gpu_get_address_range(void *ptr, void **base_out, size_t *size_out)
+{
+	CUdeviceptr base;
+	size_t sz;
+	CUresult ret = pfn_cuMemGetAddressRange(&base, &sz, (CUdeviceptr)ptr);
+	if (ret != CUDA_SUCCESS) {
+		*base_out = nullptr;
+		*size_out = 0;
+		return -EINVAL;
+	}
+	*base_out = (void *)base;
+	*size_out = sz;
+	return 0;
+}
+
+int nccl_net_ofi_gpu_seg_is_host(void *seg_base, bool *is_host_out)
+{
+	CUmemGenericAllocationHandle handle;
+	CUresult ret = pfn_cuMemRetainAllocationHandle(&handle, seg_base);
+	if (ret != CUDA_SUCCESS) {
+		return -EINVAL;
+	}
+	CUmemAllocationProp prop = {};
+	ret = pfn_cuMemGetAllocationPropertiesFromHandle(&prop, handle);
+	/* Release the reference retained above regardless of the query result. */
+	pfn_cuMemRelease(handle);
+	if (ret != CUDA_SUCCESS) {
+		return -EINVAL;
+	}
+	/* CU_MEM_LOCATION_TYPE_HOST_NUMA{,_CURRENT} were added in CUDA 12.2;
+	   guard them so this still compiles against our 11.7 floor. */
+	*is_host_out = (prop.location.type == CU_MEM_LOCATION_TYPE_HOST
+#if CUDA_VERSION >= 12020
+			|| prop.location.type == CU_MEM_LOCATION_TYPE_HOST_NUMA
+			|| prop.location.type == CU_MEM_LOCATION_TYPE_HOST_NUMA_CURRENT
+#endif
+			);
+	return 0;
 }
 
 int nccl_net_ofi_gpu_host_register_iomem(void *ptr, size_t size)
