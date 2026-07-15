@@ -344,7 +344,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 		   registered device buffer. */
 		if (mrFlags & NCCL_NET_MR_FLAG_SIGNAL_NEVER_RESET) {
 			mr_handle->signal_never_reset = true;
-			mr_handle->signal_shadow.assign(size / sizeof(uint64_t), 0);
+			mr_handle->signal_shadow.assign(mr_handle->size / sizeof(uint64_t), 0);
 		}
 	}
 
