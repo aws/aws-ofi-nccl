@@ -12,6 +12,8 @@
 #include "nccl_ofi_param.h"
 #include "rdma/gin/nccl_ofi_gin_gdaki_resources.h"
 
+#include "efa_cuda_dp.h"
+
 #include <rdma/fi_cm.h>
 #include <rdma/fi_ext_efa.h>
 
@@ -147,46 +149,70 @@ void gdaki_fi_endpoint::bind(struct fid *fid, uint64_t flags)
 	}
 }
 
+gdaki_gpu_qp::~gdaki_gpu_qp()
+{
+	if (qp != nullptr) {
+		efa_cuda_destroy_qp(qp);
+	}
+}
+
 void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 			 const struct fi_efa_wq_attr &rq_attr,
 			 void *sq_buf_dev, void *sq_db_dev)
 {
-	buf.allocate(1);
+	/* The host API allocates GPU memory; rebuilding would overwrite the only
+	 * owned pointer and leak the previous descriptor. */
+	if (qp != nullptr) {
+		throw std::runtime_error("gdaki_gpu_qp: double build");
+	}
 
-	efa_cuda_qp &h = *buf.host;
-	h.sq.wq.buf = static_cast<uint8_t *>(sq_buf_dev);
-	h.sq.wq.db = static_cast<uint32_t *>(sq_db_dev);
-	h.sq.wq.max_wqes = sq_attr.num_entries;
-	h.sq.wq.queue_mask = sq_attr.num_entries - 1;
-	h.sq.wq.queue_size_shift = __builtin_ctz(sq_attr.num_entries);
-	h.sq.wq.max_batch = sq_attr.max_batch;
-	h.sq.wq.phase = NCCL_OFI_GDAKI_SQ_INITIAL_PHASE;
-	h.sq.max_inline_data = NCCL_OFI_GDAKI_SQ_INLINE_DATA_BYTES;
-	h.sq.max_rdma_sges = NCCL_OFI_GDAKI_SQ_RDMA_SGES;
-	h.rq.wq.buf = rq_attr.buffer;
-	h.rq.wq.db = rq_attr.doorbell;
-	h.rq.wq.max_wqes = rq_attr.num_entries;
-	h.rq.wq.queue_mask = rq_attr.num_entries - 1;
-	h.rq.wq.queue_size_shift = __builtin_ctz(rq_attr.num_entries);
-	h.rq.wq.max_batch = rq_attr.num_entries;
-	h.rq.wq.phase = NCCL_OFI_GDAKI_RQ_INITIAL_PHASE;
+	/* The plugin supplies provider-probed buffers and geometry. The host API
+	 * validates the attributes and initializes queue masks, counters, and phase
+	 * state before uploading the canonical descriptor to GPU memory. */
+	struct efa_cuda_qp_attrs attrs = {};
+	attrs.sq_buffer = static_cast<uint8_t *>(sq_buf_dev);
+	attrs.rq_buffer = static_cast<uint8_t *>(rq_attr.buffer);
+	attrs.sq_doorbell = static_cast<uint32_t *>(sq_db_dev);
+	attrs.rq_doorbell = static_cast<uint32_t *>(rq_attr.doorbell);
+	attrs.sq_num_entries = sq_attr.num_entries;
+	attrs.sq_entry_size = sq_attr.entry_size;
+	attrs.sq_max_batch = sq_attr.max_batch;
+	attrs.rq_num_entries = rq_attr.num_entries;
+	attrs.rq_entry_size = rq_attr.entry_size;
 
-	buf.commit();
+	qp = efa_cuda_create_qp(&attrs, sizeof(attrs));
+	if (qp == nullptr) {
+		throw std::runtime_error("gdaki_gpu_qp: efa_cuda_create_qp failed");
+	}
+}
+
+gdaki_gpu_cq::~gdaki_gpu_cq()
+{
+	if (cq != nullptr) {
+		efa_cuda_destroy_cq(cq);
+	}
 }
 
 void gdaki_gpu_cq::build(const struct fi_efa_cq_attr &cq_attr)
 {
-	buf.allocate(1);
+	/* The host API allocates GPU memory; rebuilding would overwrite the only
+	 * owned pointer and leak the previous descriptor. */
+	if (cq != nullptr) {
+		throw std::runtime_error("gdaki_gpu_cq: double build");
+	}
 
-	efa_cuda_cq &h = *buf.host;
-	h.buf = cq_attr.buffer;
-	h.entry_size = cq_attr.entry_size;
-	h.num_entries = cq_attr.num_entries;
-	h.queue_mask = cq_attr.num_entries - 1;
-	h.queue_size_shift = __builtin_ctz(cq_attr.num_entries);
-	h.phase = NCCL_OFI_GDAKI_CQ_INITIAL_PHASE;
+	/* The plugin supplies the provider-probed CQ buffer and geometry. The host
+	 * API validates the attributes and initializes queue masks and phase state
+	 * before uploading the canonical descriptor to GPU memory. */
+	struct efa_cuda_cq_attrs attrs = {};
+	attrs.buffer = static_cast<uint8_t *>(cq_attr.buffer);
+	attrs.num_entries = cq_attr.num_entries;
+	attrs.entry_size = cq_attr.entry_size;
 
-	buf.commit();
+	cq = efa_cuda_create_cq(&attrs, sizeof(attrs));
+	if (cq == nullptr) {
+		throw std::runtime_error("gdaki_gpu_cq: efa_cuda_create_cq failed");
+	}
 }
 
 /*
