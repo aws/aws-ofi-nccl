@@ -22,6 +22,29 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
+ * @brief Get / set the CUDA device for the calling thread. set_device also
+ *        establishes the thread's primary CUDA context, which bare worker
+ *        threads (e.g. the gdrcopy signal worker) otherwise lack.
+ */
+int nccl_net_ofi_gpu_get_device(int *dev_id);
+int nccl_net_ofi_gpu_set_device(int dev_id);
+
+/*
+ * @brief Retrieve the base address and size of the VMM segment (cuMemCreate
+ *        allocation) containing `ptr`, via cuMemGetAddressRange.
+ * @return 0 on success, -EINVAL if ptr is not a valid device pointer.
+ */
+int nccl_net_ofi_gpu_get_address_range(void *ptr, void **base_out, size_t *size_out);
+
+/*
+ * @brief Classify whether the VMM segment at `seg_base` is host-NUMA memory
+ *        (which cannot be GDRCopy-pinned) rather than device memory.
+ * @param is_host_out  set to true for a host-NUMA segment, false for device.
+ * @return 0 on success, -EINVAL if the segment's allocation cannot be queried.
+ */
+int nccl_net_ofi_gpu_seg_is_host(void *seg_base, bool *is_host_out);
+
+/*
  * @brief	wraps cudaFlushGPUDirectRDMAWrites() with default args.
 
  * @return	0 on success
