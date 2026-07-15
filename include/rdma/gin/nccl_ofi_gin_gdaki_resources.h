@@ -8,12 +8,10 @@
  * calls symmetrically. nccl_ofi_gin_gdaki_context composes them, and
  * createContext / destroyContext orchestrate via the composed type.
  *
- * All GPU memory access goes through the plugin's accelerator
- * abstraction (nccl_net_ofi_gpu_*); this file contains no direct
- * CUDA API calls. The GDAKI code path is gated at Makefile level on
- * HAVE_CUDA today, but using the abstraction leaves GDAKI portable to
- * any accelerator that implements the gpu_mem / host_register_iomem
- * family.
+ * Plugin-owned GPU buffers and MMIO mappings use the accelerator
+ * abstraction (nccl_net_ofi_gpu_*). Canonical QP/CQ descriptors instead
+ * delegate allocation and destruction to the pinned efa-dp-direct host
+ * API, which uses the CUDA Runtime API. The GDAKI code path is CUDA-only.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_RESOURCES_H_
@@ -270,13 +268,21 @@ public:
 /**
  * A GPU-resident canonical efa_cuda_qp descriptor.
  *
- * Built from fi_efa_wq_attr returned by gda_ops->query_qp_wqs, plus
- * the GPU-visible device pointers for the SQ buffer and doorbell
- * MMIO mappings.
+ * Owns the descriptor created through the pinned efa-dp-direct host API.
+ * `build()` is deliberately single-use: each host API create call allocates a
+ * fresh GPU descriptor, so rebuilding would overwrite an owned pointer. The
+ * destructor calls the paired host API destroy function. The SQ buffer and
+ * doorbell inputs are GPU-visible device pointers for the existing MMIO
+ * mappings; the RQ inputs remain raw EFA pointers.
  */
 class gdaki_gpu_qp {
 public:
-	gdaki_gpu_buf<efa_cuda_qp> buf;
+	gdaki_gpu_qp() = default;
+	~gdaki_gpu_qp();
+	gdaki_gpu_qp(const gdaki_gpu_qp &) = delete;
+	gdaki_gpu_qp &operator=(const gdaki_gpu_qp &) = delete;
+	gdaki_gpu_qp(gdaki_gpu_qp &&) = delete;
+	gdaki_gpu_qp &operator=(gdaki_gpu_qp &&) = delete;
 
 	void build(const struct fi_efa_wq_attr &sq_attr,
 		   const struct fi_efa_wq_attr &rq_attr,
@@ -284,28 +290,41 @@ public:
 
 	efa_cuda_qp *dev() const
 	{
-		return buf.dev;
+		return qp;
 	}
+
+private:
+	efa_cuda_qp *qp = nullptr;
 };
 
 /**
  * A GPU-resident canonical efa_cuda_cq descriptor.
  *
- * On P5en the CQ buffer is polled via its host pointer rather than
- * through a GPU-mapped MMIO region; IOMEMORY|DEVICEMAP registration of
- * the CQ BAR fails, and the host pointer is usable from both CPU and
- * CUDA kernels for CQ polling.
+ * Owns the descriptor created through the pinned efa-dp-direct host API.
+ * `build()` is deliberately single-use: each host API create call allocates a
+ * fresh GPU descriptor, and the destructor calls the paired destroy function.
+ * On P5en the CQ buffer is polled via its host pointer rather than through a
+ * GPU-mapped MMIO region; IOMEMORY|DEVICEMAP registration of the CQ BAR
+ * fails, and the host pointer is usable from both CPU and CUDA kernels.
  */
 class gdaki_gpu_cq {
 public:
-	gdaki_gpu_buf<efa_cuda_cq> buf;
+	gdaki_gpu_cq() = default;
+	~gdaki_gpu_cq();
+	gdaki_gpu_cq(const gdaki_gpu_cq &) = delete;
+	gdaki_gpu_cq &operator=(const gdaki_gpu_cq &) = delete;
+	gdaki_gpu_cq(gdaki_gpu_cq &&) = delete;
+	gdaki_gpu_cq &operator=(gdaki_gpu_cq &&) = delete;
 
 	void build(const struct fi_efa_cq_attr &cq_attr);
 
 	efa_cuda_cq *dev() const
 	{
-		return buf.dev;
+		return cq;
 	}
+
+private:
+	efa_cuda_cq *cq = nullptr;
 };
 
 /**
