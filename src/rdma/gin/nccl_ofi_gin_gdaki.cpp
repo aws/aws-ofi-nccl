@@ -1161,6 +1161,35 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext_v14(void *collComm, ncclGin
 							 void **ginCtx,
 							 ncclNetDeviceHandle_v11_t **devHandle)
 {
+	if (config == nullptr) {
+		NCCL_OFI_WARN("gin GDAKI: createContext_v14 received NULL config");
+		return ncclInvalidArgument;
+	}
+
+	/*
+	 * backendVersion selects the efa-dp-direct QP/CQ device-struct layout
+	 * that NCCL was built to drive. NCCL picks it from efaGdaBackendMinVersions[]
+	 * and passes it here; the plugin must build exactly that layout or refuse.
+	 * Building a layout NCCL did not request would hand its kernel a struct it
+	 * drives with the wrong field offsets -> silent memory corruption.
+	 *
+	 * There is one layout today (efa_cuda_qp/cq); NCCL 2.31.0+ requests
+	 * version 1, and version 0 is a vestigial table floor no EFA-GDA-capable
+	 * NCCL actually sends. Both map to the current layout. INVARIANT: any
+	 * change to the efa_cuda_qp/cq byte layout MUST bump
+	 * NCCL_OFI_GDAKI_MAX_BACKEND_VERSION and add a matching case in
+	 * gdaki_gpu_qp/cq::build(); comp_mask capability bits never change layout.
+	 */
+	if (config->backendVersion < 0 ||
+	    config->backendVersion > NCCL_OFI_GDAKI_MAX_BACKEND_VERSION) {
+		NCCL_OFI_WARN("gin GDAKI: unsupported backendVersion %d "
+			      "(plugin supports 0..%d); refusing rather than "
+			      "building a mismatched device struct",
+			      config->backendVersion,
+			      NCCL_OFI_GDAKI_MAX_BACKEND_VERSION);
+		return ncclInvalidArgument;
+	}
+
 	ncclGinConfig_v13_t config_v13;
 	memset(&config_v13, 0, sizeof(config_v13));
 	config_v13.nSignals = config->nSignals;

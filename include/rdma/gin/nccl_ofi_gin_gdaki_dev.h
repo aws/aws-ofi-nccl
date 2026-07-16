@@ -98,6 +98,24 @@ struct nccl_ofi_gin_gdaki_mr_handle {
  * casts from plugin-local mirrors.
  */
 
+/*
+ * Highest efa-dp-direct QP/CQ device-struct layout version this plugin can
+ * build. NCCL passes the layout version it was built to drive as
+ * ncclGinConfig_v14_t::backendVersion (selected from efaGdaBackendMinVersions[]);
+ * createContext_v14 rejects any request outside [0, this].
+ *
+ * There is a single layout today (the canonical efa_cuda_qp / efa_cuda_cq).
+ * NCCL 2.31.0+ requests version 1; version 0 is a vestigial table floor that
+ * predates the EFA-GDA backend and is never sent by an EFA-GDA-capable NCCL.
+ * Both map to the current layout.
+ *
+ * INVARIANT: any change to the efa_cuda_qp / efa_cuda_cq byte layout MUST bump
+ * this value AND add a matching case in gdaki_gpu_qp/cq::build(); comp_mask
+ * capability bits are additive and never change the layout.
+ */
+#define NCCL_OFI_GDAKI_MAX_BACKEND_VERSION 1
+
+
 /**
  * Common per-endpoint state shared by the data, counter, and signal
  * device handles. Holds the GPU-resident QP/CQ, the target
