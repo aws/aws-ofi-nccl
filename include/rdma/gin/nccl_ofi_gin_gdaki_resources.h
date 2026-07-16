@@ -268,7 +268,7 @@ public:
 };
 
 /**
- * A GPU-resident efa_cuda_qp-compatible descriptor.
+ * A GPU-resident canonical efa_cuda_qp descriptor.
  *
  * Built from fi_efa_wq_attr returned by gda_ops->query_qp_wqs, plus
  * the GPU-visible device pointers for the SQ buffer and doorbell
@@ -276,20 +276,20 @@ public:
  */
 class gdaki_gpu_qp {
 public:
-	gdaki_gpu_buf<nccl_ofi_gin_gdaki_qp> buf;
+	gdaki_gpu_buf<efa_cuda_qp> buf;
 
 	void build(const struct fi_efa_wq_attr &sq_attr,
 		   const struct fi_efa_wq_attr &rq_attr,
 		   void *sq_buf_dev, void *sq_db_dev);
 
-	nccl_ofi_gin_gdaki_qp *dev() const
+	efa_cuda_qp *dev() const
 	{
 		return buf.dev;
 	}
 };
 
 /**
- * A GPU-resident efa_cuda_cq-compatible descriptor.
+ * A GPU-resident canonical efa_cuda_cq descriptor.
  *
  * On P5en the CQ buffer is polled via its host pointer rather than
  * through a GPU-mapped MMIO region; IOMEMORY|DEVICEMAP registration of
@@ -298,11 +298,11 @@ public:
  */
 class gdaki_gpu_cq {
 public:
-	gdaki_gpu_buf<nccl_ofi_gin_gdaki_cq> buf;
+	gdaki_gpu_buf<efa_cuda_cq> buf;
 
 	void build(const struct fi_efa_cq_attr &cq_attr);
 
-	nccl_ofi_gin_gdaki_cq *dev() const
+	efa_cuda_cq *dev() const
 	{
 		return buf.dev;
 	}

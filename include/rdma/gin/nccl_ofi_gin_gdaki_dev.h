@@ -6,13 +6,17 @@
  * memory and destroyContext tears down.
  *
  * This header is plugin-internal. NCCL does not include it: NCCL's kernel
- * code uses the layout-compatible efa_cuda_qp / efa_cuda_cq types provided
- * by efa-dp-direct. This header exists so that both createContext (which
- * builds the device handle on the host) and destroyContext (which frees it)
- * agree on the struct layout.
+ * code and the plugin both use the canonical efa_cuda_qp / efa_cuda_cq
+ * types provided by efa-dp-direct. Using those dependency definitions directly
+ * makes incompatible queue-layout changes surface at build time rather than
+ * silently diverging from a plugin-local mirror. This header exists so that
+ * both createContext (which builds the device handle on the host) and
+ * destroyContext (which frees it) agree on the remaining GIN-specific
+ * struct layout.
  *
- * Keep this header free of libfabric and plugin-internal transport types;
- * it is intended to be a stable contract for the GPU-memory layout.
+ * Keep this header free of libfabric and plugin-internal transport types.
+ * It depends only on efa-dp-direct's plain C queue-layout header and is a
+ * stable contract for the GPU-memory layout.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_DEV_H_
@@ -20,23 +24,11 @@
 
 #include <stdint.h>
 
+#include "efa_cuda_dp_types.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
-
-/* Size of the inline-data slot reserved in each SQ WQE. */
-#define NCCL_OFI_GDAKI_SQ_INLINE_DATA_BYTES 32
-
-/* Number of SGEs the SQ WQE layout accommodates per RDMA_WRITE. */
-#define NCCL_OFI_GDAKI_SQ_RDMA_SGES 2
-
-/*
- * Phase-bit initial values for the EFA ownership-bit protocol:
- * WQEs start at 0, CQEs and RQ entries start at 1.
- */
-#define NCCL_OFI_GDAKI_SQ_INITIAL_PHASE 0
-#define NCCL_OFI_GDAKI_RQ_INITIAL_PHASE 1
-#define NCCL_OFI_GDAKI_CQ_INITIAL_PHASE 1
 
 /* Per-slot stride (bytes) of the PutValue source pool. PutValue's T
  * is asserted by the kernel template to be <= 8 bytes; using 8 lets
@@ -100,70 +92,11 @@ struct nccl_ofi_gin_gdaki_mr_handle {
  * during createContext / regMrSym. */
 #define NCCL_OFI_GDAKI_MAX_RAILS 2
 
-/**
- * Work queue descriptor, layout-compatible with efa_cuda_wq from efa-dp-direct.
- *
- * The kernel-side code (in NCCL's transport/net_efa) casts this to
- * efa_cuda_wq* for use with efa-dp-direct device functions.
+/*
+ * QP/CQ/WQ layouts are canonical efa-dp-direct types. The device handle
+ * stores them directly, so device code no longer relies on representation
+ * casts from plugin-local mirrors.
  */
-struct nccl_ofi_gin_gdaki_wq {
-	uint32_t max_sge;
-	uint32_t max_wqes;
-	uint32_t queue_mask;
-	uint32_t queue_size_shift;
-	uint32_t max_batch;
-	uint32_t wqes_pending;
-	uint32_t wqes_posted;
-	uint32_t wqes_completed;
-	uint32_t pc;
-	int phase;
-	uint8_t *buf;
-	uint32_t *db;
-};
-
-/**
- * Send queue descriptor, layout-compatible with efa_cuda_sq.
- */
-struct nccl_ofi_gin_gdaki_sq {
-	struct nccl_ofi_gin_gdaki_wq wq;
-	uint32_t max_inline_data;
-	uint32_t max_rdma_sges;
-};
-
-/**
- * Receive queue descriptor, layout-compatible with efa_cuda_rq.
- */
-struct nccl_ofi_gin_gdaki_rq {
-	struct nccl_ofi_gin_gdaki_wq wq;
-};
-
-/**
- * QP descriptor, layout-compatible with efa_cuda_qp.
- * Allocated in GPU memory by createContext. The kernel casts this to
- * efa_cuda_qp* for use with efa-dp-direct device functions.
- */
-struct nccl_ofi_gin_gdaki_qp {
-	uint64_t comp_mask;
-	struct nccl_ofi_gin_gdaki_sq sq;
-	struct nccl_ofi_gin_gdaki_rq rq;
-};
-
-/**
- * CQ descriptor, layout-compatible with efa_cuda_cq.
- * Allocated in GPU memory by createContext. The kernel casts this to
- * efa_cuda_cq* for use with efa-dp-direct device functions.
- */
-struct nccl_ofi_gin_gdaki_cq {
-	uint64_t comp_mask;
-	uint32_t entry_size;
-	uint32_t num_entries;
-	uint32_t queue_mask;
-	uint32_t queue_size_shift;
-	uint32_t cc;
-	int phase;
-	uint8_t *buf;
-	uint32_t *db;
-};
 
 /**
  * Common per-endpoint state shared by the data, counter, and signal
@@ -179,10 +112,10 @@ struct nccl_ofi_gin_gdaki_cq {
  */
 struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	/* GPU-resident QP for this endpoint. */
-	struct nccl_ofi_gin_gdaki_qp *qp;
+	struct efa_cuda_qp *qp;
 
 	/* GPU-resident CQ for this endpoint. */
-	struct nccl_ofi_gin_gdaki_cq *cq;
+	struct efa_cuda_cq *cq;
 
 	/* Target addressing for this (poster) endpoint's QP.
 	 *
