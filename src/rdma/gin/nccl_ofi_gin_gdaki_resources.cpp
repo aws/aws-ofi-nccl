@@ -153,7 +153,7 @@ void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 {
 	buf.allocate(1);
 
-	nccl_ofi_gin_gdaki_qp &h = *buf.host;
+	efa_cuda_qp &h = *buf.host;
 	h.sq.wq.buf = static_cast<uint8_t *>(sq_buf_dev);
 	h.sq.wq.db = static_cast<uint32_t *>(sq_db_dev);
 	h.sq.wq.max_wqes = sq_attr.num_entries;
@@ -178,7 +178,7 @@ void gdaki_gpu_cq::build(const struct fi_efa_cq_attr &cq_attr)
 {
 	buf.allocate(1);
 
-	nccl_ofi_gin_gdaki_cq &h = *buf.host;
+	efa_cuda_cq &h = *buf.host;
 	h.buf = cq_attr.buffer;
 	h.entry_size = cq_attr.entry_size;
 	h.num_entries = cq_attr.num_entries;
