@@ -36,6 +36,8 @@ jobs:
       - run: |
           yum -y update && yum -y install git tar util-linux findutils yum-utils
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"

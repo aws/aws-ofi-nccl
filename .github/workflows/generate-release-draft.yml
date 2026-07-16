@@ -32,6 +32,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ github.ref }}
+          submodules: recursive
 
       - name: Configure and build
         run: |
