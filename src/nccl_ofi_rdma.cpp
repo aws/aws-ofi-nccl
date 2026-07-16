@@ -7,6 +7,9 @@
 #include <deque>
 #include <stdexcept>
 
+#include "nccl_ofi_diag.h"
+
+
 #include <assert.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -2936,6 +2939,18 @@ error:
 }
 
 
+/* diag helper: whether a registration ckey carries a dmabuf fd (guarded for
+ * builds without FI_MR_DMABUF support) */
+static inline bool diag_ckey_is_dmabuf(nccl_ofi_mr_ckey_ref ckey)
+{
+#if HAVE_DECL_FI_MR_DMABUF
+	return ckey->type == NCCL_OFI_MR_CKEY_DMABUF;
+#else
+	(void)ckey;
+	return false;
+#endif
+}
+
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
 				       nccl_net_ofi_rdma_ep_t *ep,
@@ -2944,6 +2959,9 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
 	*mhandle = NULL;
+
+	const bool _diag_on = ofi_diag::enabled();
+	uint64_t _diag_t0 = 0;
 
 	if (this->mr_cache) {
 		/*
@@ -2956,14 +2974,26 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			this->mr_cache->lookup_entry(ckey, endpoint_mr));
 		if (ret_handle) {
 			/* Cache hit */
+			if (_diag_on) {
+				ofi_diag::g_mr.cache_hits.fetch_add(1, std::memory_order_relaxed);
+			}
 			*mhandle = ret_handle;
 			return ret;
 		}
 		/* Cache miss */
+		if (_diag_on) {
+			ofi_diag::g_mr.cache_misses.fetch_add(1, std::memory_order_relaxed);
+			_diag_t0 = ofi_diag::now_ns();
+		}
 
 		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
+		}
+		if (_diag_on) {
+			ofi_diag::mr_add(ofi_diag::now_ns() - _diag_t0,
+					 nccl_ofi_mr_ckey_len(ckey), type == NCCL_PTR_CUDA,
+					 diag_ckey_is_dmabuf(ckey));
 		}
 
 		ret = this->mr_cache->insert_entry(ckey,
@@ -2976,9 +3006,17 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
+		if (_diag_on) {
+			_diag_t0 = ofi_diag::now_ns();
+		}
 		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
+		}
+		if (_diag_on) {
+			ofi_diag::mr_add(ofi_diag::now_ns() - _diag_t0,
+					 nccl_ofi_mr_ckey_len(ckey), type == NCCL_PTR_CUDA,
+					 diag_ckey_is_dmabuf(ckey));
 		}
 	}
 
@@ -6997,6 +7035,7 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 	int ret = 0;
 	nccl_net_ofi_rdma_device_t *device_ptr = this->rdma_domain_get_device();
 	assert(device_ptr != nullptr);
+	const uint64_t _diag_t0 = ofi_diag::enabled() ? ofi_diag::now_ns() : 0;
 
 	/* Allocate endpoint. Pass shared_from_this() so the ep
 	 * holds a shared_ptr to this domain */
@@ -7015,6 +7054,11 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 	ret = init_max_write_inline_size_if_not_initialized(device_ptr, ep.get());
 	if (ret != 0) {
 		return nullptr;
+	}
+
+	if (_diag_t0) {
+		ofi_diag::print("EP_CREATE dev=%d took=%.2fms",
+				device_ptr->dev_id, (ofi_diag::now_ns() - _diag_t0) / 1e6);
 	}
 
 	return ep;
@@ -7126,8 +7170,14 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 
 nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain(unsigned int domain_key)
 {
+	const uint64_t _diag_t0 = ofi_diag::enabled() ? ofi_diag::now_ns() : 0;
 
 	auto *domain = new nccl_net_ofi_rdma_domain_t(this, domain_key);
+
+	if (_diag_t0) {
+		ofi_diag::print("DOMAIN_CREATE dev=%d key=%u took=%.2fms",
+				this->dev_id, domain_key, (ofi_diag::now_ns() - _diag_t0) / 1e6);
+	}
 
 	return domain;
 }
