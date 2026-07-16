@@ -51,6 +51,8 @@ jobs:
     name: al2023/${{ matrix.sdk }}/efa@${{ matrix.efainstaller }}/${{ matrix.build-type }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -125,6 +127,8 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.cc-variant }}-${{ (contains(matrix.tracing, 'nvtx') && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -211,6 +215,8 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ (contains(matrix.tracing, 'nvtx') && 'lttng') || matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -282,6 +288,8 @@ jobs:
     container: ghcr.io/${{ github.repository }}/aws-ofi-nccl-ubuntu2404:${{ matrix.sdk }}-${{ matrix.cc }}-${{ matrix.tracing }}-efalattest
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
@@ -334,6 +342,8 @@ jobs:
     name: CodeChecker - ${{ matrix.sdk }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          submodules: recursive
 
       - name: Fix Git Configuration
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
