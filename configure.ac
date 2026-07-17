@@ -14,6 +14,19 @@ AC_INIT([aws-ofi-nccl],
         [al-ofi-nccl-team@amazon.com], , [http://github.com/aws/aws-ofi-nccl])
 AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.cpp])
+
+AC_MSG_CHECKING([for required efa-dp-direct CUDA sources])
+AS_IF([test -f "$srcdir/3rd-party/efa-dp-direct/CUDA/README.md"],
+      [AC_MSG_RESULT([yes])],
+      [AC_MSG_RESULT([no])
+       AC_MSG_ERROR([Missing required file:
+  3rd-party/efa-dp-direct/CUDA/README.md
+
+If this is a Git checkout, initialize the dependency with:
+  git submodule update --init --recursive 3rd-party/efa-dp-direct
+
+Release tarballs must include this file.])])
+
 AC_CONFIG_AUX_DIR([build-aux])
 AC_CONFIG_HEADERS([include/config.h])
 AC_CONFIG_MACRO_DIRS([m4])
