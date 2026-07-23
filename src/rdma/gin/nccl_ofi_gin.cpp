@@ -19,6 +19,9 @@
 #include <system_error>
 #include <vector>
 
+/* Max signal work items the gdrcopy worker drains and folds per pass. */
+#define OFI_NCCL_MAX_GDR_COPY_BATCH 512
+
 struct gin_connect_handle {
 	/* Number of rails */
 	uint16_t num_rails;
@@ -73,55 +76,29 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 	resources.set_comm(local_comm_id, *this);
 	resources.increment_ref_cnt();
 
-	/* Spawn the gdrcopy worker thread that runs the signal-delivery
-	 * read-modify-write off the proxy CQ-drain thread. A spawn failure is
-	 * unexpected (thread/FD exhaustion); rather than silently fall back to
-	 * running gdrcopy on the proxy thread, fail comm creation so we never
-	 * run in that degraded configuration. Undo the comm registration before
-	 * rethrowing so resources teardown does not see a dangling comm. */
-#if HAVE_CUDA
-	/* Capture the CUDA device on this (context-bearing) thread so the gdrcopy
-	 * worker can bind to it; the worker's lazy signal-segment discovery calls
-	 * cuMemGetAddressRange, which requires a current CUDA context. -1 means we
-	 * could not determine the device, in which case the worker skips binding
-	 * and falls back to whatever context it inherits (see
-	 * run_gdrcopy_worker_loop). cudaGetDevice failing here is unexpected. */
-	if (nccl_net_ofi_gpu_get_device(&gdrcopy_cuda_dev) != 0) {
-		NCCL_OFI_WARN("Could not query CUDA device for gdrcopy worker; "
-			      "it will not bind to a device");
-		gdrcopy_cuda_dev = -1;
-	}
-#endif
+	/* Ensure the single process-wide gdrcopy worker exists. It is spawned
+	 * lazily on the first comm and runs until process teardown; later comms
+	 * just attach to it. A spawn failure (thread/FD exhaustion) is fatal:
+	 * rather than silently fall back to running gdrcopy on the proxy thread,
+	 * fail comm creation so we never run in that degraded configuration.
+	 * Undo the comm registration before rethrowing so resources teardown
+	 * does not see a dangling comm. */
 	try {
-		gdrcopy_thread = std::thread(
-			&nccl_ofi_rdma_gin_put_comm::run_gdrcopy_worker_loop, this);
-	} catch (const std::system_error &err) {
-		NCCL_OFI_WARN("Failed to spawn GIN gdrcopy worker thread: %s",
-			      err.what());
+		(void)nccl_ofi_gin_gdrcopy_worker::get();
+	} catch (const std::exception &err) {
+		NCCL_OFI_WARN("Failed to start GIN gdrcopy worker: %s", err.what());
 		resources.remove_comm(local_comm_id);
 		throw;
 	}
 }
 
-/* closeColl() holds the ep lock across `delete gin_comm`, so the drain calls
- * below run with the lock held. Clang TSA does not track the held lock across
- * the implicit destructor invocation, so suppress analysis here rather than
- * weakening drain_gdrcopy_done_queue()'s REQUIRES(get_ep_lock()). */
-nccl_ofi_rdma_gin_put_comm::~nccl_ofi_rdma_gin_put_comm() NO_THREAD_SAFETY_ANALYSIS
+nccl_ofi_rdma_gin_put_comm::~nccl_ofi_rdma_gin_put_comm()
 {
-	/* Stop and join the gdrcopy worker thread. The proxy is the only
-	 * consumer of gdrcopy_done_queue, so it must keep draining while the
-	 * worker is shutting down — otherwise a worker that finds the done
-	 * queue full spins forever on push and we self-deadlock on join. */
-	if (gdrcopy_thread.joinable()) {
-		gdrcopy_thread_stop.store(1, std::memory_order_release);
-		while (!gdrcopy_thread_exited.load(std::memory_order_acquire)) {
-			drain_gdrcopy_done_queue();
-		}
-		gdrcopy_thread.join();
-	}
-	/* Drain any leftover done-queue entries (best effort). */
-	drain_gdrcopy_done_queue();
+	/* The shared gdrcopy worker is not joined here — it outlives every
+	 * comm. closeColl() has already quiesced it for this comm (drained
+	 * outstanding_gdrcopy to zero under ep_lock and emptied the done
+	 * queue), so by the time we get here no work entry references this
+	 * comm and nothing more will be pushed into its done queue. */
 
 #if HAVE_NVTX_TRACING
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) {
@@ -1030,20 +1007,27 @@ int nccl_ofi_rdma_gin_put_comm::ensure_signal_seg(
 	return 0;
 }
 
-int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_metadata_msg_t &metadata)
+/* Fill `work` with everything the worker needs to apply this signal's
+ * read-modify-write. The mr_handle_map lookup and segment discovery happen
+ * here, on the proxy thread under ep_lock, so the worker never touches the
+ * map (which a concurrent deregMrSym could mutate) or needs a CUDA context
+ * (ensure_signal_seg uses cuMemGetAddressRange). */
+int nccl_ofi_rdma_gin_put_comm::build_signal_work(
+	const nccl_net_ofi_gin_signal_metadata_msg_t &metadata, gin_signal_work_entry &work)
 {
 	void *signal_base = reinterpret_cast<void *>(metadata.signal_base_address);
 
-	/* Value to increment the signal. For increment ops, this will be 1 */
-	uint64_t add_value = metadata.signal_value;
-
-	/* Look up the MR handle associated with this signal */
 	auto it = this->mr_handle_map.find(signal_base);
 	if (OFI_UNLIKELY(it == this->mr_handle_map.end())) {
 		NCCL_OFI_WARN("Signal base address %p not found in MR handle map", signal_base);
 		return -EINVAL;
 	}
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = it->second.handle;
+
+	work.signal_base_address = metadata.signal_base_address;
+	work.signal_value = metadata.signal_value;
+	work.type = mr_handle->type;
+	work.signal_never_reset = mr_handle->signal_never_reset;
 
 	/* Reject a peer-supplied offset that would place the 8-byte counter
 	   outside the MR (overflow- and underflow-safe) before we use it. */
@@ -1058,7 +1042,10 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 		uintptr_t signal_va = metadata.signal_base_address +
 				      metadata.signal_offset;
 
-		/* Lazily discover and pin the segment this signal lands in. */
+		/* Lazily discover and pin the segment this signal lands in.
+		   This runs on the proxy thread (under ep_lock) where the CUDA
+		   context is current, so cuMemGetAddressRange succeeds. The worker
+		   only ever touches the pre-resolved segment handle. */
 		signal_seg_t *seg = nullptr;
 		int ret = ensure_signal_seg(mr_handle, signal_va, &seg);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -1067,56 +1054,82 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal(const nccl_net_ofi_gin_signal_meta
 			return ret;
 		}
 
-		if (seg->gdr_handle == nullptr) {
-			/* Host-NUMA segment (not pinnable): update with a CPU
-			   atomic; the VA is host-accessible. */
-			auto *dest = reinterpret_cast<volatile uint64_t *>(signal_va);
-			__atomic_fetch_add(dest, add_value, __ATOMIC_RELAXED);
+		work.gdr_handle = seg->gdr_handle;  /* null for host-NUMA segment */
+		work.signal_offset = signal_va - seg->seg_base;  /* segment-relative */
+		work.host_signal_va = signal_va;  /* for host-NUMA CPU-atomic path */
+
+		if (mr_handle->signal_never_reset && seg->gdr_handle != nullptr) {
+			uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
+			work.signal_shadow_slot = &mr_handle->signal_shadow[idx];
 		} else {
-			size_t off = signal_va - seg->seg_base;
-			uint64_t new_value;
-
-			if (mr_handle->signal_never_reset) {
-				/* Never-reset: the host shadow is authoritative,
-				   so skip the device read. */
-				uint64_t idx = metadata.signal_offset / sizeof(uint64_t);
-				assert(idx < mr_handle->signal_shadow.size());
-				new_value = (mr_handle->signal_shadow[idx] += add_value);
-			} else {
-				/* May have been reset (VA signals): read first. */
-				uint64_t old_value;
-				ret = get_device_copy().copy_from_device(
-					*seg->gdr_handle, off, &old_value,
-					sizeof(old_value));
-				if (OFI_UNLIKELY(ret != 0)) {
-					NCCL_OFI_WARN("Failed to read current signal value");
-					return -ret;
-				}
-				new_value = old_value + add_value;
-			}
-
-			/* Write using GDRCopy. */
-			ret = get_device_copy().copy_to_device(
-				&new_value, *seg->gdr_handle, off, sizeof(new_value));
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Failed to update signal value");
-				return -ret;
-			}
+			work.signal_shadow_slot = nullptr;
 		}
 	} else {
-		/**
-		 * Notes:
-		 * 1. This code (host memory signal update) will never be used
-		 *    in practice, because NCCL's GIN proxy thread always
-		 *    allocates signals in GPU memory
-		 *
-		 * 2. Using relaxed ordering here is OK because signals
-		 *    themselves need not be ordered, as long as all previous
-		 *    puts() have arrived.
-		 */
-		assert(mr_handle->type == NCCL_PTR_HOST);
-		auto *dest = reinterpret_cast<volatile uint64_t *>(metadata.signal_base_address +
-								   metadata.signal_offset);
+		/* Host path: worker uses a CPU atomic at the signal VA. */
+		work.gdr_handle = nullptr;
+		work.signal_offset = metadata.signal_offset;
+		work.host_signal_va = metadata.signal_base_address + metadata.signal_offset;
+		work.signal_shadow_slot = nullptr;
+	}
+	return 0;
+}
+
+/* Apply one signal read-modify-write from the captured work-entry fields.
+ * Static: it needs no comm state (the segment gdr handle and offsets are all
+ * in the entry), which is what lets the shared worker run it without touching
+ * any comm's mr_handle_map or calling ensure_signal_seg. */
+int nccl_ofi_rdma_gin_put_comm::apply_signal_work(const gin_signal_work_entry &work)
+{
+	uint64_t add_value = work.signal_value;
+
+	if (work.type == NCCL_PTR_CUDA) {
+
+		if (work.gdr_handle == nullptr) {
+			/* Host-NUMA segment within a CUDA MR: not GDRCopy-pinnable,
+			   update with a CPU atomic at the signal VA (host-accessible). */
+			auto *dest = reinterpret_cast<volatile uint64_t *>(work.host_signal_va);
+			__atomic_fetch_add(dest, add_value, __ATOMIC_RELAXED);
+			return 0;
+		}
+
+		uint64_t new_value;
+		int ret;
+
+		if (work.signal_never_reset) {
+			/* Fast path: the signal is never reset, so our host-side
+			   shadow is authoritative. Add to the shadow and do a
+			   one-way write to the device, skipping the device read.
+			   apply_signal_work only ever runs on the gdrcopy worker
+			   thread, so the shadow needs no additional locking. */
+			new_value = (*work.signal_shadow_slot += add_value);
+		} else {
+			/* Slow path: the signal may have been reset out from under
+			   us (e.g. VA signals), so read the current value back from
+			   the device before adding. */
+			uint64_t old_value;
+
+			ret = get_device_copy().copy_from_device(*work.gdr_handle,
+								 work.signal_offset, &old_value,
+								 sizeof(old_value));
+			if (OFI_UNLIKELY(ret != 0)) {
+				NCCL_OFI_WARN("Failed to read current signal value");
+				return -ret;
+			}
+
+			new_value = old_value + add_value;
+		}
+
+		/* Write using GDRcopy. */
+		ret = get_device_copy().copy_to_device(&new_value, *work.gdr_handle,
+						       work.signal_offset, sizeof(new_value));
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Failed to update signal value");
+			return -ret;
+		}
+
+	} else {
+		assert(work.type == NCCL_PTR_HOST);
+		auto *dest = reinterpret_cast<volatile uint64_t *>(work.host_signal_va);
 		__atomic_fetch_add(dest, add_value, __ATOMIC_RELAXED);
 	}
 
@@ -1129,41 +1142,47 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal_and_trace(uint32_t peer_rank,
 	NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_BEGIN(dev, this, peer_rank,
 						 req->metadata.header.seq_num, req);
 
-	/* Hand the gdrcopy work off to the worker thread. The proxy reaps via
+	/* Hand the gdrcopy work off to the shared worker. The proxy reaps via
 	 * drain_gdrcopy_done_queue() each progress tick, which emits the
-	 * matching DELIVERY_END trace once the gdrcopy has actually landed. The
-	 * worker is spawned at comm construction (a spawn failure aborts comm
-	 * creation), so it is always running here. */
+	 * matching DELIVERY_END trace once the gdrcopy has actually landed. */
 	return enqueue_gdrcopy_work(peer_rank, req);
 }
 
-/* Push a signal-delivery work item to the gdrcopy worker. On a full work
- * ring the proxy must not fall back to running gdrcopy itself: the worker
- * is the sole owner of that read-modify-write, and two concurrent r-m-w
- * sequences against a PCIe-mapped counter can race and lose increments. We
- * spin instead, draining the worker's done ring while we wait so it keeps
- * making room. The ring holds nearly its full CAPACITY of entries, so under
- * normal load this loop never iterates; if it does, a recv burst genuinely
- * outpaced gdrcopy and throttling the proxy until the worker catches up is
- * the behavior we want.
- *
- * The req is marked in_flight before the push so retire_completed_peer_iput_ops
- * will not advance past it, return it to the pool, or stash an ACK while
- * the gdrcopy is outstanding. */
-int nccl_ofi_rdma_gin_put_comm::enqueue_gdrcopy_work(uint32_t peer_rank,
-						nccl_net_ofi_gin_iputsignal_recv_req *req)
+/* Hand a pre-folded signal-delivery work item to the shared worker. The value
+ * in `work` is already the sum across the coalesced run; `gate_req` is the one
+ * recv req that carries the in-flight gate (its done entry re-runs retire).
+ * Same handoff as enqueue_gdrcopy_work but skips the per-req build (the caller
+ * already filled `work`) so the whole run costs one ring slot and one r-m-w. */
+int nccl_ofi_rdma_gin_put_comm::post_folded_signal_work(uint32_t peer_rank,
+						const gin_signal_work_entry &work_template,
+						nccl_net_ofi_gin_iputsignal_recv_req *gate_req)
 {
-	gin_signal_work_entry work;
-	work.metadata = req->metadata;
-	work.req = req;
+	gin_signal_work_entry work = work_template;
+	work.comm = this;
+	work.req = gate_req;
 	work.peer_rank = peer_rank;
+	work.seq_num = gate_req->metadata.header.seq_num;
 
-	req->gdrcopy_in_flight = true;
-	req->gdrcopy_status = 0;
+	if (OFI_UNLIKELY(closing.load(std::memory_order_acquire))) {
+		/* Teardown path: worker is quiesced for this comm. Apply the
+		 * folded value synchronously; no handoff. */
+		gate_req->gdrcopy_status = apply_signal_work(work);
+		gate_req->gdrcopy_in_flight = false;
+		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank, work.seq_num, gate_req);
+		return gate_req->gdrcopy_status;
+	}
 
-	while (!gdrcopy_work_queue.push(work)) {
+	gate_req->gdrcopy_in_flight = true;
+	gate_req->gdrcopy_status = 0;
+
+	outstanding_gdrcopy.fetch_add(1, std::memory_order_relaxed);
+
+	auto &worker = nccl_ofi_gin_gdrcopy_worker::get();
+	while (!worker.enqueue(work)) {
 		int drain_ret = drain_gdrcopy_done_queue();
 		if (OFI_UNLIKELY(drain_ret != 0)) {
+			outstanding_gdrcopy.fetch_sub(1, std::memory_order_acq_rel);
+			gate_req->gdrcopy_in_flight = false;
 			return drain_ret;
 		}
 		asm volatile("" ::: "memory");
@@ -1171,11 +1190,72 @@ int nccl_ofi_rdma_gin_put_comm::enqueue_gdrcopy_work(uint32_t peer_rank,
 	return 0;
 }
 
-/* Drain the worker's done queue. Each entry is a signal whose gdrcopy
- * has already been applied. Clearing gdrcopy_in_flight here is what
- * unblocks retire_completed_peer_iput_ops for this seq num: ACK stash,
- * map erase and request pool return all run after this point. Returns
- * the first nonzero worker status so callers can propagate failures. */
+/* Hand a signal-delivery work item to the single process-wide gdrcopy worker.
+ *
+ * During teardown (closing set) the worker has already been quiesced for this
+ * comm, so we apply the signal synchronously on the proxy instead of handing
+ * it to the worker — this keeps outstanding_gdrcopy from rising again after
+ * closeColl drove it to zero, and is race-free because the worker provably
+ * holds no entry for this comm at that point.
+ *
+ * On a full work ring the proxy must not run the gdrcopy itself in steady
+ * state: the worker is the sole owner of that read-modify-write, and two
+ * concurrent r-m-w against a PCIe-mapped counter can lose increments. We spin
+ * instead, draining our done queue while we wait so the worker keeps making
+ * room.
+ *
+ * The req is marked in_flight before enqueue so retire_completed_peer_iput_ops
+ * will not advance past it, return it to the pool, or stash an ACK while the
+ * gdrcopy is outstanding. */
+int nccl_ofi_rdma_gin_put_comm::enqueue_gdrcopy_work(uint32_t peer_rank,
+						nccl_net_ofi_gin_iputsignal_recv_req *req)
+{
+	gin_signal_work_entry work;
+	work.comm = this;
+	work.req = req;
+	work.peer_rank = peer_rank;
+	work.seq_num = req->metadata.header.seq_num;
+
+	int ret = build_signal_work(req->metadata, work);
+	if (OFI_UNLIKELY(ret != 0)) {
+		return ret;
+	}
+
+	if (OFI_UNLIKELY(closing.load(std::memory_order_acquire))) {
+		/* Teardown path: worker is quiesced for this comm. Apply
+		 * synchronously and complete the req inline; no handoff. */
+		req->gdrcopy_status = apply_signal_work(work);
+		req->gdrcopy_in_flight = false;
+		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, peer_rank, work.seq_num, req);
+		return req->gdrcopy_status;
+	}
+
+	req->gdrcopy_in_flight = true;
+	req->gdrcopy_status = 0;
+
+	/* Count the outstanding hand-off before publishing it so the worker's
+	 * matching decrement can never be observed before this increment. */
+	outstanding_gdrcopy.fetch_add(1, std::memory_order_relaxed);
+
+	auto &worker = nccl_ofi_gin_gdrcopy_worker::get();
+	while (!worker.enqueue(work)) {
+		int drain_ret = drain_gdrcopy_done_queue();
+		if (OFI_UNLIKELY(drain_ret != 0)) {
+			/* Roll back the count for the entry we never enqueued. */
+			outstanding_gdrcopy.fetch_sub(1, std::memory_order_acq_rel);
+			req->gdrcopy_in_flight = false;
+			return drain_ret;
+		}
+		asm volatile("" ::: "memory");
+	}
+	return 0;
+}
+
+/* Drain this comm's done queue. Each entry is a signal whose gdrcopy has
+ * already been applied by the worker. Clearing gdrcopy_in_flight here is what
+ * unblocks retire_completed_peer_iput_ops for this seq num: ACK stash, map
+ * erase and request pool return all run after this point. Returns the first
+ * nonzero worker status so callers can propagate failures. */
 int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 {
 	gin_signal_done_entry done;
@@ -1212,53 +1292,196 @@ int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 	return ret;
 }
 
-void nccl_ofi_rdma_gin_put_comm::run_gdrcopy_worker_loop()
+/* ---- Single process-wide gdrcopy worker ---- */
+
+nccl_ofi_gin_gdrcopy_worker &nccl_ofi_gin_gdrcopy_worker::get()
 {
-#if HAVE_CUDA
-	/* Bind this worker to the comm's CUDA device so its lazy segment
-	   discovery (cuMemGetAddressRange) has a valid CUDA context. A failure
-	   here leaves the worker without the intended context, so warn -- lazy
-	   discovery would then fail on the first signal. */
-	if (gdrcopy_cuda_dev >= 0 &&
-	    nccl_net_ofi_gpu_set_device(gdrcopy_cuda_dev) != 0) {
-		NCCL_OFI_WARN("gdrcopy worker failed to bind CUDA device %d",
-			      gdrcopy_cuda_dev);
+	static nccl_ofi_gin_gdrcopy_worker instance;
+	return instance;
+}
+
+nccl_ofi_gin_gdrcopy_worker::nccl_ofi_gin_gdrcopy_worker()
+{
+	/* Throws std::system_error on spawn failure; the first comm's ctor
+	 * catches it and aborts comm creation (we never run the r-m-w on a
+	 * proxy thread in steady state). */
+	thread = std::thread(&nccl_ofi_gin_gdrcopy_worker::run_loop, this);
+}
+
+nccl_ofi_gin_gdrcopy_worker::~nccl_ofi_gin_gdrcopy_worker()
+{
+	stop.store(1, std::memory_order_release);
+	if (thread.joinable()) {
+		thread.join();
 	}
-#endif
-	gin_signal_work_entry work;
+}
+
+/* Apply a batch of work items, coalescing entries that target the same signal
+ * slot into a single read-modify-write. Signal ops are pure additions, which
+ * commute, so summing the add-values of N entries hitting one slot and applying
+ * them as one r-m-w yields the same counter value as N separate r-m-w -- while
+ * saving N-1 PCIe round trips. One done entry is still pushed per request, so
+ * each req's gdrcopy_in_flight clears individually and retire advances in seq
+ * order.
+ *
+ * O(n) single pass: a hash map on the slot key assigns each entry to the first
+ * entry that hit its slot ("lead"); duplicates fold their value into the lead.
+ * Each lead is then applied once and every entry's done is delivered with its
+ * lead's status. The map and scratch vectors are reused members, cleared here
+ * rather than reallocated, so steady state does no heap work. */
+void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batch, size_t n)
+{
+	/* Fast path for the common low-pressure case: a single work item has
+	 * nothing to coalesce with, so skip the map machinery and apply it
+	 * directly. */
+	if (n == 1) {
+		gin_signal_work_entry &w = batch[0];
+		int status = nccl_ofi_rdma_gin_put_comm::apply_signal_work(w);
+
+		gin_signal_done_entry done;
+		done.req = w.req;
+		done.peer_rank = w.peer_rank;
+		done.seq_num = w.seq_num;
+		done.status = status;
+		deliver_done(w.comm, done);
+		return;
+	}
+
+	fold_index.clear();
+	fold_lead.resize(n);
+	fold_status.resize(n);
+
+	/* Pass 1: map each entry to its slot lead, summing duplicates into it. */
+	for (size_t i = 0; i < n; ++i) {
+		const gin_signal_work_entry &e = batch[i];
+		fold_slot_key key{e.comm, e.gdr_handle, e.signal_base_address, e.signal_offset, e.type};
+		auto it = fold_index.find(key);
+		if (it == fold_index.end()) {
+			fold_index.emplace(key, i);
+			fold_lead[i] = i;
+		} else {
+			size_t lead = it->second;
+			fold_lead[i] = lead;
+			batch[lead].signal_value += e.signal_value;
+		}
+	}
+
+	/* Pass 2: apply each lead's combined value with one PCIe r-m-w. */
+	for (size_t i = 0; i < n; ++i) {
+		if (fold_lead[i] == i) {
+			fold_status[i] = nccl_ofi_rdma_gin_put_comm::apply_signal_work(batch[i]);
+		}
+	}
+
+	/* Pass 3: deliver one done per request, carrying its lead's status. */
+	for (size_t i = 0; i < n; ++i) {
+		gin_signal_work_entry &member = batch[i];
+		gin_signal_done_entry done;
+		done.req = member.req;
+		done.peer_rank = member.peer_rank;
+		done.seq_num = member.seq_num;
+		done.status = fold_status[fold_lead[i]];
+		deliver_done(member.comm, done);
+	}
+}
+
+/* Route one completed signal to its comm's done queue. The worker must never
+ * block here: a comm whose proxy has momentarily stopped draining (e.g. it is
+ * in await_pending_requests at closeColl) would otherwise head-of-line block
+ * delivery for every other comm and deadlock the process. So on a full done
+ * queue we stash the entry and move on; flush_done_entries retries it later.
+ *
+ * The outstanding_gdrcopy decrement happens only once the entry is actually in
+ * the comm's done queue (here or in the flush), never while it is stashed:
+ * closeColl reads that count to decide the comm is safe to delete, so the
+ * worker must still hold a reference for any entry it has not yet handed off. */
+void nccl_ofi_gin_gdrcopy_worker::deliver_done(nccl_ofi_rdma_gin_put_comm *comm,
+					       const gin_signal_done_entry &done)
+{
+	if (!done_entries.empty() || !comm->gdrcopy_done_queue.push(done)) {
+		/* Either this comm (or an earlier one) already has stashed
+		 * entries — push here would jump ahead of them and break
+		 * per-comm FIFO — or the queue is full right now. Stash. */
+		done_entries.push_back({comm, done});
+		return;
+	}
+	comm->outstanding_gdrcopy.fetch_sub(1, std::memory_order_release);
+}
+
+/* Retry stashed done entries in FIFO order. A comm whose queue is still full
+ * is marked blocked for this pass and all its later stashed entries are kept
+ * (preserving per-comm order) while other comms continue to drain. */
+void nccl_ofi_gin_gdrcopy_worker::flush_done_entries()
+{
+	if (done_entries.empty()) {
+		return;
+	}
+
+	blocked_comms.clear();
+	size_t kept = 0;
+	for (size_t i = 0; i < done_entries.size(); ++i) {
+		deferred_done &s = done_entries[i];
+
+		bool blocked = false;
+		for (auto *c : blocked_comms) {
+			if (c == s.comm) {
+				blocked = true;
+				break;
+			}
+		}
+
+		if (!blocked && s.comm->gdrcopy_done_queue.push(s.done)) {
+			s.comm->outstanding_gdrcopy.fetch_sub(1, std::memory_order_release);
+			continue;
+		}
+
+		/* Could not deliver: keep it, and block this comm so we do not
+		 * reorder its later entries ahead of this one. */
+		blocked_comms.push_back(s.comm);
+		done_entries[kept++] = s;
+	}
+	done_entries.resize(kept);
+}
+
+void nccl_ofi_gin_gdrcopy_worker::run_loop()
+{
+	/* Drain up to OFI_NCCL_MAX_GDR_COPY_BATCH work items each iteration and hand
+	 * them to apply_and_complete, which coalesces the same-slot entries within
+	 * the batch. A deeper batch lets more same-slot entries land together and
+	 * collapse into one PCIe r-m-w; too shallow a batch splits a burst across
+	 * iterations and re-issues a write per slot per batch. static (not on the
+	 * stack) because the buffer is large and the worker is the sole thread
+	 * touching it. */
+	static gin_signal_work_entry batch[OFI_NCCL_MAX_GDR_COPY_BATCH];
+
 	while (true) {
-		if (!gdrcopy_work_queue.pop(work)) {
-			/* Empty queue. After stop is set, draining to empty
-			 * means we're done; otherwise busy-poll. We deliberately
-			 * busy-poll rather than block on a condition variable:
-			 * signal delivery is latency-critical and a wakeup
-			 * syscall round-trip would show up directly in the
-			 * critical path, so the worker pegs one core instead. */
-			if (gdrcopy_thread_stop.load(std::memory_order_acquire)) {
+		/* Retry any done entries a full comm queue made us stash on a
+		 * previous iteration before producing more. */
+		flush_done_entries();
+
+		size_t n = 0;
+		while (n < OFI_NCCL_MAX_GDR_COPY_BATCH && work_queue.pop(batch[n])) {
+			++n;
+		}
+
+		if (n == 0) {
+			/* Nothing new to apply. After stop is set, exit once both
+			 * the work ring and the done stash are fully drained, so
+			 * no completed signal is left undelivered. Otherwise
+			 * busy-poll: we deliberately busy-poll rather than block on
+			 * a condition variable because signal delivery is
+			 * latency-critical and a wakeup syscall round-trip would
+			 * show up directly in the critical path, so the worker pegs
+			 * one core instead. */
+			if (stop.load(std::memory_order_acquire) && done_entries.empty()) {
 				break;
 			}
 			asm volatile("" ::: "memory");
 			continue;
 		}
 
-		int status = do_gin_signal(work.metadata);
-
-		gin_signal_done_entry done;
-		done.req = work.req;
-		done.peer_rank = work.peer_rank;
-		done.seq_num = work.metadata.header.seq_num;
-		done.status = status;
-		while (!gdrcopy_done_queue.push(done)) {
-			/* Done queue full: brief pause, proxy will drain on its
-			 * next tick. Both rings share the same CAPACITY, so this
-			 * is unlikely under normal operation. */
-			asm volatile("" ::: "memory");
-		}
+		apply_and_complete(batch, n);
 	}
-
-	/* Signal the destructor that we have exited so it stops draining
-	 * the done queue and joins. */
-	gdrcopy_thread_exited.store(1, std::memory_order_release);
 }
 
 int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_rank, uint64_t map_key,
@@ -1310,7 +1533,16 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 
 	/* Walk in-order delivered ops, advancing rx_consumed as we go. The
 	   sender's flow-control window opens once we send back a standalone
-	   ACK (maybe_send_ack at the end of this function). */
+	   ACK (maybe_send_ack at the end of this function).
+
+	   Producer-side coalescing (strong ordering): rather than post one
+	   gdrcopy work item per signal, we greedily fold a maximal run of
+	   consecutive ready signals targeting the SAME (base,offset) slot into
+	   a single +N read-modify-write, posted once to the worker. Signal adds
+	   commute, so summing the run's values and applying them as one r-m-w
+	   lands the counter on the same value while collapsing the run to one
+	   PCIe write and one ring slot. Only the run's last req carries the
+	   in-flight gate; its done entry re-runs retire for the whole run. */
 	while (true) {
 		auto &rank_comm = this->rank_comms[peer_rank];
 		uint16_t next_seq_num = rank_comm.next_delivered_signal_seq_num;
@@ -1339,19 +1571,129 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			return ret;
 		}
 
-		ack_requested = ack_requested || req->is_ack_requested;
-		rank_comm.rx_consumed = gin_cursor_inc(rank_comm.rx_consumed);
-		rank_comm.next_delivered_signal_seq_num =
-			(rank_comm.next_delivered_signal_seq_num + 1) & GIN_IMM_SEQ_MASK;
-		ret = iput_signal_recv_req_completion(peer_rank, map_key, req);
+		/* Fall back to the original per-req completion path when there is
+		   nothing to fold:
+		     - weak ordering: the signal was already posted (and maybe
+		       applied) at CQ-completion time, so retire only advances; or
+		     - the req has no metadata yet (a write-only completion can mark
+		       a req segment-complete before its metadata message arrives,
+		       so signal_base_address is not populated) — the per-req path
+		       correctly skips the gdrcopy in that case.
+		   Producer-side folding only applies under strong ordering with
+		   metadata in hand, which is also the only case build_signal_work
+		   can resolve the slot. */
+		if (!strong_signal_ordering_enabled || !req->metadata_received) {
+			ack_requested = ack_requested || req->is_ack_requested;
+			rank_comm.rx_consumed = gin_cursor_inc(rank_comm.rx_consumed);
+			rank_comm.next_delivered_signal_seq_num =
+				(rank_comm.next_delivered_signal_seq_num + 1) & GIN_IMM_SEQ_MASK;
+			ret = iput_signal_recv_req_completion(peer_rank, map_key, req);
+			if (OFI_UNLIKELY(ret != 0)) {
+				return ret;
+			}
+			this->resources.return_req_to_pool(req);
+			continue;
+		}
+
+		/* Strong ordering: build the work item for this slot once, then
+		   greedily extend the run over consecutive same-slot ready
+		   signals. For each member of the run we sum its value into the
+		   fold, advance the cursor, erase it from the outstanding map and
+		   recycle it inline — the same per-req lifecycle as before, except
+		   the whole run posts a single +N work item (below) instead of K.
+
+		   Recycling reqs that the fold's gdrcopy still covers is safe for
+		   the same reason the per-signal path could recycle an in-flight
+		   req: the worker captured the folded work by value, so the done
+		   entry's req pointer is never dereferenced (status travels by
+		   value). Cursor + map are fully advanced before we post, so the
+		   drain-spin inside post_folded_signal_work can re-enter retire
+		   without reprocessing this run. */
+		gin_signal_work_entry folded {};
+		ret = build_signal_work(req->metadata, folded);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
-		if (req->gdrcopy_in_flight) {
-			req->gdrcopy_pool_return_deferred = true;
+		folded.signal_value = 0;
+
+		/* First pass: extend the run over consecutive same-slot ready
+		   signals, summing values and advancing the cursor / erasing /
+		   recycling each member EXCEPT the last (gate) req. The gate req
+		   stays live until after we post, so post_folded_signal_work can
+		   set its in-flight gate before it returns to the pool — matching
+		   the original mark-in-flight-then-recycle ordering. */
+		nccl_net_ofi_gin_iputsignal_recv_req *gate_req = req;
+		uint64_t gate_key = map_key;
+		uint16_t cur_seq = next_seq_num;
+		uint64_t cur_key = map_key;
+		auto *cur_req = req;
+
+		while (true) {
+			folded.signal_value += cur_req->metadata.signal_value;
+			ack_requested = ack_requested || cur_req->is_ack_requested;
+			rank_comm.rx_consumed = gin_cursor_inc(rank_comm.rx_consumed);
+			rank_comm.next_delivered_signal_seq_num =
+				(rank_comm.next_delivered_signal_seq_num + 1) & GIN_IMM_SEQ_MASK;
+
+			/* Peek the next consecutive seq; fold only if it is ready and
+			   hits the same slot. */
+			uint16_t peek_seq = (cur_seq + 1) & GIN_IMM_SEQ_MASK;
+			uint64_t peek_key = get_req_map_key(peer_rank, peek_seq);
+			auto peek_it = this->outstanding_iput_signal_recv_reqs.find(peek_key);
+			bool extend = peek_it != this->outstanding_iput_signal_recv_reqs.end();
+			nccl_net_ofi_gin_iputsignal_recv_req *peek_req = nullptr;
+			if (extend) {
+				peek_req = peek_it->second;
+				extend = peek_req->num_seg_completions == peek_req->total_segments &&
+					 peek_req->metadata_received &&
+					 !peek_req->gdrcopy_in_flight &&
+					 peek_req->gdrcopy_status == 0 &&
+					 peek_req->metadata.signal_base_address ==
+						 folded.signal_base_address &&
+					 peek_req->metadata.signal_offset == folded.signal_offset;
+			}
+
+			if (!extend) {
+				/* cur_req is the gate; leave it in the map + live and
+				   stop. */
+				gate_req = cur_req;
+				gate_key = cur_key;
+				break;
+			}
+
+			/* cur_req is an interior member: erase + recycle it now. */
+			size_t n_removed = this->outstanding_iput_signal_recv_reqs.erase(cur_key);
+			assert_always(n_removed == 1);
+			this->resources.return_req_to_pool(cur_req);
+
+			cur_seq = peek_seq;
+			cur_key = peek_key;
+			cur_req = peek_req;
+		}
+
+		/* Post the single folded +N work item, gated on the run's last
+		   req (its done entry re-runs retire for the whole run). The gate
+		   req is still in the map and live here. */
+		ret = post_folded_signal_work(peer_rank, folded, gate_req);
+		if (OFI_UNLIKELY(ret != 0)) {
+			return ret;
+		}
+
+		/* Now retire the gate req: erase + recycle, mirroring the original
+		   post-then-recycle for an in-flight req (benign: the worker holds
+		   the folded work by value). */
+		size_t n_removed = this->outstanding_iput_signal_recv_reqs.erase(gate_key);
+		assert_always(n_removed == 1);
+
+		/* If the worker still has the gate req's gdrcopy in flight, defer its
+		   return to the pool: the done entry will re-run retire and recycle it
+		   then. Otherwise (synchronous closing-path apply) recycle it now. */
+		if (gate_req->gdrcopy_in_flight) {
+			gate_req->gdrcopy_pool_return_deferred = true;
 			break;
 		}
-		this->resources.return_req_to_pool(req);
+
+		this->resources.return_req_to_pool(gate_req);
 	}
 
 	/* If the sender requested an ACK, emit a standalone ACK now. */
