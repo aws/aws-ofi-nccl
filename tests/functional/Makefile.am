@@ -79,7 +79,7 @@ gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 # kernel-only functional tests use common/device APIs and deliberately do not
 # include the CUDA host API.
 .cu.o:
-	$(NVCC) -std=c++17 $(NVCC_GENCODE) \
+	$(NVCC) -std=c++20 $(NVCC_GENCODE) \
 		-ccbin=$(MPICXX) \
 		-Xcompiler -fPIC \
 		-Xcompiler -Wno-error \
