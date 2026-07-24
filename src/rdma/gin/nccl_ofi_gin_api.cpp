@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <thread>
 
 #include "rdma/gin/nccl_ofi_gin.h"
 #include "rdma/gin/nccl_ofi_gin_api.h"
@@ -340,12 +341,42 @@ ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 		return nccl_net_ofi_retval_translate(ret);
 	}
 
-	/* Under ep_lock: drain any outbound ACK sends (their CQ handler
-	   references this comm), then atomically remove + delete so no new
-	   work can be dispatched to this comm in between. */
-	auto &ep_lock = gin_comm->get_ep_lock();
+	/* Phase 1 — quiesce the shared gdrcopy worker for this comm. The worker
+	   outlives every comm and is never joined here, so before we can free
+	   this comm we must guarantee it holds no work entry referencing it. We
+	   set `closing` (so the CQ-completion paths stop handing this comm new
+	   async work) and then drain outstanding_gdrcopy to zero WITHOUT calling
+	   progress(): the worker decrements autonomously as it finishes this
+	   comm's entries, and not calling progress() means no new entry can be
+	   enqueued and no synchronous apply can race the worker's r-m-w. The
+	   final drain after the count hits zero reaps the last done entry (frees
+	   its req and clears in_flight) — the release/acquire on the counter
+	   guarantees that last done push is visible to it. */
+	gin_comm->begin_closing();
 	while (true) {
-		std::lock_guard<std::mutex> lock(ep_lock);
+		std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
+		if (!gin_comm->has_outstanding_gdrcopy()) {
+			ret = gin_comm->drain_gdrcopy_done_queue();
+			if (OFI_UNLIKELY(ret != 0)) {
+				return nccl_net_ofi_retval_translate(ret);
+			}
+			break;
+		}
+		ret = gin_comm->drain_gdrcopy_done_queue();
+		if (OFI_UNLIKELY(ret != 0)) {
+			return nccl_net_ofi_retval_translate(ret);
+		}
+		std::this_thread::yield();
+	}
+
+	/* Phase 2 — drain outbound ACK sends (their CQ handler references this
+	   comm), then atomically remove + delete. progress() here is now safe:
+	   `closing` routes any late inbound signal through the synchronous
+	   teardown apply (enqueue_gdrcopy_work), which never hands work to the
+	   worker, so outstanding_gdrcopy stays zero and the worker can never
+	   reference this comm again. */
+	while (true) {
+		std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
 		if (gin_comm->has_outstanding_ack_sends()) {
 			ret = gin_comm->get_resources().progress();
 			if (OFI_UNLIKELY(ret != 0)) {
