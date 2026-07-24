@@ -35,6 +35,9 @@ public:
 	}
 
 
+	inline std::size_t get_bin_size() const { return num_bins; }
+
+
 	std::size_t get_num_bins(void) const
 	{
 		return num_bins;
