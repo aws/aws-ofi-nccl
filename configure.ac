@@ -61,8 +61,8 @@ AC_USE_SYSTEM_EXTENSIONS
 AC_PROG_CXX
 AC_LANG([C++])
 
-dnl use C++17, disable runtime type information
-AX_CXX_COMPILE_STDCXX([17], [noext], [mandatory])
+dnl use C++20, disable runtime type information
+AX_CXX_COMPILE_STDCXX([20], [noext], [mandatory])
 CXXFLAGS="${CXXFLAGS} -fno-rtti"
 
 AX_COMPILER_VENDOR

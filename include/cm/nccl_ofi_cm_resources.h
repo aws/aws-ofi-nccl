@@ -34,6 +34,12 @@ public:
 		/* Default constructor */
 		mr_handle_t() = default;
 
+		/* Member-wise constructor. C++20 no longer treats a class with any
+		   user-declared constructor as an aggregate, so callers can no longer
+		   brace-initialize the members directly. */
+		mr_handle_t(ofi_mr_ptr mr_arg, uint64_t mr_key_arg, endpoint *ep_arg)
+			: mr(std::move(mr_arg)), mr_key(mr_key_arg), ep(ep_arg) {}
+
 		/* Move constructor and assignment */
 		mr_handle_t(mr_handle_t&&) = default;
 		mr_handle_t& operator=(mr_handle_t&&) = default;
