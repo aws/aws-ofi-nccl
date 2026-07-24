@@ -38,6 +38,7 @@ public:
 	uint64_t device_get_guid(struct fi_info *info, int dev_id) override;
 	void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
 			  const char *req_type) override;
+	bool gdaki_supported() override;
 
 protected:
 	struct ec2_platform_data {
@@ -48,6 +49,11 @@ protected:
 		float latency;
 		bool gdr_required;
 		PROTOCOL default_protocol;
+		/* True if the EFA hardware completion counter (used by the
+		 * GDAKI GIN data path) is supported on this platform.
+		 * Consulted by PlatformAWS::gdaki_supported(). Set per platform
+		 * row; false where the feature is not supported. */
+		bool efa_hw_comp_cntr;
 		std::map<std::string, std::string> env;
 	};
 

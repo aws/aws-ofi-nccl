@@ -127,6 +127,23 @@ public:
 			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 			      (long)err_entry->len);
 	}
+
+	/**
+	 * @brief	Whether this platform can run the GDAKI GIN data path.
+	 *
+	 *		Capability query used by the GDAKI GIN context setup to
+	 *		decide, up front, whether to proceed on the running
+	 *		platform. The base implementation returns false: a
+	 *		platform is not assumed to support GDAKI unless it opts
+	 *		in. Concrete platforms override this to advertise support
+	 *		and decide for themselves how they determine it.
+	 *
+	 * @return	true if this platform supports the GDAKI data path
+	 */
+	virtual bool gdaki_supported()
+	{
+		return false;
+	}
 };
 
 using PlatformPtr = std::unique_ptr<Platform>;
