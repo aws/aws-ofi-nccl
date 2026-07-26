@@ -919,7 +919,7 @@ public:
 				nccl_net_ofi_rdma_req **ret_req,
 				bool recv_completion_optional);
 	int drain_recv_eager_queue();
-	int handle_eager_recv(uint16_t msg_seq_num, nccl_net_ofi_rdma_req *rx_buff_req);
+	int handle_eager_recv(uint16_t msg_seq_num, nccl_net_ofi_rdma_req *rx_buff_req, uint16_t rail_id);
 	int eager_match_recv(nccl_net_ofi_rdma_req *recv_req, int32_t eager_tag);
 	int eager_copy_to_sub_recv(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_req *rx_buff_req, int sub_idx);
 

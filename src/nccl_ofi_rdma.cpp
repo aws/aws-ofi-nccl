@@ -1061,7 +1061,8 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
  */
 int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 					     uint16_t msg_seq_num,
-					     nccl_net_ofi_rdma_req *rx_buff_req)
+					     nccl_net_ofi_rdma_req *rx_buff_req,
+						 uint16_t rail_id)
 {
 	int ret;
 	nccl_net_ofi_rdma_ep_t *local_ep = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
@@ -1101,6 +1102,9 @@ int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 	new_entry->recv_len = rx_data->recv_len;
 	new_entry->handled = false;
 	recv_eager_sorted_insert(&this->recv_eager_list, new_entry);
+
+	NCCL_OFI_TRACE_EAGER_RECV(this->dev_id, rail_id, this, msg_seq_num,
+							eager_tag);
 
 	ret = this->drain_recv_eager_queue();
 
@@ -1202,10 +1206,7 @@ static inline int handle_rx_buff_recv(nccl_net_ofi_rdma_device_t *device, uint16
 			goto exit;
 		}
 
-		NCCL_OFI_TRACE_EAGER_RECV(r_comm->dev_id, rail_id, r_comm,
-					  GET_SEQ_NUM_FROM_IMM(cq_entry->data));
-
-		ret = r_comm->handle_eager_recv(GET_SEQ_NUM_FROM_IMM(cq_entry->data), rx_buff_req);
+		ret = r_comm->handle_eager_recv(GET_SEQ_NUM_FROM_IMM(cq_entry->data), rx_buff_req, rail_id);
 		if (OFI_UNLIKELY(ret != 0)) {
 			goto exit;
 		}
@@ -1290,7 +1291,7 @@ static inline int handle_write_comp(struct fi_cq_data_entry *cq_entry, nccl_net_
 		}
 	}
 
-	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, req->comm, cq_entry->len, req, req->msg_seq_num);
+	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(req->dev_id, rail_id, req->comm, cq_entry->len, req, req->msg_seq_num, recv_idx);
 
 	return 0;
 }
