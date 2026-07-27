@@ -376,6 +376,28 @@ OFI_NCCL_PARAM_VALUE_SET(NVTX_TRACE_DIMENSION, (PER_COMM)(PER_DEV))
 OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSION", NVTX_TRACE_DIMENSION::PER_COMM)
 
 /*
+ * Whether the GDAKI GIN data path may use the EFA hardware completion
+ * counter in GPU memory (fi_efa_ops_gda::cntr_open_ext). Support is decided
+ * per platform (see PlatformAWS::config_gdaki_domain); this knob overrides
+ * that per-platform decision.
+ *
+ * This is an override / escape hatch, NOT a general enable switch: it only
+ * controls whether the hardware completion counter is used by the GDAKI
+ * data path.
+ *
+ *   auto: use the counter where the running platform declares support
+ *         (default; normal deployments should leave it here)
+ *   off:  do not use the counter even where the platform supports it
+ *   on:   attempt the counter even if the platform does not declare
+ *         support (for bring-up / validation on a system known to have it).
+ *         This does NOT make the counter work on hardware that lacks it: if
+ *         the counter cannot be opened, GDAKI context creation fails rather
+ *         than falling back.
+ */
+OFI_NCCL_PARAM_VALUE_SET(GDAKI_EFA_HW_COUNTER, (AUTO)(ON)(OFF))
+OFI_NCCL_PARAM(GDAKI_EFA_HW_COUNTER, gdaki_efa_hw_counter, "GDAKI_EFA_HW_COUNTER", GDAKI_EFA_HW_COUNTER::AUTO)
+
+/*
  * Enable strong-signal semantics for the GIN plugin.
  *
  * When true, completed requests are delivered to the application in
