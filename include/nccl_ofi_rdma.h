@@ -922,6 +922,13 @@ public:
 	int free(bool dec_inflight_reqs) override;
 	int post() override;
 	int handle_completion(uint64_t comp_flags, uint16_t rail_id) override;
+
+private:
+	/* Post the eager-send path: prepend the eager header and send the
+	 * [header][payload] message on a single rail.  Factored out of
+	 * post(), which dispatches here when this->eager is set. */
+	int post_eager(nccl_net_ofi_rdma_send_comm *s_comm,
+		       nccl_net_ofi_xfer_info_t *xfer_info);
 };
 
 class rdma_recv_req : public nccl_net_ofi_rdma_req {
