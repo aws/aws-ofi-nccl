@@ -11,6 +11,7 @@
 #include <rdma/fabric.h>
 #include <rdma/fi_eq.h>
 #include <rdma/fi_endpoint.h>
+#include <rdma/fi_errno.h>
 
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_system.h"
@@ -126,6 +127,29 @@ public:
 			      err_entry->err, err_entry->flags, err_entry->prov_errno,
 			      fi_cq_strerror(cq, err_entry->prov_errno, err_entry->err_data, NULL, 0),
 			      (long)err_entry->len);
+	}
+
+	/**
+	 * @brief	Authorize/configure the GDAKI GIN data path on a domain.
+	 *
+	 *		Called during GDAKI GIN context setup for each domain the
+	 *		data path will use, before resources are opened on it.
+	 *		A platform returns 0 to allow GDAKI on this domain, or a
+	 *		negative libfabric error (e.g. -FI_ENOSYS) to refuse.
+	 *		Deciding here gives a single deterministic answer per
+	 *		platform before resources are built.
+	 *
+	 *		The base implementation refuses: an unknown platform is
+	 *		not assumed to support GDAKI. Concrete platforms override
+	 *		this to opt in and decide how they determine support.
+	 *
+	 * @param	domain	The libfabric domain GDAKI will run on
+	 * @param	info	The fi_info associated with that domain
+	 * @return	0 if GDAKI may run on this domain, negative errno otherwise
+	 */
+	virtual int config_gdaki_domain(struct fid_domain *domain, struct fi_info *info)
+	{
+		return -FI_ENOSYS;
 	}
 };
 

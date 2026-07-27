@@ -45,6 +45,49 @@ static int check_value(const TestablePlatformAWS::ec2_platform_data *platform_da
 	return 0;
 }
 
+/* check that a platform entry advertises the expected efa_hw_comp_cntr
+ * (GDAKI) value. Only P5en / P6-B200 / P6-B300 opt in; everything else defaults false. */
+static int check_gdaki_flag(const TestablePlatformAWS::ec2_platform_data *platform_data_list,
+			    const size_t len, const char *platform_type, bool expected)
+{
+	const TestablePlatformAWS::ec2_platform_data *entry =
+		TestablePlatformAWS::get_platform_entry(platform_type, platform_data_list, len);
+
+	if (NULL == entry) {
+		printf("check_gdaki_flag: no entry for %s\n", platform_type);
+		return 1;
+	}
+	if (entry->efa_hw_comp_cntr != expected) {
+		printf("efa_hw_comp_cntr for %s: got %d, expected %d\n",
+		       platform_type, (int)entry->efa_hw_comp_cntr, (int)expected);
+		return 1;
+	}
+	return 0;
+}
+
+static int check_gdaki_flags(void)
+{
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
+	size_t len;
+	int ret = 0;
+	TestablePlatformAWS platform;
+
+	platform_data_list = platform.get_platform_map(&len);
+
+	/* Opted in. */
+	ret += check_gdaki_flag(platform_data_list, len, "p5en.48xlarge", true);
+	ret += check_gdaki_flag(platform_data_list, len, "p6-b200.48xlarge", true);
+	ret += check_gdaki_flag(platform_data_list, len, "p6-b300.48xlarge", true);
+	/* Not opted in. */
+	ret += check_gdaki_flag(platform_data_list, len, "p5.48xlarge", false);
+	ret += check_gdaki_flag(platform_data_list, len, "p5e.48xlarge", false);
+	ret += check_gdaki_flag(platform_data_list, len, "p4d.24xlarge", false);
+	ret += check_gdaki_flag(platform_data_list, len, "trn2.48xlarge", false);
+	ret += check_gdaki_flag(platform_data_list, len, "p6e-gb200.36xlarge", false);
+
+	return ret;
+}
+
 static int check_known_platforms(void)
 {
 	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
@@ -72,6 +115,7 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p5e.48xlarge", "p5/p5e");
 	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p5en/p6-b200");
 	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p5en/p6-b200");
+	ret += check_value(platform_data_list, len, "p6-b300.48xlarge", "p6-b300");
 	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p-series");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
@@ -101,6 +145,7 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 		.latency = 0.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::SENDRECV,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 	{
@@ -111,6 +156,7 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 		.latency = 0.0,
 		.gdr_required = false,
 		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
 		.env = {},
 	},
 };
@@ -118,10 +164,34 @@ static TestablePlatformAWS::ec2_platform_data test_map_1[] = {
 int main(int argc, char *argv[]) {
 	int ret = 0;
 
+	/* Force the GDAKI hw-counter override ON before any param read so
+	 * config_gdaki_domain() authorizes regardless of the (unknown)
+	 * unit-test host platform. */
+	setenv("OFI_NCCL_GDAKI_EFA_HW_COUNTER", "on", 1);
+
 	unit_test_init();
 
 	/* verify we get the answer we want on real platforms */
 	ret += check_known_platforms();
+
+	/* verify the per-platform GDAKI hw-counter opt-in flags */
+	ret += check_gdaki_flags();
+
+	/* rows that are not opted in carry efa_hw_comp_cntr = false */
+	if (test_map_1[0].efa_hw_comp_cntr != false || test_map_1[1].efa_hw_comp_cntr != false) {
+		printf("test_map_1 efa_hw_comp_cntr should be false\n");
+		ret += 1;
+	}
+
+	/* OFI_NCCL_GDAKI_EFA_HW_COUNTER=on -> config_gdaki_domain authorizes (returns 0).
+	 * AWS's impl decides from the platform/param, so domain/info can be null. */
+	{
+		TestablePlatformAWS platform;
+		if (platform.config_gdaki_domain(nullptr, nullptr) != 0) {
+			printf("config_gdaki_domain() with override=on: expected 0\n");
+			ret += 1;
+		}
+	}
 
 	/* make sure we maintain ordering */
 	ret += check_value(test_map_1, 2, "platform-x", "first");

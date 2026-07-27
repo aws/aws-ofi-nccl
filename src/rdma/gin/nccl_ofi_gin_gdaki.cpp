@@ -17,6 +17,7 @@
 #include "rdma/gin/nccl_ofi_gin_gdaki.h"
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
+#include "nccl_ofi_platform.h"
 
 #include <algorithm>
 #include <cstdlib>
@@ -640,6 +641,27 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				throw std::runtime_error(
 					"rail " + std::to_string(r) + " fi_info is null");
 			}
+
+			/*
+			 * Per-platform gate, applied to each rail's domain
+			 * before we open GDA ops / endpoints / counters on it.
+			 * The GDAKI hardware completion counter is a
+			 * domain-scoped capability (opened on the domain, before
+			 * any endpoint exists), so the platform authorizes each
+			 * domain the data path will use. Refusing here with a
+			 * direct return keeps it as ncclInvalidUsage before
+			 * anything is built on this domain (dev_handle_out is
+			 * null, ctx unwinds via RAII). A platform that authorizes
+			 * but still cannot open the counter surfaces later as
+			 * ncclSystemError.
+			 */
+			if (PlatformManager::get_global().get_platform().config_gdaki_domain(
+				    dom_r, info_r) != 0) {
+				NCCL_OFI_WARN("gin GDAKI: not supported on this platform; "
+					      "cannot create a GDAKI context here");
+				return ncclInvalidUsage;
+			}
+
 			struct fi_efa_ops_gda *ops_r = nullptr;
 			int ret = fi_open_ops(&dom_r->fid, FI_EFA_GDA_OPS, 0,
 					      reinterpret_cast<void **>(&ops_r), nullptr);
