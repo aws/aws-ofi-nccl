@@ -30,7 +30,7 @@ RUN cc_family=`echo ${CC_TYPE} | awk -F'-' '{print $1}'` && \
     cc_version=`echo ${CC_TYPE} | awk -F'-' '{print $2}'` && \
     if [ "$cc_family" = "clang" ]; then \
         DEBIAN_FRONTEND=noninteractive apt-get install -y \
-	    libc++-dev clang-${cc_version} lldb-${cc_version} lld-${cc_version} ; \
+	    libc++-${cc_version}-dev clang-${cc_version} lldb-${cc_version} lld-${cc_version} ; \
     elif [ "$cc_family" = "gcc" ]; then \
         DEBIAN_FRONTEND=noninteractive apt-get install -y gcc-${cc_version} g++-${cc_version} ; \
     else \

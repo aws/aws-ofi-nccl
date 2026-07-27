@@ -23,7 +23,7 @@
       ]
     },
     "ubuntu2404": {
-      "cc": ["gcc-13", "gcc-14", "clang-18"],
+      "cc": ["gcc-13", "gcc-14", "clang-18", "clang-19"],
       "tracing": ["lttng", "none"],
       "sdk": ["cuda", "neuron"]
     },
