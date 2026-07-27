@@ -351,20 +351,15 @@ AS_IF([test -e "${srcdir}/.git" -a -z "${enable_werror}"],
       [AC_MSG_NOTICE([Adding ${werror_flags} to CXXFLAGS.])
        CXXFLAGS="${werror_flags} ${CXXFLAGS} "])
 
-AC_ARG_ENABLE([gdaki],
-   [AS_HELP_STRING([--enable-gdaki],
-       [Build GDAKI (GPUDirect Async Kernel-Initiated) support for the GIN plugin. [default=no]])])
-AS_IF([test "${enable_gdaki}" = "yes"],
-      [AS_IF([test "${ac_cv_have_decl_FI_EFA_GDA_OPS}" != "yes"],
-             [AC_MSG_ERROR([--enable-gdaki requires a libfabric build with FI_EFA_GDA_OPS support (libfabric >= 2.3.0).])])
-       AS_IF([test "${have_device_interface}" != "cuda"],
-             [AC_MSG_ERROR([--enable-gdaki requires CUDA support.])])
-       AS_IF([test "${have_fi_efa_comp_cntr}" != "1"],
-             [AC_MSG_ERROR([--enable-gdaki requires libfabric with the fi_efa_ops_gda hardware-counter ABI (libfabric >= 2.5.0).])])
-       have_gdaki=1],
-      [have_gdaki=0])
+AS_IF([test "${ac_cv_have_decl_FI_EFA_GDA_OPS}" = "yes" \
+       && test "${have_fi_efa_comp_cntr}" = "1" \
+       && test "${have_device_interface}" = "cuda"],
+      [have_gdaki=1
+       AC_MSG_NOTICE([GDAKI support enabled (libfabric GDA ops + hw counters + CUDA present).])],
+      [have_gdaki=0
+       AC_MSG_NOTICE([GDAKI support disabled (requires libfabric >= 2.5 GDA ops + hw-counter ABI and CUDA); building proxy-only GIN.])])
 AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
-AM_CONDITIONAL([ENABLE_GDAKI], [test "${have_gdaki}" = "1"])
+AM_CONDITIONAL([HAVE_GDAKI], [test "${have_gdaki}" = "1"])
 
 AC_ARG_ENABLE([nccl-net-library],
       [AS_HELP_STRING([--disable-nccl-net-library],

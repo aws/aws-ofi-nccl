@@ -16,7 +16,7 @@
  * destination address is allgathered out-of-band over MPI to keep the
  * test free of plugin-internal mhandle reach-through.
  *
- * Run with at least 2 MPI ranks and OFI_NCCL_GIN_TYPE=GDAKI.
+ * Run with at least 2 MPI ranks on an EFA (GDA-capable) provider.
  */
 
 #include "functional_test.h"

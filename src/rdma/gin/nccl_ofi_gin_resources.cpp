@@ -6,6 +6,7 @@
 
 #include "rdma/gin/nccl_ofi_gin_resources.h"
 #include "rdma/gin/nccl_ofi_gin_reqs.h"
+#include "rdma/gin/nccl_ofi_gin_gdaki.h"
 
 #include "nccl_ofi_assert.h"
 #include <cstdlib>
@@ -336,25 +337,16 @@ static inline struct fi_info *get_gin_info(struct fi_info *info)
 	get_gin_hints(*gin_hints.get(), info);
 
 	/*
-	 * Select libfabric API version.
-	 *   - GDAKI: hard requirements — CUDA, DMA-BUF, libfabric 2.5+ (the
-	 *     hardware-counter ABI). Fail loudly if any prerequisite is
-	 *     missing rather than silently degrading.
-	 *   - Proxy: works on any libfabric >= 1.18; the GIN endpoint hints
-	 *     (FI_RX_CQ_DATA, cq_data_size = 4) don't use any 1.20+ features,
-	 *     so 1.18 is sufficient and avoids requesting a contract we don't
+	 * Select libfabric API version:
+	 *   - GDA-capable EFA provider (GDAKI compiled in, DMA-BUF viable): 2.5,
+	 *     the hardware-counter ABI the GDAKI plugin reuses via fi_open_ops.
+	 *   - Otherwise (non-EFA / tcp / proxy-only build): 1.18 is sufficient;
+	 *     the GIN endpoint hints (FI_RX_CQ_DATA, cq_data_size = 4) don't use
+	 *     any 1.20+ features, so we avoid requesting a contract we don't
 	 *     consume.
 	 */
 	uint32_t api_version;
-	if (ofi_nccl_gin_type.get() == GIN_TYPE::GDAKI) {
-#if !HAVE_CUDA
-		throw std::runtime_error(
-			"OFI_NCCL_GIN_TYPE=GDAKI set but plugin built without CUDA");
-#endif
-		if (!nccl_ofi_dmabuf_viable()) {
-			throw std::runtime_error(
-				"OFI_NCCL_GIN_TYPE=GDAKI set but DMA-BUF is not viable");
-		}
+	if (nccl_ofi_gin_gdaki_capable(info)) {
 		api_version = FI_VERSION(2, 5);
 	} else {
 		api_version = FI_VERSION(1, 18);

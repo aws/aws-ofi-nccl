@@ -1,23 +1,15 @@
 /*
  * Copyright (c) 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
- * GDAKI misconfig probe.
+ * GDAKI build probe.
  *
- * Loads the plugin, calls extNet->init then extGin->init. Used to verify
- * that opting in to GDAKI (OFI_NCCL_GIN_TYPE=GDAKI) on a plugin built
- * without --enable-gdaki fails plugin init with ncclInvalidUsage rather
- * than silently falling back to the proxy path.
+ * Asserts that the exported GIN symbols match the build configuration:
+ *   - ncclGinPlugin_v13 (the proxy op-table) must always be present.
+ *   - ncclGinPlugin_v14 (the GDAKI op-table) must be present iff the plugin
+ *     was built with GDAKI support (HAVE_GDAKI), i.e. configure detected a
+ *     capable toolchain.
  *
- * Expected return codes:
- *   - GDAKI compiled in (HAVE_GDAKI=1):
- *       opt-in or not — extGin->init returns ncclSuccess (0)
- *   - GDAKI NOT compiled in AND OFI_NCCL_GIN_TYPE=GDAKI:
- *       extGin->init returns ncclInvalidUsage (5)
- *   - GDAKI NOT compiled in AND OFI_NCCL_GIN_TYPE unset/PROXY:
- *       extGin->init returns ncclSuccess (0)
- *
- * The probe runs as a single process (no MPI) — plugin init does not
- * require collective coordination.
+ * Pure symbol check (dlsym) — no plugin init, no MPI, no fabric required.
  */
 
 #include "config.h"
@@ -25,8 +17,7 @@
 #include "functional_test.h"
 
 #include <cstdio>
-#include <cstdlib>
-#include <cstring>
+#include <dlfcn.h>
 
 int main(int argc, char *argv[])
 {
@@ -34,63 +25,38 @@ int main(int argc, char *argv[])
 	(void)argv;
 
 	set_system_page_size();
-	auto *net_plugin_handle = load_netPlugin();
-	auto *extNet = get_netPlugin_symbol(net_plugin_handle);
-	auto *extGin = get_ginPlugin_symbol(net_plugin_handle);
-	if (!extNet || !extGin) {
-		fprintf(stderr, "probe: failed to load plugin symbols\n");
+	void *net_plugin_handle = load_netPlugin();
+	if (net_plugin_handle == nullptr) {
+		fprintf(stderr, "probe: failed to load plugin library\n");
 		return 1;
 	}
 
-	void *netCtx = nullptr;
-	ncclNetCommConfig_v11_t netConfig = {};
-	ncclResult_t net_rc = extNet->init(&netCtx, 0, &netConfig,
-					   &functional_test_logger, nullptr);
-	if (net_rc != ncclSuccess) {
-		fprintf(stderr, "probe: extNet->init returned %d\n", net_rc);
+	void *gin_v13 = dlsym(net_plugin_handle, "ncclGinPlugin_v13");
+	void *gin_v14 = dlsym(net_plugin_handle, "ncclGinPlugin_v14");
+
+	fprintf(stderr, "probe: HAVE_GDAKI=%d, ncclGinPlugin_v13=%s, ncclGinPlugin_v14=%s\n",
+		HAVE_GDAKI, gin_v13 ? "present" : "absent",
+		gin_v14 ? "present" : "absent");
+
+	if (gin_v13 == nullptr) {
+		fprintf(stderr, "probe: FAIL (proxy GIN op-table ncclGinPlugin_v13 missing)\n");
 		return 1;
 	}
 
-	void *ginCtx = nullptr;
-	ncclResult_t gin_rc = extGin->init(&ginCtx, 0, &functional_test_logger);
-
-	const char *opt_in = getenv("OFI_NCCL_GIN_TYPE");
-	bool requested = (opt_in != nullptr) && (strcasecmp(opt_in, "GDAKI") == 0);
-
-	fprintf(stderr,
-		"probe: HAVE_GDAKI=%d, OFI_NCCL_GIN_TYPE=%s, "
-		"extGin->init returned %d\n",
-		HAVE_GDAKI,
-		opt_in ? opt_in : "(unset)", gin_rc);
-
-	/* Validate the result against expectations. */
 #if HAVE_GDAKI
-	(void)requested;
-	if (gin_rc == ncclSuccess) {
-		fprintf(stderr, "probe: PASS (GDAKI compiled in, init succeeded)\n");
-		return 0;
+	if (gin_v14 == nullptr) {
+		fprintf(stderr, "probe: FAIL (built with GDAKI support but GDAKI "
+				"op-table ncclGinPlugin_v14 missing)\n");
+		return 1;
 	}
 #else
-	if (requested) {
-		if (gin_rc == ncclInvalidUsage) {
-			fprintf(stderr, "probe: PASS (GDAKI requested without "
-					"compile-time support, init refused with "
-					"ncclInvalidUsage)\n");
-			return 0;
-		}
-		fprintf(stderr, "probe: FAIL (expected ncclInvalidUsage=%d, "
-				"got %d)\n",
-			ncclInvalidUsage, gin_rc);
+	if (gin_v14 != nullptr) {
+		fprintf(stderr, "probe: FAIL (built without GDAKI support but GDAKI "
+				"op-table ncclGinPlugin_v14 exported)\n");
 		return 1;
-	} else {
-		if (gin_rc == ncclSuccess) {
-			fprintf(stderr, "probe: PASS (GDAKI not requested, "
-					"init succeeded in proxy mode)\n");
-			return 0;
-		}
 	}
 #endif
 
-	fprintf(stderr, "probe: FAIL (unexpected return code %d)\n", gin_rc);
-	return 1;
+	fprintf(stderr, "probe: PASS (exported GIN symbols match build configuration)\n");
+	return 0;
 }

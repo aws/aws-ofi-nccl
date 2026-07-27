@@ -17,8 +17,9 @@
  * dev->signal_handles[i]->base.local_cntr_value is the FI_WRITE counter
  * (the sender sees this increment).
  *
- * Built only when configure finds nvcc (HAVE_NVCC) and --enable-gdaki.
- * Run with at least 2 MPI ranks and OFI_NCCL_GIN_TYPE=GDAKI.
+ * Built only when configure finds nvcc (HAVE_NVCC) and GDAKI support
+ * (HAVE_GDAKI). Run with at least 2 MPI ranks on an EFA (GDA-capable)
+ * provider.
  */
 
 #include "functional_test.h"

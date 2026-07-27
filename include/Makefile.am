@@ -65,7 +65,7 @@ noinst_HEADERS = \
 	tuner/nccl_ofi_tuner_region.h \
 	tuner/nccl_ofi_tuner_model.h
 
-if ENABLE_GDAKI
+if HAVE_GDAKI
 noinst_HEADERS += \
 	rdma/gin/nccl_ofi_gin_gdaki.h \
 	rdma/gin/nccl_ofi_gin_gdaki_dev.h \

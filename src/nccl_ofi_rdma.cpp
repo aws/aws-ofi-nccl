@@ -7235,22 +7235,23 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	get_hints(hints);
 	/*
 	 * Select libfabric API version.
-	 *   - GDAKI: hard requirements — CUDA, DMA-BUF, libfabric 2.5+.
+	 *   - GDAKI: requirements — HAVE_GDAKI, DMA-BUF, runtime libfabric 2.5+.
 	 *     The proxy domain opened here is reused by the GDAKI plugin,
 	 *     so the domain must be created with the 2.5 ABI to expose the
-	 *     EFA hardware-counter ops via fi_open_ops. Fail loudly if any
-	 *     prerequisite is missing.
+	 *     EFA hardware-counter ops via fi_open_ops. Fall back to proxy
+	 *     if any prerequisite is missing.
 	 *   - Proxy: 1.20 with DMA-BUF (FI_MR_DMABUF support), 1.18 otherwise.
+	 *
+	 * TODO: remove the GDAKI term here once the GDAKI plugin opens its own
+	 * domain (with its own MR registrations) instead of reusing the proxy
+	 * domain; the net plugin could then always request the proxy ABI.
 	 */
-	if (ofi_nccl_gin_type.get() == GIN_TYPE::GDAKI) {
-#if !HAVE_CUDA
-		NCCL_OFI_WARN("OFI_NCCL_GIN_TYPE=GDAKI set but plugin built without CUDA");
-		return -FI_EINVAL;
+	bool gdaki_usable = false;
+#if HAVE_GDAKI
+	gdaki_usable = FI_VERSION_GE(fi_version(), FI_VERSION(2, 5)) &&
+		       nccl_ofi_dmabuf_viable();
 #endif
-		if (!nccl_ofi_dmabuf_viable()) {
-			NCCL_OFI_WARN("OFI_NCCL_GIN_TYPE=GDAKI set but DMA-BUF is not viable");
-			return -FI_EINVAL;
-		}
+	if (gdaki_usable) {
 		api_version = FI_VERSION(2, 5);
 	} else {
 		api_version = nccl_ofi_dmabuf_viable() ? FI_VERSION(1, 20) : FI_VERSION(1, 18);

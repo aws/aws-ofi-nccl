@@ -57,7 +57,7 @@ sources += \
 	rdma/gin/nccl_ofi_gin_api.cpp \
 	rdma/gin/nccl_ofi_gin_reqs.cpp \
 	rdma/gin/nccl_ofi_gin_resources.cpp
-if ENABLE_GDAKI
+if HAVE_GDAKI
 sources += \
 	rdma/gin/nccl_ofi_gin_gdaki.cpp \
 	rdma/gin/nccl_ofi_gin_gdaki_resources.cpp
@@ -82,7 +82,7 @@ libinternal_plugin_la_SOURCES = $(sources)
 libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS) $(ROCM_LDFLAGS)
 libinternal_plugin_la_LIBADD  = $(CUDA_LIBS) $(ROCM_LIBS)
 
-if ENABLE_GDAKI
+if HAVE_GDAKI
 # TODO: Pinned efa-dp-direct submodule commit 81c4dc7 has a bug that causes a 
 # "sign-compare" error. To avoid relaxing the sign-compare compilation check
 # when building the entire OFI NCCL plugin library, we separately build a
