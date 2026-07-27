@@ -2346,6 +2346,67 @@ int nccl_net_ofi_rdma_req::handle_completion([[maybe_unused]] uint64_t comp_flag
 	return -EINVAL;
 }
 
+int rdma_send_req::post_eager(nccl_net_ofi_rdma_send_comm *s_comm,
+			      nccl_net_ofi_xfer_info_t *xfer_info)
+{
+	/* Eager send: prepend an eager header carrying the wrap-safe
+	 * eager_seq (and prev_batch_count) and post a 2-iovec
+	 * [header][payload] message via fi_sendmsg on a single rail.
+	 * This is the master eager-header protocol (seq-wrap hang fix);
+	 * it replaces the earlier headerless fi_senddata path. */
+	nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
+		s_comm->get_data_rail(xfer_info->rail_id);
+	assert(xfer_info->rail_id < this->buff_mr_handle->num_rails);
+	uint16_t rail_id = xfer_info->rail_id;
+	struct fid_mr *rail_mr_handle = this->buff_mr_handle->mr_data[rail_id].get();
+
+	/* Allocate eager header from freelist */
+	nccl_ofi_freelist::fl_entry *hdr_fl_entry = s_comm->eager_hdr_fl->entry_alloc();
+	if (OFI_UNLIKELY(!hdr_fl_entry)) {
+		NCCL_OFI_WARN("No free eager header buffers");
+		return -ENOMEM;
+	}
+	nccl_ofi_eager_msg_header_t *hdr = (nccl_ofi_eager_msg_header_t *)hdr_fl_entry->ptr;
+	this->eager_hdr_fl_entry = hdr_fl_entry;
+	hdr->eager_offset = this->eager_offset;
+	hdr->tag = this->tag;
+	hdr->prev_batch_count = this->prev_batch_count;
+	hdr->eager_seq = this->eager_seq;
+
+	/* Build 2-iovec message: [header][payload] */
+	struct iovec iov[2];
+	void *desc_arr[2];
+
+	iov[0].iov_base = hdr;
+	iov[0].iov_len = NCCL_OFI_EAGER_HEADER_SIZE;
+	freelist_regmr_fn_handle_t *hdr_mr_fl =
+		(freelist_regmr_fn_handle_t *)hdr_fl_entry->mr_handle;
+	desc_arr[0] = fi_mr_desc(hdr_mr_fl->mr_handle->mr_data[rail_id].get());
+
+	iov[1].iov_base = (void *)(((uintptr_t)this->buff) + xfer_info->offset);
+	iov[1].iov_len = xfer_info->msg_size;
+	desc_arr[1] = fi_mr_desc(rail_mr_handle);
+
+	struct fi_msg msg = {};
+	msg.msg_iov = iov;
+	msg.desc = desc_arr;
+	msg.iov_count = 2;
+	msg.addr = comm_rail->remote_addr;
+	msg.context = rdma_req_get_ofi_context(this, rail_id);
+	msg.data = this->wdata;
+
+	ssize_t rc = fi_sendmsg(comm_rail->local_ep, &msg, FI_REMOTE_CQ_DATA);
+
+	if ((rc != 0) && (rc != -FI_EAGAIN)) {
+		NCCL_OFI_WARN("fi_sendmsg (eager) failed; RC: %zd, Error: %s",
+			      rc, fi_strerror(-rc));
+	} else if (rc == 0) {
+		NCCL_OFI_TRACE_EAGER_SEND_START(this->dev_id, rail_id, xfer_info->msg_size,
+						this->comm, this->msg_seq_num, this);
+	}
+	return rc;
+}
+
 int rdma_send_req::post()
 {
 	nccl_net_ofi_rdma_send_comm *s_comm = this->get_send_comm();
@@ -2362,63 +2423,7 @@ int rdma_send_req::post()
 	nccl_net_ofi_xfer_info_t *xfers = sched->rail_xfer_infos;
 
 	if (this->eager) {
-		/* Eager send: prepend an eager header carrying the wrap-safe
-		 * eager_seq (and prev_batch_count) and post a 2-iovec
-		 * [header][payload] message via fi_sendmsg on a single rail.
-		 * This is the master eager-header protocol (seq-wrap hang fix);
-		 * it replaces the earlier headerless fi_senddata path. */
-		nccl_net_ofi_xfer_info_t *xfer_info = &xfers[0];
-		nccl_net_ofi_rdma_send_comm_rail_t *comm_rail =
-			s_comm->get_data_rail(xfer_info->rail_id);
-		assert(xfer_info->rail_id < this->buff_mr_handle->num_rails);
-		uint16_t rail_id = xfer_info->rail_id;
-		struct fid_mr *rail_mr_handle = this->buff_mr_handle->mr_data[rail_id].get();
-
-		/* Allocate eager header from freelist */
-		nccl_ofi_freelist::fl_entry *hdr_fl_entry = s_comm->eager_hdr_fl->entry_alloc();
-		if (OFI_UNLIKELY(!hdr_fl_entry)) {
-			NCCL_OFI_WARN("No free eager header buffers");
-			return -ENOMEM;
-		}
-		nccl_ofi_eager_msg_header_t *hdr = (nccl_ofi_eager_msg_header_t *)hdr_fl_entry->ptr;
-		this->eager_hdr_fl_entry = hdr_fl_entry;
-		hdr->eager_offset = this->eager_offset;
-		hdr->tag = this->tag;
-		hdr->prev_batch_count = this->prev_batch_count;
-		hdr->eager_seq = this->eager_seq;
-
-		/* Build 2-iovec message: [header][payload] */
-		struct iovec iov[2];
-		void *desc_arr[2];
-
-		iov[0].iov_base = hdr;
-		iov[0].iov_len = NCCL_OFI_EAGER_HEADER_SIZE;
-		freelist_regmr_fn_handle_t *hdr_mr_fl =
-			(freelist_regmr_fn_handle_t *)hdr_fl_entry->mr_handle;
-		desc_arr[0] = fi_mr_desc(hdr_mr_fl->mr_handle->mr_data[rail_id].get());
-
-		iov[1].iov_base = (void *)(((uintptr_t)this->buff) + xfer_info->offset);
-		iov[1].iov_len = xfer_info->msg_size;
-		desc_arr[1] = fi_mr_desc(rail_mr_handle);
-
-		struct fi_msg msg = {};
-		msg.msg_iov = iov;
-		msg.desc = desc_arr;
-		msg.iov_count = 2;
-		msg.addr = comm_rail->remote_addr;
-		msg.context = rdma_req_get_ofi_context(this, rail_id);
-		msg.data = this->wdata;
-
-		ssize_t rc = fi_sendmsg(comm_rail->local_ep, &msg, FI_REMOTE_CQ_DATA);
-
-		if ((rc != 0) && (rc != -FI_EAGAIN)) {
-			NCCL_OFI_WARN("fi_sendmsg (eager) failed; RC: %zd, Error: %s",
-				      rc, fi_strerror(-rc));
-		} else if (rc == 0) {
-			NCCL_OFI_TRACE_EAGER_SEND_START(this->dev_id, rail_id, xfer_info->msg_size,
-							this->comm, this->msg_seq_num, this);
-		}
-		return rc;
+		return this->post_eager(s_comm, &xfers[0]);
 	}
 
 	/* Non-eager send: iterate remaining rails, post an RDMA write per
