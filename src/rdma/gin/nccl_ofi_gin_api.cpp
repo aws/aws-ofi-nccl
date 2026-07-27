@@ -10,15 +10,9 @@
 #include "rdma/gin/nccl_ofi_gin.h"
 #include "rdma/gin/nccl_ofi_gin_api.h"
 #include "rdma/gin/nccl_ofi_gin_types.h"
-#if HAVE_GDAKI
-#include "rdma/gin/nccl_ofi_gin_gdaki.h"
-#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
-
-/* Forward declaration — defined at bottom of this file */
-extern ncclGin_v13_t ncclGinPlugin_v13;
 
 struct nccl_ofi_gin_context {
 	/* Per-init() sequence number used as endpoint cache key so that the
@@ -92,36 +86,6 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Failed to allocate GIN context: %s", e.what());
 		return ncclSystemError;
-	}
-
-	/*
-	 * Choose the GIN plugin variant based on OFI_NCCL_GIN_TYPE.
-	 *   GIN_TYPE::PROXY: keep the default (proxy) plugin.
-	 *   GIN_TYPE::GDAKI: morph the exported v13 plugin to GDAKI.
-	 *
-	 * Shared plugin APIs are wired into nccl_ofi_gin_gdaki_plugin at
-	 * compile time, so to engage GDAKI we just overwrite the exported
-	 * symbol.
-	 *
-	 * If the user requested GDAKI but the plugin was built without
-	 * --enable-gdaki, fail init rather than silently falling back: GDAKI
-	 * was an explicit opt-in.
-	 */
-	switch (ofi_nccl_gin_type.get()) {
-	case GIN_TYPE::PROXY:
-		break;
-	case GIN_TYPE::GDAKI:
-#if HAVE_GDAKI
-		NCCL_OFI_INFO(NCCL_NET | NCCL_INIT,
-			      "gin: GDAKI mode enabled (OFI_NCCL_GIN_TYPE=GDAKI)");
-		memcpy(&ncclGinPlugin_v13, &nccl_ofi_gin_gdaki_plugin, sizeof(ncclGinPlugin_v13));
-		break;
-#else
-		NCCL_OFI_WARN("OFI_NCCL_GIN_TYPE=GDAKI requested but plugin "
-			      "was built without GDAKI support (configure with "
-			      "--enable-gdaki); failing init");
-		return ncclInvalidUsage;
-#endif
 	}
 
 	return ncclSuccess;

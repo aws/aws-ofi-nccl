@@ -40,7 +40,7 @@ bin_PROGRAMS = nccl_connection nccl_message_transfer ring inflight_close reuse_l
 # it is not part of the CI functional run-list, so keep it out of the default
 # build: it is an EXTRA_PROGRAM, built on demand with `make gin_multiseg_signal`.
 EXTRA_PROGRAMS = gin_multiseg_signal
-if ENABLE_GDAKI
+if HAVE_GDAKI
 if HAVE_NVCC
 bin_PROGRAMS += gin_put_gdaki_gpu gin_signal_gdaki_gpu
 endif
@@ -65,7 +65,7 @@ gin_gdaki_misconfig_probe_SOURCES = $(base_sources) gin_gdaki_misconfig_probe.cp
 # nvcc -c (not -dc) fully resolves device code in the object file, so
 # no nvcc-driven device link step is required. -Wno-error works around
 # benign NCCL macro redefinitions that fire under -Werror.
-if ENABLE_GDAKI
+if HAVE_GDAKI
 if HAVE_NVCC
 SUFFIXES = .cu
 
@@ -92,7 +92,7 @@ gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 		$(MPI_CPPFLAGS) $(CUDA_CPPFLAGS) \
 		-c -o $@ $<
 endif # HAVE_NVCC
-endif # ENABLE_GDAKI
+endif # HAVE_GDAKI
 
 endif # ENABLE_FUNC_TESTS
 eager_multirecv_SOURCES = $(base_sources) eager_multirecv.cpp

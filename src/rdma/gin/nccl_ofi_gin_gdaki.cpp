@@ -507,6 +507,21 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		return ncclInvalidArgument;
 	}
 
+	/*
+	 * NCCL binds this op-table directly; there is no plugin-side mode
+	 * selection. This is the only capability gate on the GDAKI path —
+	 * verify here so failure is early and actionable rather than an
+	 * obscure cntr_open_ext error mid-setup.
+	 */
+	if (!nccl_ofi_gin_gdaki_capable()) {
+		NCCL_OFI_WARN(
+			"gin GDAKI: createContext on a non-GDA-capable "
+			"environment (requires an EFA provider, runtime "
+			"libfabric >= 2.5, and viable DMA-BUF); GDAKI is "
+			"unavailable here");
+		return ncclInvalidUsage;
+	}
+
 	NCCL_OFI_INFO(NCCL_NET,
 		      "gin GDAKI: createContext request: nSignals=%d nCounters=%d "
 		      "nContexts=%d queueDepth=%d",
@@ -1131,35 +1146,6 @@ static ncclResult_t nccl_ofi_gin_gdaki_queryLastError(void *ginCtx, bool *hasErr
 	*hasError = false;
 	return ncclSuccess;
 }
-
-/*
- * GDAKI plugin. Shared APIs are wired directly from nccl_ofi_gin_api.cpp;
- * GDAKI-specific ones above. iput/iputSignal/iget/iflush/test are nullptr —
- * no CPU involvement in GDAKI mode.
- */
-ncclGin_v13_t nccl_ofi_gin_gdaki_plugin = {
-	.name = "Libfabric_GDAKI",
-	.init = nccl_ofi_gin_init,
-	.devices = nccl_ofi_gin_devices,
-	.getProperties = nccl_ofi_gin_gdaki_get_properties,
-	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
-	.createContext = nccl_ofi_gin_gdaki_createContext,
-	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
-	.regMrSymDmaBuf = nccl_ofi_gin_gdaki_regMrSymDmaBuf,
-	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
-	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
-	.closeColl = nccl_ofi_gin_gdaki_closeColl,
-	.closeListen = nccl_ofi_gin_closeListen,
-	.iput = nullptr,
-	.iputSignal = nullptr,
-	.iget = nullptr,
-	.iflush = nullptr,
-	.test = nullptr,
-	.ginProgress = nccl_ofi_gin_ginProgress,
-	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
-	.finalize = nccl_ofi_gin_finalize
-};
 
 /* v14 GIN op-table: control-plane + device handle only (host data path is in
  * the RMA op-table). Exported as the GDAKI backend; built only with GDAKI. */
