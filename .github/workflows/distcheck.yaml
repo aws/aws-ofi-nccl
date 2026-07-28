@@ -192,6 +192,7 @@ jobs:
           - gcc-13
           - gcc-14
           - clang-18
+          - clang-19
         tracing:
           - lttng
           - nvtx
@@ -275,7 +276,7 @@ jobs:
     strategy:
       matrix:
         cc:
-          - clang-18
+          - clang-19
         tracing:
           - none
         sdk:
