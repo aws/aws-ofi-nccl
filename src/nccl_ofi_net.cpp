@@ -25,6 +25,7 @@
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_environ.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_diag.h"
 #include "nccl_ofi_tracepoint.h"
 #if HAVE_CUDA
 #include "nccl_ofi_cuda.h"
@@ -220,7 +221,14 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	topo.reset(nccl_ofi_topo_create());
+	{
+		const uint64_t _diag_t0 = ofi_diag::enabled() ? ofi_diag::now_ns() : 0;
+		topo.reset(nccl_ofi_topo_create());
+		if (_diag_t0) {
+			ofi_diag::print("INIT topology discovery took=%.1fms",
+					(ofi_diag::now_ns() - _diag_t0) / 1e6);
+		}
+	}
 	if (!topo) {
 		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
 		ret = -ENODEV;

@@ -10,6 +10,7 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_diag.h"
 
 
 static_assert(sizeof(nccl_net_ofi_conn_handle_t) <= NCCL_NET_HANDLE_MAXSIZE,
@@ -73,10 +74,15 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 
 	abort_on_error = (ofi_nccl_abort_on_error() != 0);
 	try {
+		const uint64_t _diag_t0 = ofi_diag::enabled() ? ofi_diag::now_ns() : 0;
 		ret = nccl_net_ofi_create_plugin(&plugin);
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Initializing plugin failed");
 			return nccl_net_ofi_retval_translate_impl(ret);
+		}
+		if (_diag_t0) {
+			ofi_diag::print("INIT plugin init (device discovery, topology, platform) took=%.1fms",
+					(ofi_diag::now_ns() - _diag_t0) / 1e6);
 		}
 	}
 	catch (const std::exception &e) {
@@ -95,8 +101,15 @@ ncclResult_t nccl_net_ofi_fini()
 		NCCL_OFI_WARN("Finalizing already finalized plugin");
 		ret = check_return(ncclSystemError);
 	} else {
+		const uint64_t _diag_t0 = ofi_diag::enabled() ? ofi_diag::now_ns() : 0;
 		delete plugin;
 		plugin = NULL;
+		if (_diag_t0) {
+			ofi_diag::print("FINI plugin finalize (teardown of domains/endpoints/fabric) took=%.1fms",
+					(ofi_diag::now_ns() - _diag_t0) / 1e6);
+			/* Emit the summary here, while NCCL's logger is guaranteed valid. */
+			ofi_diag::summary();
+		}
 	}
 	return ret;
 }
@@ -110,6 +123,7 @@ nccl_net_ofi_plugin_t *nccl_net_ofi_get_plugin()
 
 ncclResult_t nccl_net_ofi_devices(int *num_devices)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::DEVICES, true);
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == NULL)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
@@ -128,6 +142,7 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 
 ncclResult_t nccl_net_ofi_get_properties(int dev_id, nccl_ofi_properties_t *ofi_properties)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::GET_PROPERTIES, true);
 	nccl_net_ofi_device_t *device;
 
 	/* Validate plugin */
@@ -155,6 +170,7 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 	std::shared_ptr<nccl_net_ofi_ep_t> ep;
 	nccl_net_ofi_listen_comm **listen_comm =
 		reinterpret_cast<nccl_net_ofi_listen_comm **>(lComm);
+	ofi_diag::ApiScope _diag(ofi_diag::LISTEN, true);
 
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == nullptr)) {
@@ -187,6 +203,12 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 		ret = -EINVAL;
 	}
 
+	/* Diag: pre-create the accept-side stats entry, keyed by the listen comm,
+	 * so accept() polls know the device id. */
+	if (_diag.on && ret == 0 && *listen_comm != nullptr) {
+		(void)ofi_diag::g_accept_map.get(*listen_comm, dev_id);
+	}
+
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -217,6 +239,13 @@ ncclResult_t nccl_net_ofi_listen(int dev_id, void *handle, void **lComm,
 ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int trafficClass,
 				  unsigned int domain_key, unsigned int resource_key)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::CONNECT, false);
+	ofi_diag::ConnStats *_diag_cs = nullptr;
+	if (_diag.on) {
+		_diag_cs = ofi_diag::g_connect_map.get(handle, dev_id);
+		ofi_diag::poll_begin(_diag_cs, _diag.t0);
+	}
+
 	/* Validate plugin */
 	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
@@ -267,6 +296,14 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
 		ret = -EINVAL;
 	}
 
+	if (_diag.on) {
+		uint64_t _t_out = ofi_diag::now_ns();
+		bool _done = (ret == 0 && *sComm != nullptr);
+		if (_diag_cs) _diag_cs->inside_sum_ns += _t_out - _diag.t0;
+		_diag.completed = _done;
+		ofi_diag::poll_end(ofi_diag::g_connect_map, _diag_cs, _t_out, _done, 0, "CONNECT");
+	}
+
 	/* ep shared_ptr drops on scope exit. No manual release needed */
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
@@ -290,6 +327,13 @@ ncclResult_t nccl_net_ofi_connect(int dev_id, void *handle, void **sComm, int tr
  */
 ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::ACCEPT, false);
+	ofi_diag::ConnStats *_diag_cs = nullptr;
+	if (_diag.on) {
+		_diag_cs = ofi_diag::g_accept_map.get(lComm, -1);
+		ofi_diag::poll_begin(_diag_cs, _diag.t0);
+	}
+
 	if (OFI_UNLIKELY(plugin == nullptr)) {
 		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
 		return check_return(ncclInvalidArgument);
@@ -315,6 +359,14 @@ ncclResult_t nccl_net_ofi_accept(void *lComm, void **rComm)
 		ret = -EINVAL;
 	}
 
+	if (_diag.on) {
+		uint64_t _t_out = ofi_diag::now_ns();
+		bool _done = (ret == 0 && *rComm != nullptr);
+		if (_diag_cs) _diag_cs->inside_sum_ns += _t_out - _diag.t0;
+		_diag.completed = _done;
+		ofi_diag::poll_end(ofi_diag::g_accept_map, _diag_cs, _t_out, _done, 1, "ACCEPT");
+	}
+
 	/* On failure, the listen comm's ep shared_ptr will be
 	 * released when the listen comm is destroyed. No manual
 	 * release needed. */
@@ -327,6 +379,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 				      int type, uint64_t offset,
 				      int fd, void** mhandle)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::REGMR, true);
 	int ret;
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm *base_comm =
@@ -395,6 +448,7 @@ ncclResult_t nccl_net_ofi_regMrDmaBuf(void* comm, void* data, size_t size,
 
 ncclResult_t nccl_net_ofi_deregMr(void *comm, void *mhandle)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::DEREGMR, true);
 	/* Retrieve and validate comm */
 	nccl_net_ofi_comm *base_comm =
 		(nccl_net_ofi_comm *)comm;
@@ -460,7 +514,9 @@ ncclResult_t nccl_net_ofi_isend(void* sendComm, void* data, size_t size,
 		return check_return(ncclInternalError);
 	}
 
+	ofi_diag::ApiScope _diag(ofi_diag::ISEND, false);
 	int ret = send_comm->send(data, size, tag, handle, base_req);
+	_diag.completed = (ret == 0 && *request != NULL);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -507,13 +563,16 @@ ncclResult_t nccl_net_ofi_irecv(void* recvComm, int n, void** data,
 		return check_return(ncclInternalError);
 	}
 
+	ofi_diag::ApiScope _diag(ofi_diag::IRECV, false);
 	int ret = recv_comm->recv(n, data, sizes, tags, handles, base_req);
+	_diag.completed = (ret == 0 && *request != NULL);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
 
 ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::TEST, false);
 	/* Validate request */
 	if (OFI_UNLIKELY(req == NULL)) {
 		return check_return(ncclInternalError);
@@ -521,6 +580,7 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 
 	nccl_net_ofi_req *base_req = (nccl_net_ofi_req *)req;
 	int ret = base_req->test(done, size);
+	_diag.completed = (ret == 0 && *done != 0);
 	return nccl_net_ofi_retval_translate_impl(ret);
 }
 
@@ -528,6 +588,7 @@ ncclResult_t nccl_net_ofi_test(void* req, int* done, int* size)
 ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
 				 void** mhandles, void** req)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::IFLUSH, true);
 	nccl_net_ofi_recv_comm *recv_comm =
 		(nccl_net_ofi_recv_comm *)rComm;
 	nccl_net_ofi_mr_handle_t **handles = (nccl_net_ofi_mr_handle_t **)mhandles;
@@ -570,6 +631,7 @@ ncclResult_t nccl_net_ofi_iflush(void* rComm, int n, void** buffers, int* sizes,
  */
 ncclResult_t nccl_net_ofi_closeSend(void *sComm)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::CLOSE_SEND, true);
 	nccl_net_ofi_send_comm *send_comm = (nccl_net_ofi_send_comm *)sComm;
 
 	/* neuron has a cleanup race between the atexit handler and *
@@ -597,6 +659,7 @@ ncclResult_t nccl_net_ofi_closeSend(void *sComm)
  */
 ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::CLOSE_RECV, true);
 	nccl_net_ofi_recv_comm *recv_comm = (nccl_net_ofi_recv_comm *)rComm;
 
 	/* neuron has a cleanup race between the atexit handler and *
@@ -621,6 +684,7 @@ ncclResult_t nccl_net_ofi_closeRecv(void *rComm)
 
 ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::CLOSE_LISTEN, true);
 	nccl_net_ofi_listen_comm *listen_comm =
 		(nccl_net_ofi_listen_comm *)lComm;
 
@@ -645,6 +709,7 @@ ncclResult_t nccl_net_ofi_closeListen(void *lComm)
 
 ncclResult_t nccl_net_ofi_get_mr_key(void* mhandle, uint64_t* mr_key)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::GET_MR_KEY, true);
 	int ret = 0;
 	nccl_net_ofi_device_t *device = NULL;
 	auto *mhandle_ptr = static_cast<nccl_net_ofi_mr_handle_t *>(mhandle);
@@ -673,6 +738,7 @@ ncclResult_t nccl_net_ofi_get_mr_key(void* mhandle, uint64_t* mr_key)
 ncclResult_t nccl_net_ofi_iwrite(void* sComm, void* src, size_t size, void* mhandle,
 				 uint64_t dest, uint64_t mr_key, void** req)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::IWRITE, true);
 	nccl_net_ofi_send_comm *send_comm =
 		(nccl_net_ofi_send_comm *)sComm;
 	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
@@ -696,6 +762,7 @@ ncclResult_t nccl_net_ofi_iwrite(void* sComm, void* src, size_t size, void* mhan
 ncclResult_t nccl_net_ofi_iwrite_inline(void* sComm, void* src, size_t size,
 					uint64_t dest, uint64_t mr_key, void** req)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::IWRITE, true);
 	nccl_net_ofi_send_comm *send_comm =
 		(nccl_net_ofi_send_comm *)sComm;
 	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
@@ -719,6 +786,7 @@ ncclResult_t nccl_net_ofi_iwrite_inline(void* sComm, void* src, size_t size,
 ncclResult_t nccl_net_ofi_iread(void* rComm, void* dest, size_t size, void* mhandle,
 				uint64_t src, uint64_t mr_key, void** req)
 {
+	ofi_diag::ApiScope _diag(ofi_diag::IREAD, true);
 	nccl_net_ofi_recv_comm *recv_comm =
 		(nccl_net_ofi_recv_comm *)rComm;
 	nccl_net_ofi_req **base_req = (nccl_net_ofi_req **)req;
