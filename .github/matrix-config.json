@@ -27,6 +27,11 @@
       "tracing": ["lttng", "none"],
       "sdk": ["cuda", "neuron"]
     },
+    "ubuntu2604": {
+      "cc": ["gcc-14", "gcc-15", "clang-19", "clang-20"],
+      "tracing": ["lttng", "none"],
+      "sdk": ["cuda", "neuron"]
+    },
     "codechecker": {
       "sdk": ["cuda", "neuron"]
     }
