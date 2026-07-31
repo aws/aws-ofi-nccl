@@ -1,0 +1,91 @@
+name: Build and test plugin
+description: >
+  Configure, build, and test the aws-ofi-nccl plugin inside an Ubuntu CI
+  container. Shared by the Ubuntu PR CI jobs (u2204/u2404/u2604). The calling
+  job provides the runner, container image, and matrix; this action runs the
+  common build/check/install/distcheck steps.
+
+inputs:
+  cc:
+    description: >
+      Compiler selector. Either bare (gcc, clang) resolved by the container's
+      update-alternatives, or versioned (gcc-14, clang-19).
+    required: true
+  sdk:
+    description: "cuda or neuron"
+    required: true
+  tracing:
+    description: "none, lttng, nvtx, or lttng-nvtx"
+    required: true
+  build-type:
+    description: "release or debug"
+    required: true
+  artifact-name:
+    description: "Name for the config.log artifact uploaded on failure"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Fix Git Configuration
+      shell: bash
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    - name: Build Plugin
+      shell: bash
+      run: |
+        set -x
+        # Accept both bare (gcc/clang) and versioned (gcc-14/clang-19) selectors.
+        cc_family=$(echo "${{ inputs.cc }}" | cut -d'-' -f1)
+        cc_version=$(echo "${{ inputs.cc }}" | cut -s -d'-' -f2)
+        if [ "${cc_family}" = "gcc" ]; then
+            export CC="gcc${cc_version:+-$cc_version}"
+            export CXX="g++${cc_version:+-$cc_version}"
+            [ -n "${cc_version}" ] && export CPP="cpp-${cc_version}"
+        elif [ "${cc_family}" = "clang" ]; then
+            export CC="clang${cc_version:+-$cc_version}"
+            export CXX="clang++${cc_version:+-$cc_version}"
+            [ -n "${cc_version}" ] && export CPP="clang-cpp-${cc_version}"
+        else
+            echo "unknown compiler family ${cc_family}"
+            exit 1
+        fi
+        ./autogen.sh
+        # Tracing values: "none" = no tracing backends,
+        #                  "lttng" = --with-lttng only,
+        #                  "nvtx" = --with-nvtx only (CUDA only),
+        #                  "lttng-nvtx" = --with-lttng + --with-nvtx (CUDA only)
+        ./configure --with-mpi=/opt/amazon/openmpi \
+                    --with-libfabric=/opt/amazon/efa \
+                    --enable-tests=yes \
+                    --enable-werror=yes \
+                    --enable-picky-compiler=yes \
+                    --enable-platform-aws \
+                    ${{ inputs.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
+                    ${{ inputs.build-type == 'debug' && '--enable-debug --enable-trace' || '' }} \
+                    ${{ contains(inputs.tracing, 'lttng') && '--with-lttng' || '' }} \
+                    ${{ contains(inputs.tracing, 'nvtx') && '--with-nvtx=/usr/local/cuda' || '' }}
+
+    - name: Call `make`
+      shell: bash
+      run: make V=1
+
+    - name: Call `make check`
+      shell: bash
+      run: make check V=1 || (cat tests/unit/test-suite.log && exit 1)
+
+    - name: Call `make install`
+      shell: bash
+      run: sudo make install V=1
+
+    - name: Call `make distcheck`
+      shell: bash
+      run: make distcheck V=1
+
+    - name: Upload config.log
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: config.log
+        if-no-files-found: ignore
