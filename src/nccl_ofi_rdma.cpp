@@ -2134,24 +2134,42 @@ static inline bool has_ctrl_msg(nccl_net_ofi_rdma_send_comm* s_comm, uint16_t se
 {
 	uint16_t slot = seq_num % NCCL_OFI_CTRL_MAILBOX_SIZE;
 	uint16_t expected = (uint16_t)(seq_num & MSG_SEQ_NUM_MASK);
-	if (READ_ONCE(s_comm->ctrl_mailbox[slot].entries[0].msg_seq_num) != expected) {
+	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
+	uint16_t num_recvs;
+
+	/* entries[0] doubles as the ready bit and carries num_recvs, so it has
+	 * to be validated before num_recvs can be trusted as a loop bound. */
+	if (READ_ONCE(ctrl->entries[0].msg_seq_num) != expected) {
 		return false;
 	}
 
-	// create barrier point so that no code which depends on a valid
-	// control message is hoisted above the msg_seq_num check
+	// create barrier point so that num_recvs won't be hoisted
+	// above the msg_seq_num checks
 	std::atomic_thread_fence(std::memory_order_acquire);
 
-	nccl_net_ofi_ctrl_msg_t *ctrl = &s_comm->ctrl_mailbox[slot];
-	/* Grouped receive: verify per-entry seq nums and find matching tag */
-	for (uint16_t i = 0; i < ctrl->entries[0].num_recvs; i++) {
+	num_recvs = READ_ONCE(ctrl->entries[0].num_recvs);
+
+	/* Verify the remaining entries of the grouped receive have arrived */
+	for (uint16_t i = 1; i < num_recvs; i++) {
 		if (READ_ONCE(ctrl->entries[i].msg_seq_num) != expected) {
 			return false;
 		}
+	}
+
+	// create barrier point so that no code which depends on a valid
+	// control message is hoisted above the msg_seq_num checks
+	std::atomic_thread_fence(std::memory_order_acquire);
+
+	if (ignore_tag_match) {
+		return true;
+	}
+
+	/* Find a free entry matching this tag */
+	for (uint16_t i = 0; i < num_recvs; i++) {
 		if (ctrl->entries[i].entry_used == 1) {
 			continue;
 		}
-		if (ignore_tag_match || (ctrl->entries[i].tag == tag)) {
+		if (ctrl->entries[i].tag == tag) {
 			return true;
 		}
 	}
@@ -5545,9 +5563,6 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 		uint16_t seq = this->next_msg_seq_num;
 		if (!has_ctrl_msg(this, seq, 0, true))
 			return false;
-
-		/* Memory fence: we're about to read ctrl msg contents */
-		std::atomic_thread_fence(std::memory_order_acquire);
 
 		uint16_t slot = seq % NCCL_OFI_CTRL_MAILBOX_SIZE;
 		nccl_net_ofi_ctrl_msg_t *ctrl = &this->ctrl_mailbox[slot];
