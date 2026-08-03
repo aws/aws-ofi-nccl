@@ -248,9 +248,6 @@ typedef struct nccl_net_ofi_ctrl_msg_entry {
 
 	/* Tag for matching this sub-entry to the corresponding isend */
 	int16_t tag;
-	/* Per-entry sequence number for RDMA atomicity verification.
-	 * In entries[0], this also serves as the ctrl msg ready bit. */
-	uint16_t msg_seq_num;
 	/* The following fields are only meaningful in entries[0] and carry
 	 * metadata that applies to the entire control message. */
 	uint16_t flags;
@@ -260,7 +257,10 @@ typedef struct nccl_net_ofi_ctrl_msg_entry {
 	/* Set by sender when this entry has been consumed by either eager or write */
 	uint8_t entry_used;
 	/* Padding to 64-byte cache line boundary */
-	uint8_t pad[8];
+	uint8_t pad[10];
+	/* Per-entry sequence number for RDMA atomicity verification.
+	 * In all entries, this also serves as the ctrl msg ready bit. */
+	uint16_t msg_seq_num;
 } nccl_net_ofi_ctrl_msg_entry_t;
 static_assert(sizeof(nccl_net_ofi_ctrl_msg_entry_t) == 64,
 		"Wrong size for RDMA Control message entry");
