@@ -552,9 +552,12 @@ static inline void clear_write_reqs_pending_back_pointers(
 int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr_handle_t *srcMhandle, size_t size,
 				  uint64_t dstOff, nccl_ofi_gin_symm_mr_handle_t *dstMhandle, uint32_t dst_rank,
 				  uint64_t signalOff, nccl_ofi_gin_symm_mr_handle_t *signalMhandle,
-				  uint64_t signalValue, uint32_t signalOp,
+				  uint64_t signalValue, uint32_t signalOp, uint32_t optFlags,
 				  nccl_ofi_gin_req_t **request)
 {
+	/* optFlags carries ncclRmaOptFlags from the v15 RMA op-table. The aggregate
+	   hint is honored in a later change; threaded through here behavior-neutral. */
+	(void)optFlags;
 	auto *src_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(srcMhandle);
 	auto *dst_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(dstMhandle);
 	auto *sig_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(signalMhandle);
@@ -790,8 +793,10 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 				      nccl_ofi_gin_symm_mr_handle_t *remoteMhandle,
 				      size_t size, uint64_t localOff,
 				      nccl_ofi_gin_symm_mr_handle_t *localMhandle,
-				      uint32_t dst_rank, nccl_ofi_gin_req_t **request)
+				      uint32_t dst_rank, uint32_t optFlags, nccl_ofi_gin_req_t **request)
 {
+	/* iget uses fi_read — not part of the FI_MORE write-doorbell path. */
+	(void)optFlags;
 	auto *remote_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(remoteMhandle);
 	auto *local_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(localMhandle);
 	auto &gin_ep = resources.get_ep();

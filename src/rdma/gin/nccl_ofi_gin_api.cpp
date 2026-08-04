@@ -370,7 +370,8 @@ static ncclResult_t nccl_ofi_gin_test(void *collComm, void *request, int *done)
 static ncclResult_t nccl_ofi_gin_iputSignal(void *collComm, uint64_t srcOff, void *srcMhandle,
 					    size_t size, uint64_t dstOff, void *dstMhandle,
 					    uint32_t rank, uint64_t signalOff, void *signalMhandle,
-					    uint64_t signalValue, uint32_t signalOp, void **request)
+					    uint64_t signalValue, uint32_t signalOp, uint32_t optFlags,
+					    void **request)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	auto *src_mr_handle = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(srcMhandle);
@@ -379,7 +380,8 @@ static ncclResult_t nccl_ofi_gin_iputSignal(void *collComm, uint64_t srcOff, voi
 
 	nccl_ofi_gin_req_t *req = nullptr;
 	int ret = gin_comm->iputSignal(srcOff, src_mr_handle, size, dstOff, dst_mr_handle, rank,
-				       signalOff, signal_mr_handle, signalValue, signalOp, &req);
+				       signalOff, signal_mr_handle, signalValue, signalOp, optFlags,
+				       &req);
 	if (ret != 0) {
 		return nccl_net_ofi_retval_translate(ret);
 	}
@@ -390,24 +392,24 @@ static ncclResult_t nccl_ofi_gin_iputSignal(void *collComm, uint64_t srcOff, voi
 
 static ncclResult_t nccl_ofi_gin_iput(void *collComm, uint64_t srcOff, void *srcMhandle,
 				      size_t size, uint64_t dstOff, void *dstMhandle, uint32_t rank,
-				      void **request)
+				      uint32_t optFlags, void **request)
 {
 	/* Currently, due to ordering requirements, iput is just implemented as an
 	   iputSignal with a zero'd signal address (instead of a write-without-immediate) */
 	return nccl_ofi_gin_iputSignal(collComm, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
-				       0, nullptr, 0, 0, request);
+				       0, nullptr, 0, 0, optFlags, request);
 }
 
 static ncclResult_t nccl_ofi_gin_iget(void *collComm, uint64_t remoteOff, void *remoteMhandle,
 				      size_t size, uint64_t localOff, void *localMhandle,
-				      uint32_t rank, void **request)
+				      uint32_t rank, uint32_t optFlags, void **request)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	auto *remote_mr = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(remoteMhandle);
 	auto *local_mr = static_cast<nccl_ofi_gin_symm_mr_handle_t *>(localMhandle);
 
 	nccl_ofi_gin_req_t *req = nullptr;
-	int ret = gin_comm->iget(remoteOff, remote_mr, size, localOff, local_mr, rank, &req);
+	int ret = gin_comm->iget(remoteOff, remote_mr, size, localOff, local_mr, rank, optFlags, &req);
 	if (ret != 0) {
 		return nccl_net_ofi_retval_translate(ret);
 	}
@@ -505,7 +507,7 @@ static ncclResult_t nccl_ofi_gin_iput_v13(void *ginCtx, int context, uint64_t sr
 					  void *dstMhandle, uint32_t rank, void **request)
 {
 	return nccl_ofi_gin_iput(ginCtx, srcOff, srcMhandle, size,
-				 dstOff, dstMhandle, rank, request);
+				 dstOff, dstMhandle, rank, /*optFlags*/ 0, request);
 }
 
 static ncclResult_t nccl_ofi_gin_iputSignal_v13(void *ginCtx, int context, uint64_t srcOff,
@@ -516,7 +518,7 @@ static ncclResult_t nccl_ofi_gin_iputSignal_v13(void *ginCtx, int context, uint6
 {
 	return nccl_ofi_gin_iputSignal(ginCtx, srcOff, srcMhandle, size,
 				       dstOff, dstMhandle, rank, signalOff, signalMhandle,
-				       signalValue, signalOp, request);
+				       signalValue, signalOp, /*optFlags*/ 0, request);
 }
 
 static ncclResult_t nccl_ofi_gin_iget_v13(void *ginCtx, int context, uint64_t remoteOff,
@@ -524,7 +526,7 @@ static ncclResult_t nccl_ofi_gin_iget_v13(void *ginCtx, int context, uint64_t re
 					  void *localMhandle, uint32_t rank, void **request)
 {
 	return nccl_ofi_gin_iget(ginCtx, remoteOff, remoteMhandle, size,
-				 localOff, localMhandle, rank, request);
+				 localOff, localMhandle, rank, /*optFlags*/ 0, request);
 }
 
 static ncclResult_t nccl_ofi_gin_iflush_v13(void *ginCtx, int context, void *mhandle,
@@ -541,6 +543,24 @@ static ncclResult_t nccl_ofi_gin_iflush_v13(void *ginCtx, int context, void *mha
 
 	*request = req;
 	return ncclSuccess;
+}
+
+/* The v11 GIN op-table has no optFlags argument; forward the default (0). */
+static ncclResult_t nccl_ofi_gin_iput_v11(void *collComm, uint64_t srcOff, void *srcMhandle, size_t size,
+					  uint64_t dstOff, void *dstMhandle, uint32_t rank, void **request)
+{
+	return nccl_ofi_gin_iput(collComm, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
+				 /*optFlags*/ 0, request);
+}
+
+static ncclResult_t nccl_ofi_gin_iputSignal_v11(void *collComm, uint64_t srcOff, void *srcMhandle,
+						size_t size, uint64_t dstOff, void *dstMhandle,
+						uint32_t rank, uint64_t signalOff, void *signalMhandle,
+						uint64_t signalValue, uint32_t signalOp, void **request)
+{
+	return nccl_ofi_gin_iputSignal(collComm, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
+				       signalOff, signalMhandle, signalValue, signalOp,
+				       /*optFlags*/ 0, request);
 }
 
 NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
@@ -562,8 +582,8 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
 	.destroyContext = nullptr,
 	.closeColl = nccl_ofi_gin_closeColl,
 	.closeListen = nccl_ofi_gin_closeListen,
-	.iput = nccl_ofi_gin_iput,
-	.iputSignal = nccl_ofi_gin_iputSignal,
+	.iput = nccl_ofi_gin_iput_v11,
+	.iputSignal = nccl_ofi_gin_iputSignal_v11,
 	.test = nccl_ofi_gin_test,
 	.ginProgress = nccl_ofi_gin_ginProgress,
 	/* Not used by NCCL in proxy mode */
@@ -628,7 +648,9 @@ static ncclResult_t nccl_ofi_rma_regMrSymDmaBuf_v14(void *collComm, void *data, 
 					   &unusedGinHandle);
 }
 
-/* v14 iputSignal adds a trailing isStrongSignal; the plugin's signals are always strong. */
+/* v14 iputSignal adds a trailing isStrongSignal hint. The plugin does not
+ * consult it: signal ordering is selected per-comm at construction from
+ * OFI_NCCL_GIN_STRONG_SIGNAL (see strong_signal_ordering_enabled), not per op. */
 static ncclResult_t nccl_ofi_rma_iputSignal_v14(void *rmaCtx, int context, uint64_t srcOff,
 						void *srcMhandle, size_t size, uint64_t dstOff,
 						void *dstMhandle, uint32_t rank, uint64_t signalOff,
@@ -660,6 +682,73 @@ NCCL_OFI_EXPORT_SYMBOL ncclRma_v14_t ncclRmaPlugin_v14 = {
 	.iput = nccl_ofi_gin_iput_v13,
 	.iputSignal = nccl_ofi_rma_iputSignal_v14,
 	.iget = nccl_ofi_gin_iget_v13,
+	.iflush = nccl_ofi_gin_iflush_v13,
+	.test = nccl_ofi_gin_test,
+	.rmaProgress = nccl_ofi_gin_ginProgress,
+	.queryLastError = nullptr,
+	.finalize = nccl_ofi_gin_finalize
+};
+
+/* RMA v15 export. Extends v14 by carrying optFlags (ncclRmaOptFlags) end-to-end so the
+ * caller's ncclRmaOptFlagsAggregateRequests hint reaches the doorbell-coalescing path.
+ * createContext/regMrSym/regMrSymDmaBuf are unchanged from v14 (ncclRmaConfig_v15_t is a
+ * typedef of ncclRmaConfig_v14_t), so those wrappers are reused directly. */
+static ncclResult_t nccl_ofi_rma_iput_v15(void *rmaCtx, int context, uint64_t srcOff,
+					  void *srcMhandle, size_t size, uint64_t dstOff,
+					  void *dstMhandle, uint32_t rank, uint32_t optFlags,
+					  void **request)
+{
+	(void)context;
+	/* Forward optFlags into the doorbell-coalescing path. */
+	return nccl_ofi_gin_iput(rmaCtx, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
+				 optFlags, request);
+}
+
+static ncclResult_t nccl_ofi_rma_iputSignal_v15(void *rmaCtx, int context, uint64_t srcOff,
+						void *srcMhandle, size_t size, uint64_t dstOff,
+						void *dstMhandle, uint32_t rank, uint64_t signalOff,
+						void *signalMhandle, uint64_t signalValue,
+						uint32_t signalOp, bool isStrongSignal,
+						uint32_t optFlags, void **request)
+{
+	(void)context;
+	/* Signal ordering is selected per-comm from OFI_NCCL_GIN_STRONG_SIGNAL, not
+	   from NCCL's per-op isStrongSignal hint (same as v14). */
+	(void)isStrongSignal;
+	return nccl_ofi_gin_iputSignal(rmaCtx, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
+				       signalOff, signalMhandle, signalValue, signalOp, optFlags,
+				       request);
+}
+
+static ncclResult_t nccl_ofi_rma_iget_v15(void *rmaCtx, int context, uint64_t remoteOff,
+					  void *remoteMhandle, size_t size, uint64_t localOff,
+					  void *localMhandle, uint32_t rank, uint32_t optFlags,
+					  void **request)
+{
+	(void)context;
+	return nccl_ofi_gin_iget(rmaCtx, remoteOff, remoteMhandle, size, localOff, localMhandle,
+				 rank, optFlags, request);
+}
+
+/* RMA v15 op-table. NCCL's GIN proxy binds this in preference to v14 (via rma_v15.cc),
+ * so the aggregate hint is not dropped. */
+NCCL_OFI_EXPORT_SYMBOL ncclRma_v15_t ncclRmaPlugin_v15 = {
+	.name = "Libfabric",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getProperties = nccl_ofi_gin_getProperties_v13,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
+	.createContext = nccl_ofi_rma_createContext_v14,
+	.regMrSym = nccl_ofi_rma_regMrSym_v14,
+	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
+	.deregMrSym = nccl_ofi_gin_deregMrSym,
+	.destroyContext = nccl_ofi_gin_destroyContext_v13,
+	.closeColl = nccl_ofi_gin_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.iput = nccl_ofi_rma_iput_v15,
+	.iputSignal = nccl_ofi_rma_iputSignal_v15,
+	.iget = nccl_ofi_rma_iget_v15,
 	.iflush = nccl_ofi_gin_iflush_v13,
 	.test = nccl_ofi_gin_test,
 	.rmaProgress = nccl_ofi_gin_ginProgress,
