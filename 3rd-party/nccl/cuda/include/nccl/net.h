@@ -59,5 +59,6 @@ typedef ncclResult_t (*ncclProfilerCallback_t)(void** eHandle, int type, void* p
 #include "gin_v13.h"
 
 #include "rma_v14.h"
+#include "rma_v15.h"
 
 #endif // end include guard
