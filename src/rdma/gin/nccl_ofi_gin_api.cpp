@@ -648,9 +648,7 @@ static ncclResult_t nccl_ofi_rma_regMrSymDmaBuf_v14(void *collComm, void *data, 
 					   &unusedGinHandle);
 }
 
-/* v14 iputSignal adds a trailing isStrongSignal hint. The plugin does not
- * consult it: signal ordering is selected per-comm at construction from
- * OFI_NCCL_GIN_STRONG_SIGNAL (see strong_signal_ordering_enabled), not per op. */
+/* v14 iputSignal adds a trailing isStrongSignal; the plugin's signals are always strong. */
 static ncclResult_t nccl_ofi_rma_iputSignal_v14(void *rmaCtx, int context, uint64_t srcOff,
 						void *srcMhandle, size_t size, uint64_t dstOff,
 						void *dstMhandle, uint32_t rank, uint64_t signalOff,
@@ -712,8 +710,7 @@ static ncclResult_t nccl_ofi_rma_iputSignal_v15(void *rmaCtx, int context, uint6
 						uint32_t optFlags, void **request)
 {
 	(void)context;
-	/* Signal ordering is selected per-comm from OFI_NCCL_GIN_STRONG_SIGNAL, not
-	   from NCCL's per-op isStrongSignal hint (same as v14). */
+	/* v15 iputSignal adds a trailing isStrongSignal; the plugin's signals are always strong. */
 	(void)isStrongSignal;
 	return nccl_ofi_gin_iputSignal(rmaCtx, srcOff, srcMhandle, size, dstOff, dstMhandle, rank,
 				       signalOff, signalMhandle, signalValue, signalOp, optFlags,

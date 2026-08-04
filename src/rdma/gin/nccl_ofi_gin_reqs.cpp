@@ -287,11 +287,23 @@ int nccl_net_ofi_gin_metadata_send_req_t::post()
 	nccl_ofi_gin_mr_handle_t *metadata_handle =
 		static_cast<nccl_ofi_gin_mr_handle_t *>(metadata_elem->mr_handle);
 
-	ssize_t rc =
-		fi_send(ep, metadata_elem->ptr, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
-			fi_mr_desc(metadata_handle->get_mr(rail_id)), remote_addr, &ctx.ofi_ctx);
+	void *desc = fi_mr_desc(metadata_handle->get_mr(rail_id));
+	struct iovec iov = { .iov_base = metadata_elem->ptr,
+			     .iov_len = sizeof(nccl_net_ofi_gin_signal_metadata_msg_t) };
+	struct fi_msg msg = {};
+	msg.msg_iov = &iov;
+	msg.desc = &desc;
+	msg.iov_count = 1;
+	msg.addr = remote_addr;
+	msg.context = &ctx.ofi_ctx;
+
+	ssize_t rc = fi_sendmsg(ep, &msg, flags);
+
+	/* Drop FI_MORE for retry — must not remain pending in the queue */
+	flags &= ~FI_MORE;
+
 	if (rc != 0 && rc != -FI_EAGAIN) {
-		NCCL_OFI_WARN("fi_send failed with RC %zd", rc);
+		NCCL_OFI_WARN("fi_sendmsg failed with RC %zd", rc);
 	}
 
 	return rc;

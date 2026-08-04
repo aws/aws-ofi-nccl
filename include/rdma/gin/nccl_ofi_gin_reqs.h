@@ -455,9 +455,10 @@ public:
 					     nccl_ofi_freelist::fl_entry *metadata_elem_arg,
 					     fi_addr_t remote_addr_arg,
 					     nccl_ofi_freelist *metadata_fl_arg,
-					     void *comm_arg)
+					     void *comm_arg, uint64_t msg_flags = 0)
 	    : ep(ep_arg), rail_id(rail_id_arg), metadata_elem(metadata_elem_arg),
-	      remote_addr(remote_addr_arg), metadata_fl(metadata_fl_arg), comm(comm_arg)
+	      remote_addr(remote_addr_arg), metadata_fl(metadata_fl_arg), flags(msg_flags),
+	      comm(comm_arg)
 	{
 	}
 	int post() override;
@@ -473,6 +474,9 @@ private:
 	nccl_ofi_freelist::fl_entry *metadata_elem;
 	fi_addr_t remote_addr;
 	nccl_ofi_freelist *metadata_fl;
+	/* Flags for fi_sendmsg. On retry FI_MORE is dropped as the request
+	   must be handled immediately and should not remain pending. */
+	uint64_t flags;
 
 public:
 	/* Placed after private fields for cache locality with post() hot path above.
