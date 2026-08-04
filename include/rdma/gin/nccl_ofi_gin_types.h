@@ -100,6 +100,11 @@ static_assert((1ULL << GIN_RX_CONSUMED_BITS) == 2ULL * (GIN_IMM_SEQ_MASK + 1),
    producing an ACK storm rather than the slow drip the receiver needs
    to drain the bitset. */
 #define GIN_ACK_INTERVAL  64
+
+/* Max consecutive iputSignal ops coalesced onto one pinned rail before the pin
+ * rotates to the next rail (so no single rail is pinned indefinitely). The
+ * boundary op drops FI_MORE to flush the rail, then the pin advances. */
+#define GIN_REQS_PER_DOORBELL 16
 static_assert(GIN_ACK_INTERVAL <= (GIN_IMM_SEQ_MASK >> 1),
 	      "GIN_ACK_INTERVAL must be much smaller than the seq window so "
 	      "ack-request hysteresis does not delay drain past wrap");

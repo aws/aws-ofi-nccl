@@ -655,6 +655,13 @@ private:
        int gdrcopy_cuda_dev = -1; /* CUDA device the worker binds to */
 
 	/* --- TIER 2: Receiver side — every CQ completion --- */
+	/* Rail pinned across an aggregated iputSignal sequence: when an op is
+	   posted with FI_MORE, the next op must reuse this rail to flush it.
+	   -1 means no pin (consult get_next_rail()). Guarded by ep_lock. */
+	int pinned_rail_id = -1;
+	/* Count of ops coalesced onto pinned_rail_id so far. The pin rotates to
+	   the next rail after GIN_REQS_PER_DOORBELL. Guarded by ep_lock. */
+	uint32_t pinned_rail_run = 0;
 	/* For each rail, direct-indexed table of fi_addr => peer comm rank.
 	 * Requires FI_AV_TABLE so that fi_addr_t values are dense 0-based
 	 * indices. Unused slots are set to UINT32_MAX as a sentinel. */
@@ -706,6 +713,14 @@ private:
 	 */
 	int send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
 		     uint32_t rx_consumed) REQUIRES(get_ep_lock());
+
+	/* Update the pinned-rail state after an op posted on `rail_id`:
+	   - deferring: this op kept its doorbell (FI_MORE); hold the rail and
+	     count it toward the rotation interval.
+	   - otherwise: this op rang its doorbell, so nothing is left deferred;
+	     release the pin (the next op re-pins on the scheduler's rail). */
+	void update_pin(bool defer, uint16_t rail_id)
+		REQUIRES(get_ep_lock());
 
 	/* Look up the signal's GDRCopy handle in mr_handle_map and fill `work`
 	   with everything the worker needs to apply the read-modify-write.
