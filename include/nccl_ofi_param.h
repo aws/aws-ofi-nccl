@@ -225,7 +225,7 @@ OFI_NCCL_PARAM(float, net_latency, "NET_LATENCY", 0.0);
  * this limit will always be sent using RDMA write instead of eagerly. Setting
  * this to -1 disables eager messages entirely.
  */
-OFI_NCCL_PARAM(int, eager_max_size, "EAGER_MAX_SIZE", -1);
+OFI_NCCL_PARAM(int, eager_max_size, "EAGER_MAX_SIZE", 8192);
 
 /*
  * Decide whether or not mutexes should default to errorcheck mode.
