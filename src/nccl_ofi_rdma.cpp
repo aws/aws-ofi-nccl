@@ -839,7 +839,8 @@ int nccl_net_ofi_rdma_recv_comm::drain_recv_eager_queue()
 			nccl_ofi_msgbuff_result_t mb_res = this->msgbuff->retrieve(
 				recv_seq, &elem, &elem_type, &stat);
 			if (mb_res != NCCL_OFI_MSGBUFF_SUCCESS || elem_type != NCCL_OFI_MSGBUFF_REQ) {
-				if ((entry->eager_offset > 0) && (recv_seq == this->last_completed_seq)) {
+				if (mb_res == NCCL_OFI_MSGBUFF_INVALID_IDX &&
+				    stat == NCCL_OFI_MSGBUFF_COMPLETED) {
 					recv_seq = (recv_seq + 1) & MSG_SEQ_NUM_MASK;
 					continue;
 				} else {
@@ -5575,6 +5576,14 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 		this->eager_queue_count--;
 
 		if (num_recvs <= 1) {
+			if (ctrl->entries[0].tag != entry->tag) {
+				uint8_t tail = this->eager_queue_tail;
+				this->eager_queue[tail] = *entry;
+				this->eager_queue_tail =
+					(tail + 1) % NCCL_OFI_MAX_EAGER_PENDING;
+				this->eager_queue_count++;
+				break;
+			}
 			/* Single recv: the front entry satisfies it */
 			send_data->eager_ctrl_msg_received = true;
 			this->n_ctrl_received += 1;
