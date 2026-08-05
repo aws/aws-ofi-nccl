@@ -84,7 +84,10 @@ DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
-DECLARE_CUDA_FUNCTION(cuMemcpy, 4000);
+DECLARE_CUDA_FUNCTION(cuMemcpyHtoDAsync, 3020);
+DECLARE_CUDA_FUNCTION(cuStreamCreate, 2000);
+DECLARE_CUDA_FUNCTION(cuStreamSynchronize, 2000);
+DECLARE_CUDA_FUNCTION(cuStreamDestroy, 4000);
 DECLARE_CUDA_FUNCTION(cuMemHostRegister, 6050);
 DECLARE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
 DECLARE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
@@ -99,6 +102,7 @@ DECLARE_CUDA_FUNCTION(cuMemGetAllocationGranularity, 10020);
 DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 DECLARE_CUDA_FUNCTION(cuMemRetainAllocationHandle, 11000);
 DECLARE_CUDA_FUNCTION(cuMemGetAllocationPropertiesFromHandle, 10020);
+DECLARE_CUDA_FUNCTION(cuThreadExchangeStreamCaptureMode, 10010);
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -168,7 +172,10 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
-	RESOLVE_CUDA_FUNCTION(cuMemcpy, 4000);
+	RESOLVE_CUDA_FUNCTION(cuMemcpyHtoDAsync, 3020);
+	RESOLVE_CUDA_FUNCTION(cuStreamCreate, 2000);
+	RESOLVE_CUDA_FUNCTION(cuStreamSynchronize, 2000);
+	RESOLVE_CUDA_FUNCTION(cuStreamDestroy, 4000);
 	RESOLVE_CUDA_FUNCTION(cuMemHostRegister, 6050);
 	RESOLVE_CUDA_FUNCTION(cuMemHostGetDevicePointer, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemHostUnregister, 4000);
@@ -183,6 +190,7 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemRetainAllocationHandle, 11000);
 	RESOLVE_CUDA_FUNCTION(cuMemGetAllocationPropertiesFromHandle, 10020);
+	RESOLVE_CUDA_FUNCTION(cuThreadExchangeStreamCaptureMode, 10010);
 
 	cu_ret = pfn_cuDriverGetVersion(&driverVersion);
 	if (cu_ret != CUDA_SUCCESS) {
@@ -225,7 +233,20 @@ int nccl_net_ofi_gpu_flush_gpudirect_rdma_writes(void)
 int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
 {
 	CUdeviceptr d_ptr;
-	CUresult ret = pfn_cuMemAlloc(&d_ptr, size);
+	CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+	CUresult ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to disable stream capture mode (%d)", ret);
+		return -EINVAL;
+	}
+
+	ret = pfn_cuMemAlloc(&d_ptr, size);
+
+	CUresult restore_ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (restore_ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to restore stream capture mode (%d)", restore_ret);
+	}
+
 	if (ret != CUDA_SUCCESS) {
 		return -EINVAL;
 	}
@@ -236,13 +257,66 @@ int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
 
 int nccl_net_ofi_gpu_mem_free(void *ptr)
 {
-	CUresult ret = pfn_cuMemFree((CUdeviceptr)ptr);
+	CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+	CUresult ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to disable stream capture mode (%d)", ret);
+		return -EINVAL;
+	}
+
+	ret = pfn_cuMemFree((CUdeviceptr)ptr);
+
+	CUresult restore_ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (restore_ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to restore stream capture mode (%d)", restore_ret);
+	}
+
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
 int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 {
-	CUresult ret = pfn_cuMemcpy((CUdeviceptr)dst, (CUdeviceptr)src, size);
+	CUstream stream = nullptr;
+	CUresult destroy_ret;
+	CUresult restore_ret;
+	CUstreamCaptureMode mode = CU_STREAM_CAPTURE_MODE_RELAXED;
+	CUresult ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to disable stream capture mode (%d)", ret);
+		return -EINVAL;
+	}
+
+	/* Use a non-blocking side stream so as not to interfere with any
+	 * graph capture on the legacy default stream. */
+	ret = pfn_cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuStreamCreate failed (%d)", ret);
+		goto restore;
+	}
+
+	ret = pfn_cuMemcpyHtoDAsync((CUdeviceptr)dst, src, size, stream);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuMemcpyHtoDAsync failed (%d)", ret);
+		goto destroy;
+	}
+
+	ret = pfn_cuStreamSynchronize(stream);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuStreamSynchronize failed (%d)", ret);
+	}
+
+destroy:
+	destroy_ret = pfn_cuStreamDestroy(stream);
+	if (destroy_ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuStreamDestroy failed (%d)", destroy_ret);
+	}
+
+restore:
+	restore_ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
+	if (restore_ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Failed to restore stream capture mode (%d)", restore_ret);
+	}
+
 	return ret == CUDA_SUCCESS ? 0 : -EINVAL;
 }
 
