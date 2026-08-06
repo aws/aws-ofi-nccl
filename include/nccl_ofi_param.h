@@ -397,22 +397,4 @@ OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSIO
 OFI_NCCL_PARAM_VALUE_SET(GDAKI_EFA_HW_COUNTER, (AUTO)(ON)(OFF))
 OFI_NCCL_PARAM(GDAKI_EFA_HW_COUNTER, gdaki_efa_hw_counter, "GDAKI_EFA_HW_COUNTER", GDAKI_EFA_HW_COUNTER::AUTO)
 
-/*
- * Enable strong-signal semantics for the GIN plugin.
- *
- * When true, completed requests are delivered to the application in
- * sequence-number order: the plugin waits for any earlier in-flight
- * request to complete before propagating a later one up. A signal
- * completion therefore implies all prior puts on the same (comm, peer)
- * stream have been delivered to the application.
- *
- * When false, completed requests are propagated up as soon as they are
- * fully received, without waiting for earlier requests. Per-token data
- * can become visible to the application out of order. ACK emission to
- * the sender is still ordered (seq-num stream + bundled range ACKs).
- *
- * Default: true (preserves current behavior).
- */
-OFI_NCCL_PARAM(bool, gin_strong_signal, "GIN_STRONG_SIGNAL", true);
-
 #endif // End NCCL_OFI_PARAM_H_

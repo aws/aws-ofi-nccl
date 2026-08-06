@@ -655,41 +655,6 @@ private:
        int gdrcopy_cuda_dev = -1; /* CUDA device the worker binds to */
 
 	/* --- TIER 2: Receiver side — every CQ completion --- */
-	/* Controls signal delivery ordering on this communicator
-	   (env: OFI_NCCL_GIN_STRONG_SIGNAL, default true).
-	 *
-	 * true  (strong-signal mode, default):
-	 *   Completed requests are released up the stack in sequence-number
-	 *   order on a per-(comm, peer) basis. A signal visible to the
-	 *   application therefore implies that:
-	 *     - this signal's own data has landed at the target, and
-	 *     - all prior puts and signals on the same (comm, peer) stream
-	 *       have also landed and been delivered.
-	 *   Out-of-order arrivals are buffered and held until earlier
-	 *   seq_nums complete (see iput_signal_deliver_all and
-	 *   next_delivered_signal_seq_num). This is the contract most NCCL
-	 *   kernels rely on: a single terminal signal proves a whole batch
-	 *   of prior writes is visible, with no per-write verification.
-	 *
-	 * false (weak-signal mode, opt-in):
-	 *   Each signal is delivered as soon as its own segments (metadata +
-	 *   data write) have arrived — no waiting for earlier seq_nums.
-	 *   Per-item payloads may become visible out of order, so the
-	 *   application must verify each item independently (e.g. a per-token
-	 *   SignalInc in MoE low-latency dispatch). Reduces head-of-line
-	 *   blocking when the kernel already handles its own ordering.
-	 *
-	 * Notes:
-	 *   - ACK emission back to the sender stays ordered in both modes
-	 *     (seq-num stream + bundled range ACKs); only the app-visible
-	 *     completion order changes.
-	 *   - The proxy thread supports both modes; this flag is a per-comm
-	 *     selector captured at construction from ofi_nccl_gin_strong_signal(),
-	 *     not a dynamic capability bit.
-	 *   - See handle_signal_metadata_completion / handle_signal_write_completion
-	 *     for the weak-mode early-deliver paths. */
-	bool strong_signal_ordering_enabled;
-
 	/* For each rail, direct-indexed table of fi_addr => peer comm rank.
 	 * Requires FI_AV_TABLE so that fi_addr_t values are dense 0-based
 	 * indices. Unused slots are set to UINT32_MAX as a sentinel. */
@@ -787,7 +752,7 @@ private:
 	 * result into this comm's own SPSC done queue, which only this comm's
 	 * proxy drains. The done queue stays single-producer (the one worker) /
 	 * single-consumer (this proxy), so SPSC FIFO still preserves per-peer
-	 * seq order under strong_signal_ordering. */
+	 * seq order. */
 	nccl_ofi_spsc_ring<gin_signal_done_entry> gdrcopy_done_queue;
 	/* Protects mr_handle->signal_segs: the gdrcopy worker appends on first
 	   touch (ensure_signal_seg) and deregMrSym tears it down. */

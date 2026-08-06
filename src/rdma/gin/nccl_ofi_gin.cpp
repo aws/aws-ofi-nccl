@@ -41,7 +41,6 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 				     nccl_net_ofi_recv_comm *r_comm_)
     : resources(resources_arg), resource_releaser { resources },
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
-      strong_signal_ordering_enabled(ofi_nccl_gin_strong_signal()),
       rank(rank_), nranks(nranks_),
       ag_comm(s_comm_, r_comm_, rank_, nranks_)
 {
@@ -1499,7 +1498,7 @@ int nccl_ofi_rdma_gin_put_comm::iput_signal_recv_req_completion(uint32_t peer_ra
 	NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on target",
 		       req->metadata.header.seq_num);
 
-	if (req->metadata_received && strong_signal_ordering_enabled) {
+	if (req->metadata_received) {
 		ret = do_gin_signal_and_trace(peer_rank, req);
 		if (ret != 0) {
 			return ret;
@@ -1578,18 +1577,14 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			return ret;
 		}
 
-		/* Fall back to the original per-req completion path when there is
-		   nothing to fold:
-		     - weak ordering: the signal was already posted (and maybe
-		       applied) at CQ-completion time, so retire only advances; or
-		     - the req has no metadata yet (a write-only completion can mark
-		       a req segment-complete before its metadata message arrives,
-		       so signal_base_address is not populated) — the per-req path
-		       correctly skips the gdrcopy in that case.
-		   Producer-side folding only applies under strong ordering with
-		   metadata in hand, which is also the only case build_signal_work
-		   can resolve the slot. */
-		if (!strong_signal_ordering_enabled || !req->metadata_received) {
+		/* Fall back to the original per-req completion path when the
+		   req has no metadata yet (a write-only completion can mark
+		   a req segment-complete before its metadata message arrives,
+		   so signal_base_address is not populated) — the per-req path
+		   correctly skips the gdrcopy in that case.
+		   Folding only applies with metadata in hand, which is also the
+		   only case build_signal_work can resolve the slot. */
+		if (!req->metadata_received) {
 			ack_requested = ack_requested || req->is_ack_requested;
 			rank_comm.rx_consumed = gin_cursor_inc(rank_comm.rx_consumed);
 			rank_comm.next_delivered_signal_seq_num =
@@ -1747,20 +1742,8 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 		req->is_ack_requested = req->is_ack_requested || meta_ack_req;
 	}
 
-	/* Weak-signal mode: once all segments of this signal (metadata +
-	   writes at this same seq, if any) have arrived, deliver it
-	   immediately. This covers metadata-first and writes-first orderings. */
 	if (req->num_seg_completions == req->total_segments) {
-		if (!strong_signal_ordering_enabled) {
-			ret = do_gin_signal_and_trace(peer_rank, req);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_METADATA_COMPLETION_FUNC_END(
-				dev, this, rail_id, peer_rank, msg_seq_num, ret);
-				return ret;
-			}
-		}
-
-		// If this packet is not full there is no reasong to try and retire packets.
+		// If this packet is not full there is no reason to try and retire packets.
 		ret = retire_completed_peer_iput_ops(peer_rank);
 	}
 
@@ -1843,24 +1826,7 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 		req->metadata.header.seq_seg_cnt = req->total_segments;
 		req->metadata.header.msg_type = GIN_MSG_TYPE_METADATA;
 
-		/* Weak-signal mode: from GIN's perspective, iput+signal is a
-		 * single logical operation sharing one sequence number.
-		 * However, from libfabric's perspective these are two separate
-		 * packets — an RDMA write-with-immediate and an fi_send — that
-		 * can complete in either order on the receiver. We therefore
-		 * need to check for signal delivery here (when the last write
-		 * completes after metadata) in addition to
-		 * handle_signal_metadata_completion() (when metadata completes
-		 * after writes). */
-		if (!strong_signal_ordering_enabled && req->metadata_received) {
-			ret = do_gin_signal_and_trace(peer_rank, req);
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_TRACE_GIN_HANDLE_SIGNAL_WRITE_COMPLETION_FUNC_END(
-					dev, this, rail_id, peer_rank, msg_seq_num, ret);
-				return ret;
-			}
-		}
-		// If this packet is not full there is no reasong to try and retire packets.
+		// If this packet is not full there is no reason to try and retire packets.
 		ret = retire_completed_peer_iput_ops(peer_rank);
 	}
 
