@@ -5586,6 +5586,8 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 			}
 			/* Single recv: the front entry satisfies it */
 			send_data->eager_ctrl_msg_received = true;
+			/* Update msg_seq_num in entry - Used to find the ctrl msg */
+			entry->req->msg_seq_num = seq;
 			this->n_ctrl_received += 1;
 			this->next_msg_seq_num = (seq + 1) & MSG_SEQ_NUM_MASK;
 			/* Reset eager offset counter and prev parameters when advancing msg_seq_num if sent eager since last time */
@@ -5609,6 +5611,8 @@ bool nccl_net_ofi_rdma_send_comm::drain_sender_eager_queue()
 			if ((ctrl->entries[e].entry_used == 0) && (ctrl->entries[e].tag == entry->tag)) {
 				send_data->eager_ctrl_msg_received = true;
 				ctrl->entries[e].entry_used = 1;
+				/* Update msg_seq_num in entry - Used to find the ctrl msg */
+				entry->req->msg_seq_num = seq;
 				this->group_sends_remaining--;
 				found = true;
 				break;
