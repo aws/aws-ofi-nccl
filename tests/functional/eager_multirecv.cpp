@@ -8,6 +8,7 @@
 
 #include "config.h"
 #include "functional_test.h"
+#include <chrono>
 #include <queue>
 #include <set>
 
@@ -1413,6 +1414,190 @@ public:
 };
 
 
+/* ================================================================
+ * T25: Single-recv ctrl consumed against a rotated eager queue
+ *
+ * Sends: eager tag 30, eager tag 40, large tag 31, large tag 20.
+ * Recvs (posted late): grouped {30,31}, single {20}, single {40}.
+ * Draining the grouped ctrl rotates the eager ring, so the ring head
+ * (tag 40) does not own the next single-recv ctrl (tag 20). Consuming
+ * that ctrl without a tag check deadlocks the tag-20 send.
+ * Also verifies the tag-40 send reports the correct size after it is
+ * matched to a later ctrl than its batch-start msg_seq_num.
+ * ================================================================ */
+
+static constexpr int T25_TIMEOUT_MS = 10000;
+
+static void post_send_bounded(test_nccl_net_t *ext_net, void *sComm, void *buf,
+			      size_t size, int tag, void *mh, void **req,
+			      const char *what)
+{
+	*req = nullptr;
+	auto deadline = std::chrono::steady_clock::now() +
+			std::chrono::milliseconds(T25_TIMEOUT_MS);
+	while (*req == nullptr) {
+		OFINCCLTHROW(ext_net->isend(sComm, buf, size, tag, mh, nullptr, req));
+		if (*req == nullptr && std::chrono::steady_clock::now() > deadline) {
+			throw std::runtime_error(
+				std::string("T25: isend never accepted ") + what);
+		}
+	}
+}
+
+static void poll_one_bounded(test_nccl_net_t *ext_net, void *req, int *out_size,
+			     const char *what)
+{
+	int done = 0;
+	int sz = 0;
+	auto deadline = std::chrono::steady_clock::now() +
+			std::chrono::milliseconds(T25_TIMEOUT_MS);
+	while (!done) {
+		OFINCCLTHROW(ext_net->test(req, &done, &sz));
+		if (!done && std::chrono::steady_clock::now() > deadline) {
+			throw std::runtime_error(std::string("T25: timed out polling ") + what);
+		}
+	}
+	if (out_size) *out_size = sz;
+}
+
+static void poll_recv_bounded_t25(test_nccl_net_t *ext_net, void *req, int *sizes,
+				  int n, const char *what)
+{
+	int done = 0;
+	memset(sizes, 0, sizeof(int) * n);
+	auto deadline = std::chrono::steady_clock::now() +
+			std::chrono::milliseconds(T25_TIMEOUT_MS);
+	while (!done) {
+		OFINCCLTHROW(ext_net->test(req, &done, sizes));
+		if (!done && std::chrono::steady_clock::now() > deadline) {
+			throw std::runtime_error(std::string("T25: timed out polling ") + what);
+		}
+	}
+}
+
+class Test25_SingleRecvRotatedQueue : public TestScenario {
+public:
+	Test25_SingleRecvRotatedQueue()
+		: TestScenario("T25: single-recv ctrl vs rotated eager queue") {}
+
+	void run(ThreadContext &ctx) override
+	{
+		test_nccl_properties_t props = {};
+		OFINCCLTHROW(ext_net->getProperties(0, &props));
+		if (props.maxRecvs < 2) return;
+
+		for (size_t d = 0; d < ctx.lcomms.size(); d++) {
+			void *sComm = ctx.scomms[d], *rComm = ctx.rcomms[d];
+			int btype = NCCL_PTR_HOST;
+
+			if (ctx.rank == 0) {
+				const int    stags[4]  = {30, 40, 31, 20};
+				const size_t ssizes[4] = {EAGER_SIZE, EAGER_SIZE, LARGE_SIZE, LARGE_SIZE};
+				const char   spat[4]   = {'A', 'B', 'C', 'D'};
+				const char  *swhat[4]  = {"eager tag 30", "eager tag 40",
+							  "large tag 31", "large tag 20"};
+				void *bufs[4] = {}, *mhs[4] = {}, *reqs[4] = {};
+
+				for (int i = 0; i < 4; i++) {
+					OFINCCLTHROW(allocate_buff(&bufs[i], ssizes[i], btype));
+					OFINCCLTHROW(initialize_buff(bufs[i], ssizes[i], btype, spat[i]));
+					OFINCCLTHROW(ext_net->regMr(sComm, bufs[i], ssizes[i], btype, &mhs[i]));
+				}
+
+				/* Queue both eager sends before any ctrl lands. */
+				post_send_bounded(ext_net, sComm, bufs[0], ssizes[0], stags[0],
+						  mhs[0], &reqs[0], swhat[0]);
+				post_send_bounded(ext_net, sComm, bufs[1], ssizes[1], stags[1],
+						  mhs[1], &reqs[1], swhat[1]);
+
+				/* Completes the group and advances to the single-recv ctrl. */
+				post_send_bounded(ext_net, sComm, bufs[2], ssizes[2], stags[2],
+						  mhs[2], &reqs[2], swhat[2]);
+
+				/* Deadlocks if the tag-20 ctrl was consumed by tag 40. */
+				post_send_bounded(ext_net, sComm, bufs[3], ssizes[3], stags[3],
+						  mhs[3], &reqs[3], swhat[3]);
+
+				int ssz[4] = {};
+				for (int i = 0; i < 4; i++) {
+					poll_one_bounded(ext_net, reqs[i], &ssz[i], swhat[i]);
+				}
+
+				/* Tag 40 matched a later ctrl than its batch-start seq. */
+				if (ssz[1] != (int)EAGER_SIZE) {
+					throw std::runtime_error(
+						"T25: send tag 40 reported size " +
+						std::to_string(ssz[1]) + ", expected " +
+						std::to_string(EAGER_SIZE));
+				}
+
+				for (int i = 0; i < 4; i++) {
+					ext_net->deregMr(sComm, mhs[i]);
+					deallocate_buffer(bufs[i], btype);
+				}
+			} else {
+				usleep(30000);
+
+				/* Grouped recv, tags {30, 31} */
+				void *gbufs[2] = {}, *gmh[2] = {};
+				size_t gsizes[2] = {EAGER_SIZE, LARGE_SIZE};
+				int gtags[2] = {30, 31};
+				for (int i = 0; i < 2; i++) {
+					OFINCCLTHROW(allocate_buff(&gbufs[i], gsizes[i], btype));
+					OFINCCLTHROW(ext_net->regMr(rComm, gbufs[i], gsizes[i], btype, &gmh[i]));
+				}
+				void *greq = nullptr;
+				post_recv(ext_net, rComm, 2, gbufs, gsizes, gtags, gmh, &greq);
+
+				/* Single recv, tag 20 */
+				void *b20 = nullptr, *mh20 = nullptr, *req20 = nullptr;
+				OFINCCLTHROW(allocate_buff(&b20, LARGE_SIZE, btype));
+				OFINCCLTHROW(ext_net->regMr(rComm, b20, LARGE_SIZE, btype, &mh20));
+				size_t sz20 = LARGE_SIZE; int tag20 = 20;
+				post_recv(ext_net, rComm, 1, &b20, &sz20, &tag20, &mh20, &req20);
+
+				/* Single recv, tag 40 */
+				void *b40 = nullptr, *mh40 = nullptr, *req40 = nullptr;
+				OFINCCLTHROW(allocate_buff(&b40, EAGER_SIZE, btype));
+				OFINCCLTHROW(ext_net->regMr(rComm, b40, EAGER_SIZE, btype, &mh40));
+				size_t sz40 = EAGER_SIZE; int tag40 = 40;
+				post_recv(ext_net, rComm, 1, &b40, &sz40, &tag40, &mh40, &req40);
+
+				int gsz[2] = {}, rsz20 = 0, rsz40 = 0;
+				poll_recv_bounded_t25(ext_net, greq, gsz, 2, "grouped recv {30,31}");
+				poll_one_bounded(ext_net, req20, &rsz20, "single recv tag 20");
+				poll_one_bounded(ext_net, req40, &rsz40, "single recv tag 40");
+
+				if (gsz[0] != (int)EAGER_SIZE || gsz[1] != (int)LARGE_SIZE ||
+				    rsz20 != (int)LARGE_SIZE || rsz40 != (int)EAGER_SIZE) {
+					throw std::runtime_error("T25: wrong recv sizes");
+				}
+
+				char *exp = nullptr;
+				struct { void *buf; size_t len; char pat; } checks[4] = {
+					{gbufs[0], EAGER_SIZE, 'A'},
+					{gbufs[1], LARGE_SIZE, 'C'},
+					{b20,      LARGE_SIZE, 'D'},
+					{b40,      EAGER_SIZE, 'B'},
+				};
+				for (auto &c : checks) {
+					OFINCCLTHROW(allocate_buff((void **)&exp, c.len, btype));
+					OFINCCLTHROW(initialize_buff(exp, c.len, btype, c.pat));
+					OFINCCLTHROW(validate_data((char *)c.buf, exp, c.len, btype));
+					deallocate_buffer(exp, btype);
+				}
+
+				for (int i = 0; i < 2; i++) {
+					ext_net->deregMr(rComm, gmh[i]);
+					deallocate_buffer(gbufs[i], btype);
+				}
+				ext_net->deregMr(rComm, mh20); deallocate_buffer(b20, btype);
+				ext_net->deregMr(rComm, mh40); deallocate_buffer(b40, btype);
+			}
+		}
+	}
+};
+
 int main(int argc, char *argv[])
 {
 	TestSuite suite;
@@ -1459,6 +1644,9 @@ int main(int argc, char *argv[])
 	Test24_EagerAlternatingSingleGrouped t24;
 	suite.add(&t23);
 	suite.add(&t24);
+
+	Test25_SingleRecvRotatedQueue t25;
+	suite.add(&t25);
 
 	return suite.run_all();
 }
