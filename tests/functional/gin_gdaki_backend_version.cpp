@@ -19,8 +19,6 @@
  *   backendVersion < 0  (e.g. -1)               -> ncclInvalidArgument
  *   backendVersion > MAX (e.g. MAX+1)           -> ncclInvalidArgument
  *
- * Uses the v14 GIN op-table (ncclGinPlugin_v14) directly, since backendVersion
- * only exists in ncclGinConfig_v14_t.
  */
 
 #include "config.h"
@@ -56,7 +54,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "backend_version: SKIP (built without GDAKI support)\n");
 	return 0;
 #else
-	ncclGin_v14_t *gin = (ncclGin_v14_t *)dlsym(net_plugin_handle,
+	test_nccl_gin_t *gin = (test_nccl_gin_t *)dlsym(net_plugin_handle,
 						    "ncclGinPlugin_v14");
 	if (!gin || !gin->createContext) {
 		fprintf(stderr, "backend_version: FAIL (no ncclGinPlugin_v14)\n");
@@ -110,7 +108,7 @@ int main(int argc, char *argv[])
 
 	/* Case 2: negative backendVersion. */
 	{
-		ncclGinConfig_v14_t cfg = {};
+		test_nccl_gin_config_t cfg = {};
 		cfg.backendVersion = -1;
 		ncclResult_t rc = gin->createContext(collComm, &cfg,
 						     &ginCtx, &devHandle);
@@ -122,7 +120,7 @@ int main(int argc, char *argv[])
 
 	/* Case 3: backendVersion above what the plugin supports. */
 	{
-		ncclGinConfig_v14_t cfg = {};
+		test_nccl_gin_config_t cfg = {};
 		cfg.backendVersion = NCCL_OFI_GDAKI_MAX_BACKEND_VERSION + 1;
 		ncclResult_t rc = gin->createContext(collComm, &cfg,
 						     &ginCtx, &devHandle);

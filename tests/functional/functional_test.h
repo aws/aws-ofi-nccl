@@ -83,11 +83,12 @@
 
 // Can be changed when porting new versions to the plugin
 #define NCCL_PLUGIN_SYMBOL ncclNetPlugin_v11
-#define NCCL_GIN_PLUGIN_SYMBOL ncclGinPlugin_v13
+#define NCCL_GIN_PLUGIN_SYMBOL ncclGinPlugin_v14
 #define NCCL_RMA_PLUGIN_SYMBOL ncclRmaPlugin_v15
 
 typedef ncclNet_v11_t test_nccl_net_t;
-typedef ncclGin_v13_t test_nccl_gin_t;
+typedef ncclGin_v14_t test_nccl_gin_t;
+typedef ncclGinConfig_v14_t test_nccl_gin_config_t;
 typedef ncclRma_v15_t test_nccl_rma_t;
 typedef ncclRmaConfig_v15_t test_nccl_rma_config_t;
 typedef ncclNetProperties_v11_t test_nccl_properties_t;
