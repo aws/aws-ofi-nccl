@@ -421,6 +421,15 @@ test_nccl_gin_t *get_ginPlugin_symbol(void *netPluginLib)
 	return extGin;
 }
 
+test_nccl_rma_t *get_rmaPlugin_symbol(void *netPluginLib)
+{
+	test_nccl_rma_t *extRma = (test_nccl_rma_t *)dlsym(netPluginLib, STR(NCCL_RMA_PLUGIN_SYMBOL));
+	if (extRma == NULL) {
+		NCCL_OFI_WARN("RmaPlugin, could not find %s symbol",
+			      STR(NCCL_RMA_PLUGIN_SYMBOL));
+	}
+	return extRma;
+}
 
 test_nccl_net_t *get_extNet(void)
 {
