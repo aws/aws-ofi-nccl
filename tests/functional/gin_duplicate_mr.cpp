@@ -21,15 +21,15 @@
  */
 
 static inline ncclResult_t
-poll_request_completion(ncclGin_v13_t *extGin, std::deque<void *> &request_deque, void *collComm,
-		       void *ginCtx)
+poll_request_completion(test_nccl_rma_t *extRma, std::deque<void *> &request_deque, void *collComm,
+		       void *rmaCtx)
 {
 	int done = 0;
-	OFINCCLCHECK(extGin->test(collComm, request_deque.front(), &done));
+	OFINCCLCHECK(extRma->test(collComm, request_deque.front(), &done));
 	if (done) {
 		request_deque.pop_front();
 	} else {
-		OFINCCLCHECK(extGin->ginProgress(ginCtx));
+		OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
 	}
 	return ncclSuccess;
 }
@@ -77,8 +77,8 @@ int main(int argc, char *argv[])
 	set_system_page_size();
 	auto *net_plugin_handle = load_netPlugin();
 	auto *extNet = get_netPlugin_symbol(net_plugin_handle);
-	auto *extGin = get_ginPlugin_symbol(net_plugin_handle);
-	if (extNet == nullptr || extGin == NULL) {
+	auto *extRma = get_rmaPlugin_symbol(net_plugin_handle);
+	if (extNet == nullptr || extRma == NULL) {
 		return ncclInternalError;
 	}
 
@@ -86,15 +86,15 @@ int main(int argc, char *argv[])
 	ncclNetCommConfig_v11_t netConfig = {};
 	OFINCCLCHECK(extNet->init(&netCtx, 0, &netConfig, &functional_test_logger, nullptr));
 
-	void *ginCtx = nullptr;
-	OFINCCLCHECK(extGin->init(&ginCtx, 0, &functional_test_logger));
+	void *context = nullptr;
+	OFINCCLCHECK(extRma->init(&context, 0, &functional_test_logger));
 
-	OFINCCLCHECK(extGin->devices(&ndev));
+	OFINCCLCHECK(extRma->devices(&ndev));
 
 	std::vector<int> test_support_gdr(ndev);
 	for (dev = 0; dev < ndev; dev++) {
 		ncclNetProperties_v12_t props = {};
-		OFINCCLCHECK(extGin->getProperties(dev, &props));
+		OFINCCLCHECK(extRma->getProperties(dev, &props));
 		test_support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 
@@ -108,7 +108,7 @@ int main(int argc, char *argv[])
 	}
 
 	void *listenComm = nullptr;
-	OFINCCLCHECK(extGin->listen(ginCtx, dev, handles[rank].handle, &listenComm));
+	OFINCCLCHECK(extRma->listen(context, dev, handles[rank].handle, &listenComm));
 	assert(listenComm);
 
 	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, handles.data(), NCCL_NET_HANDLE_MAXSIZE,
@@ -120,19 +120,16 @@ int main(int argc, char *argv[])
 
 	void *collComm = nullptr;
 	OFINCCLCHECK(
-		extGin->connect(ginCtx, handles_ptrs.data(), nranks, rank, listenComm, &collComm));
+		extRma->connect(context, handles_ptrs.data(), nranks, rank, listenComm, &collComm));
 	assert(collComm != nullptr);
 
-	ncclGinConfig_v13_t ginConfig = {};
-	ginConfig.nSignals = 64;
-	ginConfig.nContexts = 1;
-	ginConfig.queueDepth = 64;
-	ginConfig.trafficClass = -1;
+	test_nccl_rma_config_t rmaConfig = {};
+	rmaConfig.nContexts = 1;
+	rmaConfig.trafficClass = -1;
 
-	void *proxyCtx = nullptr;
-	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
-	OFINCCLCHECK(extGin->createContext(collComm, &ginConfig, &proxyCtx, &devHandle));
-	assert(proxyCtx != nullptr);
+	void *rmaCtx = nullptr;
+	OFINCCLCHECK(extRma->createContext(collComm, &rmaConfig, &rmaCtx));
+	assert(rmaCtx != nullptr);
 
 	/*
 	 * Test 1: Register the same buffer twice with the same size.
@@ -144,15 +141,13 @@ int main(int argc, char *argv[])
 	OFINCCLCHECK(initialize_buff(buff, SEND_SIZE, buffer_type, 0));
 
 	void *mhandle1 = nullptr;
-	void *gin_handle1 = nullptr;
-	OFINCCLCHECK(extGin->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
-				      &mhandle1, &gin_handle1));
+	OFINCCLCHECK(extRma->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
+				      &mhandle1));
 	assert(mhandle1 != nullptr);
 
 	void *mhandle2 = nullptr;
-	void *gin_handle2 = nullptr;
-	OFINCCLCHECK(extGin->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
-				      &mhandle2, &gin_handle2));
+	OFINCCLCHECK(extRma->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
+				      &mhandle2));
 	assert(mhandle2 != nullptr);
 
 	if (mhandle1 != mhandle2) {
@@ -168,9 +163,8 @@ int main(int argc, char *argv[])
 	 * Should succeed and return the same handle (existing MR covers it).
 	 */
 	void *mhandle3 = nullptr;
-	void *gin_handle3 = nullptr;
-	OFINCCLCHECK(extGin->regMrSym(collComm, buff, SEND_SIZE / 2, buffer_type, mrFlags,
-				      &mhandle3, &gin_handle3));
+	OFINCCLCHECK(extRma->regMrSym(collComm, buff, SEND_SIZE / 2, buffer_type, mrFlags,
+				      &mhandle3));
 	assert(mhandle3 != nullptr);
 
 	if (mhandle3 != mhandle1) {
@@ -196,15 +190,15 @@ int main(int argc, char *argv[])
 		std::deque<void *> request_deque;
 		for (int dst_rank = 1; dst_rank < nranks; ++dst_rank) {
 			void *request = nullptr;
-			OFINCCLCHECK(extGin->iput(proxyCtx, 0, 0, mhandle1, SEND_SIZE, 0,
-						  mhandle1, dst_rank, &request));
+			OFINCCLCHECK(extRma->iput(rmaCtx, 0, 0, mhandle1, SEND_SIZE, 0,
+						  mhandle1, dst_rank, 0, &request));
 			assert(request != nullptr);
 			request_deque.push_back(request);
 		}
 
 		while (!request_deque.empty()) {
-			OFINCCLCHECK(poll_request_completion(extGin, request_deque, collComm,
-							    proxyCtx));
+			OFINCCLCHECK(poll_request_completion(extRma, request_deque, collComm,
+							    rmaCtx));
 		}
 	}
 
@@ -229,19 +223,19 @@ int main(int argc, char *argv[])
 	 * The MR should remain valid (refcount > 0).
 	 * Then deregister the second one to fully release.
 	 */
-	OFINCCLCHECK(extGin->deregMrSym(collComm, mhandle1));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle1));
 	/* mhandle1 == mhandle2, so only call deregMrSym once more */
-	OFINCCLCHECK(extGin->deregMrSym(collComm, mhandle2));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle2));
 	NCCL_OFI_INFO(NCCL_NET, "Rank %d: Test 4 PASSED — double deregMrSym succeeded", rank);
 
 	/* Deregister the third (smaller size) registration */
-	OFINCCLCHECK(extGin->deregMrSym(collComm, mhandle3));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle3));
 
 	/* Cleanup */
-	OFINCCLCHECK(extGin->destroyContext(proxyCtx));
-	OFINCCLCHECK(extGin->closeColl(collComm));
-	OFINCCLCHECK(extGin->closeListen(listenComm));
-	OFINCCLCHECK(extGin->finalize(ginCtx));
+	OFINCCLCHECK(extRma->destroyContext(rmaCtx));
+	OFINCCLCHECK(extRma->closeColl(collComm));
+	OFINCCLCHECK(extRma->closeListen(listenComm));
+	OFINCCLCHECK(extRma->finalize(context));
 	OFINCCLCHECK(extNet->finalize(netCtx));
 
 	dlclose(net_plugin_handle);

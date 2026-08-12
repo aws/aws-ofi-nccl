@@ -175,15 +175,15 @@ static void multiseg_vmm_free(multiseg_vmm_buf *b)
 }
 
 static inline ncclResult_t
-poll_request_completion(ncclGin_v13_t *extGin, std::deque<void *> &request_deque, void *collComm,
-		       void *ginCtx)
+poll_request_completion(test_nccl_rma_t *extRma, std::deque<void *> &request_deque, void *collComm,
+		       void *rmaCtx)
 {
 	int done = 0;
-	OFINCCLCHECK(extGin->test(collComm, request_deque.front(), &done));
+	OFINCCLCHECK(extRma->test(collComm, request_deque.front(), &done));
 	if (done) {
 		request_deque.pop_front();
 	} else {
-		OFINCCLCHECK(extGin->ginProgress(ginCtx));
+		OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
 	}
 	return ncclSuccess;
 }
@@ -228,8 +228,8 @@ int main(int argc, char *argv[])
 	set_system_page_size();
 	auto *net_plugin_handle = load_netPlugin();
 	auto *extNet = get_netPlugin_symbol(net_plugin_handle);
-	auto *extGin = get_ginPlugin_symbol(net_plugin_handle);
-	if (extNet == nullptr || extGin == NULL) {
+	auto *extRma = get_rmaPlugin_symbol(net_plugin_handle);
+	if (extNet == nullptr || extRma == NULL) {
 		return ncclInternalError;
 	}
 
@@ -237,15 +237,15 @@ int main(int argc, char *argv[])
 	ncclNetCommConfig_v11_t netConfig = {};
 	OFINCCLCHECK(extNet->init(&netCtx, 0, &netConfig, &functional_test_logger, nullptr));
 
-	void *ginCtx = nullptr;
-	OFINCCLCHECK(extGin->init(&ginCtx, 0, &functional_test_logger));
+	void *context = nullptr;
+	OFINCCLCHECK(extRma->init(&context, 0, &functional_test_logger));
 
-	OFINCCLCHECK(extGin->devices(&ndev));
+	OFINCCLCHECK(extRma->devices(&ndev));
 
 	std::vector<int> test_support_gdr(ndev);
 	for (dev = 0; dev < ndev; dev++) {
 		ncclNetProperties_v12_t props = {};
-		OFINCCLCHECK(extGin->getProperties(dev, &props));
+		OFINCCLCHECK(extRma->getProperties(dev, &props));
 		test_support_gdr[dev] = is_gdr_supported_nic(props.ptrSupport);
 	}
 
@@ -259,7 +259,7 @@ int main(int argc, char *argv[])
 	}
 
 	void *listenComm = nullptr;
-	OFINCCLCHECK(extGin->listen(ginCtx, dev, handles[rank].handle, &listenComm));
+	OFINCCLCHECK(extRma->listen(context, dev, handles[rank].handle, &listenComm));
 	assert(listenComm);
 
 	MPI_Allgather(MPI_IN_PLACE, 0, MPI_DATATYPE_NULL, handles.data(), NCCL_NET_HANDLE_MAXSIZE,
@@ -271,19 +271,16 @@ int main(int argc, char *argv[])
 
 	void *collComm = nullptr;
 	OFINCCLCHECK(
-		extGin->connect(ginCtx, handles_ptrs.data(), nranks, rank, listenComm, &collComm));
+		extRma->connect(context, handles_ptrs.data(), nranks, rank, listenComm, &collComm));
 	assert(collComm != nullptr);
 
-	ncclGinConfig_v13_t ginConfig = {};
-	ginConfig.nSignals = 64;
-	ginConfig.nContexts = 1;
-	ginConfig.queueDepth = 64;
-	ginConfig.trafficClass = -1;
+	test_nccl_rma_config_t rmaConfig = {};
+	rmaConfig.nContexts = 1;
+	rmaConfig.trafficClass = -1;
 
-	void *proxyCtx = nullptr;
-	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
-	OFINCCLCHECK(extGin->createContext(collComm, &ginConfig, &proxyCtx, &devHandle));
-	assert(proxyCtx != nullptr);
+	void *rmaCtx = nullptr;
+	OFINCCLCHECK(extRma->createContext(collComm, &rmaConfig, &rmaCtx));
+	assert(rmaCtx != nullptr);
 
 	const size_t MSEG_NSEGS = 2;
 	const size_t MSEG_MIN = 2 * 1024 * 1024; /* >= VMM granularity */
@@ -293,15 +290,15 @@ int main(int argc, char *argv[])
 	   moved across a cuMemCreate-handle boundary), not just registered. */
 	const size_t MSEG_PAY_BYTES = 64 * 1024;
 
-	auto reg_dmabuf = [&](CUdeviceptr base, size_t len, void **mh, void **gin) -> ncclResult_t {
+	auto reg_dmabuf = [&](CUdeviceptr base, size_t len, void **mh) -> ncclResult_t {
 		int fd = -1;
 		if (pfn_cuMemGetHandleForAddressRange(&fd, base, len,
 				CU_MEM_RANGE_HANDLE_TYPE_DMA_BUF_FD, 0) != CUDA_SUCCESS) {
 			NCCL_OFI_WARN("multiseg: cuMemGetHandleForAddressRange failed");
 			return ncclSystemError;
 		}
-		ncclResult_t r = extGin->regMrSymDmaBuf(collComm, (void *)base, len,
-							NCCL_PTR_CUDA, 0, fd, 0, mh, gin);
+		ncclResult_t r = extRma->regMrSymDmaBuf(collComm, (void *)base, len,
+							NCCL_PTR_CUDA, 0, fd, 0, mh);
 		close(fd);
 		return r;
 	};
@@ -309,8 +306,8 @@ int main(int argc, char *argv[])
 	/* Multi-segment signal window. */
 	multiseg_vmm_buf msig = {};
 	OFINCCLCHECK(multiseg_vmm_alloc(&msig, MSEG_NSEGS, MSEG_MIN));
-	void *msig_mh = nullptr, *msig_gin = nullptr;
-	OFINCCLCHECK(reg_dmabuf(msig.base, msig.total, &msig_mh, &msig_gin));
+	void *msig_mh = nullptr;
+	OFINCCLCHECK(reg_dmabuf(msig.base, msig.total, &msig_mh));
 	assert(msig_mh != nullptr);
 
 	/* Multi-segment payload windows (src + dst), also VMM + dma-buf. Both the
@@ -318,14 +315,14 @@ int main(int argc, char *argv[])
 	   case (multi-segment payload) and giving the widest coverage. */
 	multiseg_vmm_buf msrc = {};
 	OFINCCLCHECK(multiseg_vmm_alloc(&msrc, MSEG_NSEGS, MSEG_MIN));
-	void *msrc_mh = nullptr, *msrc_gin = nullptr;
-	OFINCCLCHECK(reg_dmabuf(msrc.base, msrc.total, &msrc_mh, &msrc_gin));
+	void *msrc_mh = nullptr;
+	OFINCCLCHECK(reg_dmabuf(msrc.base, msrc.total, &msrc_mh));
 	assert(msrc_mh != nullptr);
 
 	multiseg_vmm_buf mdst = {};
 	OFINCCLCHECK(multiseg_vmm_alloc(&mdst, MSEG_NSEGS, MSEG_MIN));
-	void *mdst_mh = nullptr, *mdst_gin = nullptr;
-	OFINCCLCHECK(reg_dmabuf(mdst.base, mdst.total, &mdst_mh, &mdst_gin));
+	void *mdst_mh = nullptr;
+	OFINCCLCHECK(reg_dmabuf(mdst.base, mdst.total, &mdst_mh));
 	assert(mdst_mh != nullptr);
 
 	const uint64_t seg0_off = 0;
@@ -376,27 +373,27 @@ int main(int argc, char *argv[])
 			for (int s = 0; s < MSEG_SIGNALS_PER_SEG; ++s) {
 				void *r0 = nullptr, *r1 = nullptr;
 				/* Spanning payload put into signal segment 0's counter. */
-				OFINCCLCHECK(extGin->iputSignal(proxyCtx, 0, pay_off, msrc_mh,
+				OFINCCLCHECK(extRma->iputSignal(rmaCtx, 0, pay_off, msrc_mh,
 					MSEG_PAY_BYTES, pay_off, mdst_mh, dst, seg0_off, msig_mh, 1,
-					NCCL_NET_SIGNAL_OP_INC, &r0));
+					NCCL_NET_SIGNAL_OP_INC, 1, 0, &r0));
 				assert(r0 != nullptr);
 				dq.push_back(r0);
 				/* Spanning payload put into signal segment 1's counter. */
-				OFINCCLCHECK(extGin->iputSignal(proxyCtx, 0, pay_off, msrc_mh,
+				OFINCCLCHECK(extRma->iputSignal(rmaCtx, 0, pay_off, msrc_mh,
 					MSEG_PAY_BYTES, pay_off, mdst_mh, dst, seg1_off, msig_mh, 1,
-					NCCL_NET_SIGNAL_OP_INC, &r1));
+					NCCL_NET_SIGNAL_OP_INC, 1, 0, &r1));
 				assert(r1 != nullptr);
 				dq.push_back(r1);
 			}
 		}
 		while (!dq.empty()) {
-			OFINCCLCHECK(poll_request_completion(extGin, dq, collComm, proxyCtx));
+			OFINCCLCHECK(poll_request_completion(extRma, dq, collComm, rmaCtx));
 		}
 	} else {
 		uint64_t s0 = 0, s1 = 0;
 		while (s0 != (uint64_t)MSEG_SIGNALS_PER_SEG ||
 		       s1 != (uint64_t)MSEG_SIGNALS_PER_SEG) {
-			OFINCCLCHECK(extGin->ginProgress(proxyCtx));
+			OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
 			CUDACHECK(cudaMemcpy(&s0, (void *)(msig.base + seg0_off),
 					     sizeof(uint64_t), cudaMemcpyDefault));
 			CUDACHECK(cudaMemcpy(&s1, (void *)(msig.base + seg1_off),
@@ -429,17 +426,17 @@ int main(int argc, char *argv[])
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
-	OFINCCLCHECK(extGin->deregMrSym(collComm, msig_mh));
-	OFINCCLCHECK(extGin->deregMrSym(collComm, msrc_mh));
-	OFINCCLCHECK(extGin->deregMrSym(collComm, mdst_mh));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, msig_mh));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, msrc_mh));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, mdst_mh));
 	multiseg_vmm_free(&msig);
 	multiseg_vmm_free(&msrc);
 	multiseg_vmm_free(&mdst);
 
-	OFINCCLCHECK(extGin->destroyContext(proxyCtx));
-	OFINCCLCHECK(extGin->closeColl(collComm));
-	OFINCCLCHECK(extGin->closeListen(listenComm));
-	OFINCCLCHECK(extGin->finalize(ginCtx));
+	OFINCCLCHECK(extRma->destroyContext(rmaCtx));
+	OFINCCLCHECK(extRma->closeColl(collComm));
+	OFINCCLCHECK(extRma->closeListen(listenComm));
+	OFINCCLCHECK(extRma->finalize(context));
 	OFINCCLCHECK(extNet->finalize(netCtx));
 
 	dlclose(net_plugin_handle);
