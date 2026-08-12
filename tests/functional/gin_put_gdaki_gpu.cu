@@ -147,10 +147,11 @@ int main(int argc, char *argv[])
 	OFINCCLCHECK(extGin->connect(ginCtx, handles_ptrs.data(), nranks, rank,
 				     listenComm, &collComm));
 
-	ncclGinConfig_v13_t ginConfig = {};
+	test_nccl_gin_config_t ginConfig = {};
 	ginConfig.nContexts = 1;
 	ginConfig.queueDepth = 64;
 	ginConfig.trafficClass = -1;
+	ginConfig.backendVersion = 1;
 
 	void *proxyCtx = nullptr;
 	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
