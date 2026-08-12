@@ -18,3 +18,4 @@ gdrcopy
 spinlock
 spsc_ring
 ctrl_msg
+mpsc_ring
