@@ -397,4 +397,23 @@ OFI_NCCL_PARAM(NVTX_TRACE_DIMENSION, nvtx_trace_dimension,  "NVTX_TRACE_DIMENSIO
 OFI_NCCL_PARAM_VALUE_SET(GDAKI_EFA_HW_COUNTER, (AUTO)(ON)(OFF))
 OFI_NCCL_PARAM(GDAKI_EFA_HW_COUNTER, gdaki_efa_hw_counter, "GDAKI_EFA_HW_COUNTER", GDAKI_EFA_HW_COUNTER::AUTO)
 
+/*
+ * Whether GDRCopy may pin buffers with GDR_PIN_FLAG_FORCE_PCIE, which the GIN
+ * proxy data path requires. The capability is normally probed at runtime and
+ * needs GDRCopy 2.5+ (see nccl_ofi_gdrcopy_ctx::forced_pcie_copy); this knob
+ * overrides that probe.
+ *
+ * The probe reports the *minimum* of the GDRCopy runtime (libgdrapi) and
+ * kernel driver (gdrdrv) versions, so a host running a 2.5 runtime against an
+ * older driver reports below 2.5 and loses forced PCIe copy even though the
+ * runtime supplies the v2 pin API the flag is set through.
+ *
+ * When unset the version probe decides, so the default behavior is unchanged.
+ * Setting this to 1 or 0 forces the capability on or off respectively. Forcing
+ * it on does not make the flag work where the runtime lacks gdr_pin_buffer_v2:
+ * that symbol is still resolved, and GDRCopy initialization fails if it is
+ * missing, rather than falling back.
+ */
+OFI_NCCL_PARAM(bool, gdrcopy_forced_pcie_copy, "GDRCOPY_FORCED_PCIE_COPY", false);
+
 #endif // End NCCL_OFI_PARAM_H_

@@ -11,6 +11,7 @@
 
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
+#include "nccl_ofi_param.h"
 
 #if HAVE_GDRCOPY
 
@@ -85,8 +86,7 @@ nccl_ofi_gdrcopy_ctx::nccl_ofi_gdrcopy_ctx()
 	   GDRCopy 2.5. These are needed to set the GDR_PIN_FLAG_FORCE_PCIE flag
 	   on systems with a C2C interconnect. */
 	pimpl->gdr_pin_buffer_v2_fn = nullptr;
-	uint32_t major, minor;
-	if (get_version(&major, &minor) == 0 && (major > 2 || (major == 2 && minor >= 5))) {
+	if (forced_pcie_copy()) {
 		pimpl->gdr_pin_buffer_v2_fn = reinterpret_cast<decltype(pimpl->gdr_pin_buffer_v2_fn)>
 			(dlsym(pimpl->lib, "gdr_pin_buffer_v2"));
 		if (pimpl->gdr_pin_buffer_v2_fn == nullptr) {
@@ -207,6 +207,15 @@ int nccl_ofi_gdrcopy_ctx::get_version(uint32_t *major, uint32_t *minor)
 
 bool nccl_ofi_gdrcopy_ctx::forced_pcie_copy()
 {
+	/**
+	 * An explicitly set OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY overrides the
+	 * version probe below, for hosts where the probe answers with the
+	 * older of the runtime and driver versions.
+	 */
+	if (ofi_nccl_gdrcopy_forced_pcie_copy.get_source() != ParamSource::DEFAULT) {
+		return ofi_nccl_gdrcopy_forced_pcie_copy.get();
+	}
+
 	uint32_t major, minor;
 	/**
 	 * GDRCopy supports forced PCIe copy since 2.5
