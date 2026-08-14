@@ -96,7 +96,7 @@ if HAVE_GDAKI
 noinst_LTLIBRARIES += libefa_cuda_dp.la
 
 libefa_cuda_dp_la_SOURCES = \
-	$(top_srcdir)/3rd-party/efa-gda/CUDA/host/efa_cuda_dp.cpp
+	../3rd-party/efa-gda/CUDA/host/efa_cuda_dp.cpp
 
 libefa_cuda_dp_la_CPPFLAGS = \
 	-I$(abs_top_srcdir)/include \
