@@ -129,6 +129,15 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, RegHand
 			ret = pimpl->gdr_pin_buffer_v2_fn(pimpl->gdr, regbgn,
 							  handle->gdr_reglen, flags, &mh);
 		}
+		/* On a host whose gdrdrv kernel module predates 2.5 while
+		 * userspace libgdrapi is 2.5+, the v2 pin ioctl is not
+		 * recognized by the kernel (EINVAL/ENOTTY) even though the
+		 * runtime resolved gdr_pin_buffer_v2. Fall back to the v1 pin
+		 * API, which is identical at the gdr_mh_t output level. */
+		if (ret == EINVAL || ret == ENOTTY) {
+			ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn,
+						       handle->gdr_reglen, 0, 0, &mh);
+		}
 	} else {
 		ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn, handle->gdr_reglen, 0, 0, &mh);
 	}
