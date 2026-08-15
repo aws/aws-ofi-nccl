@@ -4,17 +4,6 @@ We strongly recommend starting with a release tarball available on the
 [GitHub Release Page](https://github.com/aws/aws-ofi-nccl/releases) when
 building from source for production uses.
 
-#### Git checkout
-
-Before running `./configure` from a Git checkout, initialize the required
-`3rd-party/efa-dp-direct` source dependency:
-
-```
-git submodule update --init --recursive 3rd-party/efa-dp-direct
-```
-
-Release tarballs already include this dependency.
-
 #### Libfabric
 
 `aws-ofi-nccl` requires a working installation of Libfabric (v1.18.0 or newer). You can

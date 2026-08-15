@@ -62,7 +62,7 @@ gin_gdaki_backend_version_SOURCES = $(base_sources) gin_gdaki_backend_version.cp
 # The backendVersion probe includes nccl_ofi_gin_gdaki_dev.h, which pulls in
 # efa-dp-direct's efa_cuda_dp_types.h; add that include path for this target.
 gin_gdaki_backend_version_CPPFLAGS = $(AM_CPPFLAGS) $(CPPFLAGS) \
-	-isystem $(top_srcdir)/3rd-party/efa-dp-direct/CUDA/common
+	-isystem $(top_srcdir)/3rd-party/efa-gda/CUDA/common
 
 # GDAKI GPU smoke test. .cu compiles via the .cu.o suffix rule below,
 # .cpp via the existing CXXCOMPILE; the binary links via CXXLINK
@@ -92,8 +92,8 @@ gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 		-I$(top_srcdir)/include \
 		-I$(top_srcdir)/3rd-party \
 		-I$(top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include \
-		-isystem $(top_srcdir)/3rd-party/efa-dp-direct/CUDA/common \
-		-isystem $(top_srcdir)/3rd-party/efa-dp-direct/CUDA/device \
+		-isystem $(top_srcdir)/3rd-party/efa-gda/CUDA/common \
+		-isystem $(top_srcdir)/3rd-party/efa-gda/CUDA/device \
 		$(MPI_CPPFLAGS) $(CUDA_CPPFLAGS) \
 		-c -o $@ $<
 endif # HAVE_NVCC
