@@ -77,6 +77,8 @@ DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuGetErrorString, 6000);
 DECLARE_CUDA_FUNCTION(cuGetErrorName, 6000);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
+DECLARE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
+DECLARE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 DECLARE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
@@ -87,6 +89,7 @@ DECLARE_CUDA_FUNCTION(cuMemGetHandleForAddressRange, 11070);
 DECLARE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 DECLARE_CUDA_FUNCTION(cuMemAlloc, 3020);
 DECLARE_CUDA_FUNCTION(cuMemFree, 3020);
+DECLARE_CUDA_FUNCTION(cuMemsetD8, 3020);
 DECLARE_CUDA_FUNCTION(cuMemcpyHtoDAsync, 3020);
 DECLARE_CUDA_FUNCTION(cuStreamCreate, 2000);
 DECLARE_CUDA_FUNCTION(cuStreamSynchronize, 2000);
@@ -192,6 +195,8 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuGetErrorString, 6000);
 	RESOLVE_CUDA_FUNCTION(cuGetErrorName, 6000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
+	RESOLVE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
+	RESOLVE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
 	RESOLVE_CUDA_FUNCTION(cuFlushGPUDirectRDMAWrites, 11030);
@@ -202,6 +207,7 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuPointerGetAttributes, 7000);
 	RESOLVE_CUDA_FUNCTION(cuMemAlloc, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemFree, 3020);
+	RESOLVE_CUDA_FUNCTION(cuMemsetD8, 3020);
 	RESOLVE_CUDA_FUNCTION(cuMemcpyHtoDAsync, 3020);
 	RESOLVE_CUDA_FUNCTION(cuStreamCreate, 2000);
 	RESOLVE_CUDA_FUNCTION(cuStreamSynchronize, 2000);
@@ -355,19 +361,29 @@ restore:
 }
 
 /*
- * Bind the calling thread to a CUDA device (and lazily its primary context).
- * The gdrcopy worker thread is a bare std::thread with no CUDA context, so the
- * lazy signal-segment discovery it performs (cuMemGetAddressRange) fails there
- * unless we set one.
+ * Thin wrappers over the CUDA driver context primitives. set/get manage which
+ * context the calling thread is bound to; they take no ownership of it.
  */
-int nccl_net_ofi_gpu_get_device(int *dev_id)
+int nccl_net_ofi_gpu_set_current_context(CUcontext ctx)
 {
-	return cudaGetDevice(dev_id) == cudaSuccess ? 0 : -EINVAL;
+	CUresult res = pfn_cuCtxSetCurrent(ctx);
+	if (res != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuCtxSetCurrent failed: %s",
+			      nccl_net_ofi_cuda_error_string(res));
+		return -EINVAL;
+	}
+	return 0;
 }
 
-int nccl_net_ofi_gpu_set_device(int dev_id)
+int nccl_net_ofi_gpu_get_current_context(CUcontext *ctx)
 {
-	return cudaSetDevice(dev_id) == cudaSuccess ? 0 : -EINVAL;
+	CUresult res = pfn_cuCtxGetCurrent(ctx);
+	if (res != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuCtxGetCurrent failed: %s",
+			      nccl_net_ofi_cuda_error_string(res));
+		return -EINVAL;
+	}
+	return 0;
 }
 
 int nccl_net_ofi_gpu_get_address_range(void *ptr, void **base_out, size_t *size_out)
@@ -531,8 +547,8 @@ int nccl_net_ofi_gpu_vmm_alloc(void **ptr, size_t size, size_t *out_alloc_size)
 		return -1;
 	}
 
-	if (cudaMemset((void *)dptr, 0, alloc_size) != cudaSuccess) {
-		NCCL_OFI_WARN("vmm_alloc: cudaMemset failed");
+	if (pfn_cuMemsetD8(dptr, 0, alloc_size) != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("vmm_alloc: cuMemsetD8 failed");
 		pfn_cuMemUnmap(dptr, alloc_size);
 		pfn_cuMemAddressFree(dptr, alloc_size);
 		return -EINVAL;
