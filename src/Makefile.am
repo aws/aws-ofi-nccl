@@ -1,5 +1,5 @@
 #
-# Copyright (c) 2018-2025, Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2018-2026, Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -7,7 +7,7 @@
 AM_CPPFLAGS = -I$(abs_top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
-AM_CPPFLAGS += $(CUDA_CPPFLAGS) $(ROCM_CPPFLAGS)
+AM_CPPFLAGS += $(CUDA_CPPFLAGS)
 AM_CPPFLAGS += -DXML_DIR=\"${pkgdatadir}/xml\"
 
 sources = \
@@ -80,8 +80,8 @@ endif
 # us writing dlopen() handlers for simple unit tests.
 noinst_LTLIBRARIES = libinternal_plugin.la
 libinternal_plugin_la_SOURCES = $(sources)
-libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS) $(ROCM_LDFLAGS)
-libinternal_plugin_la_LIBADD  = $(CUDA_LIBS) $(ROCM_LIBS)
+libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS)
+libinternal_plugin_la_LIBADD  = $(CUDA_LIBS)
 
 if HAVE_GDAKI
 # TODO: Vendored efa-dp-direct commit 81c4dc7 has a bug that causes a 
