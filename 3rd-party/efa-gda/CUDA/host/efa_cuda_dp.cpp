@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <stdint.h>
-#include <cuda_runtime.h>
+#include "nccl_ofi_cuda.h"
 
 #include "efa_cuda_dp.h"
 #include "efa_cuda_dp_types.h"
@@ -26,7 +26,7 @@ static bool is_buf_cleared(void *buf, size_t len)
 
 struct efa_cuda_cq *efa_cuda_create_cq(struct efa_cuda_cq_attrs *attrs, uint32_t inlen)
 {
-	cudaError_t cuda_err;
+	int ret;
 
 	if (inlen > sizeof(*attrs) && !is_ext_cleared(attrs, inlen)) {
 		printf("Incompatible attributes struct\n");
@@ -39,10 +39,9 @@ struct efa_cuda_cq *efa_cuda_create_cq(struct efa_cuda_cq_attrs *attrs, uint32_t
 	}
 
 	efa_cuda_cq *d_cq;
-	cuda_err = cudaMalloc(&d_cq, sizeof(efa_cuda_cq));
-	if (cuda_err != cudaSuccess) {
-		printf("Failed to allocate device memory for cq: %s\n",
-		       cudaGetErrorString(cuda_err));
+	ret = nccl_net_ofi_gpu_mem_alloc((void **)&d_cq, sizeof(efa_cuda_cq));
+	if (ret != 0) {
+		printf("Failed to allocate device memory for cq: %d\n", ret);
 		return nullptr;
 	}
 
@@ -55,11 +54,10 @@ struct efa_cuda_cq *efa_cuda_create_cq(struct efa_cuda_cq_attrs *attrs, uint32_t
 	h_cq.cc = 0;
 	h_cq.phase = 1;
 
-	cuda_err = cudaMemcpy(d_cq, &h_cq, sizeof(efa_cuda_cq), cudaMemcpyHostToDevice);
-	if (cuda_err != cudaSuccess) {
-		cudaFree(d_cq);
-		printf("Failed to copy cq to device: %s\n",
-		       cudaGetErrorString(cuda_err));
+	ret = nccl_net_ofi_gpu_mem_copy_host_to_device(d_cq, &h_cq, sizeof(efa_cuda_cq));
+	if (ret != 0) {
+		nccl_net_ofi_gpu_mem_free(d_cq);
+		printf("Failed to copy cq to device: %d\n", ret);
 		return nullptr;
 	}
 
@@ -68,12 +66,13 @@ struct efa_cuda_cq *efa_cuda_create_cq(struct efa_cuda_cq_attrs *attrs, uint32_t
 
 void efa_cuda_destroy_cq(efa_cuda_cq *d_cq)
 {
-	cudaFree(d_cq);
+	if (d_cq)
+		nccl_net_ofi_gpu_mem_free(d_cq);
 }
 
 struct efa_cuda_qp *efa_cuda_create_qp(struct efa_cuda_qp_attrs *attrs, uint32_t inlen)
 {
-	cudaError_t cuda_err;
+	int ret;
 
 	if ((inlen > sizeof(*attrs) && !is_ext_cleared(attrs, inlen)) ||
 	    attrs->reserved) {
@@ -88,10 +87,9 @@ struct efa_cuda_qp *efa_cuda_create_qp(struct efa_cuda_qp_attrs *attrs, uint32_t
 	}
 
 	efa_cuda_qp *d_qp;
-	cuda_err = cudaMalloc(&d_qp, sizeof(efa_cuda_qp));
-	if (cuda_err != cudaSuccess) {
-		printf("Failed to allocate device memory for qp: %s\n",
-		       cudaGetErrorString(cuda_err));
+	ret = nccl_net_ofi_gpu_mem_alloc((void **)&d_qp, sizeof(efa_cuda_qp));
+	if (ret != 0) {
+		printf("Failed to allocate device memory for qp: %d\n", ret);
 		return nullptr;
 	}
 
@@ -124,11 +122,10 @@ struct efa_cuda_qp *efa_cuda_create_qp(struct efa_cuda_qp_attrs *attrs, uint32_t
 	h_qp.rq.wq.pc = 0;
 	h_qp.rq.wq.phase = 1;
 
-	cuda_err = cudaMemcpy(d_qp, &h_qp, sizeof(efa_cuda_qp), cudaMemcpyHostToDevice);
-	if (cuda_err != cudaSuccess) {
-		cudaFree(d_qp);
-		printf("Failed to copy qp to device: %s\n",
-		       cudaGetErrorString(cuda_err));
+	ret = nccl_net_ofi_gpu_mem_copy_host_to_device(d_qp, &h_qp, sizeof(efa_cuda_qp));
+	if (ret != 0) {
+		nccl_net_ofi_gpu_mem_free(d_qp);
+		printf("Failed to copy qp to device: %d\n", ret);
 		return nullptr;
 	}
 
@@ -138,7 +135,7 @@ struct efa_cuda_qp *efa_cuda_create_qp(struct efa_cuda_qp_attrs *attrs, uint32_t
 void efa_cuda_destroy_qp(struct efa_cuda_qp *d_qp)
 {
 	if (d_qp)
-		cudaFree(d_qp);
+		nccl_net_ofi_gpu_mem_free(d_qp);
 }
 
 int efa_cuda_get_version(int *major, int *minor, int *subminor)
