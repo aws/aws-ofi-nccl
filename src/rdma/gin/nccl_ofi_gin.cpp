@@ -76,17 +76,15 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 	resources.increment_ref_cnt();
 
 #if HAVE_CUDA
-       /* Capture the CUDA device on this (context-bearing) thread so the gdrcopy
-        * worker can bind to it; the worker's lazy signal-segment discovery calls
-        * cuMemGetAddressRange, which requires a current CUDA context. -1 means we
-        * could not determine the device, in which case the worker skips binding
-        * and falls back to whatever context it inherits (see
-        * run_gdrcopy_worker_loop). cudaGetDevice failing here is unexpected. */
-       if (nccl_net_ofi_gpu_get_device(&gdrcopy_cuda_dev) != 0) {
-               NCCL_OFI_WARN("Could not query CUDA device for gdrcopy worker; "
-                             "it will not bind to a device");
-               gdrcopy_cuda_dev = -1;
-       }
+	/* Capture the app's context on this context-bearing thread so discovery
+	 * can rebind it on NCCL's context-less GIN progress thread. The app owns
+	 * it and it outlives this comm. */
+	if (nccl_net_ofi_gpu_get_current_context(&gdrcopy_cuda_ctx) != 0 ||
+	    gdrcopy_cuda_ctx == nullptr) {
+		NCCL_OFI_WARN("Could not capture a CUDA context; GPU signal "
+			      "delivery may fail");
+		gdrcopy_cuda_ctx = nullptr;
+	}
 #endif
 
 	/* Ensure the single process-wide gdrcopy worker exists. It is spawned
@@ -1059,15 +1057,12 @@ int nccl_ofi_rdma_gin_put_comm::ensure_signal_seg(
 	}
 
 #if HAVE_CUDA
-       /* Bind this worker to the comm's CUDA device so its lazy segment
-          discovery (cuMemGetAddressRange) has a valid CUDA context. A failure
-          here leaves the worker without the intended context, so warn -- lazy
-          discovery would then fail on the first signal. */
-       if (gdrcopy_cuda_dev >= 0 &&
-           nccl_net_ofi_gpu_set_device(gdrcopy_cuda_dev) != 0) {
-               NCCL_OFI_WARN("gdrcopy worker failed to bind CUDA device %d",
-                             gdrcopy_cuda_dev);
-       }
+	/* cuMemGetAddressRange needs a current context; the GIN progress thread
+	 * has none. Bind the comm's captured context -- per comm, not per thread,
+	 * since one thread serves comms across GPUs. No restore needed. */
+	if (gdrcopy_cuda_ctx != nullptr) {
+		nccl_net_ofi_gpu_set_current_context(gdrcopy_cuda_ctx);
+	}
 #endif
 
 	void *seg_base_ptr = nullptr;
@@ -1161,10 +1156,8 @@ int nccl_ofi_rdma_gin_put_comm::build_signal_work(
 		uintptr_t signal_va = metadata.signal_base_address +
 				      metadata.signal_offset;
 
-		/* Lazily discover and pin the segment this signal lands in.
-		   This runs on the proxy thread (under ep_lock) where the CUDA
-		   context is current, so cuMemGetAddressRange succeeds. The worker
-		   only ever touches the pre-resolved segment handle. */
+		/* Lazily discover and pin the segment this signal lands in;
+		   ensure_signal_seg binds the comm's context for the lookup. */
 		signal_seg_t *seg = nullptr;
 		int ret = ensure_signal_seg(mr_handle, signal_va, &seg);
 		if (OFI_UNLIKELY(ret != 0)) {
