@@ -6,6 +6,8 @@
 #ifndef NCCL_OFI_CUDA_H_
 #define NCCL_OFI_CUDA_H_
 
+#include <cuda.h>
+
 int nccl_net_ofi_gpu_init(void);
 
 /*
@@ -22,12 +24,19 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
- * @brief Get / set the CUDA device for the calling thread. set_device also
- *        establishes the thread's primary CUDA context, which bare worker
- *        threads (e.g. the gdrcopy signal worker) otherwise lack.
+ * Bind / read the calling thread's current CUDA context. No ownership taken;
+ * the app (or NCCL) owns the context lifetime.
  */
-int nccl_net_ofi_gpu_get_device(int *dev_id);
-int nccl_net_ofi_gpu_set_device(int dev_id);
+
+/*
+ * @brief Make ctx the calling thread's current context; NULL detaches.
+ */
+int nccl_net_ofi_gpu_set_current_context(CUcontext ctx);
+
+/*
+ * @brief Return the calling thread's current context; *ctx is NULL if none.
+ */
+int nccl_net_ofi_gpu_get_current_context(CUcontext *ctx);
 
 /*
  * @brief Retrieve the base address and size of the VMM segment (cuMemCreate
