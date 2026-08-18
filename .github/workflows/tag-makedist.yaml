@@ -32,6 +32,8 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     name: make dist for tag ${{ github.ref_name }}
+    env:
+      PLUGIN_TAG: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
     steps:
       - run: |
           yum -y update && yum -y install git tar util-linux findutils yum-utils

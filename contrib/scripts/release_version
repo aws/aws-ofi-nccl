@@ -1,0 +1,174 @@
+#!/bin/bash
+#
+# Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+# Central release version parser for AWS OFI NCCL.
+# Supports only: ^v[0-9]+\.[0-9]+\.[0-9]+(a[1-9][0-9]*)?$
+#
+# Usage:
+#   release_version <tag>
+#   release_version --validate <tag>
+#   release_version --field <field> <tag>
+#
+# Output (default): KEY=VALUE pairs safe for shell eval
+# Fields: TAG, VERSION, BASE_VERSION, ALPHA_SEQUENCE, IS_ALPHA,
+#          TARBALL, DSC, DEBIAN_TAR, SRPM, DEBIAN_VERSION, RELEASE_BRANCH
+#
+# Exit codes:
+#   0 - success
+#   1 - invalid tag or usage error
+
+set -euo pipefail
+
+readonly PROG="${0##*/}"
+readonly TAG_REGEX='^v([0-9]+)\.([0-9]+)\.([0-9]+)(a([1-9][0-9]*))?$'
+
+usage() {
+	cat >&2 <<EOF
+Usage: ${PROG} [--validate|--field <field>] <tag>
+
+Parse a release tag and emit version metadata.
+
+Options:
+  --validate   Exit 0 if tag is valid, 1 otherwise (no output on success)
+  --field <f>  Print only the value of field <f>
+
+Supported tag format: v<MAJOR>.<MINOR>.<PATCH>[a<N>]
+  where N >= 1
+
+Fields: TAG VERSION BASE_VERSION MAJOR MINOR PATCH ALPHA_SEQUENCE IS_ALPHA
+        TARBALL DSC DEBIAN_TAR SRPM DEBIAN_VERSION RELEASE_BRANCH
+EOF
+	exit 1
+}
+
+die() {
+	printf '%s: error: %s\n' "${PROG}" "$*" >&2
+	exit 1
+}
+
+parse_tag() {
+	local tag="$1"
+
+	if ! [[ "${tag}" =~ ${TAG_REGEX} ]]; then
+		die "tag '${tag}' does not match required format: v<MAJOR>.<MINOR>.<PATCH>[a<N>]"
+	fi
+
+	MAJOR="${BASH_REMATCH[1]}"
+	MINOR="${BASH_REMATCH[2]}"
+	PATCH="${BASH_REMATCH[3]}"
+	ALPHA_SUFFIX="${BASH_REMATCH[4]}"
+	ALPHA_SEQUENCE="${BASH_REMATCH[5]}"
+
+	TAG="${tag}"
+	BASE_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+
+	if [[ -n "${ALPHA_SUFFIX}" ]]; then
+		IS_ALPHA=true
+		VERSION="${BASE_VERSION}a${ALPHA_SEQUENCE}"
+	else
+		IS_ALPHA=false
+		VERSION="${BASE_VERSION}"
+		ALPHA_SEQUENCE=""
+	fi
+
+	DEBIAN_VERSION="${VERSION}-1"
+	TARBALL="aws-ofi-nccl-${VERSION}.tar.gz"
+	DSC="aws-ofi-nccl_${DEBIAN_VERSION}.dsc"
+	DEBIAN_TAR="aws-ofi-nccl_${DEBIAN_VERSION}.tar.xz"
+	SRPM="libnccl-ofi-${VERSION}-1.src.rpm"
+	RELEASE_BRANCH="v${MAJOR}.${MINOR}.x"
+}
+
+emit_all() {
+	cat <<EOF
+TAG=${TAG}
+VERSION=${VERSION}
+BASE_VERSION=${BASE_VERSION}
+MAJOR=${MAJOR}
+MINOR=${MINOR}
+PATCH=${PATCH}
+ALPHA_SEQUENCE=${ALPHA_SEQUENCE}
+IS_ALPHA=${IS_ALPHA}
+TARBALL=${TARBALL}
+DSC=${DSC}
+DEBIAN_TAR=${DEBIAN_TAR}
+SRPM=${SRPM}
+DEBIAN_VERSION=${DEBIAN_VERSION}
+RELEASE_BRANCH=${RELEASE_BRANCH}
+EOF
+}
+
+emit_field() {
+	local field="$1"
+	case "${field}" in
+		TAG) echo "${TAG}" ;;
+		VERSION) echo "${VERSION}" ;;
+		BASE_VERSION) echo "${BASE_VERSION}" ;;
+		MAJOR) echo "${MAJOR}" ;;
+		MINOR) echo "${MINOR}" ;;
+		PATCH) echo "${PATCH}" ;;
+		ALPHA_SEQUENCE) echo "${ALPHA_SEQUENCE}" ;;
+		IS_ALPHA) echo "${IS_ALPHA}" ;;
+		TARBALL) echo "${TARBALL}" ;;
+		DSC) echo "${DSC}" ;;
+		DEBIAN_TAR) echo "${DEBIAN_TAR}" ;;
+		SRPM) echo "${SRPM}" ;;
+		DEBIAN_VERSION) echo "${DEBIAN_VERSION}" ;;
+		RELEASE_BRANCH) echo "${RELEASE_BRANCH}" ;;
+		*) die "unknown field '${field}'" ;;
+	esac
+}
+
+# --- Main ---
+
+mode="emit"
+field=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--validate)
+			mode="validate"
+			shift
+			;;
+		--field)
+			[[ $# -lt 2 ]] && usage
+			mode="field"
+			field="$2"
+			shift 2
+			;;
+		--help|-h)
+			usage
+			;;
+		-*)
+			die "unknown option '$1'"
+			;;
+		*)
+			break
+			;;
+	esac
+done
+
+[[ $# -ne 1 ]] && usage
+input_tag="$1"
+
+case "${mode}" in
+	validate)
+		# Suppress error output for validate mode
+		if [[ "${input_tag}" =~ ${TAG_REGEX} ]]; then
+			exit 0
+		else
+			exit 1
+		fi
+		;;
+	emit)
+		parse_tag "${input_tag}"
+		emit_all
+		;;
+	field)
+		parse_tag "${input_tag}"
+		emit_field "${field}"
+		;;
+esac

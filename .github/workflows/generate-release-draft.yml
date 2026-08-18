@@ -13,7 +13,41 @@ permissions:
   packages: read
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.parse.outputs.tag }}
+      version: ${{ steps.parse.outputs.version }}
+      is_alpha: ${{ steps.parse.outputs.is_alpha }}
+      tarball: ${{ steps.parse.outputs.tarball }}
+      dsc: ${{ steps.parse.outputs.dsc }}
+      debian_tar: ${{ steps.parse.outputs.debian_tar }}
+      srpm: ${{ steps.parse.outputs.srpm }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: contrib/scripts/release_version
+          sparse-checkout-cone-mode: false
+
+      - name: Parse release tag
+        id: parse
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          chmod +x contrib/scripts/release_version
+          eval "$(contrib/scripts/release_version "$RELEASE_TAG")"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "is_alpha=${IS_ALPHA}"
+            echo "tarball=${TARBALL}"
+            echo "dsc=${DSC}"
+            echo "debian_tar=${DEBIAN_TAR}"
+            echo "srpm=${SRPM}"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: metadata
     strategy:
       matrix:
         include:
@@ -27,6 +61,8 @@ jobs:
     runs-on: ubuntu-latest
     container: ${{ matrix.container }}
     name: Build for ${{ matrix.name }}
+    env:
+      PLUGIN_TAG: ${{ needs.metadata.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,7 +71,7 @@ jobs:
 
       - name: Configure and build
         run: |
-          git config --global --add safe.directory $GITHUB_WORKSPACE
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           ./autogen.sh
           ./configure --with-mpi=/opt/amazon/openmpi \
                       --with-libfabric=/opt/amazon/efa \
@@ -50,16 +86,36 @@ jobs:
       - name: Generate source packages
         if: matrix.generate_packages
         run: |
-          echo "Attempting to generate packages for tag: ${{ github.ref_name }}"
-          ./contrib/scripts/generate_source_packages.sh "${{ github.ref_name }}"
+          echo "Generating packages for tag: ${{ needs.metadata.outputs.tag }}"
+          ./contrib/scripts/generate_source_packages.sh "${{ needs.metadata.outputs.tag }}"
+
+      - name: Validate expected artifacts
+        if: matrix.generate_packages
+        run: |
+          set -e
+          TARBALL="${{ needs.metadata.outputs.tarball }}"
+          DSC="${{ needs.metadata.outputs.dsc }}"
+          DEBIAN_TAR="${{ needs.metadata.outputs.debian_tar }}"
+          SRPM="${{ needs.metadata.outputs.srpm }}"
+
+          for f in "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}"; do
+            if [ ! -f "${f}" ]; then
+              echo "ERROR: Expected artifact missing: ${f}" >&2
+              find . -maxdepth 1 -type f \( -name '*.tar*' -o -name '*.dsc' -o -name '*.rpm' \) -print
+              exit 1
+            fi
+          done
+          echo "All four expected artifacts present."
 
       - name: Prepare release notes
         if: matrix.generate_packages
         run: |
-          VERSION=${{ github.ref_name }}
-          awk -v version="$VERSION" '
+          TAG="${{ needs.metadata.outputs.tag }}"
+          TARBALL="${{ needs.metadata.outputs.tarball }}"
+
+          cat > release-notes.awk <<'AWK'
           BEGIN { found=0; printing=0; }
-          $0 ~ "^# " version " \\(" { found=1; printing=1; print; next }
+          index($0, "# " version " (") == 1 { found=1; printing=1; print; next }
           printing==1 && $0 ~ "^# v[0-9]" { printing=0; exit }
           printing==1 { print }
           END {
@@ -67,17 +123,15 @@ jobs:
               print "No specific release notes found for version " version > "/dev/stderr"
               exit 1
             }
-          }' RELEASENOTES.md > RELEASE_NOTES.md
+          }
+          AWK
+          awk -v version="${TAG}" -f release-notes.awk RELEASENOTES.md > RELEASE_NOTES.md
+          rm -f release-notes.awk
 
-          # Extract version without 'v' prefix for tarball name
-          TARBALL_VERSION=$(echo $VERSION | sed 's/^v//')
-          TARBALL_NAME="aws-ofi-nccl-${TARBALL_VERSION}.tar.gz"
-
-          # Calculate SHA512 checksum for the tarball and format it properly
-          CHECKSUM=$(sha512sum ${TARBALL_NAME})
-
-          # Append checksum information to release notes in the exact format of the v1.16.0 release
-          echo -e "\nChecksum (sha512) for the release tarball \`aws-ofi-nccl-${TARBALL_VERSION}.tar.gz\`:\n\n\`\`\`\n${CHECKSUM}\n\`\`\`" >> RELEASE_NOTES.md
+          # Append checksum for the tarball
+          CHECKSUM=$(sha512sum "${TARBALL}")
+          printf "\nChecksum (sha512) for the release tarball \`%s\`:\n\n\`\`\`\n%s\n\`\`\`\n" \
+            "${TARBALL}" "${CHECKSUM}" >> RELEASE_NOTES.md
 
       - name: Upload artifacts
         if: matrix.generate_packages
@@ -85,14 +139,16 @@ jobs:
         with:
           name: packages-${{ matrix.name }}
           path: |
-            *.tar*
-            *.dsc
-            *.rpm
+            ${{ needs.metadata.outputs.tarball }}
+            ${{ needs.metadata.outputs.dsc }}
+            ${{ needs.metadata.outputs.debian_tar }}
+            ${{ needs.metadata.outputs.srpm }}
+            release-manifest.txt
             RELEASE_NOTES.md
           if-no-files-found: error
 
   create-release:
-    needs: build
+    needs: [metadata, build]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -100,18 +156,57 @@ jobs:
         with:
           name: packages-ubuntu
 
+      - name: Validate artifacts before release
+        run: |
+          set -e
+          TARBALL="${{ needs.metadata.outputs.tarball }}"
+          DSC="${{ needs.metadata.outputs.dsc }}"
+          DEBIAN_TAR="${{ needs.metadata.outputs.debian_tar }}"
+          SRPM="${{ needs.metadata.outputs.srpm }}"
+
+          for f in "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}" release-manifest.txt; do
+            if [ ! -f "${f}" ]; then
+              echo "ERROR: Expected file missing: ${f}" >&2
+              ls -la
+              exit 1
+            fi
+          done
+          echo "All release files present."
+
+      - name: Generate release metadata
+        run: |
+          cat > release-metadata.json <<EOF
+          {
+            "tag": "${{ needs.metadata.outputs.tag }}",
+            "version": "${{ needs.metadata.outputs.version }}",
+            "is_alpha": ${{ needs.metadata.outputs.is_alpha }},
+            "commit": "${{ github.sha }}",
+            "workflow_run_id": "${{ github.run_id }}",
+            "artifacts": [
+              "${{ needs.metadata.outputs.tarball }}",
+              "${{ needs.metadata.outputs.dsc }}",
+              "${{ needs.metadata.outputs.debian_tar }}",
+              "${{ needs.metadata.outputs.srpm }}"
+            ]
+          }
+          EOF
+
       - name: Display structure of downloaded files
-        run: ls -R
+        run: ls -la
 
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
-          name: AWS OFI NCCL ${{ github.ref_name }}
+          name: AWS OFI NCCL ${{ needs.metadata.outputs.tag }}
           draft: true
-          prerelease: false
+          prerelease: ${{ needs.metadata.outputs.is_alpha == 'true' }}
           body_path: RELEASE_NOTES.md
           files: |
-            aws-ofi-nccl*
-            libnccl-ofi-*
+            ${{ needs.metadata.outputs.tarball }}
+            ${{ needs.metadata.outputs.dsc }}
+            ${{ needs.metadata.outputs.debian_tar }}
+            ${{ needs.metadata.outputs.srpm }}
+            release-manifest.txt
+            release-metadata.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
