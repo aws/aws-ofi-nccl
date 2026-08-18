@@ -114,12 +114,8 @@ AM_CPPFLAGS += \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/common \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
 
-# Make the private host implementation available to the internal plugin for
-# later GDAKI integration. It uses CUDA Runtime APIs, so add CUDART only for
-# GDAKI builds and preserve the existing non-GDAKI dependency set.
 libinternal_plugin_la_LIBADD += \
-	libefa_cuda_dp.la \
-	$(CUDA_RUNTIME_LIBS)
+	libefa_cuda_dp.la
 endif
 
 lib_LTLIBRARIES =
