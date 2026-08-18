@@ -13,6 +13,7 @@
 #include "nccl_ofi_spsc_ring.h"
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_tracepoint.h"
 
@@ -652,7 +653,10 @@ private:
 	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
 	int dev;
 
-       int gdrcopy_cuda_dev = -1; /* CUDA device the worker binds to */
+	/* CUDA context of the thread that created this comm. Signal-segment
+	   discovery makes it current when it runs on a thread that has none
+	   (NCCL's GIN progress threads are bare std::threads). */
+	CUcontext gdrcopy_cuda_ctx = nullptr;
 
 	/* --- TIER 2: Receiver side — every CQ completion --- */
 	/* Rail pinned across an aggregated iputSignal sequence: when an op is
