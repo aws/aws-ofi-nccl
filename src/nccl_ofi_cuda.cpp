@@ -6,6 +6,7 @@
 #include "config.h"
 
 #include <errno.h>
+#include <stdio.h>
 #include <dlfcn.h>
 #include <memory>
 #include <cudaTypedefs.h>
@@ -73,6 +74,8 @@ static std::unique_ptr<void, DlcloseDeleter> cudaruntime_lib;
 
 /* Use driver APIs wherever possible - they are version-stable */
 DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
+DECLARE_CUDA_FUNCTION(cuGetErrorString, 6000);
+DECLARE_CUDA_FUNCTION(cuGetErrorName, 6000);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 DECLARE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
@@ -103,6 +106,31 @@ DECLARE_CUDA_FUNCTION(cuMemGetAddressRange, 3020);
 DECLARE_CUDA_FUNCTION(cuMemRetainAllocationHandle, 11000);
 DECLARE_CUDA_FUNCTION(cuMemGetAllocationPropertiesFromHandle, 10020);
 DECLARE_CUDA_FUNCTION(cuThreadExchangeStreamCaptureMode, 10010);
+
+/*
+ * Driver-API equivalent of cudaGetErrorString(): renders a CUresult as
+ * "CUDA_ERROR_OUT_OF_MEMORY (out of memory)". Falls back to placeholders when
+ * a code cannot be translated, so the result is always safe to log.
+ */
+static const char *nccl_net_ofi_cuda_error_string(CUresult res)
+{
+	static thread_local char buf[256];
+	const char *name = NULL;
+	const char *desc = NULL;
+
+	if (pfn_cuGetErrorName == NULL || pfn_cuGetErrorName(res, &name) != CUDA_SUCCESS ||
+	    name == NULL) {
+		name = "unknown error";
+	}
+
+	if (pfn_cuGetErrorString == NULL ||
+	    pfn_cuGetErrorString(res, &desc) != CUDA_SUCCESS || desc == NULL) {
+		desc = "no description available";
+	}
+
+	(void)snprintf(buf, sizeof(buf), "%s (%s)", name, desc);
+	return buf;
+}
 
 int nccl_net_ofi_gpu_init(void)
 {
@@ -161,6 +189,8 @@ int nccl_net_ofi_gpu_init(void)
 #endif
 
 	RESOLVE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
+	RESOLVE_CUDA_FUNCTION(cuGetErrorString, 6000);
+	RESOLVE_CUDA_FUNCTION(cuGetErrorName, 6000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGetAttribute, 2000);
 #if HAVE_CUDA_GDRFLUSH_SUPPORT
@@ -248,6 +278,7 @@ int nccl_net_ofi_gpu_mem_alloc(void **ptr, size_t size)
 	}
 
 	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuMemAlloc failed: %s", nccl_net_ofi_cuda_error_string(ret));
 		return -EINVAL;
 	}
 
@@ -265,6 +296,9 @@ int nccl_net_ofi_gpu_mem_free(void *ptr)
 	}
 
 	ret = pfn_cuMemFree((CUdeviceptr)ptr);
+	if (ret != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuMemFree failed: %s", nccl_net_ofi_cuda_error_string(ret));
+	}
 
 	CUresult restore_ret = pfn_cuThreadExchangeStreamCaptureMode(&mode);
 	if (restore_ret != CUDA_SUCCESS) {
@@ -290,19 +324,19 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 	 * graph capture on the legacy default stream. */
 	ret = pfn_cuStreamCreate(&stream, CU_STREAM_NON_BLOCKING);
 	if (ret != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("cuStreamCreate failed (%d)", ret);
+		NCCL_OFI_WARN("cuStreamCreate failed: %s", nccl_net_ofi_cuda_error_string(ret));
 		goto restore;
 	}
 
 	ret = pfn_cuMemcpyHtoDAsync((CUdeviceptr)dst, src, size, stream);
 	if (ret != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("cuMemcpyHtoDAsync failed (%d)", ret);
+		NCCL_OFI_WARN("cuMemcpyHtoDAsync failed: %s", nccl_net_ofi_cuda_error_string(ret));
 		goto destroy;
 	}
 
 	ret = pfn_cuStreamSynchronize(stream);
 	if (ret != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("cuStreamSynchronize failed (%d)", ret);
+		NCCL_OFI_WARN("cuStreamSynchronize failed: %s", nccl_net_ofi_cuda_error_string(ret));
 	}
 
 destroy:

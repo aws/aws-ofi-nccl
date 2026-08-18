@@ -99,6 +99,7 @@ libefa_cuda_dp_la_SOURCES = \
 	$(top_srcdir)/3rd-party/efa-gda/CUDA/host/efa_cuda_dp.cpp
 
 libefa_cuda_dp_la_CPPFLAGS = \
+	-I$(abs_top_srcdir)/include \
 	$(CUDA_CPPFLAGS) \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/common \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
