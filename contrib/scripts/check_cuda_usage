@@ -1,0 +1,38 @@
+#!/bin/bash
+#
+# Copyright (c) 2026      Amazon.com, Inc. or its affiliates. All rights reserved.
+#
+# See LICENSE.txt for license information
+#
+# Scan through all object files in the build directory looking for
+# symbols that start with cuda*, indicating that they belong to the
+# CUDA Runtime (which we're not supposed to use in the plugin, beyond
+# the simple RuntimeGetVersion/GetDriverEntryPoint calls we need in
+# the cuda helper file.
+#
+# The tests are allowed to use the CUDA runtime, so they are skipped
+# for this check.  There used to be a submodule in
+# 3rd-party/efa-dp-direct/ which did violate these rules.  Skip that
+# as well, so that we don't fail the build during a git bisect that
+# jumps from the submodule timeframe to the current subtree timeframe.
+#
+# this script will be run from the top of the build tree
+
+files=`find . -path "*/tests" -prune -o -path "*/efa-dp-direct" -prune -o -name "*.o" -print`
+
+for file in $files ; do
+    symbols=`nm -u -f just-symbols $file | grep '^cuda'`
+
+    if test `basename $file` = "nccl_ofi_cuda.o" ; then
+       symbols=`echo "$symbols" | grep -vE '(^cudaRuntimeGetVersion$|^cudaGetDriverEntryPoint)'`
+    fi
+
+    if test -n "$symbols" ; then
+       echo "******************** ERROR ********************"
+       echo ""
+       echo "CUDA Runtime symbols found in $file:"
+       echo "$symbols"
+       echo ""
+       echo "Aborting build!"
+    fi
+done
