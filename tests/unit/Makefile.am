@@ -45,6 +45,7 @@ if !ENABLE_NEURON
   LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += gdrcopy
   gdrcopy_SOURCES = $(base_sources) gdrcopy.cpp
+  gdrcopy_LDADD = $(LDADD) $(CUDA_RUNTIME_LIBS)
   noinst_PROGRAMS += ctrl_msg
   ctrl_msg_SOURCES = $(base_sources) ctrl_msg.cpp
 if WANT_PLATFORM_AWS
