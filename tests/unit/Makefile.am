@@ -40,9 +40,6 @@ base_sources = unit_test.cpp
 
 
 if !ENABLE_NEURON
-  AM_LDFLAGS = $(CUDA_LDFLAGS)
-  AM_CPPFLAGS += $(CUDA_CPPFLAGS)
-  LDADD += $(CUDA_LIBS)
   noinst_PROGRAMS += gdrcopy
   gdrcopy_SOURCES = $(base_sources) gdrcopy.cpp
   gdrcopy_LDADD = $(LDADD) $(CUDA_RUNTIME_LIBS)
