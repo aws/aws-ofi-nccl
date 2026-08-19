@@ -1,6 +1,6 @@
 # -*- autoconf -*-
 #
-# Copyright (c) 2024      Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2024-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -14,10 +14,6 @@ AC_DEFUN([CHECK_PKG_NVTX], [
   dnl if provided a path, add the path to CFLAGS. Otherwise assume it's provided by --with-cuda.
   AS_IF([test "x${with_nvtx}" != "xyes" -a "x${with_nvtx}" != "xno"],
         [CPPFLAGS="-isystem ${with_nvtx}/include ${CPPFLAGS}"])
-
-  dnl Try to use CUDA's incdir flags if cuda is being used and no specific path was provided.
-  AS_IF([test "x${with_nvtx}" = "xyes" -a "x${with_cuda}" != "xyes" -a "x${with_cuda}" != "xno"],
-        [CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"])
 
   dnl don't enable it by default.
   AS_IF([test -z "${with_nvtx}"], [check_pkg_found=no])
