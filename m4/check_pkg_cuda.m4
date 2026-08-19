@@ -1,6 +1,6 @@
 # -*- autoconf -*-
 #
-# Copyright (c) 2023      Amazon.com, Inc. or its affiliates. All rights reserved.
+# Copyright (c) 2023-2026 Amazon.com, Inc. or its affiliates. All rights reserved.
 #
 # See LICENSE.txt for license information
 #
@@ -37,17 +37,17 @@ AC_DEFUN([CHECK_PKG_CUDA], [
         [check_pkg_found=no],
         [cuda_realpath="$(realpath ${with_cuda})"
          cuda_ldpath="${cuda_realpath}/lib64"
-         CUDA_LDFLAGS="-L${cuda_ldpath}"
-         CUDA_CPPFLAGS="-isystem ${cuda_realpath}/include"
+         CPPFLAGS="${CPPFLAGS} -isystem ${cuda_realpath}/include"
+         LDFLAGS="${LDFLAGS} -L${cuda_ldpath}"
          AS_IF([test "x${enable_cudart_dynamic}" = "xyes"],
-               [CUDA_LIBS="-lrt -ldl"
-                CUDA_RUNTIME_LIBS="-l${cudart_lib}"],
-               [CUDA_LIBS="-l${cudart_lib} -lrt -ldl"
+               [CUDA_RUNTIME_LIBS="-l${cudart_lib}"],
+               [LIBS="-l${cudart_lib} ${LIBS} "
                 CUDA_RUNTIME_LIBS=""])
-         LDFLAGS="${CUDA_LDFLAGS} ${LDFLAGS}"
-         LIBS="${CUDA_LIBS} ${LIBS}"
-         CPPFLAGS="${CUDA_CPPFLAGS} ${CPPFLAGS}"
         ])
+
+  dnl cudart calls the shm interface, which is still defined in librt
+  dnl in some Glibc versions, so check if we need it here.
+  AC_SEARCH_LIBS([shm_open], [rt], [], [])
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_SEARCH_LIBS(
@@ -55,7 +55,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
          [${cudart_lib}],
          [],
          [check_pkg_found=no],
-         [-ldl -lrt])])
+         [])])
 
   check_cuda_gdr_flush_define=0
   AS_IF([test "${check_pkg_found}" = "yes"],
@@ -113,7 +113,10 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AS_IF([test "${check_pkg_found}" = "yes"],
         [check_pkg_define=1
          $1],
-        [check_pkg_define=0
+        [CPPFLAGS="${check_pkg_CPPFLAGS_save}"
+         LDFLAGS="${check_pkg_LDFLAGS_save}"
+         LIBS="${check_pkg_LIBS_save}"
+         check_pkg_define=0
          $2])
 
   AC_DEFINE_UNQUOTED([HAVE_CUDA], [${check_pkg_define}], [Defined to 1 if CUDA is available])
@@ -123,14 +126,7 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   AC_DEFINE_UNQUOTED([ENABLE_CUDART_DYNAMIC], [${enable_cudart_dynamic_define}], [Defined to 1 if CUDA dynamic runtime linking is enabled])
   AM_CONDITIONAL([HAVE_CUDA], [test "${check_pkg_found}" = "yes"])
 
-  AC_SUBST([CUDA_LDFLAGS])
-  AC_SUBST([CUDA_CPPFLAGS])
-  AC_SUBST([CUDA_LIBS])
   AC_SUBST([CUDA_RUNTIME_LIBS])
-
-  CPPFLAGS="${check_pkg_CPPFLAGS_save}"
-  LDFLAGS="${check_pkg_LDFLAGS_save}"
-  LIBS="${check_pkg_LIBS_save}"
 
   AS_UNSET([check_pkg_found])
   AS_UNSET([check_pkg_define])

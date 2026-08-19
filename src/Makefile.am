@@ -7,7 +7,6 @@
 AM_CPPFLAGS = -I$(abs_top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
-AM_CPPFLAGS += $(CUDA_CPPFLAGS)
 AM_CPPFLAGS += -DXML_DIR=\"${pkgdatadir}/xml\"
 
 sources = \
@@ -80,8 +79,8 @@ endif
 # us writing dlopen() handlers for simple unit tests.
 noinst_LTLIBRARIES = libinternal_plugin.la
 libinternal_plugin_la_SOURCES = $(sources)
-libinternal_plugin_la_LDFLAGS = -static $(CUDA_LDFLAGS)
-libinternal_plugin_la_LIBADD  = $(CUDA_LIBS)
+libinternal_plugin_la_LDFLAGS = -static
+libinternal_plugin_la_LIBADD=
 
 if HAVE_GDAKI
 # TODO: Vendored efa-dp-direct commit 81c4dc7 has a bug that causes a 
@@ -100,7 +99,6 @@ libefa_cuda_dp_la_SOURCES = \
 
 libefa_cuda_dp_la_CPPFLAGS = \
 	-I$(abs_top_srcdir)/include \
-	$(CUDA_CPPFLAGS) \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/common \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
 
