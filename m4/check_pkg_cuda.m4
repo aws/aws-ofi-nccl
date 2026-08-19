@@ -5,6 +5,28 @@
 # See LICENSE.txt for license information
 #
 
+# IMPORTANT CUDA LIBRARIES NOTE: The core plugin code should only use
+# the driver interface (ie, cu* functions), with the exception of
+# cudaRuntimeGetVersion(), cudaGetDriverEntryPoint() and its recent
+# cousin cudaGetDriverEntryPointByVersion().  The goal is to be able
+# to ship a plugin binary that works with multiple versions of CUDA,
+# and the CUDA runtime is not versioned to allow use across multiple
+# major versions.  We have two ways of dealing with that:
+#
+#  1. static link against the runtime.  This is the default, but
+#     raises questions about shipping a binary, since the plugin includes
+#     Nvidia code at that point.
+#  2. dlopen libcudart and hope that Nvidia didn't break the ABI for
+#     the two getDriverEntryPoint functions.  This is enabled by
+#     --enable-cudart-dynamic.
+#
+# The core library should not use cuda* functions.  The Automake
+# variable CUDA_RUNTIME_LIB exists so that tests can directly call
+# cuda* functions (being much easier to use thank their cu*
+# equivalents) and should be added to the LIBS of any test that uses
+# cuda directly.  It should not be added to any LIBS for code that
+# will end up in one of the NCCL plugins.
+
 AC_DEFUN([CHECK_PKG_CUDA], [
   check_pkg_found=yes
 
