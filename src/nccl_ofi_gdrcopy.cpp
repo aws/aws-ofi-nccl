@@ -12,6 +12,9 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_param.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 
 #if HAVE_GDRCOPY
 
@@ -207,20 +210,65 @@ int nccl_ofi_gdrcopy_ctx::get_version(uint32_t *major, uint32_t *minor)
 
 bool nccl_ofi_gdrcopy_ctx::forced_pcie_copy()
 {
+	const bool override_set =
+		ofi_nccl_gdrcopy_forced_pcie_copy.get_source() != ParamSource::DEFAULT;
+
 	/**
-	 * An explicitly set OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY overrides the
-	 * version probe below, for hosts where the probe answers with the
-	 * older of the runtime and driver versions.
+	 * Forcing the capability OFF is always safe (at worst GIN refuses to
+	 * initialize), so an explicit =0 is honored unconditionally.
 	 */
-	if (ofi_nccl_gdrcopy_forced_pcie_copy.get_source() != ParamSource::DEFAULT) {
-		return ofi_nccl_gdrcopy_forced_pcie_copy.get();
+	if (override_set && !ofi_nccl_gdrcopy_forced_pcie_copy.get()) {
+		return false;
 	}
 
 	uint32_t major, minor;
 	/**
 	 * GDRCopy supports forced PCIe copy since 2.5
 	 */
-	return (get_version(&major, &minor) == 0 && (major > 2 || (major == 2 && minor >= 5)));
+	const bool version_ok =
+		(get_version(&major, &minor) == 0 && (major > 2 || (major == 2 && minor >= 5)));
+
+	if (version_ok) {
+		return true;
+	}
+
+	/**
+	 * An explicitly set OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY=1 may claim the
+	 * capability when the version probe says otherwise — but only on
+	 * platforms where the CPU<->GPU path is positively PCIe-only. On
+	 * cache-coherent platforms (e.g. GB200 with a C2C link) a pre-2.5
+	 * GDRCopy cannot force the PCIe path, and BAR1 mappings may go over
+	 * the coherent interconnect: honoring the override there would let
+	 * the GIN proxy run with an unflushed data path and silently corrupt
+	 * data. When coherence cannot be determined, the override is refused
+	 * for the same reason.
+	 *
+	 * The probe reports the minimum of the GDRCopy runtime (libgdrapi)
+	 * and kernel driver (gdrdrv) versions, so a 2.5 runtime over an older
+	 * gdrdrv reports below 2.5; on PCIe-only hosts the flag is a no-op in
+	 * that combination and the override is safe.
+	 */
+	if (override_set) {
+#if HAVE_CUDA
+		if (!nccl_net_ofi_gpu_coherent_dma_platform()) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "gdrcopy: OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY=1 accepted "
+				      "(PCIe-only platform; version probe reported %u.%u)",
+				      major, minor);
+			return true;
+		}
+		NCCL_OFI_WARN(
+			"gdrcopy: ignoring OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY=1: platform has "
+			"(or may have) a coherent CPU<->GPU interconnect, where overriding "
+			"the GDRCopy 2.5+ requirement risks silent data corruption");
+#else
+		NCCL_OFI_WARN(
+			"gdrcopy: ignoring OFI_NCCL_GDRCOPY_FORCED_PCIE_COPY=1: platform "
+			"coherence cannot be determined without CUDA support");
+#endif
+	}
+
+	return false;
 }
 
 int nccl_ofi_gdrcopy_ctx::deregister_region(RegHandle *handle)

@@ -145,4 +145,18 @@ bool nccl_net_ofi_gpu_have_dma_buf_attr(void);
  */
 bool nccl_net_ofi_gpu_have_gdr_support_attr(void);
 
+/*
+ * @brief	query CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
+ *		the driver's indicator of a cache-coherent CPU<->GPU
+ *		interconnect (e.g. Grace-Blackwell C2C) where device memory
+ *		may be mapped over a non-PCIe path.
+ *
+ * @return	false only when the attribute is read successfully and reports
+ *		0, i.e. PCIe is positively the only CPU<->GPU data path.
+ *		true when the platform is coherent OR when the answer cannot
+ *		be determined — fail-safe for callers gating PCIe-only
+ *		assumptions.
+ */
+bool nccl_net_ofi_gpu_coherent_dma_platform(void);
+
 #endif  // End NCCL_OFI_CUDA_H_

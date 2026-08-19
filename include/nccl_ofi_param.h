@@ -409,10 +409,15 @@ OFI_NCCL_PARAM(GDAKI_EFA_HW_COUNTER, gdaki_efa_hw_counter, "GDAKI_EFA_HW_COUNTER
  * runtime supplies the v2 pin API the flag is set through.
  *
  * When unset the version probe decides, so the default behavior is unchanged.
- * Setting this to 1 or 0 forces the capability on or off respectively. Forcing
- * it on does not make the flag work where the runtime lacks gdr_pin_buffer_v2:
- * that symbol is still resolved, and GDRCopy initialization fails if it is
- * missing, rather than falling back.
+ * Setting this to 0 forces the capability off unconditionally (always safe).
+ * Setting this to 1 claims the capability despite a below-2.5 probe, and is
+ * honored ONLY on platforms whose CPU<->GPU path is positively PCIe-only: on
+ * cache-coherent platforms (e.g. GB200 C2C) — or when coherence cannot be
+ * determined — the override is refused with a warning, because a pre-2.5
+ * GDRCopy there cannot force the PCIe path and the GIN proxy could silently
+ * corrupt data. Forcing it on also does not make the flag work where the
+ * runtime lacks gdr_pin_buffer_v2: that symbol is still resolved, and GDRCopy
+ * initialization fails if it is missing, rather than falling back.
  */
 OFI_NCCL_PARAM(bool, gdrcopy_forced_pcie_copy, "GDRCOPY_FORCED_PCIE_COPY", false);
 

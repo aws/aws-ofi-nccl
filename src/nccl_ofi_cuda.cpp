@@ -587,3 +587,28 @@ bool nccl_net_ofi_gpu_have_dma_buf_attr(void)
 	return false;
 #endif
 }
+
+bool nccl_net_ofi_gpu_coherent_dma_platform(void)
+{
+	/* Fail-safe: only report non-coherent when the attribute is read
+	 * successfully and positively reports PCIe-only. Any inability to
+	 * answer is treated as possibly-coherent so callers never relax a
+	 * coherency-sensitive requirement on an undetermined platform. */
+	if (pfn_cuCtxGetDevice == NULL || pfn_cuDeviceGetAttribute == NULL) {
+		return true;
+	}
+
+	CUdevice dev;
+	CUresult result = pfn_cuCtxGetDevice(&dev);
+	if (result != CUDA_SUCCESS) {
+		return true;
+	}
+
+	int coherent;
+	result = pfn_cuDeviceGetAttribute(
+		&coherent, CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES, dev);
+	if (result != CUDA_SUCCESS) {
+		return true;
+	}
+	return coherent != 0;
+}
