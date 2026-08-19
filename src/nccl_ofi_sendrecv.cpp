@@ -1024,7 +1024,7 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 		endpoint->sendrecv_endpoint_abort();
 	}
 
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !nccl_ofi_use_cuda_flush) {
 		NCCL_OFI_TRACE(NCCL_NET, "De-registering buffer for flush operations");
 		/* Deregister Flush buffer memory region */
 		mr_handle = this->flush_buff.mr_handle;
@@ -1078,7 +1078,7 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 		goto exit;
 
 #if HAVE_CUDA
-	if (cuda_flush) {
+	if (nccl_ofi_use_cuda_flush) {
 		ret = nccl_net_ofi_gpu_flush_gpudirect_rdma_writes();
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error performing GPU GDR flush");
@@ -1350,7 +1350,7 @@ nccl_net_ofi_sendrecv_recv_comm *nccl_net_ofi_sendrecv_recv_comm::create(nccl_ne
 	 * Setup flush resources if using GPUDirect RDMA unless user disables
 	 * flush operations
 	 */
-	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !cuda_flush) {
+	if (!ofi_nccl_gdr_flush_disable() && support_gdr == GDR_SUPPORTED && !nccl_ofi_use_cuda_flush) {
 		r_comm->flush_buff.size = NCCL_OFI_FLUSH_SIZE;
 		ret = r_comm->alloc_and_reg_flush_buff(domain, ep_arg,
 						       key_pool);
@@ -2200,7 +2200,7 @@ static void sendrecv_get_hints(struct fi_info *hints, int req_gdr)
 
 	if (req_gdr) {
 		hints->caps |= FI_HMEM;
-		if (!cuda_flush) {
+		if (!nccl_ofi_use_cuda_flush) {
 			hints->caps |= FI_RMA | FI_READ;
 		}
 		/*

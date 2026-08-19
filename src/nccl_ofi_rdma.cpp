@@ -4441,7 +4441,7 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 		goto exit;
 
 #if HAVE_GPU
-	if (cuda_flush) {
+	if (nccl_ofi_use_cuda_flush) {
 		ret = nccl_net_ofi_gpu_flush_gpudirect_rdma_writes();
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error performing GPU GDR flush");
