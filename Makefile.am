@@ -15,7 +15,8 @@ EXTRA_DIST = \
 	NOTICE \
 	README.md \
 	RELEASENOTES.md \
-	m4/get_version.sh
+	m4/get_version.sh \
+	contrib/scripts/check_cuda_usage
 
 
 AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
@@ -24,6 +25,14 @@ AM_DISTCHECK_CONFIGURE_FLAGS=$(NCCL_NET_OFI_DISTCHCK_CONFIGURE_FLAGS)
 # Ref: https://www.gnu.org/software/automake/manual/html_node/Basics-of-Distribution.html
 TAR_OPTIONS = --owner=0 --group=0
 export TAR_OPTIONS
+
+# after each build, verify that there are no problematic cuda runtime
+# calls in the build
+all-local:
+	@if test -d "$(top_srcdir)/.git"; then \
+		echo "Checking for CUDA Runtime symbols" ; \
+		$(top_srcdir)/contrib/scripts/check_cuda_usage ; \
+	fi
 
 # create a hook so that autogen.sh works in release tarballs
 # Implement the equivalent of check-news, but for RELEASENOTES.md
