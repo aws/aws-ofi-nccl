@@ -7,6 +7,17 @@
 - Debian 12 and Debian 13
 - RHEL 9 and RHEL 10
 
+# v1.21.1 (2026-08)
+
+The 1.21.1 release series has been tested with [NCCL v2.31.2-1](https://github.com/NVIDIA/nccl/releases/tag/v2.31.2-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
+
+This release has been tested with [Libfabric v2.6.0amzn1.0](https://github.com/ofiwg/libfabric/releases/tag/v2.6.0). The plugin requires at least [Libfabric v1.11.0](https://github.com/ofiwg/libfabric/releases/tag/v1.11.0), and compiling AWS-specific support requires at least [Libfabric v1.22.0](https://github.com/ofiwg/libfabric/releases/tag/v1.22.0). GPU-Initiated Networking (GIN) with the kernel backend requires at least [Libfabric v2.6.0](https://github.com/ofiwg/libfabric/releases/tag/v2.6.0).
+
+### Bug Fixes and Improvements:
+
+- Fixed builds using `--enable-cudart-dynamic`, which incorrectly retained a hard dependency on the CUDA Runtime library (libcudart). CUDA Runtime API calls in the GIN path now use their CUDA Driver API equivalents.
+- Vendored the EFA GDA source directly into the repository instead of using a Git submodule.
+
 # v1.21.0 (2026-08)
 
 The 1.21.0 release series has been tested with [NCCL v2.31.2-1](https://github.com/NVIDIA/nccl/releases/tag/v2.31.2-1) while maintaining backward compatibility with older NCCL versions ([NCCL v2.17.1](https://github.com/NVIDIA/nccl/releases/tag/v2.17.1-1) and later).
