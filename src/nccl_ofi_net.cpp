@@ -70,7 +70,7 @@ enum gdr_support_level_t support_gdr = GDR_UNKNOWN;
 /* Indicates if the cudaDeviceFlushGPUDirectRDMAWrites function should be used
  * to flush data to the GPU. Note, CUDA flush support is not supported on all
  * platforms and should be disabled by default */
-bool cuda_flush = false;
+bool nccl_ofi_use_cuda_flush = false;
 
 /* number of cq entries to read in a single call to fi_cq_read.
    This variable will be updated during init (hence, can not be

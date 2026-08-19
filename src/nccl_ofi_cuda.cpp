@@ -241,9 +241,9 @@ int nccl_net_ofi_gpu_init(void)
 
 	if (HAVE_CUDA_GDRFLUSH_SUPPORT && nccl_net_ofi_gpu_have_gdr_support_attr() && ofi_nccl_cuda_flush_enable()) {
 		NCCL_OFI_WARN("CUDA flush enabled");
-		cuda_flush = true;
+		nccl_ofi_use_cuda_flush = true;
 	} else {
-		cuda_flush = false;
+		nccl_ofi_use_cuda_flush = false;
 	}
 
 	return 0;
