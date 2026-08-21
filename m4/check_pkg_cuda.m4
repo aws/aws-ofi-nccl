@@ -71,13 +71,11 @@ AC_DEFUN([CHECK_PKG_CUDA], [
   dnl in some Glibc versions, so check if we need it here.
   AC_SEARCH_LIBS([shm_open], [rt], [], [])
 
+  dnl Use AC_CHECK_LIB instead of AC_SEARCH_LIBS to avoid adding
+  dnl ${cudart_lib} to LIBS, which is also why we have an (essentially
+  dnl dummy) action-if-found specified.
   AS_IF([test "${check_pkg_found}" = "yes"],
-        [AC_SEARCH_LIBS(
-         [cudaGetDriverEntryPoint],
-         [${cudart_lib}],
-         [],
-         [check_pkg_found=no],
-         [])])
+        [AC_CHECK_LIB([${cudart_lib}], [cudaGetDriverEntryPoint], [check_pkg_found=yes], [check_pkg_found=no])])
 
   check_cuda_gdr_flush_define=0
   AS_IF([test "${check_pkg_found}" = "yes"],
