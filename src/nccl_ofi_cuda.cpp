@@ -20,9 +20,19 @@
 /* CUDA Runtime function pointers - only for functions without driver equivalents */
 static cudaError_t (*pfn_cudaRuntimeGetVersion)(int *runtimeVersion) = NULL;
 
-/* Both entry point functions for cross-version compatibility */
-static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(const char *symbol, void **funcPtr, unsigned int cudaVersion, unsigned long long flags, enum cudaDriverEntryPointQueryResult *driverStatus) = NULL;
-static cudaError_t (*pfn_cudaGetDriverEntryPoint)(const char *symbol, void **funcPtr, unsigned long long flags, enum cudaDriverEntryPointQueryResult *driverStatus) = NULL;
+/* Entry point function pointers for cross-version compatibility.
+ *
+ * The driverStatus parameter is declared as void * rather than
+ * enum cudaDriverEntryPointQueryResult * because that enum only exists in
+ * CUDA >= 12.0 headers.  The parameter is optional (NULL is allowed), we
+ * always pass NULL, and void * is ABI-compatible, so this lets the same
+ * code compile against CUDA 11 headers.
+ *
+ * pfn_cudaGetDriverEntryPoint_v11030 is the 3-argument variant (no
+ * driverStatus) exported by CUDA 11.3 - 11.8 runtimes. */
+static cudaError_t (*pfn_cudaGetDriverEntryPointByVersion)(const char *symbol, void **funcPtr, unsigned int cudaVersion, unsigned long long flags, void *driverStatus) = NULL;
+static cudaError_t (*pfn_cudaGetDriverEntryPoint)(const char *symbol, void **funcPtr, unsigned long long flags, void *driverStatus) = NULL;
+static cudaError_t (*pfn_cudaGetDriverEntryPoint_v11030)(const char *symbol, void **funcPtr, unsigned long long flags) = NULL;
 
 #if ENABLE_CUDART_DYNAMIC
 
@@ -42,25 +52,31 @@ static std::unique_ptr<void, DlcloseDeleter> cudaruntime_lib;
 
 /* Simple function resolution with fallback for cross-version compatibility */
 #define RESOLVE_CUDA_FUNCTION(function, version) do {                                                                  \
-		enum cudaDriverEntryPointQueryResult result = cudaDriverEntryPointSymbolNotFound;                   \
 		cudaError_t err = cudaErrorUnknown;                                                                     \
 		bool resolved = false;                                                                                  \
 		/* Try versioned entry point first (CUDA 13+ preferred) */                                             \
 		if (pfn_cudaGetDriverEntryPointByVersion != NULL) {                                                    \
-			err = pfn_cudaGetDriverEntryPointByVersion(#function, (void **)&pfn_##function, version, cudaEnableDefault, &result); \
+			err = pfn_cudaGetDriverEntryPointByVersion(#function, (void **)&pfn_##function, version, cudaEnableDefault, NULL); \
 			if (err == cudaSuccess && pfn_##function != NULL) {                                             \
 				resolved = true;                                                                         \
 			}                                                                                               \
 		}                                                                                                       \
 		/* Fallback to legacy entry point for CUDA 12 compatibility */                                         \
 		if (!resolved && pfn_cudaGetDriverEntryPoint != NULL) {                                                \
-			err = pfn_cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, &result); \
+			err = pfn_cudaGetDriverEntryPoint(#function, (void **)&pfn_##function, cudaEnableDefault, NULL); \
+			if (err == cudaSuccess && pfn_##function != NULL) {                                             \
+				resolved = true;                                                                         \
+			}                                                                                               \
+		}                                                                                                       \
+		/* Fallback to 3-argument entry point for CUDA 11.3 - 11.8 compatibility */                            \
+		if (!resolved && pfn_cudaGetDriverEntryPoint_v11030 != NULL) {                                         \
+			err = pfn_cudaGetDriverEntryPoint_v11030(#function, (void **)&pfn_##function, cudaEnableDefault); \
 			if (err == cudaSuccess && pfn_##function != NULL) {                                             \
 				resolved = true;                                                                         \
 			}                                                                                               \
 		}                                                                                                       \
 		if (!resolved) {                                                                                        \
-			NCCL_OFI_WARN("Failed to resolve CUDA function %s (last error: %d, result: %d)", #function, err, result);                             \
+			NCCL_OFI_WARN("Failed to resolve CUDA function %s (last error: %d)", #function, err);            \
 			return -ENOTSUP;                                                                                \
 		}                                                                                                       \
 	} while (0);
@@ -165,11 +181,22 @@ int nccl_net_ofi_gpu_init(void)
 
 	if (runtimeVersion >= 13000) {
 		LOAD_CUDA_RUNTIME_SYM(cudaruntime_lib.get(), cudaGetDriverEntryPointByVersion);
-	} else {
+	} else if (runtimeVersion >= 12000) {
 		LOAD_CUDA_RUNTIME_SYM(cudaruntime_lib.get(), cudaGetDriverEntryPoint);
+	} else {
+		/* CUDA 11.3 - 11.8 runtimes export the 3-argument variant (no
+		 * driverStatus) under the same symbol name. */
+		pfn_cudaGetDriverEntryPoint_v11030 =
+			(decltype(pfn_cudaGetDriverEntryPoint_v11030))dlsym(cudaruntime_lib.get(),
+									    "cudaGetDriverEntryPoint");
+		if (pfn_cudaGetDriverEntryPoint_v11030 == NULL) {
+			NCCL_OFI_WARN("Failed to load CUDA runtime symbol cudaGetDriverEntryPoint");
+			return -ENOTSUP;
+		}
 	}
 
-	if (pfn_cudaGetDriverEntryPointByVersion == NULL && pfn_cudaGetDriverEntryPoint == NULL) {
+	if (pfn_cudaGetDriverEntryPointByVersion == NULL && pfn_cudaGetDriverEntryPoint == NULL &&
+	    pfn_cudaGetDriverEntryPoint_v11030 == NULL) {
 		NCCL_OFI_WARN("No CUDA driver entry point functions available in runtime");
 		return -ENOTSUP;
 	}
@@ -185,9 +212,13 @@ int nccl_net_ofi_gpu_init(void)
 	}
 
 #if CUDART_VERSION >= 13000
-	pfn_cudaGetDriverEntryPointByVersion = cudaGetDriverEntryPointByVersion;
+	pfn_cudaGetDriverEntryPointByVersion =
+		reinterpret_cast<decltype(pfn_cudaGetDriverEntryPointByVersion)>(cudaGetDriverEntryPointByVersion);
+#elif CUDART_VERSION >= 12000
+	pfn_cudaGetDriverEntryPoint = reinterpret_cast<decltype(pfn_cudaGetDriverEntryPoint)>(cudaGetDriverEntryPoint);
 #else
-	pfn_cudaGetDriverEntryPoint = cudaGetDriverEntryPoint;
+	/* CUDA 11.3 - 11.8: 3-argument variant without driverStatus */
+	pfn_cudaGetDriverEntryPoint_v11030 = cudaGetDriverEntryPoint;
 #endif
 #endif
 
@@ -415,14 +446,17 @@ int nccl_net_ofi_gpu_seg_is_host(void *seg_base, bool *is_host_out)
 	if (ret != CUDA_SUCCESS) {
 		return -EINVAL;
 	}
-	/* CU_MEM_LOCATION_TYPE_HOST_NUMA{,_CURRENT} were added in CUDA 12.2;
-	   guard them so this still compiles against our 11.7 floor. */
-	*is_host_out = (prop.location.type == CU_MEM_LOCATION_TYPE_HOST
+	/* CU_MEM_LOCATION_TYPE_HOST{,_NUMA,_NUMA_CURRENT} were all added in
+	   CUDA 12.2; guard them so this still compiles against CUDA 11.x.
+	   Before 12.2 the cuMem API had no host location types, so a
+	   successfully-queried allocation is never host memory. */
 #if CUDA_VERSION >= 12020
+	*is_host_out = (prop.location.type == CU_MEM_LOCATION_TYPE_HOST
 			|| prop.location.type == CU_MEM_LOCATION_TYPE_HOST_NUMA
-			|| prop.location.type == CU_MEM_LOCATION_TYPE_HOST_NUMA_CURRENT
+			|| prop.location.type == CU_MEM_LOCATION_TYPE_HOST_NUMA_CURRENT);
+#else
+	*is_host_out = false;
 #endif
-			);
 	return 0;
 }
 
