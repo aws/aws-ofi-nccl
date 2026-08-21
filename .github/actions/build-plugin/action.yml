@@ -20,6 +20,9 @@ inputs:
   build-type:
     description: "release or debug"
     required: true
+  cudart:
+    description: "static, dynamic, or none"
+    required: true
   artifact-name:
     description: "Name for the config.log artifact uploaded on failure"
     required: true
@@ -61,6 +64,7 @@ runs:
                     --enable-werror=yes \
                     --enable-picky-compiler=yes \
                     --enable-platform-aws \
+                    ${{ inputs.cudart == 'dynamic' && '--enable-cudart-dynamic' || '' }} \
                     ${{ inputs.sdk == 'neuron' && '--enable-neuron' || '--with-cuda=/usr/local/cuda' }} \
                     ${{ inputs.build-type == 'debug' && '--enable-debug --enable-trace' || '' }} \
                     ${{ contains(inputs.tracing, 'lttng') && '--with-lttng' || '' }} \
@@ -69,6 +73,29 @@ runs:
     - name: Call `make`
       shell: bash
       run: make V=1
+
+    - name: Verify dynamic CUDART isolation
+      if: inputs.cudart == 'dynamic'
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        shopt -s nullglob
+        plugins=(src/.libs/libnccl*.so)
+        if [ ${#plugins[@]} -eq 0 ]; then
+            echo "No core plugin shared libraries were built" >&2
+            exit 1
+        fi
+
+        for plugin in "${plugins[@]}"; do
+            echo "Checking ${plugin}"
+
+            if readelf -d "${plugin}" | grep -Eq 'NEEDED.*\[libcudart\.so'; then
+                echo "${plugin} has a direct CUDART dependency" >&2
+                readelf -d "${plugin}" >&2
+                exit 1
+            fi
+        done
 
     - name: Call `make check`
       shell: bash
