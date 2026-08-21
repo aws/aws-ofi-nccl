@@ -1,0 +1,80 @@
+FROM registry.suse.com/bci/bci-base:15.7
+
+ARG CC_VERSION=14
+ARG CUDA_VERSION=12-6
+ARG EFA_INSTALLER_VERSION=latest
+ARG HWLOC_VERSION=2.11.2
+ARG HWLOC_SHA256=866ac8ef07b350a6a2ba0c6826c37d78e8994dcbcd443bdd2b436350de19d540
+
+# Keep the SLES-provided Autotools versions. In particular, Automake 1.15.1
+# provides the compatibility coverage that caught issue #1353.
+RUN zypper --non-interactive addrepo \
+        https://developer.download.nvidia.com/compute/cuda/repos/sles15/x86_64/ cuda && \
+    zypper --gpg-auto-import-keys --non-interactive refresh && \
+    zypper --non-interactive install --no-recommends \
+        autoconf automake libtool \
+        gcc${CC_VERSION} gcc${CC_VERSION}-c++ \
+        make git curl tar gzip bzip2 xz m4 gawk diffutils findutils which \
+        pkg-config libxml2-devel libpciaccess-devel libnl3-devel \
+        rdma-core-devel libfabric-devel openmpi4-devel \
+        cuda-cudart-devel-${CUDA_VERSION} cuda-crt-${CUDA_VERSION} && \
+    zypper clean --all
+
+# The BCI repositories provide the hwloc runtime but not its development
+# package. Build the same hwloc release used by the reported SLES environment.
+RUN curl -fsSL \
+        "https://download.open-mpi.org/release/hwloc/v2.11/hwloc-${HWLOC_VERSION}.tar.gz" \
+        -o /tmp/hwloc.tar.gz && \
+    echo "${HWLOC_SHA256}  /tmp/hwloc.tar.gz" | sha256sum --check --strict && \
+    mkdir /tmp/hwloc && \
+    tar -xzf /tmp/hwloc.tar.gz -C /tmp/hwloc --strip-components=1 && \
+    cd /tmp/hwloc && \
+    CC=gcc-${CC_VERSION} CXX=g++-${CC_VERSION} \
+        ./configure --prefix=/opt/hwloc \
+        --disable-cairo --disable-opencl --disable-nvml && \
+    make -j"$(nproc)" && \
+    make install && \
+    rm -rf /tmp/hwloc /tmp/hwloc.tar.gz
+
+# Keep SLES libfabric 2.0 for proxy-only coverage, and use the rolling EFA
+# installer for the GDAKI-capable libfabric under /opt/amazon/efa. Container
+# mode skips kernel/service setup; retain the SLES Open MPI and plugin build.
+RUN curl -fsSL \
+        "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
+        -o /tmp/efa-installer.tar.gz && \
+    mkdir /tmp/efa-installer && \
+    tar -xzf /tmp/efa-installer.tar.gz \
+        -C /tmp/efa-installer --strip-components=1 && \
+    cd /tmp/efa-installer && \
+    ./efa_installer.sh --enable-ngc --skip-mpi --skip-plugin && \
+    cd / && \
+    rm -rf /tmp/efa-installer /tmp/efa-installer.tar.gz && \
+    zypper clean --all
+
+# Open MPI's wrapper defaults to an unversioned compiler, which is not present
+# when only the GCC 14 packages are installed. Prefer the SLES library directory
+# by default because the EFA profile adds /opt/amazon/efa to the loader config.
+ENV OMPI_CC=gcc-${CC_VERSION}
+ENV OMPI_CXX=g++-${CC_VERSION}
+ENV LD_LIBRARY_PATH=/usr/lib64:/opt/hwloc/lib
+
+# Fail image publication if either side of the future CI matrix disappears.
+RUN test "$(autoconf --version | head -1)" = \
+        "autoconf (GNU Autoconf) 2.69" && \
+    test "$(automake --version | head -1)" = \
+        "automake (GNU automake) 1.15.1" && \
+    test "$(pkg-config --modversion libfabric)" = "2.0.0" && \
+    test -f /usr/include/rdma/fi_ext_efa.h && \
+    ! grep -q FI_EFA_GDA_OPS /usr/include/rdma/fi_ext_efa.h && \
+    PKG_CONFIG_PATH=/opt/amazon/efa/lib64/pkgconfig \
+        pkg-config --atleast-version=2.5 libfabric && \
+    grep -q FI_EFA_GDA_OPS \
+        /opt/amazon/efa/include/rdma/fi_ext_efa.h && \
+    grep -q 'struct fi_efa_comp_cntr_init_attr' \
+        /opt/amazon/efa/include/rdma/fi_ext_efa.h && \
+    test -f /opt/amazon/efa/lib64/libfabric.so && \
+    /usr/lib64/mpi/gcc/openmpi4/bin/mpicc --version >/dev/null && \
+    test -f /opt/hwloc/include/hwloc.h && \
+    test -f /usr/local/cuda/include/cuda.h
+
+WORKDIR /workspace
