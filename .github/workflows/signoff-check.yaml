@@ -1,0 +1,109 @@
+name: Sign-off Check
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+concurrency:
+  group: signoff-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  signoff:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR head with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Verify Signed-off-by email matches author and looks sane
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+
+          # A sane commit email must be a real, routable address, not a machine
+          # default. sane_email() enforces three rules:
+          #   1. Well-formed: local@domain.tld (has an @, domain has a dot, no spaces).
+          #   2. Local part is not a known machine/system account (ec2-user, root, ...).
+          #   3. Domain is not an instance hostname / internal name. Covers dotless
+          #      names (ip-10-0-0-1, localhost, fv-az123) AND dotted internal hostnames
+          #      rule 1 would allow (ip-10-0-2-142.ec2.internal, *.compute.internal).
+          email_re='^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'
+          bad_local_re='^(ec2-user|root|runner|ubuntu|admin|nobody)$'
+          bad_domain_re='^(localhost|ip-[0-9]+-[0-9]+-[0-9]+-[0-9]+([.-].*)?|fv-az.*|.*\.(internal|local|localdomain)|.*\.ant\.amazon\.com)$'
+
+          # echoes a reason and returns 1 when the address is not sane.
+          sane_email() {
+            local e="$1" local_part domain
+            if [[ ! "$e" =~ $email_re ]]; then echo "malformed address"; return 1; fi
+            local_part="${e%@*}"; domain="${e##*@}"
+            shopt -s nocasematch
+            if [[ "$local_part" =~ $bad_local_re ]]; then
+              shopt -u nocasematch; echo "system/machine local part '$local_part'"; return 1
+            fi
+            if [[ "$domain" =~ $bad_domain_re ]]; then
+              shopt -u nocasematch; echo "instance/internal hostname domain '$domain'"; return 1
+            fi
+            shopt -u nocasematch; return 0
+          }
+
+          range="${BASE_SHA}..${HEAD_SHA}"
+          echo "Checking commits in $range"
+
+          fail=0
+          # --no-merges: merge commits are created by GitHub and carry no sign-off.
+          for sha in $(git rev-list --no-merges "$range"); do
+            author=$(git show -s --format=%ae "$sha")
+            subject=$(git show -s --format=%s "$sha")
+
+            # All Signed-off-by trailer emails on this commit.
+            mapfile -t signoffs < <(
+              git show -s --format='%(trailers:key=Signed-off-by,valueonly)' "$sha"                 | sed -n 's/.*<\(.*\)>.*/\1/p'
+            )
+
+            short=${sha:0:12}
+
+            if [ ${#signoffs[@]} -eq 0 ]; then
+              echo "::error::commit $short ($subject): missing Signed-off-by trailer"
+              fail=1
+              continue
+            fi
+
+            # Sanity-check the author email.
+            if ! why=$(sane_email "$author"); then
+              echo "::error::commit $short ($subject): author email '$author' is not valid/routable ($why)"
+              fail=1
+            fi
+
+            matched=0
+            for so in "${signoffs[@]}"; do
+              # Sanity-check each sign-off email.
+              if ! why=$(sane_email "$so"); then
+                echo "::error::commit $short ($subject): Signed-off-by email '$so' is not valid/routable ($why)"
+                fail=1
+                continue
+              fi
+              [ "$so" = "$author" ] && matched=1
+            done
+
+            if [ "$matched" -ne 1 ]; then
+              echo "::error::commit $short ($subject): no Signed-off-by email matches author '$author' (found: ${signoffs[*]})"
+              fail=1
+            fi
+          done
+
+          if [ "$fail" -ne 0 ]; then
+            echo
+            echo "Sign-off check failed. Each commit must have a Signed-off-by line"
+            echo "whose email matches the commit author (git commit -s), using a real"
+            echo "email address (not an ec2-user@<hostname> / localhost default)."
+            exit 1
+          fi
+          echo "All commits have a valid, matching Signed-off-by."
