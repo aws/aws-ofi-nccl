@@ -505,9 +505,21 @@ public:
 	 * insertion, and the per-rank key all-gather. Leaves gdr_handle == nullptr;
 	 * GDRCopy (proxy only) is layered on top by the caller. Caller holds ep_lock. */
 	int regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
-				 nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out);
+				 nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+		REQUIRES(get_ep_lock());
 
-	int deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle) override;
+	/* Local part of symmetric memory registration: allocate the handle,
+	 * register data_ptr with the endpoint, and fill in this rank's entry of
+	 * the handle's per-rank metadata table. Caller must hold ep_lock. */
+	int regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
+			  nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+		REQUIRES(get_ep_lock());
+
+	int deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle) EXCLUDES(get_ep_lock()) override;
+
+	/* Body of deregMrSym, with ep_lock held by the caller. */
+	int deregMrSymLocked(nccl_ofi_rdma_gin_symm_mr_handle *mr_handle)
+		REQUIRES(get_ep_lock());
 
 	void increment_outstanding_ack_counter()
 	{
