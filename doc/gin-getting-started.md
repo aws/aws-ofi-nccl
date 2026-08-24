@@ -9,9 +9,10 @@ Two modes of GIN are supported:
 
 ## Requirements
 
+- [aws-ofi-nccl 1.21.0](https://github.com/aws/aws-ofi-nccl/releases/tag/v1.21.0) or later
 - [NCCL 2.31.2-1](https://github.com/NVIDIA/nccl/releases/tag/v2.31.2-1) or later
-- [GDRCopy 2.5](https://github.com/NVIDIA/gdrcopy/releases/tag/v2.5) or later
-- EFA-GDA additionally requires [Libfabric 2.6.0](https://github.com/ofiwg/libfabric/releases/tag/v2.6.0)+ and a supported EC2 instance type
+- [GDRCopy 2.5](https://github.com/NVIDIA/gdrcopy/releases/tag/v2.5) or later, for **both** the runtime (`libgdrapi`) and the kernel driver (`gdrdrv`)
+- EFA-GDA has additional requirements — see [below](#efa-gda-requirements)
 
 ## Testing
 
@@ -29,7 +30,28 @@ The GIN functionality can be tested (proxy mode) using the latest version of ncc
 
 EFA ([Elastic Fabric Adapter](https://aws.amazon.com/hpc/efa/)) is a high-performance network interface for EC2, supporting low-latency communication at scale with OS bypass.
 
-For supported AWS EC2 instance types with EFA, a fast path is supported for NCCL-GIN in which the GPU initiates network operations directly, without CPU involvement. Currently, P5en, P6-B200, and P6-B300 instance types are supported.
+For supported AWS EC2 instance types with EFA, a fast path is supported for NCCL-GIN in which the GPU initiates network operations directly, without CPU involvement.
+
+### EFA-GDA Requirements
+
+In addition to the requirements above, EFA-GDA requires:
+- A supported EC2 instance type (P5en, P6-B200, or P6-B300)
+- [Libfabric 2.6.0](https://github.com/ofiwg/libfabric/releases/tag/v2.6.0) or later
+- rdma-core `64.0amzn0` or later
+- EFA driver 3.3.0 or later
+- The NVIDIA driver loaded with `PeerMappingOverride` enabled (see [below](#enabling-peermappingoverride-in-the-nvidia-driver))
+
+The required software versions are provided by [AWS EFA installer](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa-start-nccl.html#nccl-start-base-enable) 1.50.0 or later
+
+#### Enabling PeerMappingOverride in the NVIDIA driver
+
+EFA-GDA maps EFA MMIO regions into the GPU address space, which the NVIDIA driver rejects unless `PeerMappingOverride` is enabled.
+
+Add the following to a file under `/etc/modprobe.d/` (for example `/etc/modprobe.d/nvidia-gdaki.conf`):
+```
+options nvidia NVreg_RegistryDwords="PeerMappingOverride=1"
+```
+This takes effect only after the NVIDIA driver is reloaded or the instance is rebooted.
 
 ### Limitations
 
