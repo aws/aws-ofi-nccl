@@ -317,8 +317,7 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
 				      int type, uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out)
 {
-	auto &gin_ep = resources.get_ep();
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard<std::mutex> scoped_ep_lock(get_ep_lock());
 
 	/* Shared core: dedup/refcount, local EFA registration, MR-map insert,
 	   per-rank key all-gather. */
@@ -347,26 +346,10 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 	return 0;
 }
 
-int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
+int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
 				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
 {
 	auto &gin_ep = resources.get_ep();
-
-	/* Check for duplicate registration */
-	auto it = mr_handle_map.find(data_ptr);
-	if (it != mr_handle_map.end()) {
-		if (it->second.handle->size >= size) {
-			/* Existing MR covers the requested region */
-			it->second.refcnt++;
-			*mr_handle_out = it->second.handle;
-			return 0;
-		}
-		/* Existing MR is too small. We do not support upgrading
-		   an existing registration to a larger size. */
-		NCCL_OFI_WARN("regMrSym for ptr %p with size %zu but existing registration "
-			      "has size %zu", data_ptr, size, it->second.handle->size);
-		return -EINVAL;
-	}
 
 	auto *mr_handle = new nccl_ofi_rdma_gin_symm_mr_handle {};
 
@@ -410,13 +393,50 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, 
 		}
 	}
 
-	mr_handle_map.insert(std::make_pair(data_ptr, nccl_ofi_rdma_gin_mr_map_entry{mr_handle, 1}));
+	*mr_handle_out = mr_handle;
+	return 0;
+}
 
-	/* Exchange MR metadata with all ranks using AG ring */
+int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+{
+	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
+	int ret = 0;
+
+	/* Check for duplicate registration */
+	auto it = mr_handle_map.find(data_ptr);
+	if (it != mr_handle_map.end()) {
+		if (it->second.handle->size < size) {
+			/* Existing MR is too small. We do not support upgrading
+			   an existing registration to a larger size. */
+			NCCL_OFI_WARN("regMrSym for ptr %p with size %zu but existing registration "
+				      "has size %zu", data_ptr, size, it->second.handle->size);
+			return -EINVAL;
+		}
+		/* Existing MR covers the requested region */
+		it->second.refcnt++;
+		mr_handle = it->second.handle;
+	} else {
+		ret = regMrSymLocal(ckey, data_ptr, size, type, &mr_handle);
+		if (ret != 0) {
+			return ret;
+		}
+		mr_handle_map.insert(std::make_pair(data_ptr,
+						   nccl_ofi_rdma_gin_mr_map_entry{mr_handle, 1}));
+	}
+
+	/* Exchange MR metadata with all ranks using AG ring.
+	 *
+	 * Symmetric registration is collective, so every rank must reach this
+	 * all-gather
+	 */
 	ret = ag_comm.all_gather(mr_handle->remote_mr.data(), sizeof(gin_remote_mr));
 	if (ret != 0) {
-		mr_handle_map.erase(data_ptr);
-		delete mr_handle;
+		int dereg_ret = deregMrSymLocked(mr_handle);
+		if (dereg_ret != 0) {
+			NCCL_OFI_WARN("Failed to release symmetric registration for ptr %p after "
+				      "a failed all-gather: %d", data_ptr, dereg_ret);
+		}
 		return ret;
 	}
 
@@ -429,9 +449,13 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 	auto *mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mr_handle_base);
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
 
-	auto &gin_ep = resources.get_ep();
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard<std::mutex> scoped_ep_lock(get_ep_lock());
 
+	return deregMrSymLocked(mr_handle);
+}
+
+int nccl_ofi_rdma_gin_put_comm::deregMrSymLocked(nccl_ofi_rdma_gin_symm_mr_handle *mr_handle)
+{
 	auto it = mr_handle_map.find(mr_handle->input_address);
 	if (it == mr_handle_map.end()) {
 		return -ENOENT;

@@ -18,6 +18,10 @@
  * 2. Registering the same buffer with a smaller size is covered by the existing MR
  * 3. Deregistering with outstanding refs keeps the MR alive
  * 4. Data transfers work correctly after duplicate registration
+ * 5. A collective re-registration still completes when one rank has
+ *    deregistered locally in the meantime (refcounts differ across ranks)
+ * 6. That re-registration refreshes the deregistering rank's keys, so RMA
+ *    targeting it still lands
  */
 
 static inline ncclResult_t
@@ -230,6 +234,98 @@ int main(int argc, char *argv[])
 
 	/* Deregister the third (smaller size) registration */
 	OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle3));
+
+	/*
+	 * Test 5: collective re-registration after an asymmetric, rank-local
+	 * deregistration. Regression test for a hang in regMrSym.
+	 *
+	 * NCCL documents ncclCommWindowDeregister as rank-local, so ranks may
+	 * legitimately hold different refcounts for the same buffer. regMrSym
+	 * is still collective, so its per-rank key all-gather has to run on
+	 * every rank -- including ranks whose call only bumps a refcount.
+	 * Previously the dedup fast path returned before the all-gather, so
+	 * rank 0 (a cache miss, having dropped its registration) entered a ring
+	 * all-gather that no peer joined and the job deadlocked here.
+	 *
+	 * A regression manifests as a hang rather than a failed assertion, so
+	 * this case relies on the harness timeout to fail the test.
+	 */
+	void *mhandle_sym1 = nullptr;
+	OFINCCLCHECK(extRma->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
+				      &mhandle_sym1));
+	assert(mhandle_sym1 != nullptr);
+
+	/* Rank 0 alone drops its registration. */
+	if (rank == 0) {
+		OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle_sym1));
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	/* Collective again: a cache miss on rank 0, a refcount bump elsewhere. */
+	void *mhandle_sym2 = nullptr;
+	OFINCCLCHECK(extRma->regMrSym(collComm, buff, SEND_SIZE, buffer_type, mrFlags,
+				      &mhandle_sym2));
+	assert(mhandle_sym2 != nullptr);
+
+	if (rank != 0 && mhandle_sym2 != mhandle_sym1) {
+		NCCL_OFI_WARN("Test 5 FAILED: rank %d still holds a registration, so regMrSym "
+			      "should have returned the same handle. Got %p and %p", rank,
+			      mhandle_sym1, mhandle_sym2);
+		return 1;
+	}
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d: Test 5 PASSED — re-registration completed after a "
+		      "rank-local deregister", rank);
+
+	/*
+	 * Test 6: the peers were holding rank 0's pre-deregistration keys. The
+	 * all-gather in Test 5 must have replaced them with the keys from rank
+	 * 0's fresh registration, so an RMA write targeting rank 0 has to land.
+	 */
+	const int send_val2 = 77;
+	if (rank == 1) {
+		OFINCCLCHECK(initialize_buff(buff, SEND_SIZE, buffer_type, send_val2));
+	} else if (rank == 0) {
+		OFINCCLCHECK(initialize_buff(buff, SEND_SIZE, buffer_type, 0));
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	if (rank == 1) {
+		std::deque<void *> request_deque;
+		void *request = nullptr;
+		OFINCCLCHECK(extRma->iput(rmaCtx, 0, 0, mhandle_sym2, SEND_SIZE, 0, mhandle_sym2,
+					  0, 0, &request));
+		assert(request != nullptr);
+		request_deque.push_back(request);
+
+		while (!request_deque.empty()) {
+			OFINCCLCHECK(poll_request_completion(extRma, request_deque, collComm,
+							    rmaCtx));
+		}
+	}
+
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	if (rank == 0) {
+		uint8_t verif_buf[SEND_SIZE];
+		CUDACHECK(cudaMemcpy(verif_buf, buff, SEND_SIZE, cudaMemcpyDefault));
+		for (int i = 0; i < SEND_SIZE; ++i) {
+			if (verif_buf[i] != send_val2) {
+				NCCL_OFI_WARN("Test 6 FAILED: index %d expected %d got %d", i,
+					      send_val2, verif_buf[i]);
+				return 1;
+			}
+		}
+	}
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d: Test 6 PASSED — iput to the deregistered rank landed",
+		      rank);
+
+	/* Release: rank 0 holds one registration, every other rank holds two. */
+	OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle_sym2));
+	if (rank != 0) {
+		OFINCCLCHECK(extRma->deregMrSym(collComm, mhandle_sym1));
+	}
 
 	/* Cleanup */
 	OFINCCLCHECK(extRma->destroyContext(rmaCtx));
