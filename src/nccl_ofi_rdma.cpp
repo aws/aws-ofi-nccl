@@ -15,6 +15,9 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
@@ -419,7 +422,6 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 		static_assert(NCCL_OFI_MAX_RECVS <= (1 << NCCL_OFI_RDMA_RECV_IDX_BITS),
 					  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
-		this->eager_support = props->eager_support;
 	} else {
 		return ret;
 	}
@@ -7051,6 +7053,29 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	}
 
 	/* The fabrics are created lazily on first use; see create_domain(). */
+
+	/* Verify support for eager messages */
+#if HAVE_DECL_FI_EFA_FEATURE_OPS
+	{ /* Scope block: C++ forbids goto past auto variable initialization */
+		auto fabric_result = nccl_ofi_ofiutils_fabric_create(this->device_rails[0].info);
+		if (OFI_UNLIKELY(fabric_result.is_failure())) {
+			NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
+				      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
+			ret = fabric_result.error_code;
+			throw std::runtime_error("Opening fabric provider for eager check failed");
+		}
+
+		struct fi_efa_feature_ops *feat_ops = NULL;
+		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
+				  (void **)&feat_ops, NULL);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+		} else if (feat_ops->query("mixed_hmem_iov")) {
+			this->eager_support = true;
+		}
+	}
+#endif
 
 	/* NVTX domain */
 #if HAVE_NVTX_TRACING
