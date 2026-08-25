@@ -83,37 +83,12 @@ libinternal_plugin_la_LDFLAGS = -static
 libinternal_plugin_la_LIBADD=
 
 if HAVE_GDAKI
-# TODO: Vendored efa-dp-direct commit 81c4dc7 has a bug that causes a 
-# "sign-compare" error. To avoid relaxing the sign-compare compilation check
-# when building the entire OFI NCCL plugin library, we separately build a
-# libefa_cuda_dp.la library with "-Wno-error=sign-compare" set. Once we 
-# digest an efa-dp-direct version with the sign-compare error bug fixed, we 
-# should stop building a separate libefa_cuda_dp.la library and instead just
-# ingest the efa-dp-direct files directly as sources for the libinternal_plugin.la
-# library.
-
-noinst_LTLIBRARIES += libefa_cuda_dp.la
-
-libefa_cuda_dp_la_SOURCES = \
-	../3rd-party/efa-gda/CUDA/host/efa_cuda_dp.cpp
-
-libefa_cuda_dp_la_CPPFLAGS = \
-	-I$(abs_top_srcdir)/include \
-	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/common \
-	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
-
-# The pinned host source compares its `int` loop index with a `size_t` length.
-# Scope this temporary warning-as-error exception to third-party code so
-# plugin-owned sources remain subject to the project warning policy.
-libefa_cuda_dp_la_CXXFLAGS = \
-	-Wno-error=sign-compare
-
 AM_CPPFLAGS += \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/common \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
 
 libinternal_plugin_la_LIBADD += \
-	libefa_cuda_dp.la
+	$(top_builddir)/3rd-party/libefa_cuda_dp.la
 endif
 
 lib_LTLIBRARIES =
