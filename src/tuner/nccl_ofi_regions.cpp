@@ -2144,8 +2144,9 @@ ncclResult_t region_get_coll_info_internal_v3(nccl_ofi_tuner_context_t *ctx,
 		*nChannels = calculateBestNChannelTree(nBytes, region_ctx->log2_nnodes);
 	}
 
-	/* Selecting best nChannels for P6 platform PAT AG/RS 0x7 */
-	if ((region_ctx->platform == NCCL_OFI_TUNER_P6) && (nBytes <= 32 * 1024 * 1024) &&
+	/* Selecting best nChannels for P6 platforms PAT AG/RS 0x7 */
+	if ((region_ctx->platform == NCCL_OFI_TUNER_P6 || region_ctx->platform == NCCL_OFI_TUNER_P6_B300)
+		&& (nBytes <= 32 * 1024 * 1024) &&
 		(algorithm == NCCL_ALGO_PAT) && (protocol == NCCL_PROTO_SIMPLE) &&
 		(region_ctx->dims.num_nodes == region_ctx->dims.num_ranks)) {
 		*nChannels = calculateBestNChannelPat(nBytes, region_ctx->dims.num_nodes);
