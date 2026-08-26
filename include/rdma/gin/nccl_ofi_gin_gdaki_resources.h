@@ -138,7 +138,10 @@ public:
 		}
 		if (nccl_net_ofi_gpu_host_register_iomem(bar, size) != 0) {
 			throw std::runtime_error(
-				"gdaki_mmio_region: host_register_iomem failed");
+				"gdaki_mmio_region: host_register_iomem failed "
+				"(this mapping of the EFA doorbell BAR into the GPU "
+				"address space requires the NVIDIA driver to be loaded "
+				"with NVreg_RegistryDwords=\"PeerMappingOverride=1\")");
 		}
 		host = bar;
 		if (nccl_net_ofi_gpu_host_get_device_pointer(&dev, bar) != 0) {
@@ -328,6 +331,25 @@ private:
 };
 
 /**
+ * Remediation hint for a cntr_open_ext() failure, or "" if we have none.
+ *
+ * Only FI_ENOSYS is mapped: the efa provider compiled the comp-cntr stub
+ * because efadv_create_comp_cntr was absent from the rdma-core libfabric
+ * was built against.
+ */
+static inline std::string gdaki_cntr_open_hint(int fi_errno)
+{
+	if (fi_errno == FI_ENOSYS) {
+		return " -- the runtime libfabric was built without EFA "
+		       "completion-counter support, which EFA-GDA requires. "
+		       "Install libfabric 2.6.0 or later built against "
+		       "rdma-core 64.0amzn0 or later (AWS EFA installer 1.50.0 "
+		       "or later provides both)";
+	}
+	return "";
+}
+
+/**
  * A hardware completion counter backed by GPU-accessible external memory.
  *
  * The NIC writes the counter value directly into GPU memory via
@@ -387,7 +409,8 @@ public:
 			close(fd);
 			nccl_net_ofi_gpu_vmm_free(gpu_mem, actual_size);
 			throw std::runtime_error("gdaki_hw_counter: cntr_open_ext failed: " +
-						 std::string(fi_strerror(-ret)));
+						 std::string(fi_strerror(-ret)) +
+						 gdaki_cntr_open_hint(-ret));
 		}
 
 		cntr = c;
