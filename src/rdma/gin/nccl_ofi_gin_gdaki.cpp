@@ -452,7 +452,7 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.data.target_remote_qpns     = ctx->data[ctx_id]->base.targets.qpns.dev;
 	h.data.target_qkey            = ctx->data[ctx_id]->base.targets.qkeys.dev;
 	h.data.sq_lock = 0;
-	h.data.local_cntr_value = ctx->data[ctx_id]->write_cntr.gpu_ptr();
+	h.data.local_cntr_value = ctx->data[ctx_id]->local_cntr.gpu_ptr();
 	h.data.submitted_count = 0;
 	h.data.sq_size = ctx->data[ctx_id]->base.sq_size;
 
@@ -464,7 +464,7 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.pvdata.target_remote_qpns     = ctx->pvdata[ctx_id]->base.targets.qpns.dev;
 	h.pvdata.target_qkey            = ctx->pvdata[ctx_id]->base.targets.qkeys.dev;
 	h.pvdata.sq_lock = 0;
-	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->write_cntr.gpu_ptr();
+	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->local_cntr.gpu_ptr();
 	h.pvdata.submitted_count = 0;
 	h.pvdata.sq_size = ctx->pvdata[ctx_id]->base.sq_size;
 	h.pvdata.putvalue_slice_base = ctx->pvdata[ctx_id]->putvalue_slice_base;
@@ -753,7 +753,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 * domain (ofi_domain / proxy_info / gda_ops selected above by
 			 * rail_id = ctx_id % num_rails).
 			 */
-			ctx->data[ctx_id]->open(ofi_domain, proxy_info, gda_ops);
+			/* The data endpoint issues both Put and Get, so it counts reads too. */
+			ctx->data[ctx_id]->open(ofi_domain, proxy_info, gda_ops, FI_WRITE | FI_READ);
 			if (local_n_sc > 0) {
 				ctx->sc_endpoints[ctx_id].reserve(local_n_sc);
 			}
@@ -762,7 +763,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
 			}
 			/* Dedicated PutValue poster endpoint. */
-			ctx->pvdata[ctx_id]->open(ofi_domain, proxy_info, gda_ops);
+			/* PutValue only writes. */
+			ctx->pvdata[ctx_id]->open(ofi_domain, proxy_info, gda_ops, FI_WRITE);
 
 			/*
 			 * Step 5: Exchange ALL of this ctx's endpoint addresses in a

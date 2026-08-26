@@ -350,16 +350,16 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 }
 
 void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
-			       struct fi_efa_ops_gda *gda_ops)
+			       struct fi_efa_ops_gda *gda_ops, uint64_t cntr_flags)
 {
-	/* Create the FI_WRITE counter first; it will be bound to the inner
-	 * endpoint between open() and enable(). */
-	write_cntr.create(gda_ops, domain);
+	/* Create the counter first; it will be bound to the inner endpoint
+	 * between open() and enable(). */
+	local_cntr.create(gda_ops, domain);
 
 	/* Open the inner endpoint without enable. */
 	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size());
 
-	base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
+	base.endpoint.bind(&local_cntr.get()->fid, cntr_flags);
 
 	base.endpoint.enable();
 }

@@ -501,14 +501,14 @@ public:
 /**
  * Host-side state for the data (main) endpoint.
  *
- * Composes a gdaki_endpoint plus a FI_WRITE hardware counter for
- * tracking local completion of outgoing data-only writes. The kernel
- * spins on this counter (instead of polling the CQ) to determine when
- * Put has completed locally; same model as gdaki_sc_endpoint, just
- * without the FI_REMOTE_WRITE counter (the data EP isn't a signal
- * target).
+ * Composes a gdaki_endpoint plus a hardware counter for tracking local
+ * completion of the operations this endpoint posts; open() takes the
+ * operations to count. The kernel spins on this counter (instead of
+ * polling the CQ) to determine when Put or Get has completed locally;
+ * same model as gdaki_sc_endpoint, just without the FI_REMOTE_WRITE
+ * counter (the data EP isn't a signal target).
  *
- * Member declaration order is critical: write_cntr MUST be declared
+ * Member declaration order is critical: local_cntr MUST be declared
  * BEFORE base so the inner libfabric endpoint closes before the
  * counter bound to it (closing a counter while it is still bound to
  * an open endpoint returns EBUSY in libfabric).
@@ -523,15 +523,17 @@ public:
 	gdaki_data_endpoint(const gdaki_data_endpoint &) = delete;
 	gdaki_data_endpoint &operator=(const gdaki_data_endpoint &) = delete;
 
-	gdaki_hw_counter write_cntr;        /* FI_WRITE (local completion) */
+	gdaki_hw_counter local_cntr;         /* local completion; ops per open() */
 	gdaki_endpoint   base;          /* AFTER counter → EP closes first */
 
 	/**
-	 * Open the inner endpoint, create the FI_WRITE counter, and bind
-	 * the counter before enabling.
+	 * Open the inner endpoint, create the local-completion counter, and bind
+	 * it before enabling. cntr_flags names the operations the counter counts:
+	 * FI_WRITE for an endpoint that only writes, FI_WRITE | FI_READ for one
+	 * that also issues reads.
 	 */
 	void open(struct fid_domain *domain, struct fi_info *ref_info,
-		  struct fi_efa_ops_gda *gda_ops);
+		  struct fi_efa_ops_gda *gda_ops, uint64_t cntr_flags);
 
 	/**
 	 * Populate the inner endpoint's GPU descriptors (QP/CQ attrs,
