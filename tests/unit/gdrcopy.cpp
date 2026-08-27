@@ -146,10 +146,22 @@ int main(int argc, char *argv[])
 		return SKIP_TEST;
 	}
 
-	/* Using GPU 0 for simplicity. This also serves to initialize the context. */
+	/* Using GPU 0 for simplicity. */
 	cudaError_t cudaErr = cudaSetDevice(0);
 	if (cudaErr != cudaSuccess) {
 		fprintf(stderr, "cudaSetDevice() failed: %s\n", cudaGetErrorString(cudaErr));
+		return 1;
+	}
+
+	/* The plugin calls the CUDA driver API, which needs a context current on
+	 * this thread. Only CUDA >= 12 creates the primary context eagerly in
+	 * cudaSetDevice(); before that it is created lazily on the first runtime
+	 * call that needs it, and cuMemAlloc() fails with
+	 * CUDA_ERROR_CONTEXT_IS_DESTROYED until then. cudaFree(0) is the usual
+	 * way to force that initialization. */
+	cudaErr = cudaFree(0);
+	if (cudaErr != cudaSuccess) {
+		fprintf(stderr, "cudaFree(0) failed: %s\n", cudaGetErrorString(cudaErr));
 		return 1;
 	}
 
