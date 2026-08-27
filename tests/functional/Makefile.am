@@ -83,8 +83,12 @@ gin_signal_gdaki_gpu_LDADD = $(LDADD) -lcuda
 # efa-dp-direct splits shared definitions from GPU device helpers. These
 # kernel-only functional tests use common/device APIs and deliberately do not
 # include the CUDA host API.
+#
+# Our .cu sources are held to C++17, even though the host build uses C++20, to
+# maintain compatibility with CUDA 11. nvcc did not accept -std=c++20 until
+# CUDA 12.0
 .cu.o:
-	$(NVCC) -std=c++20 $(NVCC_GENCODE) \
+	$(NVCC) -std=c++17 $(NVCC_GENCODE) \
 		-ccbin=$(MPICXX) \
 		-Xcompiler -fPIC \
 		-Xcompiler -Wno-error \
