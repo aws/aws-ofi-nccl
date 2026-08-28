@@ -1600,6 +1600,19 @@ public:
 
 int main(int argc, char *argv[])
 {
+	/*
+	 * Eager messages are disabled by default (OFI_NCCL_EAGER_MAX_SIZE == -1).
+	 * This suite specifically exercises the eager path, so force-enable eager
+	 * with the historical default size (8192). The test constants (EAGER_SIZE,
+	 * LARGE_SIZE, and the T14 size-boundary check) all assume this value.
+	 *
+	 * This must run before the plugin is loaded and initialized (the TestSuite
+	 * constructor dlopen()s the plugin and ext_net->init() calls
+	 * ofi_nccl_parameters_init(), which reads the environment). overwrite=0 so
+	 * an explicit OFI_NCCL_EAGER_MAX_SIZE from the caller still takes priority.
+	 */
+	setenv("OFI_NCCL_EAGER_MAX_SIZE", "8192", 0);
+
 	TestSuite suite;
 
 	Test5_SingleEagerLate t5;
