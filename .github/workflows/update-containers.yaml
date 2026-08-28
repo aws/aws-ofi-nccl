@@ -14,6 +14,7 @@ jobs:
       ubuntu: ${{ steps.set-matrix.outputs.ubuntu }}
       ubuntu2404: ${{ steps.set-matrix.outputs.ubuntu2404 }}
       ubuntu2604: ${{ steps.set-matrix.outputs.ubuntu2604 }}
+      sles15: ${{ steps.set-matrix.outputs.sles15 }}
       codechecker: ${{ steps.set-matrix.outputs.codechecker }}
     steps:
       - uses: actions/checkout@v6
@@ -23,6 +24,7 @@ jobs:
           echo "ubuntu=$(jq -c '.matrix_config.ubuntu' .github/matrix-config.json)" >> $GITHUB_OUTPUT
           echo "ubuntu2404=$(jq -c '.matrix_config.ubuntu2404' .github/matrix-config.json)" >> $GITHUB_OUTPUT
           echo "ubuntu2604=$(jq -c '.matrix_config.ubuntu2604' .github/matrix-config.json)" >> $GITHUB_OUTPUT
+          echo "sles15=$(jq -c '.matrix_config.sles15' .github/matrix-config.json)" >> $GITHUB_OUTPUT
           echo "codechecker=$(jq -c '.matrix_config.codechecker' .github/matrix-config.json)" >> $GITHUB_OUTPUT
 
   build-amazonlinux-containers:
@@ -56,6 +58,41 @@ jobs:
           build-args: |
             ENABLE_CUDA=${{ matrix.sdk == 'cuda' }}
             EFA_INSTALLER_VERSION=${{ matrix.efainstaller }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-sles15-containers:
+    needs: get-matrix
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{fromJson(needs.get-matrix.outputs.sles15)}}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push SLES 15 containers
+        uses: docker/build-push-action@v6
+        with:
+          context: docker/base
+          file: docker/base/Dockerfile.sles15
+          push: true
+          tags: ghcr.io/${{ github.repository }}/aws-ofi-nccl-sles15:${{ matrix.sdk }}-${{ matrix.cc }}
+          build-args: |
+            CC_TYPE=${{ matrix.cc }}
+            CUDA_VERSION=12-6
+            EFA_INSTALLER_VERSION=latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
