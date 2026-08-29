@@ -12,7 +12,7 @@
 #include "nccl_ofi_param.h"
 #include "rdma/gin/nccl_ofi_gin_gdaki_resources.h"
 
-#include "efa_cuda_dp.h"
+#include "efa_cuda_dp_v1.h"
 
 #include <rdma/fi_cm.h>
 #include <rdma/fi_ext_efa.h>
@@ -152,7 +152,7 @@ void gdaki_fi_endpoint::bind(struct fid *fid, uint64_t flags)
 gdaki_gpu_qp::~gdaki_gpu_qp()
 {
 	if (qp != nullptr) {
-		efa_cuda_destroy_qp(qp);
+		efa_cuda_dp_v1.destroy_qp(qp);
 	}
 }
 
@@ -169,7 +169,7 @@ void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 	/* The plugin supplies provider-probed buffers and geometry. The host API
 	 * validates the attributes and initializes queue masks, counters, and phase
 	 * state before uploading the canonical descriptor to GPU memory. */
-	struct efa_cuda_qp_attrs attrs = {};
+	efa_cuda_qp_attrs_v1 attrs = {};
 	attrs.sq_buffer = static_cast<uint8_t *>(sq_buf_dev);
 	attrs.rq_buffer = static_cast<uint8_t *>(rq_attr.buffer);
 	attrs.sq_doorbell = static_cast<uint32_t *>(sq_db_dev);
@@ -179,17 +179,18 @@ void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 	attrs.sq_max_batch = sq_attr.max_batch;
 	attrs.rq_num_entries = rq_attr.num_entries;
 	attrs.rq_entry_size = rq_attr.entry_size;
+	attrs.reserved = 0;
 
-	qp = efa_cuda_create_qp(&attrs, sizeof(attrs));
+	qp = efa_cuda_dp_v1.create_qp(&attrs, sizeof(attrs));
 	if (qp == nullptr) {
-		throw std::runtime_error("gdaki_gpu_qp: efa_cuda_create_qp failed");
+		throw std::runtime_error("gdaki_gpu_qp: efa_cuda_dp_v1.create_qp failed");
 	}
 }
 
 gdaki_gpu_cq::~gdaki_gpu_cq()
 {
 	if (cq != nullptr) {
-		efa_cuda_destroy_cq(cq);
+		efa_cuda_dp_v1.destroy_cq(cq);
 	}
 }
 
@@ -204,14 +205,14 @@ void gdaki_gpu_cq::build(const struct fi_efa_cq_attr &cq_attr)
 	/* The plugin supplies the provider-probed CQ buffer and geometry. The host
 	 * API validates the attributes and initializes queue masks and phase state
 	 * before uploading the canonical descriptor to GPU memory. */
-	struct efa_cuda_cq_attrs attrs = {};
+	efa_cuda_cq_attrs_v1 attrs = {};
 	attrs.buffer = static_cast<uint8_t *>(cq_attr.buffer);
 	attrs.num_entries = cq_attr.num_entries;
 	attrs.entry_size = cq_attr.entry_size;
 
-	cq = efa_cuda_create_cq(&attrs, sizeof(attrs));
+	cq = efa_cuda_dp_v1.create_cq(&attrs, sizeof(attrs));
 	if (cq == nullptr) {
-		throw std::runtime_error("gdaki_gpu_cq: efa_cuda_create_cq failed");
+		throw std::runtime_error("gdaki_gpu_cq: efa_cuda_dp_v1.create_cq failed");
 	}
 }
 

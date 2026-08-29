@@ -8,10 +8,9 @@
  * calls symmetrically. nccl_ofi_gin_gdaki_context composes them, and
  * createContext / destroyContext orchestrate via the composed type.
  *
- * Plugin-owned GPU buffers and MMIO mappings use the accelerator
- * abstraction (nccl_net_ofi_gpu_*). Canonical QP/CQ descriptors instead
- * delegate allocation and destruction to the pinned efa-dp-direct host
- * API, which uses the CUDA Runtime API. The GDAKI code path is CUDA-only.
+ * Plugin-owned GPU buffers and MMIO mappings use the accelerator abstraction
+ * (nccl_net_ofi_gpu_*). QP/CQ descriptors use efa-dp-direct's frozen v1
+ * operation table. The GDAKI code path is CUDA-only.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_RESOURCES_H_
@@ -269,9 +268,9 @@ public:
 };
 
 /**
- * A GPU-resident canonical efa_cuda_qp descriptor.
+ * A GPU-resident efa_cuda_qp_v1 descriptor.
  *
- * Owns the descriptor created through the pinned efa-dp-direct host API.
+ * Owns the descriptor created through efa-dp-direct's v1 operation table.
  * `build()` is deliberately single-use: each host API create call allocates a
  * fresh GPU descriptor, so rebuilding would overwrite an owned pointer. The
  * destructor calls the paired host API destroy function. The SQ buffer and
@@ -291,19 +290,19 @@ public:
 		   const struct fi_efa_wq_attr &rq_attr,
 		   void *sq_buf_dev, void *sq_db_dev);
 
-	efa_cuda_qp *dev() const
+	efa_cuda_qp_v1 *dev() const
 	{
 		return qp;
 	}
 
 private:
-	efa_cuda_qp *qp = nullptr;
+	efa_cuda_qp_v1 *qp = nullptr;
 };
 
 /**
- * A GPU-resident canonical efa_cuda_cq descriptor.
+ * A GPU-resident efa_cuda_cq_v1 descriptor.
  *
- * Owns the descriptor created through the pinned efa-dp-direct host API.
+ * Owns the descriptor created through efa-dp-direct's v1 operation table.
  * `build()` is deliberately single-use: each host API create call allocates a
  * fresh GPU descriptor, and the destructor calls the paired destroy function.
  * On P5en the CQ buffer is polled via its host pointer rather than through a
@@ -321,13 +320,13 @@ public:
 
 	void build(const struct fi_efa_cq_attr &cq_attr);
 
-	efa_cuda_cq *dev() const
+	efa_cuda_cq_v1 *dev() const
 	{
 		return cq;
 	}
 
 private:
-	efa_cuda_cq *cq = nullptr;
+	efa_cuda_cq_v1 *cq = nullptr;
 };
 
 /**

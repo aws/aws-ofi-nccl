@@ -6,7 +6,7 @@
  * memory and destroyContext tears down.
  *
  * This header is plugin-internal. NCCL does not include it: NCCL's kernel
- * code and the plugin both use the canonical efa_cuda_qp / efa_cuda_cq
+ * code and the plugin both use the frozen efa_cuda_qp_v1 / efa_cuda_cq_v1
  * types provided by efa-dp-direct. Using those dependency definitions directly
  * makes incompatible queue-layout changes surface at build time rather than
  * silently diverging from a plugin-local mirror. This header exists so that
@@ -24,7 +24,7 @@
 
 #include <stdint.h>
 
-#include "efa_cuda_dp_types.h"
+#include "efa_cuda_dp_types_v1.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,9 +93,9 @@ struct nccl_ofi_gin_gdaki_mr_handle {
 #define NCCL_OFI_GDAKI_MAX_RAILS 2
 
 /*
- * QP/CQ/WQ layouts are canonical efa-dp-direct types. The device handle
- * stores them directly, so device code no longer relies on representation
- * casts from plugin-local mirrors.
+ * QP/CQ/WQ layouts are frozen efa-dp-direct v1 types. The device handle
+ * stores them directly, so backend version 1 remains independent of changes
+ * to the unversioned efa-dp-direct API.
  */
 
 /*
@@ -104,12 +104,12 @@ struct nccl_ofi_gin_gdaki_mr_handle {
  * ncclGinConfig_v14_t::backendVersion (selected from efaGdaBackendMinVersions[]);
  * createContext_v14 rejects any request outside [0, this].
  *
- * There is a single layout today (the canonical efa_cuda_qp / efa_cuda_cq).
+ * There is a single layout today (efa_cuda_qp_v1 / efa_cuda_cq_v1).
  * NCCL 2.31.0+ requests version 1; version 0 is a vestigial table floor that
  * predates the EFA-GDA backend and is never sent by an EFA-GDA-capable NCCL.
  * Both map to the current layout.
  *
- * INVARIANT: any change to the efa_cuda_qp / efa_cuda_cq byte layout MUST bump
+ * INVARIANT: any change to the QP/CQ byte layout MUST bump
  * this value AND add a matching case in gdaki_gpu_qp/cq::build(); comp_mask
  * capability bits are additive and never change the layout.
  */
@@ -130,10 +130,10 @@ struct nccl_ofi_gin_gdaki_mr_handle {
  */
 struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	/* GPU-resident QP for this endpoint. */
-	struct efa_cuda_qp *qp;
+	struct efa_cuda_qp_v1 *qp;
 
 	/* GPU-resident CQ for this endpoint. */
-	struct efa_cuda_cq *cq;
+	struct efa_cuda_cq_v1 *cq;
 
 	/* Target addressing for this (poster) endpoint's QP.
 	 *

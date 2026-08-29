@@ -16,11 +16,13 @@ AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.cpp])
 
 AC_MSG_CHECKING([for required efa-dp-direct CUDA sources])
-AS_IF([test -f "$srcdir/3rd-party/efa-gda/CUDA/README.md"],
+AS_IF([test -f "$srcdir/3rd-party/efa-gda/CUDA/README.md" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/host/efa_cuda_dp_v1.h" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/host/efa_cuda_dp_v1.cpp"],
       [AC_MSG_RESULT([yes])],
       [AC_MSG_RESULT([no])
-       AC_MSG_ERROR([Missing required file:
-  3rd-party/efa-gda/CUDA/README.md
+       AC_MSG_ERROR([Missing required efa-dp-direct v1 CUDA sources under:
+  3rd-party/efa-gda/CUDA
 
 3rd-party/efa-gda is vendored directly in this repository and is not a Git
 submodule. A missing file here means the source tree is incomplete. Re-checkout
