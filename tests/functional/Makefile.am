@@ -59,10 +59,6 @@ rma_duplicate_mr_SOURCES = $(base_sources) rma_duplicate_mr.cpp
 grouped_recv_SOURCES = $(base_sources) grouped_recv.cpp
 gin_gdaki_misconfig_probe_SOURCES = $(base_sources) gin_gdaki_misconfig_probe.cpp
 gin_gdaki_backend_version_SOURCES = $(base_sources) gin_gdaki_backend_version.cpp
-# The backendVersion probe includes nccl_ofi_gin_gdaki_dev.h, which pulls in
-# efa-dp-direct's efa_cuda_dp_types.h; add that include path for this target.
-gin_gdaki_backend_version_CPPFLAGS = $(AM_CPPFLAGS) $(CPPFLAGS) \
-	-isystem $(top_srcdir)/3rd-party/efa-gda/CUDA/common
 
 # GDAKI GPU smoke test. .cu compiles via the .cu.o suffix rule below,
 # .cpp via the existing CXXCOMPILE; the binary links via CXXLINK

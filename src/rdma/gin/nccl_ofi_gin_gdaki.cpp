@@ -499,7 +499,10 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	h.putvalue_slot_size       = (uint32_t)ctx->putvalue_slot_size;
 }
 
+/* `backend_version` must already be validated by the caller; see
+ * createContext_v14. */
 static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConfig_v13_t *config,
+						     int backend_version,
 						     void **ginCtx,
 						     ncclNetDeviceHandle_v11_t **devHandle)
 {
@@ -577,6 +580,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 	ctx->rank = rank;
 	ctx->nSignals = config->nSignals;
 	ctx->nCounters = config->nCounters;
+	ctx->backend_version = backend_version;
 
 	ncclNetDeviceHandle_v11_t *dev_handle_out = nullptr;
 
@@ -809,16 +813,19 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 * slot)...]) and transposes it into the targetSlot-major
 			 * device table.
 			 */
-			ctx->data[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len,
+			ctx->data[ctx_id]->populate(ctx->backend_version, gda_ops,
+						    all_addrs, ep_addr_len,
 						    (int)total_slots, nranks);
 			/* pvdata's target table resolves the same peer target slots as
 			 * data (through its own AV), so signalled PutValue can address the
 			 * peer sc EP and no-signal PutValue the peer data EP. */
-			ctx->pvdata[ctx_id]->populate(gda_ops, all_addrs, ep_addr_len,
+			ctx->pvdata[ctx_id]->populate(ctx->backend_version, gda_ops,
+						      all_addrs, ep_addr_len,
 						      (int)total_slots, nranks);
 			for (int i = 0; i < local_n_sc; i++) {
 				ctx->sc_endpoints[ctx_id][i]->populate(
-					gda_ops, all_addrs, ep_addr_len,
+					ctx->backend_version, gda_ops,
+					all_addrs, ep_addr_len,
 					(int)total_slots, nranks);
 			}
 
@@ -1197,17 +1204,17 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext_v14(void *collComm, ncclGin
 	 * Building a layout NCCL did not request would hand its kernel a struct it
 	 * drives with the wrong field offsets -> silent memory corruption.
 	 *
-	 * There is one layout today (efa_cuda_qp/cq); NCCL 2.31.0+ requests
-	 * version 1, and version 0 is a vestigial table floor no EFA-GDA-capable
-	 * NCCL actually sends. Both map to the current layout. INVARIANT: any
-	 * change to the efa_cuda_qp/cq byte layout MUST bump
-	 * NCCL_OFI_GDAKI_MAX_BACKEND_VERSION and add a matching case in
-	 * gdaki_gpu_qp/cq::build(); comp_mask capability bits never change layout.
+	 * Enumerated rather than a range check, so that a version inside the range
+	 * but without a frozen layout is refused instead of silently served the
+	 * current one. Version 0 is a vestigial table floor no EFA-GDA-capable NCCL
+	 * sends, and has no layout, so it is rejected too.
 	 */
-	if (config->backendVersion < 0 ||
-	    config->backendVersion > NCCL_OFI_GDAKI_MAX_BACKEND_VERSION) {
+	switch (config->backendVersion) {
+	case 1:
+		break;
+	default:
 		NCCL_OFI_WARN("gin GDAKI: unsupported backendVersion %d "
-			      "(plugin supports 0..%d); refusing rather than "
+			      "(plugin supports 1..%d); refusing rather than "
 			      "building a mismatched device struct",
 			      config->backendVersion,
 			      NCCL_OFI_GDAKI_MAX_BACKEND_VERSION);
@@ -1221,7 +1228,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext_v14(void *collComm, ncclGin
 	config_v13.nContexts = config->nContexts;
 	config_v13.queueDepth = config->queueDepth;
 	config_v13.trafficClass = config->trafficClass;
-	return nccl_ofi_gin_gdaki_createContext(collComm, &config_v13, ginCtx, devHandle);
+	return nccl_ofi_gin_gdaki_createContext(collComm, &config_v13,
+						config->backendVersion, ginCtx,
+						devHandle);
 }
 
 NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
@@ -1243,4 +1252,3 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
 	.finalize = nccl_ofi_gin_finalize
 };
-

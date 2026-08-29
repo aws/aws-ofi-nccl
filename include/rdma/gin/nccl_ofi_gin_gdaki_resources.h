@@ -9,8 +9,9 @@
  * createContext / destroyContext orchestrate via the composed type.
  *
  * Plugin-owned GPU buffers and MMIO mappings use the accelerator abstraction
- * (nccl_net_ofi_gpu_*). QP/CQ descriptors use efa-dp-direct's frozen v1
- * operation table. The GDAKI code path is CUDA-only.
+ * (nccl_net_ofi_gpu_*). QP/CQ descriptors are created through the
+ * efa-dp-direct operation table selected by backendVersion. The GDAKI code
+ * path is CUDA-only.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_RESOURCES_H_
@@ -268,14 +269,14 @@ public:
 };
 
 /**
- * A GPU-resident efa_cuda_qp_v1 descriptor.
+ * A GPU-resident QP descriptor in the layout named by a backendVersion.
  *
- * Owns the descriptor created through efa-dp-direct's v1 operation table.
- * `build()` is deliberately single-use: each host API create call allocates a
- * fresh GPU descriptor, so rebuilding would overwrite an owned pointer. The
- * destructor calls the paired host API destroy function. The SQ buffer and
- * doorbell inputs are GPU-visible device pointers for the existing MMIO
- * mappings; the RQ inputs remain raw EFA pointers.
+ * Owns the descriptor created by that version's efa-dp-direct operation table.
+ * `build()` is deliberately single-use: each create call allocates a fresh GPU
+ * descriptor, so rebuilding would overwrite an owned pointer. The destructor
+ * releases it through the same table, which is why `version` is retained. The
+ * SQ buffer and doorbell inputs are GPU-visible device pointers for the
+ * existing MMIO mappings; the RQ inputs remain raw EFA pointers.
  */
 class gdaki_gpu_qp {
 public:
@@ -286,25 +287,34 @@ public:
 	gdaki_gpu_qp(gdaki_gpu_qp &&) = delete;
 	gdaki_gpu_qp &operator=(gdaki_gpu_qp &&) = delete;
 
-	void build(const struct fi_efa_wq_attr &sq_attr,
+	/** Throws if `backend_version` names no layout this plugin can build. */
+	void build(int backend_version,
+		   const struct fi_efa_wq_attr &sq_attr,
 		   const struct fi_efa_wq_attr &rq_attr,
 		   void *sq_buf_dev, void *sq_db_dev);
 
-	efa_cuda_qp_v1 *dev() const
+	/** GPU pointer to the descriptor; its layout is version(). */
+	nccl_ofi_gin_gdaki_dev_qp *dev() const
 	{
 		return qp;
 	}
 
+	/** backendVersion whose layout `dev()` points at; UNSET before build(). */
+	int version() const
+	{
+		return backend_version;
+	}
+
 private:
-	efa_cuda_qp_v1 *qp = nullptr;
+	nccl_ofi_gin_gdaki_dev_qp *qp = nullptr;
+	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 };
 
 /**
- * A GPU-resident efa_cuda_cq_v1 descriptor.
+ * A GPU-resident CQ descriptor in the layout named by a backendVersion.
  *
- * Owns the descriptor created through efa-dp-direct's v1 operation table.
- * `build()` is deliberately single-use: each host API create call allocates a
- * fresh GPU descriptor, and the destructor calls the paired destroy function.
+ * Same ownership and versioning contract as gdaki_gpu_qp.
+ *
  * On P5en the CQ buffer is polled via its host pointer rather than through a
  * GPU-mapped MMIO region; IOMEMORY|DEVICEMAP registration of the CQ BAR
  * fails, and the host pointer is usable from both CPU and CUDA kernels.
@@ -318,15 +328,23 @@ public:
 	gdaki_gpu_cq(gdaki_gpu_cq &&) = delete;
 	gdaki_gpu_cq &operator=(gdaki_gpu_cq &&) = delete;
 
-	void build(const struct fi_efa_cq_attr &cq_attr);
+	void build(int backend_version, const struct fi_efa_cq_attr &cq_attr);
 
-	efa_cuda_cq_v1 *dev() const
+	/** GPU pointer to the descriptor; its layout is version(). */
+	nccl_ofi_gin_gdaki_dev_cq *dev() const
 	{
 		return cq;
 	}
 
+	/** backendVersion whose layout `dev()` points at; UNSET before build(). */
+	int version() const
+	{
+		return backend_version;
+	}
+
 private:
-	efa_cuda_cq_v1 *cq = nullptr;
+	nccl_ofi_gin_gdaki_dev_cq *cq = nullptr;
+	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 };
 
 /**
@@ -492,7 +510,7 @@ public:
 	 * [total_slots*nranks] target table from the batched
 	 * allgather buffer. Must be called after open().
 	 */
-	void populate(struct fi_efa_ops_gda *gda_ops,
+	void populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &all_addrs,
 		      size_t ep_addr_len, int total_slots, int nranks);
 };
@@ -540,7 +558,7 @@ public:
 	 * [total_slots*nranks] target table from the batched allgather
 	 * buffer. Must be called after open().
 	 */
-	void populate(struct fi_efa_ops_gda *gda_ops,
+	void populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &all_addrs,
 		      size_t ep_addr_len, int total_slots, int nranks);
 
@@ -604,7 +622,7 @@ public:
 	 * buffer), and build the per-EP device handles. Must be called
 	 * after open().
 	 */
-	void populate(struct fi_efa_ops_gda *gda_ops,
+	void populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &all_addrs,
 		      size_t ep_addr_len, int total_slots, int nranks);
 };
@@ -667,6 +685,11 @@ struct nccl_ofi_gin_gdaki_context {
 	int rank = 0;
 	int nSignals = 0;   /* this rank's local signal count  */
 	int nCounters = 0;  /* this rank's local counter count */
+
+	/* The QP/CQ layout version NCCL asked for; every endpoint in this
+	 * context builds it. Validated by createContext, then threaded into
+	 * populate() -> gpu_qp/gpu_cq::build(). */
+	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 
 	/* Asymmetric-count support. Ranks are NOT required to request the
 	 * same nSignals/nCounters for a context, so createContext allgathers
