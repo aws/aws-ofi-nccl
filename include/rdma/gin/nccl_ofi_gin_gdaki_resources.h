@@ -9,9 +9,9 @@
  * createContext / destroyContext orchestrate via the composed type.
  *
  * Plugin-owned GPU buffers and MMIO mappings use the accelerator abstraction
- * (nccl_net_ofi_gpu_*). QP/CQ descriptors are created through the
- * efa-dp-direct operation table selected by backendVersion. The GDAKI code
- * path is CUDA-only.
+ * (nccl_net_ofi_gpu_*). QP/CQ descriptors are initialized through the
+ * efa-dp-direct context selected by backendVersion, then copied into
+ * plugin-owned GPU storage. The GDAKI code path is CUDA-only.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_RESOURCES_H_
@@ -271,17 +271,16 @@ public:
 /**
  * A GPU-resident QP descriptor in the layout named by a backendVersion.
  *
- * Owns the descriptor created by that version's efa-dp-direct operation table.
- * `build()` is deliberately single-use: each create call allocates a fresh GPU
- * descriptor, so rebuilding would overwrite an owned pointer. The destructor
- * releases it through the same table, which is why `version` is retained. The
- * SQ buffer and doorbell inputs are GPU-visible device pointers for the
- * existing MMIO mappings; the RQ inputs remain raw EFA pointers.
+ * Owns matched host/GPU storage sized by that version's efa-dp-direct context.
+ * `build()` initializes the caller-owned host descriptor, copies it to GPU
+ * memory, and is deliberately single-use. The SQ buffer and doorbell inputs
+ * are GPU-visible device pointers for the existing MMIO mappings; the RQ
+ * inputs remain raw EFA pointers.
  */
 class gdaki_gpu_qp {
 public:
 	gdaki_gpu_qp() = default;
-	~gdaki_gpu_qp();
+	~gdaki_gpu_qp() = default;
 	gdaki_gpu_qp(const gdaki_gpu_qp &) = delete;
 	gdaki_gpu_qp &operator=(const gdaki_gpu_qp &) = delete;
 	gdaki_gpu_qp(gdaki_gpu_qp &&) = delete;
@@ -306,6 +305,7 @@ public:
 	}
 
 private:
+	gdaki_gpu_buf<uint8_t> descriptor;
 	nccl_ofi_gin_gdaki_dev_qp *qp = nullptr;
 	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 };
@@ -322,7 +322,7 @@ private:
 class gdaki_gpu_cq {
 public:
 	gdaki_gpu_cq() = default;
-	~gdaki_gpu_cq();
+	~gdaki_gpu_cq() = default;
 	gdaki_gpu_cq(const gdaki_gpu_cq &) = delete;
 	gdaki_gpu_cq &operator=(const gdaki_gpu_cq &) = delete;
 	gdaki_gpu_cq(gdaki_gpu_cq &&) = delete;
@@ -343,6 +343,7 @@ public:
 	}
 
 private:
+	gdaki_gpu_buf<uint8_t> descriptor;
 	nccl_ofi_gin_gdaki_dev_cq *cq = nullptr;
 	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 };
@@ -493,6 +494,7 @@ public:
 	gdaki_gpu_cq            gpu_cq;
 	gdaki_target_addressing targets;   /* [total_slots*nranks] target table */
 	uint32_t                sq_size = 0;       /* SQ ring depth, populated by populate() */
+	uint32_t                sq_entry_size = 0; /* SQ WQE bytes, populated by populate() */
 
 	gdaki_endpoint() = default;
 	/* Implicit dtor: members destroy in reverse declaration order. */

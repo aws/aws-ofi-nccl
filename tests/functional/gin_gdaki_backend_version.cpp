@@ -19,8 +19,9 @@
  *   backendVersion == 0 (vestigial table floor) -> ncclInvalidArgument
  *   backendVersion > MAX (e.g. MAX+1)           -> ncclInvalidArgument
  *
- * The accept path (backendVersion 1) needs a real communicator and is covered
- * by the end-to-end GDAKI GPU tests.
+ * The backendVersion-2 accept path needs a real communicator and is covered by
+ * the end-to-end GDAKI GPU tests. Backend version 1 is covered in its matching
+ * NCCL consumer integration run.
  */
 
 #include "config.h"

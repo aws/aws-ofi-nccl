@@ -847,6 +847,11 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 				[&](int i) { return ctx->sc_endpoints[ctx_id][i]->signal_dev_handle.dev; });
 		}
 
+		NCCL_OFI_INFO(NCCL_NET,
+			      "gin GDAKI: backendVersion %d, SQ %u entries x %u bytes",
+			      ctx->backend_version, ctx->data[0]->base.sq_size,
+			      ctx->data[0]->base.sq_entry_size);
+
 		/*
 		 * Step 7: PutValue source slot pool. Must run after every
 		 * context's data and sc endpoints are populated so their
@@ -1211,6 +1216,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext_v14(void *collComm, ncclGin
 	 */
 	switch (config->backendVersion) {
 	case 1:
+	case 2:
 		break;
 	default:
 		NCCL_OFI_WARN("gin GDAKI: unsupported backendVersion %d "

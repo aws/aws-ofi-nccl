@@ -88,8 +88,7 @@ AM_CPPFLAGS += \
 	-isystem $(abs_top_srcdir)/3rd-party/efa-gda/CUDA/host
 
 libinternal_plugin_la_LIBADD += \
-	$(top_builddir)/3rd-party/libefa_cuda_dp.la \
-	-lcuda
+	$(top_builddir)/3rd-party/libefa_cuda_dp.la
 endif
 
 lib_LTLIBRARIES =

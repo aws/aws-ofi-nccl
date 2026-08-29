@@ -93,21 +93,22 @@ struct nccl_ofi_gin_gdaki_mr_handle {
 #define NCCL_OFI_GDAKI_MAX_RAILS 2
 
 /*
- * Highest efa-dp-direct QP/CQ operation-table version this plugin can select.
+ * Highest efa-dp-direct QP/CQ layout version this plugin can select.
  * NCCL passes the layout version it was built to drive as
  * ncclGinConfig_v14_t::backendVersion (selected from efaGdaBackendMinVersions[]);
  * createContext_v14 dispatches on it and refuses anything it cannot select.
  *
- * Version 1 is the public efa-dp-direct 0.0.2 layout. Version 0 is a vestigial
- * table floor that predates the EFA-GDA backend and is never sent by an
- * EFA-GDA-capable NCCL; it is rejected rather than mapped onto version 1.
+ * backendVersion 1 maps to efa-dp-direct API major 0 (the original layout);
+ * backendVersion 2 maps to API major 1 (WQE context and 64-bit request IDs).
+ * Version 0 is a vestigial table floor that predates the EFA-GDA backend and
+ * is never sent by an EFA-GDA-capable NCCL; it is rejected.
  *
- * INVARIANT: any change to the QP/CQ byte layout MUST add a new immutable
- * operation table in efa-dp-direct, bump this value, and add matching selection
- * cases in gdaki_gpu_qp/cq::build(). The plugin must never implement or modify
- * a versioned descriptor layout itself.
+ * INVARIANT: any change to the QP/CQ byte layout MUST add a new API major in
+ * efa-dp-direct, bump this value, and add the matching mapping in
+ * gdaki_efa_dp_major(). The plugin must never implement or modify a versioned
+ * descriptor layout itself.
  */
-#define NCCL_OFI_GDAKI_MAX_BACKEND_VERSION 1
+#define NCCL_OFI_GDAKI_MAX_BACKEND_VERSION 2
 
 /* No default layout version: every GDAKI context gets one from
  * ncclGinConfig_v14_t::backendVersion, so an unset value is a bug rather than
