@@ -1261,9 +1261,13 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						{0, 131072},}},
 				{.algorithm = NCCL_ALGO_TREE,
 				 .protocol = NCCL_PROTO_LL128,
-				 .num_vertices = 6,
+				 .num_vertices = 10,
 				 .vertices = {{32768, 2},
 						{131072, 2},
+						{458752, 7},
+						{3145728, 8},
+						{12582912, 16},
+						{1114113, 17},
 						{8388608, 128},
 						{8589934592, 131072},
 						{32768, 131072},
@@ -1311,11 +1315,14 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						{65536, 4},}},
 				{.algorithm = NCCL_ALGO_PAT,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 9,
+				 .num_vertices = 12,
 				 .vertices = {{0, 2},
 						{65536, 4},
 						{1048576, 4},
-						{4194305, 16},
+						{1835008, 7},
+						{25165824, 8},
+						{41943040, 16},
+						{4456449, 17},
 						{12582912, 48},
 						{88080384, 48},
 						{248512512, 128},
@@ -2225,7 +2232,12 @@ exit:
 	return ret;
 }
 
-static size_t chunkSizeTuningAllGatherPatSimpleP5en(size_t nBytes, size_t nNodes)
+static size_t chunkSizeTuningAllGatherPatSimple(size_t nBytes,
+						size_t nNodes,
+						size_t T1,
+						size_t T2,
+						size_t T3,
+						size_t low_factor)
 {
 	/*
 	 * Steps DOWN a power-of-2 ladder from a per-cluster ceiling, choosing the
@@ -2251,11 +2263,6 @@ static size_t chunkSizeTuningAllGatherPatSimpleP5en(size_t nBytes, size_t nNodes
 	 * chunk size. */
 	size_t satChunkSize = nNodes >= 16 ? 524288 : 1048576;
 
-	/* Per-zone minimum chunk counts */
-	size_t T1 = nNodes >= 16 ? 32 : std::min(nNodes, (size_t)8) + 1; /* cap zone */
-	size_t T2 = std::min(nNodes, (size_t)16);                        /* mid zone */
-	size_t T3 = std::min(nNodes, (size_t)8);                         /* low zone */
-
 	size_t tunedChunkSize = satChunkSize;
 
 	/*
@@ -2271,13 +2278,17 @@ static size_t chunkSizeTuningAllGatherPatSimpleP5en(size_t nBytes, size_t nNodes
 	/*
 	 * Step 3 (low): final 64K->32K. At these sizes, the single-phase gain is
 	 * gone and only pipeline fill masters, so the threshold is the lowest. */
-	while (nBytes / tunedChunkSize < T3 && tunedChunkSize > 32768)
+	while (nBytes / tunedChunkSize < (T3 + low_factor) && tunedChunkSize > 32768)
 		tunedChunkSize /= 2;
 
 	return tunedChunkSize;
 }
 
-static size_t chunkSizeTuningTreeLL128P5en(size_t nBytes, int log2_nnodes)
+static size_t chunkSizeTuningAllReduceTreeLL128(size_t nBytes,
+						int log2_nnodes,
+						size_t high_factor,
+						size_t mid_factor,
+						size_t low_factor)
 {
 	/*
 	 * Picks a chunk size by stepping down a power-of-2 ladder
@@ -2312,31 +2323,42 @@ static size_t chunkSizeTuningTreeLL128P5en(size_t nBytes, int log2_nnodes)
 	size_t tunedChunkSize = 288000;
 
 	/*
-	 * Step 1: 288000 → 144000 (threshold: 2 × nsteps²)
+	 * Step 1: 288000 → 144000 (threshold: 2 × nsteps² - high_factor)
 	 * The quadratic scaling captures the observation that larger clusters need
 	 * proportionally many more chunks before the biggest chunk size becomes
 	 * beneficial. Choosing chunk size of 144,000 Bytes will keep inflight at
 	 * 1MB while having more chunks to maximize the pipeline efficiency. Deeper
 	 * trees need more chunks in the pipeline to keep all links busy
-	 * simultaneously, because there are more hops to fill. */
-	if (nBytes / tunedChunkSize < 2 * nsteps * nsteps)
-		tunedChunkSize /= 2;
+	 * simultaneously, because there are more hops to fill.
+	 * A high_factor may be applied according to instance type to smooth the curve
+	 * accordingly, so that on more capable instances we can use bigger chunk size. */
+	size_t square_nsteps2 = 2 * nsteps * nsteps;
+	if (square_nsteps2 > high_factor) {
+		if (nBytes / tunedChunkSize < square_nsteps2 - high_factor)
+			tunedChunkSize /= 2;
+	}
 
 	/*
-	 * Step 2: 144000 → 72000 (threshold: 1.5 × nsteps)
+	 * Step 2: 144000 → 72000 (threshold: 1.5 × nsteps + mid_factor)
 	 * At the 144 KB chunk size, decide whether there are enough chunks to keep
 	 * 144 KB or whether to step down to 72 KB for better pipelining on smaller
 	 * messages. Keeping a deeper pipeline full needs roughly "one chunk per
-	 * level," so the threshold scales linearly with depth. */
-	if (nBytes / tunedChunkSize < (size_t)(1.5 * nsteps))
+	 * level," so the threshold scales linearly with depth.
+	 * A mid_factor may be applied according to instance type to smooth the curve
+	 * accordingly, so that for mid-size messages a smaller chunk size (and therefore
+	 * deeper pipeline) could be used if needed. */
+	if (nBytes / tunedChunkSize < (size_t)(1.5 * nsteps + mid_factor))
 		tunedChunkSize /= 2;
 
 	/*
-	 * Step 3: 72000 → 36000 → 18000 (threshold: nsteps + 1)
+	 * Step 3: 72000 → 36000 → 18000 (threshold: nsteps + low_factor)
 	 * At small chunk chunk sizes, per-chunk inflight is small, and the EFA bandwidth
 	 * benefit of larger chunks is negligible, so the only concern is filling
-	 * the pipeline. That needs about one chunk per tree level. */
-	while (nBytes / tunedChunkSize < nsteps + 1 && tunedChunkSize > 18000)
+	 * the pipeline. That needs about one chunk per tree level.
+	 * A low_factor may be applied according to instance type to smooth the curve
+	 * accordingly, so that for small-size messages we have a deep enough pipeline on
+	 * more capabale instance types, but still cap at 18000 as the smallest chunk size. */
+	while (nBytes / tunedChunkSize < nsteps + low_factor && tunedChunkSize > 18000)
 		tunedChunkSize /= 2;
 
 	return tunedChunkSize;
@@ -2360,13 +2382,32 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 		if (collType == ncclFuncAllReduce && algo == NCCL_ALGO_TREE &&
 		    proto == NCCL_PROTO_LL128) {
 			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
-				*chunkSize = chunkSizeTuningTreeLL128P5en(nBytes, region_ctx->log2_nnodes);
+				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes, region_ctx->log2_nnodes, 0, 0, 1);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6) {
+				size_t high_factor = region_ctx->log2_nnodes < 3 ? 4 : 0;
+				size_t mid_factor = region_ctx->log2_nnodes < 3 ? 0 : 2;
+				size_t low_factor = region_ctx->log2_nnodes < 4 ? 1 : 2;
+				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes, region_ctx->log2_nnodes, high_factor,
+					mid_factor, low_factor);
 			}
 		}
 		if (collType == ncclFuncAllGather && algo == NCCL_ALGO_PAT &&
 		    proto == NCCL_PROTO_SIMPLE) {
+			size_t nNodes = region_ctx->dims.num_nodes;
+			size_t T1 = nNodes >= 16 ? 32 : std::min(nNodes, (size_t)8) + 1; /* cap zone */
+			size_t T2 = std::min(nNodes, (size_t)16);         				 /* mid zone */
+			size_t T3 = std::min(nNodes, (size_t)8);          				 /* low zone */
 			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
-				*chunkSize = chunkSizeTuningAllGatherPatSimpleP5en(nBytes, region_ctx->dims.num_nodes);
+				*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
+					T1, T2, T3, 0);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6) {
+				/* Restrict for now to 8-16 nodes. */
+				if (nNodes >= 8 && nNodes <= 16) {
+					T1 = nNodes >= 16 ? 16 : std::min(nNodes, (size_t)8);
+					size_t low_factor = nNodes >= 16 ? 1 : 0;
+					*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
+						T1, T2, T3, low_factor);
+				}
 			}
 		}
 	}
