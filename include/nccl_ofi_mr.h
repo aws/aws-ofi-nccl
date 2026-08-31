@@ -201,8 +201,8 @@ typedef struct nccl_ofi_reg_entry nccl_ofi_reg_entry_t;
 class nccl_ofi_mr_cache {
 public:
 	/**
-	 * Create a new mr cache. Both the initial number of entries and the
-	 * page size must be greater than zero.
+	 * Create a new mr cache. The page size must be greater than zero.
+	 * An init_num_entries of zero creates an empty cache (disabled).
 	 *
 	 * @param init_num_entries Initial capacity (used for vector::reserve)
 	 * @param page_size Page size for address alignment
