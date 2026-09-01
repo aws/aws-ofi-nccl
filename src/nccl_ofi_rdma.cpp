@@ -2595,13 +2595,29 @@ int rdma_recv_req::post()
 
 	void *desc = fi_mr_desc(r_comm->ctrl_mr_handle->mr_data[rail_id].get());
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
+	uint64_t remote_addr = r_comm->remote_mailbox_addr +
+			       slot * sizeof(nccl_net_ofi_ctrl_msg_t);
+	struct iovec iov = {
+		.iov_base = &r_comm->ctrl_mailbox[slot],
+		.iov_len = ctrl_msg_len,
+	};
+	struct fi_rma_iov rma_iov = {
+		.addr = remote_addr,
+		.len = ctrl_msg_len,
+		.key = r_comm->remote_mr_key[rail_id],
+	};
+	struct fi_msg_rma msg = {
+		.msg_iov = &iov,
+		.desc = &desc,
+		.iov_count = 1,
+		.addr = comm_rail->remote_addr,
+		.rma_iov = &rma_iov,
+		.rma_iov_count = 1,
+		.context = rdma_req_get_ofi_context(this, rail_id),
+		.data = 0,
+	};
 
-	ssize_t rc = fi_write(comm_rail->local_ep, &r_comm->ctrl_mailbox[slot],
-			      ctrl_msg_len, desc,
-			      comm_rail->remote_addr,
-			      r_comm->remote_mailbox_addr + slot * sizeof(nccl_net_ofi_ctrl_msg_t),
-			      r_comm->remote_mr_key[rail_id],
-			      rdma_req_get_ofi_context(this, rail_id));
+	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, 0);
 
 	if (rc == 0) {
 		NCCL_OFI_TRACE_WRITE_CTRL_START(this->dev_id, rail_id, this->comm, this, this->msg_seq_num);
