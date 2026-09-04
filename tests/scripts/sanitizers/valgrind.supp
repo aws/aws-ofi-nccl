@@ -1,0 +1,181 @@
+# Valgrind suppression file for aws-ofi-nccl.
+# Suppresses known leaks/errors from third-party libraries.
+# Plugin leaks (nccl_ofi_*) are intentionally NOT suppressed.
+
+# --- CUDA driver and runtime ---
+{
+   cuda_cuInit
+   Memcheck:Leak
+   ...
+   fun:cuInit
+}
+{
+   cuda_cudaGetDriverEntryPoint
+   Memcheck:Leak
+   ...
+   fun:cudaGetDriverEntryPointByVersion
+}
+{
+   cuda_driver_lib
+   Memcheck:Leak
+   ...
+   obj:*libcuda.so*
+}
+{
+   cuda_driver_cond
+   Memcheck:Cond
+   ...
+   obj:*libcuda.so*
+}
+
+# --- libfabric and EFA provider ---
+{
+   libfabric_fi_getinfo
+   Memcheck:Leak
+   ...
+   fun:fi_getinfo*
+}
+{
+   libfabric_fi_ini
+   Memcheck:Leak
+   ...
+   fun:fi_ini
+}
+{
+   efa_provider_init
+   Memcheck:Leak
+   ...
+   fun:fi_efa_ini
+}
+{
+   efa_device_list
+   Memcheck:Leak
+   ...
+   fun:efa_device_list_initialize
+}
+{
+   ibverbs_get_device_list
+   Memcheck:Leak
+   ...
+   fun:ibv_get_device_list*
+}
+{
+   libfabric_cond
+   Memcheck:Cond
+   ...
+   obj:*libfabric*
+}
+{
+   efa_cond
+   Memcheck:Cond
+   ...
+   obj:*libefa*
+}
+
+# --- OpenMPI runtime ---
+{
+   openmpi_orte_finalize
+   Memcheck:Leak
+   ...
+   fun:orte_finalize
+}
+{
+   openmpi_mpi_finalize
+   Memcheck:Leak
+   ...
+   fun:ompi_mpi_finalize
+}
+{
+   openmpi_mpi_init
+   Memcheck:Leak
+   ...
+   fun:ompi_mpi_init
+}
+{
+   openmpi_libopen_pal
+   Memcheck:Leak
+   ...
+   obj:*libopen-pal*
+}
+{
+   openmpi_libopen_rte
+   Memcheck:Leak
+   ...
+   obj:*libopen-rte*
+}
+{
+   openmpi_libmpi
+   Memcheck:Leak
+   ...
+   obj:*libmpi*
+}
+{
+   openmpi_cond
+   Memcheck:Cond
+   ...
+   obj:*libopen-pal*
+}
+
+# --- hwloc (MPI dependency) ---
+{
+   hwloc_topology_init
+   Memcheck:Leak
+   ...
+   fun:hwloc_topology_init
+}
+{
+   hwloc_bitmap_alloc
+   Memcheck:Leak
+   ...
+   fun:hwloc_bitmap_alloc
+}
+
+# --- pthread internals ---
+{
+   pthread_once
+   Memcheck:Leak
+   ...
+   fun:__pthread_once_slow
+}
+
+# --- GDR API (gdrcopy) ---
+{
+   gdr_open_ioctl
+   Memcheck:Param
+   ioctl(generic)
+   ...
+   fun:gdr_open
+}
+{
+   gdr_map_cond
+   Memcheck:Cond
+   ...
+   fun:gdr_map_v2
+}
+{
+   gdr_map_value
+   Memcheck:Value8
+   ...
+   fun:gdr_map_v2
+}
+{
+   gdr_unmap_cond
+   Memcheck:Cond
+   ...
+   fun:gdr_unmap
+}
+{
+   gdr_unmap_value
+   Memcheck:Value8
+   ...
+   fun:gdr_unmap
+}
+
+# --- OpenMPI TCP BTL uninitialized send ---
+{
+   openmpi_btl_tcp_send
+   Memcheck:Param
+   socketcall.sendto(msg)
+   ...
+   fun:mca_btl_tcp_send_blocking
+}
