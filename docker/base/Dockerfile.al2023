@@ -3,6 +3,13 @@ FROM public.ecr.aws/amazonlinux/amazonlinux:2023
 # Accept build argument
 ARG ENABLE_CUDA=false
 ARG EFA_INSTALLER_VERSION=latest
+# Which CUDA packages to install and which NVIDIA yum repo to pull them from.
+# Overridden by the CUDA 11 image, which pins 11-8 and uses the rhel9 repo
+# because NVIDIA's amzn2023 repo starts at 12-5. Keep CUDA_REPO_URL and
+# CUDA_PACKAGES in sync. Both package sets install a /usr/local/cuda
+# alternatives symlink, which is the path configure is pointed at.
+ARG CUDA_REPO_URL=http://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo
+ARG CUDA_PACKAGES="cuda-cudart-devel-12-6 cuda-crt-12-6"
 
 # Install ALL required base packages and development tools
 RUN yum -y update && \
@@ -24,11 +31,9 @@ RUN yum -y update && \
 
 # Install CUDA if enabled
 RUN if [ "$ENABLE_CUDA" = "true" ]; then \
-        dnf config-manager --add-repo \
-        http://developer.download.nvidia.com/compute/cuda/repos/amzn2023/x86_64/cuda-amzn2023.repo \
-        --save && \
+        dnf config-manager --add-repo "$CUDA_REPO_URL" --save && \
         yum -y clean expire-cache && \
-        yum -y install cuda-cudart-devel-12-6 cuda-crt-12-6 && \
+        yum -y install $CUDA_PACKAGES && \
         yum clean all; \
     fi
 
