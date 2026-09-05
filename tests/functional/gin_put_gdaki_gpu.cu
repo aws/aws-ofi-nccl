@@ -22,8 +22,9 @@
 #include "functional_test.h"
 #include "rdma/gin/nccl_ofi_gin_gdaki_dev.h"
 
-#include "efa_cuda_dp.cuh"
 #include "efa_cuda_dp_impl.cuh"
+
+static constexpr uint16_t gdaki_test_req_id = 0xdef0;
 
 struct proc_handle {
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
@@ -39,7 +40,7 @@ struct proc_handle {
  *   *out_q_type:  efa_io_queue_type, expected EFA_IO_SEND_QUEUE on a
  *                 completed TX
  *   *out_op_type: efa_cuda_wc_opcode, expected EFA_CUDA_WC_RDMA_WRITE
- *   *out_req_id:  matches the wr_id we set (0)
+ *   *out_req_id:  matches the 16-bit wr_id set below
  *   *out_done:    1 on completion, 0 on timeout
  */
 __global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle *dev,
@@ -53,22 +54,24 @@ __global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle *dev,
 				   uint8_t *out_status,
 				   uint8_t *out_q_type,
 				   uint8_t *out_op_type,
-				   uint16_t *out_req_id,
+				   uint64_t *out_req_id,
 				   uint32_t *out_done)
 {
 	if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
-	auto *qp = dev->data.qp;
-	auto *cq = dev->data.cq;
+	/* The vendored unversioned device API is the backend-v2 layout. */
+	auto *qp = reinterpret_cast<efa_cuda_qp *>(dev->data.qp);
+	auto *cq = reinterpret_cast<efa_cuda_cq *>(dev->data.cq);
 
-	efa_io_tx_wqe wr;
-	efa_cuda_init_rdma_write_wr(&wr, /*wr_id=*/0, dst_rkey, dst_addr);
-	efa_cuda_wr_set_sge(&wr, src_lkey, src_addr, bytes);
-	efa_cuda_wr_set_remote(&wr,
-			       /* slot 0 = peer's data EP: target idx = 0*nranks + peer */
-			       dev->data.target_address_handles[peer],
-			       (uint32_t)dev->data.target_remote_qpns[peer],
-			       dev->data.target_qkey[peer]);
+	efa_io_tx_wqe_128 wr;
+	EfaCudaWrBuilder wr_builder(&qp->sq.wr_ctx, reinterpret_cast<uint8_t *>(&wr));
+	if (wr_builder.init_rdma_write(gdaki_test_req_id, dst_rkey, dst_addr) != 0) return;
+	if (wr_builder.set_sge(src_lkey, src_addr, bytes) != 0) return;
+	wr_builder.set_remote(
+		/* slot 0 = peer's data EP: target idx = 0*nranks + peer */
+		dev->data.target_address_handles[peer],
+		(uint32_t)dev->data.target_remote_qpns[peer],
+		dev->data.target_qkey[peer]);
 
 	efa_cuda_start_sq_batch(qp, 1);
 	efa_cuda_sq_batch_place_wr(qp, 0, &wr);
@@ -83,7 +86,7 @@ __global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle *dev,
 			/* q_type lives in bits [2:1] of cqe->flags. */
 			*out_q_type = (uint8_t)((cqe->flags >> 1) & 0x3);
 			*out_op_type = efa_cuda_wc_read_opcode(wc);
-			*out_req_id = efa_cuda_wc_read_req_id(wc);
+			*out_req_id = efa_cuda_wc_read_req_id_16(wc);
 			efa_cuda_cq_pop(cq, 1);
 			*out_done = 1;
 			return;
@@ -151,7 +154,7 @@ int main(int argc, char *argv[])
 	ginConfig.nContexts = 1;
 	ginConfig.queueDepth = 64;
 	ginConfig.trafficClass = -1;
-	ginConfig.backendVersion = 1;
+	ginConfig.backendVersion = 2;
 
 	void *proxyCtx = nullptr;
 	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
@@ -228,6 +231,7 @@ int main(int argc, char *argv[])
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
+	int local_pass = 1;
 	if (rank == 0) {
 		const int tgt = 1;
 		NCCL_OFI_INFO(NCCL_NET,
@@ -238,10 +242,9 @@ int main(int argc, char *argv[])
 			uint8_t  status;
 			uint8_t  q_type;
 			uint8_t  op_type;
-			uint8_t  pad0;
-			uint16_t req_id;
-			uint16_t pad1;
+			uint8_t pad0;
 			uint32_t done;
+			uint64_t req_id;
 		};
 		kernel_result *d_result = nullptr;
 		CUDACHECK(cudaMalloc(&d_result, sizeof(kernel_result)));
@@ -265,11 +268,19 @@ int main(int argc, char *argv[])
 
 		if (!h_result.done) {
 			NCCL_OFI_WARN("R0: CQ poll timeout");
+			local_pass = 0;
 		} else {
 			NCCL_OFI_INFO(NCCL_NET,
-				      "R0: CQ completion status=%u op_type=%u q_type=%u req_id=%u",
-				      h_result.status, h_result.op_type, h_result.q_type,
-				      h_result.req_id);
+				      "R0: CQ completion status=%u op_type=%u q_type=%u "
+				      "req_id=0x%llx",
+				      h_result.status,
+				      h_result.op_type,
+				      h_result.q_type,
+				      (unsigned long long)h_result.req_id);
+			if (h_result.req_id != gdaki_test_req_id) {
+				NCCL_OFI_WARN("R0: 16-bit request ID mismatch");
+				local_pass = 0;
+			}
 		}
 	}
 
@@ -288,6 +299,7 @@ int main(int argc, char *argv[])
 			}
 		}
 		NCCL_OFI_INFO(NCCL_NET, "R1: %s", ok ? "PASS" : "FAIL");
+		if (!ok) local_pass = 0;
 	}
 
 	OFINCCLCHECK(extGin->deregMrSym(collComm, src_mhandle));
@@ -302,8 +314,12 @@ int main(int argc, char *argv[])
 	OFINCCLCHECK(extNet->finalize(netCtx));
 	dlclose(net_plugin_handle);
 
+	int global_pass = 0;
+	MPI_Allreduce(&local_pass, &global_pass, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+
 	MPI_Barrier(MPI_COMM_WORLD);
 	MPI_Finalize();
-	NCCL_OFI_INFO(NCCL_NET, "Rank %d: test completed", rank);
-	return ncclSuccess;
+	NCCL_OFI_INFO(
+		NCCL_NET, "Rank %d: test completed (%s)", rank, global_pass ? "PASS" : "FAIL");
+	return global_pass ? ncclSuccess : ncclSystemError;
 }

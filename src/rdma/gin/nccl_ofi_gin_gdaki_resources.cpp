@@ -17,6 +17,43 @@
 #include <rdma/fi_cm.h>
 #include <rdma/fi_ext_efa.h>
 
+static constexpr uint32_t gdaki_narrow_wqe_size = 64;
+static constexpr uint32_t gdaki_narrow_wqe_inline_size = 32;
+static constexpr uint32_t gdaki_max_rdma_sges = 1;
+
+using gdaki_efa_dp_context =
+	std::unique_ptr<efa_cuda_dp_context, void (*)(efa_cuda_dp_context *)>;
+
+/*
+ * NCCL's backendVersion names the device layout shared with the plugin.
+ * efa-dp-direct names the same two layouts with API majors 0 and 1.
+ */
+static int gdaki_efa_dp_major(int backend_version)
+{
+	switch (backend_version) {
+	case 1:
+		return 0;
+	case 2:
+		return 1;
+	default:
+		throw std::runtime_error(
+			"gin GDAKI: no efa-dp-direct API major for backendVersion " +
+			std::to_string(backend_version));
+	}
+}
+
+static gdaki_efa_dp_context gdaki_create_efa_dp_context(int backend_version)
+{
+	const int major = gdaki_efa_dp_major(backend_version);
+	efa_cuda_dp_context *ctx = efa_cuda_dp_context_create(major, 0, 0);
+	if (ctx == nullptr) {
+		throw std::runtime_error(
+			"gin GDAKI: efa_cuda_dp_context_create failed for API major " +
+			std::to_string(major));
+	}
+	return gdaki_efa_dp_context(ctx, efa_cuda_dp_context_destroy);
+}
+
 /*
  * Build fi_getinfo hints for the GDAKI endpoint.
  *
@@ -149,27 +186,25 @@ void gdaki_fi_endpoint::bind(struct fid *fid, uint64_t flags)
 	}
 }
 
-gdaki_gpu_qp::~gdaki_gpu_qp()
-{
-	if (qp != nullptr) {
-		efa_cuda_destroy_qp(qp);
-	}
-}
-
-void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
+void gdaki_gpu_qp::build(int backend_version_in,
+			 const struct fi_efa_wq_attr &sq_attr,
 			 const struct fi_efa_wq_attr &rq_attr,
 			 void *sq_buf_dev, void *sq_db_dev)
 {
-	/* The host API allocates GPU memory; rebuilding would overwrite the only
-	 * owned pointer and leak the previous descriptor. */
-	if (qp != nullptr) {
+	if (descriptor.size() != 0) {
 		throw std::runtime_error("gdaki_gpu_qp: double build");
 	}
 
-	/* The plugin supplies provider-probed buffers and geometry. The host API
-	 * validates the attributes and initializes queue masks, counters, and phase
-	 * state before uploading the canonical descriptor to GPU memory. */
-	struct efa_cuda_qp_attrs attrs = {};
+	auto ctx = gdaki_create_efa_dp_context(backend_version_in);
+	const int descriptor_size = efa_cuda_get_qp_size(ctx.get());
+	if (descriptor_size <= 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_qp: efa_cuda_get_qp_size failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " +
+			std::to_string(descriptor_size));
+	}
+
+	efa_cuda_qp_attrs attrs = {};
 	attrs.sq_buffer = static_cast<uint8_t *>(sq_buf_dev);
 	attrs.rq_buffer = static_cast<uint8_t *>(rq_attr.buffer);
 	attrs.sq_doorbell = static_cast<uint32_t *>(sq_db_dev);
@@ -180,39 +215,71 @@ void gdaki_gpu_qp::build(const struct fi_efa_wq_attr &sq_attr,
 	attrs.rq_num_entries = rq_attr.num_entries;
 	attrs.rq_entry_size = rq_attr.entry_size;
 
-	qp = efa_cuda_create_qp(&attrs, sizeof(attrs));
-	if (qp == nullptr) {
-		throw std::runtime_error("gdaki_gpu_qp: efa_cuda_create_qp failed");
+	switch (backend_version_in) {
+	case 1:
+		break;
+	case 2:
+		attrs.sq_max_inline_data = gdaki_narrow_wqe_inline_size;
+		attrs.sq_max_rdma_sges = gdaki_max_rdma_sges;
+		if (sq_attr.caps & FI_EFA_WQ_CAPS_64_BIT_REQ_ID) {
+			attrs.sq_wq_caps = EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID;
+		} else {
+			attrs.flags = EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID;
+		}
+		break;
+	default:
+		throw std::runtime_error("gdaki_gpu_qp: no QP layout for backendVersion " +
+					 std::to_string(backend_version_in));
 	}
+
+	descriptor.allocate(static_cast<size_t>(descriptor_size));
+	const int ret = efa_cuda_init_qp(ctx.get(), descriptor.host,
+					 static_cast<uint32_t>(descriptor_size),
+					 &attrs, sizeof(attrs));
+	if (ret != 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_qp: efa_cuda_init_qp failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " + std::to_string(ret));
+	}
+	descriptor.commit();
+
+	qp = reinterpret_cast<nccl_ofi_gin_gdaki_dev_qp *>(descriptor.dev);
+	backend_version = backend_version_in;
 }
 
-gdaki_gpu_cq::~gdaki_gpu_cq()
+void gdaki_gpu_cq::build(int backend_version_in, const struct fi_efa_cq_attr &cq_attr)
 {
-	if (cq != nullptr) {
-		efa_cuda_destroy_cq(cq);
-	}
-}
-
-void gdaki_gpu_cq::build(const struct fi_efa_cq_attr &cq_attr)
-{
-	/* The host API allocates GPU memory; rebuilding would overwrite the only
-	 * owned pointer and leak the previous descriptor. */
-	if (cq != nullptr) {
+	if (descriptor.size() != 0) {
 		throw std::runtime_error("gdaki_gpu_cq: double build");
 	}
 
-	/* The plugin supplies the provider-probed CQ buffer and geometry. The host
-	 * API validates the attributes and initializes queue masks and phase state
-	 * before uploading the canonical descriptor to GPU memory. */
-	struct efa_cuda_cq_attrs attrs = {};
+	auto ctx = gdaki_create_efa_dp_context(backend_version_in);
+	const int descriptor_size = efa_cuda_get_cq_size(ctx.get());
+	if (descriptor_size <= 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_cq: efa_cuda_get_cq_size failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " +
+			std::to_string(descriptor_size));
+	}
+
+	efa_cuda_cq_attrs attrs = {};
 	attrs.buffer = static_cast<uint8_t *>(cq_attr.buffer);
 	attrs.num_entries = cq_attr.num_entries;
 	attrs.entry_size = cq_attr.entry_size;
 
-	cq = efa_cuda_create_cq(&attrs, sizeof(attrs));
-	if (cq == nullptr) {
-		throw std::runtime_error("gdaki_gpu_cq: efa_cuda_create_cq failed");
+	descriptor.allocate(static_cast<size_t>(descriptor_size));
+	const int ret = efa_cuda_init_cq(ctx.get(), descriptor.host,
+					 static_cast<uint32_t>(descriptor_size),
+					 &attrs, sizeof(attrs));
+	if (ret != 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_cq: efa_cuda_init_cq failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " + std::to_string(ret));
 	}
+	descriptor.commit();
+
+	cq = reinterpret_cast<nccl_ofi_gin_gdaki_dev_cq *>(descriptor.dev);
+	backend_version = backend_version_in;
 }
 
 /*
@@ -310,7 +377,7 @@ void gdaki_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
 	endpoint.enable();
 }
 
-void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 			      const std::vector<uint8_t> &all_addrs,
 			      size_t ep_addr_len, int total_slots, int nranks)
 {
@@ -321,6 +388,14 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 		throw std::runtime_error("gdaki_endpoint query_qp_wqs failed: " +
 					 std::string(fi_strerror(-ret)));
 
+	if (backend_version == 2 &&
+	    sq_attr.entry_size != gdaki_narrow_wqe_size) {
+		throw std::runtime_error(
+			"gdaki_endpoint: backendVersion 2 requires a 64-byte narrow SQ WQE "
+			"but this endpoint has " + std::to_string(sq_attr.entry_size) +
+			" bytes");
+	}
+
 	sq_buffer.map(sq_attr.buffer,
 		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
 
@@ -329,12 +404,13 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 	 * so our GPU-side mapping covers the same region rdma-core opened. */
 	sq_doorbell.map(sq_attr.doorbell, system_page_size);
 
-	gpu_qp.build(sq_attr, rq_attr, sq_buffer.dev, sq_doorbell.dev);
+	gpu_qp.build(backend_version, sq_attr, rq_attr, sq_buffer.dev, sq_doorbell.dev);
 
 	/* Stash SQ ring depth for the device-side SQ-overflow backpressure
 	 * check. Both gdaki_data_endpoint and gdaki_sc_endpoint read this
-	 * via base.sq_size. */
+	 * via base.sq_size. entry_size is kept for createContext's log line. */
 	sq_size = sq_attr.num_entries;
+	sq_entry_size = sq_attr.entry_size;
 
 	/* Query CQ and build GPU descriptor. */
 	struct fi_efa_cq_attr efa_cq_attr = {};
@@ -343,7 +419,7 @@ void gdaki_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
 		throw std::runtime_error("gdaki_endpoint query_cq failed: " +
 					 std::string(fi_strerror(-ret)));
 
-	gpu_cq.build(efa_cq_attr);
+	gpu_cq.build(backend_version, efa_cq_attr);
 
 	/* Build the [total_slots*nranks] target table in GPU memory. */
 	targets.populate(endpoint, all_addrs, ep_addr_len, total_slots, nranks, gda_ops);
@@ -364,13 +440,13 @@ void gdaki_data_endpoint::open(struct fid_domain *domain, struct fi_info *ref_in
 	base.endpoint.enable();
 }
 
-void gdaki_data_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+void gdaki_data_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 				   const std::vector<uint8_t> &all_addrs,
 				   size_t ep_addr_len, int total_slots, int nranks)
 {
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
 	 * target table, sq_size stash) to the inner endpoint. */
-	base.populate(gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
+	base.populate(backend_version, gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
 }
 
 void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
@@ -392,13 +468,13 @@ void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info
 	base.endpoint.enable();
 }
 
-void gdaki_sc_endpoint::populate(struct fi_efa_ops_gda *gda_ops,
+void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 				 const std::vector<uint8_t> &all_addrs,
 				 size_t ep_addr_len, int total_slots, int nranks)
 {
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU descriptors,
 	 * target table) to the inner endpoint. */
-	base.populate(gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
+	base.populate(backend_version, gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
 
 	/*
 	 * Build the two device handles. They share QP / CQ / target

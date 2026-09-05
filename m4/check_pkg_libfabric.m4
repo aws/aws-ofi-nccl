@@ -62,7 +62,8 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
                   FI_OPT_SHARED_MEMORY_PERMITTED,
                   FI_MR_DMABUF,
 		      FI_OPT_INJECT_RMA_SIZE,
-                  FI_EFA_FEATURE_OPS],
+                  FI_EFA_FEATURE_OPS,
+                  FI_EFA_WQ_CAPS_64_BIT_REQ_ID],
                   [], [], [AC_INCLUDES_DEFAULT
 [#include <rdma/fi_endpoint.h>
 #ifdef HAVE_RDMA_FI_EXT_H
@@ -81,6 +82,14 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_CHECK_DECLS([FI_EFA_GDA_OPS],
+                  [], [], [AC_INCLUDES_DEFAULT
+[#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif]])])
+
+  dnl Check for provider-reported work queue capabilities.
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_MEMBERS([struct fi_efa_wq_attr.caps],
                   [], [], [AC_INCLUDES_DEFAULT
 [#ifdef HAVE_RDMA_FI_EXT_EFA_H
 #include <rdma/fi_ext_efa.h>

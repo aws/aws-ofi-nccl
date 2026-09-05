@@ -5,26 +5,26 @@
  * the layout of the device handle that createContext populates in GPU
  * memory and destroyContext tears down.
  *
- * This header is plugin-internal. NCCL does not include it: NCCL's kernel
- * code and the plugin both use the canonical efa_cuda_qp / efa_cuda_cq
- * types provided by efa-dp-direct. Using those dependency definitions directly
- * makes incompatible queue-layout changes surface at build time rather than
- * silently diverging from a plugin-local mirror. This header exists so that
- * both createContext (which builds the device handle on the host) and
- * destroyContext (which frees it) agree on the remaining GIN-specific
+ * This header is plugin-internal. NCCL does not include it; it hand-mirrors
+ * these structs in nccl_device/gin/efa_gda/gin_efa_gda_dev.h. This header
+ * exists so that both createContext (which builds the device handle on the
+ * host) and destroyContext (which frees it) agree on the GIN-specific
  * struct layout.
  *
+ * The QP and CQ are opaque handles: the pointee layout is whichever frozen
+ * layout the context's backendVersion names, so only code compiled for a known
+ * version may cast and dereference them. The plugin itself never does -- it
+ * only passes them through to this struct. NCCL's mirror declares them void*,
+ * which is layout-identical.
+ *
  * Keep this header free of libfabric and plugin-internal transport types.
- * It depends only on efa-dp-direct's plain C queue-layout header and is a
- * stable contract for the GPU-memory layout.
+ * It is a stable contract for the GPU-memory layout.
  */
 
 #ifndef NCCL_OFI_GIN_GDAKI_DEV_H_
 #define NCCL_OFI_GIN_GDAKI_DEV_H_
 
 #include <stdint.h>
-
-#include "efa_cuda_dp_types.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -93,27 +93,31 @@ struct nccl_ofi_gin_gdaki_mr_handle {
 #define NCCL_OFI_GDAKI_MAX_RAILS 2
 
 /*
- * QP/CQ/WQ layouts are canonical efa-dp-direct types. The device handle
- * stores them directly, so device code no longer relies on representation
- * casts from plugin-local mirrors.
- */
-
-/*
- * Highest efa-dp-direct QP/CQ device-struct layout version this plugin can
- * build. NCCL passes the layout version it was built to drive as
+ * Highest efa-dp-direct QP/CQ layout version this plugin can select.
+ * NCCL passes the layout version it was built to drive as
  * ncclGinConfig_v14_t::backendVersion (selected from efaGdaBackendMinVersions[]);
- * createContext_v14 rejects any request outside [0, this].
+ * createContext_v14 dispatches on it and refuses anything it cannot select.
  *
- * There is a single layout today (the canonical efa_cuda_qp / efa_cuda_cq).
- * NCCL 2.31.0+ requests version 1; version 0 is a vestigial table floor that
- * predates the EFA-GDA backend and is never sent by an EFA-GDA-capable NCCL.
- * Both map to the current layout.
+ * backendVersion 1 maps to efa-dp-direct API major 0 (the original layout);
+ * backendVersion 2 maps to API major 1 (WQE context and 64-bit request IDs).
+ * Version 0 is a vestigial table floor that predates the EFA-GDA backend and
+ * is never sent by an EFA-GDA-capable NCCL; it is rejected.
  *
- * INVARIANT: any change to the efa_cuda_qp / efa_cuda_cq byte layout MUST bump
- * this value AND add a matching case in gdaki_gpu_qp/cq::build(); comp_mask
- * capability bits are additive and never change the layout.
+ * INVARIANT: any change to the QP/CQ byte layout MUST add a new API major in
+ * efa-dp-direct, bump this value, and add the matching mapping in
+ * gdaki_efa_dp_major(). The plugin must never implement or modify a versioned
+ * descriptor layout itself.
  */
-#define NCCL_OFI_GDAKI_MAX_BACKEND_VERSION 1
+#define NCCL_OFI_GDAKI_MAX_BACKEND_VERSION 2
+
+/* No default layout version: every GDAKI context gets one from
+ * ncclGinConfig_v14_t::backendVersion, so an unset value is a bug rather than
+ * something to fall back from. */
+#define NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET (-1)
+
+/* Deliberately incomplete: see the note on qp/cq below. */
+struct nccl_ofi_gin_gdaki_dev_qp;
+struct nccl_ofi_gin_gdaki_dev_cq;
 
 
 /**
@@ -129,11 +133,12 @@ struct nccl_ofi_gin_gdaki_mr_handle {
  * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
  */
 struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
-	/* GPU-resident QP for this endpoint. */
-	struct efa_cuda_qp *qp;
+	/* GPU-resident QP for this endpoint, in the layout named by the
+	 * context's backendVersion. */
+	struct nccl_ofi_gin_gdaki_dev_qp *qp;
 
-	/* GPU-resident CQ for this endpoint. */
-	struct efa_cuda_cq *cq;
+	/* GPU-resident CQ for this endpoint, same versioning as qp. */
+	struct nccl_ofi_gin_gdaki_dev_cq *cq;
 
 	/* Target addressing for this (poster) endpoint's QP.
 	 *

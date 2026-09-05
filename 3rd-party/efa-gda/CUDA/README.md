@@ -11,14 +11,16 @@ This implementation provides CUDA device functions that allow GPU kernels to dir
 ```
 CUDA/
 ├── common/
-│   └── efa_cuda_dp_types.h       # QP/CQ/WQ struct definitions (shared by host & device)
+│   └── efa_cuda_dp_version.h           # Library version (shared by host & device)
 ├── device/
-│   ├── efa_cuda_dp.cuh           # Datapath enums and __device__ function declarations
-│   ├── efa_cuda_dp_impl.cuh      # __device__ function implementations (include in kernels)
-│   └── efa_io_defs.h             # EFA I/O HW structure definitions (internal)
+│   ├── efa_cuda_dp_defs.cuh            # Datapath enums and device-side definitions
+│   ├── efa_cuda_dp_impl.cuh            # __device__ function implementations (include in kernels)
+│   ├── efa_cuda_dp_types.h             # QP/CQ/WQ structs, latest version (consumed by kernels)
+│   └── efa_io_defs.h                   # EFA I/O HW structure definitions (internal)
 ├── host/
-│   ├── efa_cuda_dp.h             # C API header: attribute structs, init signatures, version
-│   └── efa_cuda_dp.cpp           # Host-side create/destroy implementations
+│   ├── efa_cuda_dp.h                   # C API: context, queue initializers, size queries
+│   ├── efa_cuda_dp_versioned_types.h   # Frozen QP/CQ/WQ layouts, one set per API major
+│   └── efa_cuda_dp.cpp                 # Host-side implementation
 ├── Makefile
 └── README.md
 ```
@@ -27,14 +29,40 @@ CUDA/
 
 ### Host-Side C API (`host/efa_cuda_dp.h`)
 
-#### Queue Management
+#### Context and Queue Initialization
 ```c
-struct efa_cuda_cq *efa_cuda_create_cq(struct efa_cuda_cq_attrs *attrs, uint32_t inlen);
-void efa_cuda_destroy_cq(struct efa_cuda_cq *d_cq);
+struct efa_cuda_dp_context *efa_cuda_dp_context_create(int major, int minor, int subminor);
+void efa_cuda_dp_context_destroy(struct efa_cuda_dp_context *ctx);
 
-struct efa_cuda_qp *efa_cuda_create_qp(struct efa_cuda_qp_attrs *attrs, uint32_t inlen);
-void efa_cuda_destroy_qp(struct efa_cuda_qp *d_qp);
+int efa_cuda_init_cq(struct efa_cuda_dp_context *ctx, void *cq, uint32_t outlen,
+                     const struct efa_cuda_cq_attrs *attrs, uint32_t inlen);
+int efa_cuda_init_qp(struct efa_cuda_dp_context *ctx, void *qp, uint32_t outlen,
+                     const struct efa_cuda_qp_attrs *attrs, uint32_t inlen);
+
+int efa_cuda_get_cq_size(struct efa_cuda_dp_context *ctx);
+int efa_cuda_get_qp_size(struct efa_cuda_dp_context *ctx);
+
 int efa_cuda_get_version(int *major, int *minor, int *subminor);
+```
+
+A context binds the API version the consuming device code was built against;
+the queue layout is selected by `major` (0 = original layout, 1 = adds the WQE
+context and 64-bit request IDs). The initializers fill caller-provided host
+storage of `efa_cuda_get_cq_size()` / `efa_cuda_get_qp_size()` bytes (equally,
+`sizeof` the matching `_v<major>` type from `host/efa_cuda_dp_versioned_types.h`),
+passed as `outlen`. The library makes no CUDA calls: allocating device memory
+and copying the initialized struct to it are the caller's job.
+
+```c
+struct efa_cuda_dp_context *ctx = efa_cuda_dp_context_create(1, 0, 0);
+
+struct efa_cuda_qp_v1 h_qp;
+efa_cuda_init_qp(ctx, &h_qp, sizeof(h_qp), &attrs, sizeof(attrs));
+
+/* caller-owned device placement */
+struct efa_cuda_qp_v1 *d_qp;
+cudaMalloc(&d_qp, sizeof(h_qp));
+cudaMemcpy(d_qp, &h_qp, sizeof(h_qp), cudaMemcpyHostToDevice);
 
 // Attribute structures - always zero-initialize for compatibility
 struct efa_cuda_cq_attrs {
@@ -45,25 +73,46 @@ struct efa_cuda_cq_attrs {
     uint32_t entry_size;    // Size of each CQ entry in bytes
 };
 
-struct efa_cuda_qp_attrs {
-    uint64_t comp_mask;     // Reserved for future use
-    uint64_t flags;         // Reserved for future use
-    uint8_t *sq_buffer;     // Device buffer for send queue
-    uint8_t *rq_buffer;     // Device buffer for receive queue
-    uint32_t *sq_doorbell;  // Send queue doorbell pointer
-    uint32_t *rq_doorbell;  // Receive queue doorbell pointer
-    uint32_t sq_num_entries;// Send queue entries (must be power of 2)
-    uint32_t sq_entry_size; // Send queue entry size
-    uint32_t sq_max_batch;  // Maximum batch size for send operations
-    uint32_t rq_num_entries;// Receive queue entries (must be power of 2)
-    uint32_t rq_entry_size; // Receive queue entry size
-    uint32_t reserved;      // Must be zero
+```cpp
+enum efa_cuda_wq_caps {
+    EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID = 1 << 0, // WQ supports 64-bit request IDs
+};
+
+enum efa_cuda_qp_flags {
+    // Caller uses only 16-bit SQ request IDs and reads only common.req_id.
+    EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID = 1 << 0,
 };
 ```
 
+struct efa_cuda_qp_attrs {
+    uint64_t comp_mask;         // Reserved for future use
+    uint64_t flags;             // Reserved for future use
+    uint8_t *sq_buffer;         // Device buffer for send queue
+    uint8_t *rq_buffer;         // Device buffer for receive queue
+    uint32_t *sq_doorbell;      // Send queue doorbell pointer
+    uint32_t *rq_doorbell;      // Receive queue doorbell pointer
+    uint32_t sq_num_entries;    // Send queue entries (must be power of 2)
+    uint32_t sq_entry_size;     // Send queue entry size
+    uint32_t sq_max_batch;      // Maximum batch size for send operations
+    uint32_t rq_num_entries;    // Receive queue entries (must be power of 2)
+    uint32_t rq_entry_size;     // Receive queue entry size
+    uint32_t sq_max_inline_data;// Maximum inline data size in send queue
+    uint32_t sq_max_rdma_sges;  // Maximum SGEs for RDMA operations
+    uint32_t sq_wq_caps;        // Send queue capabilities (see efa_cuda_wq_caps)
+    uint32_t rq_wq_caps;        // Receive queue capabilities (see efa_cuda_wq_caps)
+};
+```
+
+`efa_cuda_init_qp` normally requires the send queue to advertise
+`EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID`. A caller can instead set
+`EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID`; in that mode every submitted SQ
+request ID must fit in 16 bits, and completions must be decoded with
+`efa_cuda_wc_read_req_id_16()`. The upper request-ID bytes in the CQE are
+undefined when the QP does not support 64-bit request IDs.
+
 **Note**: The `inlen` parameter enables compatibility checking - use `sizeof(attrs)` to allow the library to validate extended fields are zero.
 
-### Device-Side CUDA API (`device/efa_cuda_dp.cuh`)
+### Device-Side CUDA API (`device/efa_cuda_dp_impl.cuh`)
 
 #### Completion Queue Operations
 ```cuda
@@ -75,7 +124,8 @@ __device__ int efa_cuda_cq_pop(efa_cuda_cq *cq, int amount);
 ```cuda
 __device__ enum efa_cuda_wc_opcode efa_cuda_wc_read_opcode(void *wc_buf);
 __device__ bool efa_cuda_wc_is_unsolicited(void *wc_buf);
-__device__ uint16_t efa_cuda_wc_read_req_id(void *wc_buf);
+__device__ uint16_t efa_cuda_wc_read_req_id_16(void *wc_buf);
+__device__ uint64_t efa_cuda_wc_read_req_id(void *wc_buf);
 __device__ uint32_t efa_cuda_wc_read_vendor_err(void *wc_buf);
 __device__ bool efa_cuda_wc_has_imm(void *wc_buf);
 __device__ uint32_t efa_cuda_wc_read_imm_data(void *wc_buf);
@@ -85,19 +135,31 @@ __device__ uint32_t efa_cuda_wc_read_src_qp(void *wc_buf);
 __device__ uint32_t efa_cuda_wc_read_slid(void *wc_buf);
 ```
 
-#### Work Request Initialization and Configuration
+#### Work Request Builder
 ```cuda
-__device__ int efa_cuda_init_send_wr(void *wr_buf, uint16_t wr_id);
-__device__ int efa_cuda_init_send_imm_wr(void *wr_buf, uint16_t wr_id, uint32_t imm_data);
-__device__ int efa_cuda_init_rdma_read_wr(void *wr_buf, uint16_t wr_id, uint32_t rkey, uint64_t remote_addr);
-__device__ int efa_cuda_init_rdma_write_wr(void *wr_buf, uint16_t wr_id, uint32_t rkey, uint64_t remote_addr);
-__device__ int efa_cuda_init_rdma_write_imm_wr(void *wr_buf, uint16_t wr_id, uint32_t rkey, uint64_t remote_addr, uint32_t imm_data);
+class EfaCudaWrBuilder {
+public:
+    __device__ EfaCudaWrBuilder(struct efa_cuda_wr_ctx *wr_ctx, uint8_t *wr_buf);
 
-__device__ void efa_cuda_wr_set_remote(void *wr_buf, uint16_t ah, uint32_t remote_qpn, uint32_t remote_qkey);
-__device__ int efa_cuda_wr_set_inline_data(void *wr_buf, void *addr, size_t length);
-__device__ int efa_cuda_wr_set_sge(void *wr_buf, uint32_t lkey, uint64_t addr, uint32_t length);
-__device__ void efa_cuda_wr_set_processing_hints(void *wr_buf, uint32_t hints);
+    // Initialization methods
+    __device__ int init_send(uint64_t wr_id);
+    __device__ int init_send_imm(uint64_t wr_id, uint32_t imm_data);
+    __device__ int init_rdma_write(uint64_t wr_id, uint32_t rkey, uint64_t remote_addr);
+    __device__ int init_rdma_write_imm(uint64_t wr_id, uint32_t rkey, uint64_t remote_addr, uint32_t imm_data);
+    __device__ int init_rdma_read(uint64_t wr_id, uint32_t rkey, uint64_t remote_addr);
+
+    // Field setters
+    __device__ int set_sge(uint32_t lkey, uint64_t addr, uint32_t length);
+    __device__ void set_remote(uint16_t ah, uint32_t remote_qpn, uint32_t remote_qkey);
+    __device__ int set_inline_data(void *addr, size_t length);
+    __device__ void set_processing_hints(uint32_t hints);
+};
 ```
+
+The builder binds a WR context (`efa_cuda_wr_ctx`) and a local WR buffer at
+construction time. All methods read WQE format information (offsets, sizes) from
+the WR context via the read-only cache, making WR construction fully agnostic to
+the WQE size (64B, 128B, etc.).
 
 #### Work Queue Operations
 ```cuda
@@ -116,23 +178,30 @@ __device__ bool efa_cuda_is_qp_compatible(efa_cuda_qp *qp);
 
 ## Version Checking and Compatibility
 
-To ensure compatibility between dynamically linked libraries and directly included CUDA implementations, the library provides two mechanisms:
+The QP/CQ structures are a wire format between the host library and the device
+code compiled into kernels, and those two ship in different binaries. The
+context is what keeps them in step: create it with the API major version the
+device code was built against, and the initializers produce that version's
+layout, or fail rather than produce a different one. A caller can additionally
+verify the loaded library itself:
 
 ### 1. Library Version Checking (Host Code)
 
-Use `efa_cuda_get_version()` to verify the dynamically linked library version:
+Use `efa_cuda_get_version()` to query the dynamically linked library version:
 
 ```c
 int major, minor, subminor;
 int ret = efa_cuda_get_version(&major, &minor, &subminor);
 if (ret == 0) {
     printf("EFA CUDA DP Library Version: %d.%d.%d\n", major, minor, subminor);
+}
 
-    // Check compatibility with expected version
-    if (major != EFA_CUDA_DP_VERSION_MAJOR || minor != EFA_CUDA_DP_VERSION_MINOR) {
-        fprintf(stderr, "Incompatible library version\n");
-        return -1;
-    }
+// The device code's expected version, from common/efa_cuda_dp_version.h at its
+// build time, selects the layout:
+struct efa_cuda_dp_context *ctx = efa_cuda_dp_context_create(major, minor, subminor);
+if (!ctx) {
+    fprintf(stderr, "Library does not support this API version\n");
+    return -1;
 }
 ```
 
@@ -163,19 +232,18 @@ __global__ void check_compatibility_kernel(efa_cuda_cq *cq, efa_cuda_qp *qp) {
 ### Basic Send Operation
 ```cuda
 __global__ void send_kernel(efa_cuda_qp *qp, efa_cuda_cq *cq, void *data, size_t len) {
-    // Initialize send work request
-    efa_io_tx_wqe wr_buf;
-    efa_cuda_init_send_wr(&wr_buf, 1); // req_id = 1
+    // Allocate local WR buffer
+    uint8_t wr_buf[128]; // sized to max WQE
 
-    // Set scatter-gather element
-    efa_cuda_wr_set_sge(&wr_buf, lkey, (uint64_t)data, len);
-
-    // Set remote info
-    efa_cuda_wr_set_remote(&wr_buf, ah, remote_qpn, qkey);
+    // Build work request using the builder
+    EfaCudaWrBuilder wr(&qp->sq.wr_ctx, wr_buf);
+    wr.init_send(1); // req_id = 1
+    wr.set_sge(lkey, (uint64_t)data, len);
+    wr.set_remote(ah, remote_qpn, qkey);
 
     // Post work request
     efa_cuda_start_sq_batch(qp, 1);
-    efa_cuda_sq_batch_place_wr(qp, 0, &wr_buf);
+    efa_cuda_sq_batch_place_wr(qp, 0, wr_buf);
     efa_cuda_flush_sq_wrs(qp);
 
     // Poll for completion
@@ -199,17 +267,15 @@ __global__ void send_kernel(efa_cuda_qp *qp, efa_cuda_cq *cq, void *data, size_t
 __global__ void rdma_write_imm_kernel(efa_cuda_qp *qp, void *local_data,
                                        uint64_t remote_addr, uint32_t rkey,
                                        uint32_t imm_data, size_t len) {
-    efa_io_tx_wqe wr_buf;
+    uint8_t wr_buf[128];
 
-    // Initialize RDMA write with immediate
-    efa_cuda_init_rdma_write_imm_wr(&wr_buf, 2, rkey, remote_addr, imm_data);
-
-    // Set local data
-    efa_cuda_wr_set_sge(&wr_buf, local_lkey, (uint64_t)local_data, len);
+    EfaCudaWrBuilder wr(&qp->sq.wr_ctx, wr_buf);
+    wr.init_rdma_write_imm(2, rkey, remote_addr, imm_data);
+    wr.set_sge(local_lkey, (uint64_t)local_data, len);
 
     // Post and flush
     efa_cuda_start_sq_batch(qp, 1);
-    efa_cuda_sq_batch_place_wr(qp, 0, &wr_buf);
+    efa_cuda_sq_batch_place_wr(qp, 0, wr_buf);
     efa_cuda_flush_sq_wrs(qp);
 }
 ```
@@ -256,13 +322,14 @@ __global__ void parallel_send_kernel(efa_cuda_qp *qp, void **data_ptrs, size_t *
 
     if (tid < num_requests) {
         // Each thread prepares its own work request
-        efa_io_tx_wqe wr_buf;
-        efa_cuda_init_send_wr(&wr_buf, tid);
-        efa_cuda_wr_set_sge(&wr_buf, lkey, (uint64_t)data_ptrs[tid], lengths[tid]);
-        efa_cuda_wr_set_remote(&wr_buf, ah, remote_qpn, qkey);
+        uint8_t wr_buf[128];
+        EfaCudaWrBuilder wr(&qp->sq.wr_ctx, wr_buf);
+        wr.init_send(tid);
+        wr.set_sge(lkey, (uint64_t)data_ptrs[tid], lengths[tid]);
+        wr.set_remote(ah, remote_qpn, qkey);
 
         // Place work request at thread's position in batch
-        efa_cuda_sq_batch_place_wr(qp, tid, &wr_buf);
+        efa_cuda_sq_batch_place_wr(qp, tid, wr_buf);
     }
 
     __syncthreads();
@@ -308,7 +375,8 @@ __global__ void parallel_poll_kernel(efa_cuda_cq *cq) {
 ## Build Instructions
 
 ### Prerequisites
-- NVIDIA CUDA Toolkit
+- C++ compiler (the host library has no CUDA dependency)
+- NVIDIA CUDA Toolkit (only for compiling kernels that include the device headers)
 - EFA kernel driver
 - Compatible GPU with CUDA support
 
@@ -323,8 +391,9 @@ This produces:
 
 ### Linking with Applications
 ```bash
-# Host-side code (links against libefacudadp for create/destroy)
-g++ -o myapp_host myapp_host.cpp -ICUDA/host -ICUDA/common -Lbuild -lefacudadp -lcudart
+# Host-side code (links against libefacudadp for queue initialization; the
+# library itself needs no CUDA library, add -lcudart only for your own calls)
+g++ -o myapp_host myapp_host.cpp -ICUDA/host -ICUDA/common -Lbuild -lefacudadp
 
 # CUDA kernel code (includes device headers directly)
 nvcc -o myapp_kernel myapp_kernel.cu -ICUDA/device -ICUDA/common
@@ -337,7 +406,7 @@ For direct inline usage in CUDA kernels, include `efa_cuda_dp_impl.cuh` directly
 ### Threading and Concurrency
 
 #### Object Lifecycle Operations
-- **Single-threaded only**: Queue creation/destruction (`efa_cuda_create_cq`, `efa_cuda_destroy_cq`, `efa_cuda_create_qp`, `efa_cuda_destroy_qp`) must not be called concurrently with any other operations
+- **Single-threaded only**: Queue initialization (`efa_cuda_init_cq`, `efa_cuda_init_qp`) must not be called concurrently with any other operations on the same queue storage
 
 #### Queue State Operations
 - **Single-threaded only**: Operations that modify queue state (`efa_cuda_cq_pop`, `efa_cuda_start_sq_batch`, `efa_cuda_flush_sq_wrs`, `efa_cuda_post_recv_wr`, `efa_cuda_flush_rq_wrs`) must be serialized per queue
@@ -354,8 +423,8 @@ For direct inline usage in CUDA kernels, include `efa_cuda_dp_impl.cuh` directly
 
 ### Hardware Constraints
 - **Batch size limits**: Send queue batches limited by `sq_max_batch` parameter that is an EFA device property
-- **Inline data limit**: Maximum 32 bytes inline data per work request
-- **SGE limits**: Limited number of scatter-gather elements per work request
+- **Inline data limit**: Maximum inline data per work request depends on WQE size (32 bytes for 64B WQE, 80 bytes for 128B WQE)
+- **SGE limits**: Number of scatter-gather elements per work request
 - **Completion queue sizing**: CQ must accommodate all outstanding work requests
 
 ### API Behavior

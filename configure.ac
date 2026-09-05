@@ -16,11 +16,16 @@ AC_PREREQ([2.69])
 AC_CONFIG_SRCDIR([src/nccl_ofi_net.cpp])
 
 AC_MSG_CHECKING([for required efa-dp-direct CUDA sources])
-AS_IF([test -f "$srcdir/3rd-party/efa-gda/CUDA/README.md"],
+AS_IF([test -f "$srcdir/3rd-party/efa-gda/CUDA/README.md" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/common/efa_cuda_dp_version.h" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/device/efa_cuda_dp_types.h" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/host/efa_cuda_dp.h" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/host/efa_cuda_dp.cpp" &&
+       test -f "$srcdir/3rd-party/efa-gda/CUDA/host/efa_cuda_dp_versioned_types.h"],
       [AC_MSG_RESULT([yes])],
       [AC_MSG_RESULT([no])
-       AC_MSG_ERROR([Missing required file:
-  3rd-party/efa-gda/CUDA/README.md
+       AC_MSG_ERROR([Missing required efa-dp-direct CUDA sources under:
+  3rd-party/efa-gda/CUDA
 
 3rd-party/efa-gda is vendored directly in this repository and is not a Git
 submodule. A missing file here means the source tree is incomplete. Re-checkout
@@ -352,12 +357,14 @@ AS_IF([test -e "${srcdir}/.git" -a -z "${enable_werror}"],
        CXXFLAGS="${werror_flags} ${CXXFLAGS} "])
 
 AS_IF([test "${ac_cv_have_decl_FI_EFA_GDA_OPS}" = "yes" \
+       && test "${ac_cv_have_decl_FI_EFA_WQ_CAPS_64_BIT_REQ_ID}" = "yes" \
+       && test "${ac_cv_member_struct_fi_efa_wq_attr_caps}" = "yes" \
        && test "${have_fi_efa_comp_cntr}" = "1" \
        && test "${have_device_interface}" = "cuda"],
       [have_gdaki=1
-       AC_MSG_NOTICE([GDAKI support enabled (libfabric GDA ops + hw counters + CUDA present).])],
+       AC_MSG_NOTICE([GDAKI support enabled (libfabric GDA ops + WQ capabilities + hw counters + CUDA present).])],
       [have_gdaki=0
-       AC_MSG_NOTICE([GDAKI support disabled (requires libfabric >= 2.5 GDA ops + hw-counter ABI and CUDA); building proxy-only GIN.])])
+       AC_MSG_NOTICE([GDAKI support disabled (requires libfabric GDA ops, WQ capability reporting, hw-counter ABI, and CUDA); building proxy-only GIN.])])
 AC_DEFINE_UNQUOTED([HAVE_GDAKI], [${have_gdaki}], [Defined to 1 if GDAKI support is enabled])
 AM_CONDITIONAL([HAVE_GDAKI], [test "${have_gdaki}" = "1"])
 
