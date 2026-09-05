@@ -77,6 +77,11 @@ struct efa_cuda_cq_attrs {
 enum efa_cuda_wq_caps {
     EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID = 1 << 0, // WQ supports 64-bit request IDs
 };
+
+enum efa_cuda_qp_flags {
+    // Caller uses only 16-bit SQ request IDs and reads only common.req_id.
+    EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID = 1 << 0,
+};
 ```
 
 struct efa_cuda_qp_attrs {
@@ -98,9 +103,12 @@ struct efa_cuda_qp_attrs {
 };
 ```
 
-`efa_cuda_init_qp` requires the send queue to advertise
-`EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID` (the library posts 64-bit request IDs) and
-fails with `-EOPNOTSUPP` otherwise.
+`efa_cuda_init_qp` normally requires the send queue to advertise
+`EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID`. A caller can instead set
+`EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID`; in that mode every submitted SQ
+request ID must fit in 16 bits, and completions must be decoded with
+`efa_cuda_wc_read_req_id_16()`. The upper request-ID bytes in the CQE are
+undefined when the QP does not support 64-bit request IDs.
 
 **Note**: The `inlen` parameter enables compatibility checking - use `sizeof(attrs)` to allow the library to validate extended fields are zero.
 
@@ -116,6 +124,7 @@ __device__ int efa_cuda_cq_pop(efa_cuda_cq *cq, int amount);
 ```cuda
 __device__ enum efa_cuda_wc_opcode efa_cuda_wc_read_opcode(void *wc_buf);
 __device__ bool efa_cuda_wc_is_unsolicited(void *wc_buf);
+__device__ uint16_t efa_cuda_wc_read_req_id_16(void *wc_buf);
 __device__ uint64_t efa_cuda_wc_read_req_id(void *wc_buf);
 __device__ uint32_t efa_cuda_wc_read_vendor_err(void *wc_buf);
 __device__ bool efa_cuda_wc_has_imm(void *wc_buf);

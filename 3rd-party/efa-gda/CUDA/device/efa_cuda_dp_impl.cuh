@@ -113,6 +113,17 @@ __device__ static inline bool efa_cuda_wc_is_unsolicited(void *wc_buf)
 	return EFA_GET(&cqe->flags, EFA_IO_CDESC_COMMON_UNSOLICITED);
 }
 
+/*
+ * Read a completion from a QP operating without SQ_64_BIT_REQ_ID. The bytes
+ * following common.req_id are not request-ID extension fields in that mode.
+ */
+__device__ static inline uint16_t efa_cuda_wc_read_req_id_16(void *wc_buf)
+{
+	struct efa_io_cdesc_common *cqe = (struct efa_io_cdesc_common *)wc_buf;
+
+	return cqe->req_id;
+}
+
 __device__ static inline uint64_t efa_cuda_wc_read_req_id(void *wc_buf)
 {
 	struct efa_io_tx_cdesc *tcqe = (struct efa_io_tx_cdesc *)wc_buf;

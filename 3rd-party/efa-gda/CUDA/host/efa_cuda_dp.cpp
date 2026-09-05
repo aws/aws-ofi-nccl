@@ -271,9 +271,17 @@ static int efa_init_qp_v1(void *qp_buf, uint32_t outlen, const struct efa_cuda_q
 		return -EOPNOTSUPP;
 	}
 
-	/* Device code posts 64-bit request IDs unconditionally. */
-	if (!(attrs->sq_wq_caps & EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID)) {
-		EFA_CUDA_LOG_ERR("SQ must support 64-bit request IDs");
+	if (attrs->flags &
+	    ~static_cast<uint64_t>(EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID)) {
+		EFA_CUDA_LOG_ERR("unexpected QP flags 0x%llx",
+				 static_cast<unsigned long long>(attrs->flags));
+		return -EOPNOTSUPP;
+	}
+
+	if (!(attrs->sq_wq_caps & EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID) &&
+	    !(attrs->flags & EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID)) {
+		EFA_CUDA_LOG_ERR("SQ lacks 64-bit request IDs and caller did not opt into "
+				 "16-bit request IDs");
 		return -EOPNOTSUPP;
 	}
 

@@ -36,6 +36,14 @@ enum efa_cuda_wq_caps {
 	EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID = 1 << 0,
 };
 
+enum efa_cuda_qp_flags {
+	/*
+	 * The caller guarantees that every SQ request ID fits in 16 bits and
+	 * reads only the common CQE request-ID field.
+	 */
+	EFA_CUDA_QP_FLAGS_ALLOW_16_BIT_REQ_ID = 1 << 0,
+};
+
 struct efa_cuda_qp_attrs {
 	uint64_t comp_mask;
 	uint64_t flags;
