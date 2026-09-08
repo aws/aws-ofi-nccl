@@ -2,10 +2,12 @@
  * Copyright (c) 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
  * GDAKI plugin for the GIN API. Shared APIs (init, devices, listen, connect,
- * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, ginProgress, finalize)
- * are reused from the proxy-side implementations in nccl_ofi_gin_api.cpp.
- * Only the GDAKI-specific APIs (createContext/destroyContext/get_properties/
- * queryLastError) live here.
+ * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, finalize) are reused
+ * from the proxy-side implementations in nccl_ofi_gin_api.cpp. The
+ * GDAKI-specific APIs (createContext/destroyContext/get_properties/
+ * ginProgress/queryLastError) live here. ginProgress needs its own
+ * implementation because it receives our ginCtx, a nccl_ofi_gin_gdaki_context*,
+ * whereas the shared proxy path expects the collComm it returns.
  *
  * Lifecycle-managed ctx resources are implemented as standalone owner
  * classes in rdma/gin/nccl_ofi_gin_gdaki_resources.{h,cpp}; this file
@@ -447,25 +449,21 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 				int nranks, int rank)
 {
 	h.data.qp = ctx->data[ctx_id]->base.gpu_qp.dev();
-	h.data.cq = ctx->data[ctx_id]->base.gpu_cq.dev();
 	h.data.target_address_handles = ctx->data[ctx_id]->base.targets.ahs.dev;
 	h.data.target_remote_qpns     = ctx->data[ctx_id]->base.targets.qpns.dev;
 	h.data.target_qkey            = ctx->data[ctx_id]->base.targets.qkeys.dev;
-	h.data.sq_lock = 0;
-	h.data.local_cntr_value = ctx->data[ctx_id]->local_cntr.gpu_ptr();
 	h.data.submitted_count = 0;
+	h.data.local_cntr_value = ctx->data[ctx_id]->local_cntr.gpu_ptr();
 	h.data.sq_size = ctx->data[ctx_id]->base.sq_size;
 
 	/* Dedicated PutValue poster endpoint: same field set as data. Its target
 	 * table resolves the same peer target slots (built in populate above). */
 	h.pvdata.qp = ctx->pvdata[ctx_id]->base.gpu_qp.dev();
-	h.pvdata.cq = ctx->pvdata[ctx_id]->base.gpu_cq.dev();
 	h.pvdata.target_address_handles = ctx->pvdata[ctx_id]->base.targets.ahs.dev;
 	h.pvdata.target_remote_qpns     = ctx->pvdata[ctx_id]->base.targets.qpns.dev;
 	h.pvdata.target_qkey            = ctx->pvdata[ctx_id]->base.targets.qkeys.dev;
-	h.pvdata.sq_lock = 0;
-	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->local_cntr.gpu_ptr();
 	h.pvdata.submitted_count = 0;
+	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->local_cntr.gpu_ptr();
 	h.pvdata.sq_size = ctx->pvdata[ctx_id]->base.sq_size;
 	h.pvdata.putvalue_slice_base = ctx->pvdata[ctx_id]->putvalue_slice_base;
 
@@ -497,6 +495,20 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	 * is filled. */
 	h.putvalue_lkey            = rs.putvalue_lkey;
 	h.putvalue_slot_size       = (uint32_t)ctx->putvalue_slot_size;
+
+	/* Context-wide per-peer state: the device-owned submitted counts (whose
+	 * atomicAdd also yields each write's pseq) and the host-published per-peer
+	 * ordered completion prefixes Wait compares against. */
+	h.submitted_count_per_peer = ctx->submitted_per_peer[ctx_id]->dev;
+	h.ordered_completed_count_per_peer =
+		ctx->completion_state.dev_ordered_completed_count_per_peer(ctx_id);
+	h.peer_window = NCCL_OFI_GDAKI_PEER_WINDOW;
+
+	/* Context-wide CQ-overflow gate: device-owned submitted count, host-published
+	 * completed count, and the shared CQ depth. */
+	h.submitted_count_per_ctx = ctx->submitted_per_ctx[ctx_id]->dev;
+	h.completed_count_per_ctx = ctx->completion_state.completed_count_ctx_dev(ctx_id);
+	h.cq_depth = ctx->completion_state.cq_depth();
 }
 
 /* `backend_version` must already be validated by the caller; see
@@ -745,6 +757,29 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		 * as nullptr (zero address). This is also the target-slot layout
 		 * of each poster's target addressing table. */
 		const size_t total_slots = 1 + (size_t)global_n_sc;
+
+		/*
+		 * Step 3c: Open the host-published completions table. One shared CQ is
+		 * created per logical context in the loop below (each wrapped in a
+		 * gdaki_host_cq). The completions table holds only the per-context and
+		 * per-peer counts; per-QP completion is each endpoint's NIC counter.
+		 */
+		ctx->completion_state.allocate(nContexts, nranks);
+
+		/* Context-wide per-peer and per-context submitted counts, device-owned,
+		 * one per logical context. Zeroed here; only the device writes them. */
+		for (int i = 0; i < nContexts; i++) {
+			auto counts = std::make_unique<gdaki_gpu_buf<uint32_t>>();
+			counts->allocate((size_t)nranks);
+			counts->commit();
+			ctx->submitted_per_peer.push_back(std::move(counts));
+
+			auto ctx_count = std::make_unique<gdaki_gpu_buf<uint64_t>>();
+			ctx_count->allocate(1);
+			ctx_count->commit();
+			ctx->submitted_per_ctx.push_back(std::move(ctx_count));
+		}
+
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
 			/* This context's endpoints open on rail
 			 * (ctx_id % num_rails)'s domain. Distinct contextIds
@@ -760,13 +795,20 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 * slots have no local endpoint. All open on this ctx's rail
 			 * domain (ofi_domain / proxy_info / gda_ops selected above by
 			 * rail_id = ctx_id % num_rails).
+			 *
+			 * First create this logical context's one shared CQ; data, pvdata and
+			 * every sc EP bind it. gdaki_host_cq owns the CQ and, on build(),
+			 * queries its geometry and CQ depth for the per-context overflow gate.
 			 */
-			/* The data endpoint issues both Put and Get, so it counts reads too. */
+			struct fid_cq *scq = ctx->completion_state.open_cq(
+				ctx_id, ofi_domain, ofi_nccl_cq_size(), gda_ops);
+
 			/* Put and Get carry their payload through the SGE, so the data
 			 * endpoint keeps the 64B entry and the full SQ depth. */
 			ctx->data[ctx_id]->open(ofi_domain,
 						proxy_info,
 						gda_ops,
+						scq,
 						FI_WRITE | FI_READ,
 						/* inline_write_size */ 0);
 			if (local_n_sc > 0) {
@@ -774,7 +816,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			}
 			for (int i = 0; i < local_n_sc; i++) {
 				ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
-				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
+				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops, scq);
 			}
 			/* Dedicated PutValue poster endpoint. */
 			/* PutValue only writes. */
@@ -782,7 +824,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 * inline data, so their PutValue endpoint takes the wide entry
 			 * (at half SQ depth). Backend version 1 keeps the narrow entry. */
 			ctx->pvdata[ctx_id]->open(
-				ofi_domain, proxy_info, gda_ops, FI_WRITE, putvalue_inline_size);
+				ofi_domain, proxy_info, gda_ops, scq, FI_WRITE, putvalue_inline_size);
 
 			/*
 			 * Step 5: Exchange ALL of this ctx's endpoint addresses in a
@@ -909,7 +951,12 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		dev_handle_out->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
 		dev_handle_out->handle = ctx->dev_handles.dev;
 		dev_handle_out->size = sizeof(nccl_ofi_gin_gdaki_dev_handle);
-		dev_handle_out->needsProxyProgress = 0;
+
+		/* The host must drain the shared completion queues, and this flag is
+		 * what makes NCCL spawn the "NCCL GIN Progress" thread that calls our
+		 * .ginProgress (see ginDevCommSetupWithBackend / ncclGinProgress in
+		 * NCCL's gin_host.cc). */
+		dev_handle_out->needsProxyProgress = 1;
 
 		NCCL_OFI_INFO(NCCL_NET,
 			      "gin GDAKI: createContext done (nranks=%d rank=%d "
@@ -1194,9 +1241,60 @@ static ncclResult_t nccl_ofi_gin_gdaki_deregMrSym(void *collComm, void *mhandle)
 	return nccl_ofi_gin_deregMrSym(collComm, mhandle);
 }
 
+/*
+ * GDAKI ginProgress: drain every shared CQ this context owns and publish the
+ * counts the device waits on. NCCL calls it from the "NCCL GIN Progress" thread
+ * for every context whose devHandle set needsProxyProgress. progress() is bounded
+ * per call and returns success even on a CQ completion error (see the CQ progress
+ * pass header for that contract); only a host-side fault (a failed gdrcopy)
+ * escapes.
+ *
+ * GDAKI needs its own ginProgress rather than the shared nccl_ofi_gin_ginProgress:
+ * the shared one casts ginCtx to nccl_ofi_rdma_gin_put_comm*, correct only for the
+ * proxy backend (whose createContext returns the collComm), whereas GDAKI's
+ * createContext returns a nccl_ofi_gin_gdaki_context*.
+ */
+static ncclResult_t nccl_ofi_gin_gdaki_ginProgress(void *ginCtx)
+{
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+
+	if (OFI_UNLIKELY(ctx == nullptr)) {
+		return ncclSuccess;
+	}
+
+	int ret = ctx->completion_state.progress(ofi_nccl_gin_cq_process_max_iter());
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("gin GDAKI: completions table publish failed: %d", ret);
+		return nccl_net_ofi_retval_translate(ret);
+	}
+	return ncclSuccess;
+}
+
+/*
+ * GDAKI queryLastError: surface a NIC-reported completion failure to NCCL so
+ * ncclCommGetAsyncError reports it. Reports true once a failed completion has
+ * been seen on this context's CQs, and false otherwise.
+ */
 static ncclResult_t nccl_ofi_gin_gdaki_queryLastError(void *ginCtx, bool *hasError)
 {
-	*hasError = false;
+	if (hasError == nullptr) {
+		return ncclInvalidArgument;
+	}
+
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+	if (ctx == nullptr) {
+		*hasError = false;
+		return ncclSuccess;
+	}
+
+	std::string msg;
+	if (ctx->completion_state.query_error(msg)) {
+		NCCL_OFI_WARN("gin GDAKI: %s", msg.c_str());
+		*hasError = true;
+	} else {
+		*hasError = false;
+	}
+
 	return ncclSuccess;
 }
 
@@ -1267,7 +1365,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
 	.closeColl = nccl_ofi_gin_gdaki_closeColl,
 	.closeListen = nccl_ofi_gin_closeListen,
-	.ginProgress = nccl_ofi_gin_ginProgress,
+	.ginProgress = nccl_ofi_gin_gdaki_ginProgress,
 	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
 	.finalize = nccl_ofi_gin_finalize
 };

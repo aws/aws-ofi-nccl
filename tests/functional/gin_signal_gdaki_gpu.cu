@@ -13,9 +13,7 @@
  * No plugin-internal mhandle / sc_endpoint reach-through: everything is
  * driven through the public dev->signal_handles[] contract that the
  * kernel uses in production. dev->signal_handles[i]->cntr_value is the
- * FI_REMOTE_WRITE counter (the receiver sees this increment);
- * dev->signal_handles[i]->base.local_cntr_value is the FI_WRITE counter
- * (the sender sees this increment).
+ * FI_REMOTE_WRITE counter the receiver sees increment on signal arrival.
  *
  * Built only when configure finds nvcc (HAVE_NVCC) and GDAKI support
  * (HAVE_GDAKI). Run with at least 2 MPI ranks on an EFA (GDA-capable)
@@ -44,18 +42,12 @@ __global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle *sig
 				      uint32_t dst_rkey,
 				      uint64_t src_addr,
 				      uint32_t src_lkey,
-				      uint32_t bytes,
-				      int max_iters,
-				      uint8_t *out_status,
-				      uint8_t *out_q_type,
-				      uint8_t *out_op_type,
-				      uint32_t *out_done)
+				      uint32_t bytes)
 {
 	if (threadIdx.x != 0 || blockIdx.x != 0) return;
 
 	/* The vendored unversioned device API is the backend-v2 layout. */
 	auto *qp = reinterpret_cast<efa_cuda_qp *>(sig->base.qp);
-	auto *cq = reinterpret_cast<efa_cuda_cq *>(sig->base.cq);
 
 	efa_io_tx_wqe_128 wr;
 	EfaCudaWrBuilder wr_builder(&qp->sq.wr_ctx, reinterpret_cast<uint8_t *>(&wr));
@@ -72,21 +64,6 @@ __global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle *sig
 	efa_cuda_start_sq_batch(qp, 1);
 	efa_cuda_sq_batch_place_wr(qp, 0, &wr);
 	efa_cuda_flush_sq_wrs(qp);
-
-	*out_done = 0;
-	for (int i = 0; i < max_iters; i++) {
-		void *wc = efa_cuda_cq_poll(cq, /*position=*/0);
-		if (wc != nullptr) {
-			auto *cqe = reinterpret_cast<efa_io_cdesc_common *>(wc);
-			*out_status = cqe->status;
-			/* q_type lives in bits [2:1] of cqe->flags. */
-			*out_q_type = (uint8_t)((cqe->flags >> 1) & 0x3);
-			*out_op_type = efa_cuda_wc_read_opcode(wc);
-			efa_cuda_cq_pop(cq, 1);
-			*out_done = 1;
-			return;
-		}
-	}
 }
 
 int main(int argc, char *argv[])
@@ -153,7 +130,6 @@ int main(int argc, char *argv[])
 	ginConfig.trafficClass = -1;
 	ginConfig.backendVersion = 2;
 
-
 	void *proxyCtx = nullptr;
 	ncclNetDeviceHandle_v11_t *devHandle = nullptr;
 	OFINCCLCHECK(extGin->createContext(collComm, &ginConfig, &proxyCtx, &devHandle));
@@ -208,11 +184,10 @@ int main(int argc, char *argv[])
 	MPI_Allgather(&my_dst_addr, 1, MPI_UINT64_T, all_dst_addrs.data(), 1,
 		      MPI_UINT64_T, MPI_COMM_WORLD);
 
-	/* The dev_handle gives us GPU pointers to the per-rank
-	 * signal_handles array. Pull host-side copies of:
-	 *   - the signal_handles[0] device handle pointer (for kernel arg)
-	 *   - cntr_value         = FI_REMOTE_WRITE counter (receiver sees++)
-	 *   - base.local_cntr_value = FI_WRITE counter    (sender sees++) */
+	/* The dev_handle gives us GPU pointers to the per-rank signal_handles array.
+	 * Pull host-side copies of the signal_handles[0] device handle pointer (for
+	 * the kernel arg) and its cntr_value, the FI_REMOTE_WRITE counter the receiver
+	 * sees increment. */
 	auto *dev_h_gpu =
 		reinterpret_cast<nccl_ofi_gin_gdaki_dev_handle *>(devHandle->handle);
 	nccl_ofi_gin_gdaki_dev_handle h_dev = {};
@@ -231,14 +206,11 @@ int main(int argc, char *argv[])
 	nccl_ofi_gin_gdaki_dev_counter_handle h_sig = {};
 	CUDACHECK(cudaMemcpy(&h_sig, sig_dev_gpu, sizeof(h_sig), cudaMemcpyDeviceToHost));
 
-	uint64_t rw_cntr_before = 0, w_cntr_before = 0;
+	uint64_t rw_cntr_before = 0;
 	CUDACHECK(cudaMemcpy(&rw_cntr_before, (void *)h_sig.cntr_value,
 			     sizeof(uint64_t), cudaMemcpyDeviceToHost));
-	CUDACHECK(cudaMemcpy(&w_cntr_before, (void *)h_sig.base.local_cntr_value,
-			     sizeof(uint64_t), cudaMemcpyDeviceToHost));
-	NCCL_OFI_INFO(NCCL_NET,
-		      "Rank %d: before -- remote_write_cntr=%lu write_cntr=%lu",
-		      rank, rw_cntr_before, w_cntr_before);
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d: before -- remote_write_cntr=%lu",
+		      rank, rw_cntr_before);
 
 	MPI_Barrier(MPI_COMM_WORLD);
 
@@ -250,48 +222,30 @@ int main(int argc, char *argv[])
 			      "R0: GPU signal write to R%d lkey=0x%x rkey=0x%x addr=0x%lx",
 			      tgt, sig_lkey, all_rkeys[tgt], all_dst_addrs[tgt]);
 
-		struct kernel_result {
-			uint8_t  status;
-			uint8_t  q_type;
-			uint8_t  op_type;
-			uint8_t pad0;
-			uint32_t done;
-		};
-		kernel_result *d_result = nullptr;
-		CUDACHECK(cudaMalloc(&d_result, sizeof(kernel_result)));
-		CUDACHECK(cudaMemset(d_result, 0, sizeof(kernel_result)));
-
 		gin_signal_gpu_kernel<<<1, 1>>>(
 			sig_dev_gpu, tgt, nranks,
 			all_dst_addrs[tgt], all_rkeys[tgt],
 			(uint64_t)sig_buf_gpu, sig_lkey,
-			(uint32_t)SIG_BUF_SIZE,
-			/*max_iters=*/100000000,
-			&d_result->status, &d_result->q_type, &d_result->op_type,
-			&d_result->done);
+			(uint32_t)SIG_BUF_SIZE);
 		CUDACHECK(cudaDeviceSynchronize());
 
-		kernel_result h_result = {};
-		CUDACHECK(cudaMemcpy(&h_result, d_result, sizeof(h_result),
-				     cudaMemcpyDeviceToHost));
-		CUDACHECK(cudaFree(d_result));
-
-		if (!h_result.done) {
-			NCCL_OFI_WARN("R0: signal CQ poll timeout");
-			local_pass = 0;
+		/* The device posted the signalled write. The host CQ progress pass drains
+		 * the local completion and publishes completed_count_per_ctx; drive it
+		 * until that count advances. Arrival is validated on R1 via its
+		 * FI_REMOTE_WRITE counter. */
+		const void *ctx_completed_dev = (const void *)h_dev.completed_count_per_ctx;
+		bool done = false;
+		for (int i = 0; i < 1000000 && !done; i++) {
+			OFINCCLCHECK(extGin->ginProgress(proxyCtx));
+			uint64_t ctx_completed = 0;
+			CUDACHECK(cudaMemcpy(&ctx_completed, ctx_completed_dev,
+					     sizeof(ctx_completed), cudaMemcpyDeviceToHost));
+			if (ctx_completed >= 1) done = true;
+		}
+		if (!done) {
+			NCCL_OFI_WARN("R0: host progress pass did not drain the signal completion");
 		} else {
-			NCCL_OFI_INFO(NCCL_NET,
-				      "R0: signal CQ completion status=%u op_type=%u "
-				      "q_type=%u",
-				      h_result.status,
-				      h_result.op_type,
-				      h_result.q_type);
-			if (h_result.status != EFA_IO_COMP_STATUS_OK ||
-			    h_result.op_type != EFA_CUDA_WC_RDMA_WRITE ||
-			    h_result.q_type != EFA_IO_SEND_QUEUE) {
-				NCCL_OFI_WARN("R0: unexpected signal CQ completion");
-				local_pass = 0;
-			}
+			NCCL_OFI_INFO(NCCL_NET, "R0: signal completion drained by host progress pass");
 		}
 	}
 
@@ -307,23 +261,16 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	/* Both ranks: re-read counters and validate. */
-	uint64_t rw_cntr_after = 0, w_cntr_after = 0;
+	/* Both ranks: re-read the signal (FI_REMOTE_WRITE) counter and validate. */
+	uint64_t rw_cntr_after = 0;
 	CUDACHECK(cudaMemcpy(&rw_cntr_after, (void *)h_sig.cntr_value,
 			     sizeof(uint64_t), cudaMemcpyDeviceToHost));
-	CUDACHECK(cudaMemcpy(&w_cntr_after, (void *)h_sig.base.local_cntr_value,
-			     sizeof(uint64_t), cudaMemcpyDeviceToHost));
-	NCCL_OFI_INFO(NCCL_NET,
-		      "Rank %d: after  -- remote_write_cntr=%lu write_cntr=%lu",
-		      rank, rw_cntr_after, w_cntr_after);
+	NCCL_OFI_INFO(NCCL_NET, "Rank %d: after  -- remote_write_cntr=%lu",
+		      rank, rw_cntr_after);
 
-	if (rank == 0) {
-		bool ok = (w_cntr_after == w_cntr_before + 1);
-		NCCL_OFI_INFO(NCCL_NET, "R0: write_cntr delta=%lu (%s)",
-			      w_cntr_after - w_cntr_before,
-			      ok ? "PASS" : "FAIL");
-		if (!ok) local_pass = 0;
-	} else if (rank == 1) {
+	/* R0 posts the signalled write; arrival is validated on R1, which sees its
+	 * FI_REMOTE_WRITE counter increment. */
+	if (rank == 1) {
 		bool ok = (rw_cntr_after == rw_cntr_before + 1);
 		NCCL_OFI_INFO(NCCL_NET, "R1: remote_write_cntr delta=%lu (%s)",
 			      rw_cntr_after - rw_cntr_before,

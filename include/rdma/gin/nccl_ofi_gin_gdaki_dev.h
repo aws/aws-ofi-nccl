@@ -125,13 +125,35 @@ struct nccl_ofi_gin_gdaki_mr_handle {
 struct nccl_ofi_gin_gdaki_dev_qp;
 struct nccl_ofi_gin_gdaki_dev_cq;
 
+/* req_id is echoed by the CQE. The device splits req_id into a peer
+ * id and a per-peer sequence number (pseq). These three macros size the pseq
+ * field and the per-peer completion bitmask that pseq indexes.
+ *
+ * NCCL_OFI_GDAKI_PSEQ_BITS is the number of req_id bits that hold pseq.
+ * NCCL_OFI_GDAKI_PEER_WINDOW is an independent knob: it is both the maximum number
+ * of writes outstanding to one peer (the cap put enforces) and the width in bits of
+ * that peer's completion bitmask, so pseq wraps at PEER_WINDOW without aliasing a
+ * live write. It must not exceed 2^PSEQ_BITS. NCCL_OFI_GDAKI_PEER_BITS_WORDS is
+ * PEER_WINDOW expressed in 64-bit words, which is that bitmask's storage size.
+ *
+ * The window is deep because it caps how many writes put may have outstanding to one
+ * peer: SRD completion latency has a long tail, so a window sized for typical latency
+ * stalls put on the slowest completions rather than on the link. The cost is the
+ * bitmask, at PEER_WINDOW/8 bytes of host memory per (context, peer).
+ *
+ * The host publishes PEER_WINDOW into dev_handle.peer_window at context setup.
+ * The device reads it as the per-peer backpressure cap in put, and put stamps
+ * each write's req_id with the same PSEQ_BITS split. */
+#define NCCL_OFI_GDAKI_PSEQ_BITS 32u
+#define NCCL_OFI_GDAKI_PSEQ_MASK ((1ull << NCCL_OFI_GDAKI_PSEQ_BITS) - 1ull)
+#define NCCL_OFI_GDAKI_PEER_WINDOW (1u << 20)
+#define NCCL_OFI_GDAKI_PEER_BITS_WORDS (NCCL_OFI_GDAKI_PEER_WINDOW / 64u)
+
 
 /**
  * Common per-endpoint state shared by the data, counter, and signal
- * device handles. Holds the GPU-resident QP/CQ, the target
- * addressing table, the per-QP spinlock that serializes the
- * device-side WQE-post sequence, and the counter-based completion
- * tracking fields.
+ * device handles. Holds the GPU-resident QP, the target addressing
+ * table, and the per-QP submitted and completed counts.
  * Used directly as the `data` member of nccl_ofi_gin_gdaki_dev_handle,
  * and embedded as a `base` member in nccl_ofi_gin_gdaki_dev_counter_handle.
  *
@@ -142,9 +164,6 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	/* GPU-resident QP for this endpoint, in the layout named by the
 	 * context's backendVersion. */
 	struct nccl_ofi_gin_gdaki_dev_qp *qp;
-
-	/* GPU-resident CQ for this endpoint, same versioning as qp. */
-	struct nccl_ofi_gin_gdaki_dev_cq *cq;
 
 	/* Target addressing for this (poster) endpoint's QP.
 	 *
@@ -176,37 +195,23 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 	uint16_t *target_remote_qpns;       /* [total_slots * nranks] */
 	uint32_t *target_qkey;              /* [total_slots * nranks] */
 
-	/* Per-QP spinlock used by the device-side WQE post path. efa-dp-direct's
-	 * start_sq_batch / sq_batch_place_wr / flush_sq_wrs sequence must be
-	 * serialized per QP (per the efa-dp-direct CUDA README). One lock here
-	 * lets multiple CTAs posting on different endpoints proceed in
-	 * parallel; only CTAs targeting the same endpoint contend. */
-	uint32_t sq_lock;
-
-	/* Counter-based completion tracking.
-	 *
-	 * `local_cntr_value` points at the FI_WRITE hardware counter for this
-	 * endpoint's QP. The NIC increments it on every locally-completed
-	 * outgoing WR (regardless of remote semantics). The kernel reads it
-	 * directly from GPU memory.
-	 *
-	 * `submitted_count` is incremented by the device under the sq_lock
-	 * after a successful flush_sq_wrs. The difference
-	 * (submitted_count - *local_cntr_value) gives the number of WRs
-	 * still in flight on this QP — used by the SQ-overflow backpressure
-	 * check and by Flush to wait for local completion.
-	 *
-	 * `local_cntr_value` is NULL when the endpoint has no hardware counter
-	 * bound. In that case the device-side Put / Flush silently skip the
-	 * counter operations on this endpoint. */
+	/* Per-QP completed count for this QP: the endpoint's FI_WRITE NIC counter,
+	 * read directly from GPU memory. One increment per write completion.
+	 * Sufficient for ring reuse because the NIC consumes WQEs in order and a
+	 * completion implies its WQE was consumed. Wraps at 2^31 (compared under
+	 * EFA_CNTR_MASK). The blocking peer-less Flush reads it. */
 	volatile uint64_t *local_cntr_value;
+
+	/* `submitted_count` is incremented in ringDoorbell (an atomic add of the
+	 * newly-doorbelled span, by the group leader). The difference (submitted_count
+	 * - *local_cntr_value) is the number of WRs still in flight on this QP, used
+	 * by Flush. */
 	uint64_t submitted_count;
 
-	/* SQ ring size for this endpoint's QP. Used by the device-side Put
-	 * to gate new batches against in-flight WRs (efa-dp-direct's
-	 * start_sq_batch does not validate ring overflow on its own). The
-	 * kernel spins until (submitted_count - *local_cntr_value + batch_size)
-	 * <= sq_size before reserving slots. */
+	/* SQ ring size for this endpoint's QP. The device-side Put uses it to gate
+	 * new batches against in-flight WRs: the kernel spins until
+	 * (submitted_count - *completed_count + batch_size) <= sq_size before
+	 * reserving slots. */
 	uint32_t sq_size;
 
 	uint32_t putvalue_pad;
@@ -220,8 +225,8 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
 /**
  * Per-signal/counter endpoint handle, visible to device code.
  *
- * Composes nccl_ofi_gin_gdaki_dev_endpoint_handle (qp / cq / addressing /
- * sq_lock / counter completion tracking) and adds the hardware counter
+ * Composes nccl_ofi_gin_gdaki_dev_endpoint_handle (qp / addressing /
+ * counter completion tracking) and adds the hardware counter
  * value pointer that the kernel reads to observe signal arrivals
  * (FI_REMOTE_WRITE) or counter increments (FI_WRITE). The hardware
  * counter value lives in GPU memory and is updated by the NIC directly.
@@ -238,7 +243,7 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle {
  * nccl_device/gin/efa_gda/gin_efa_gda_dev.h — keep them in sync.
  */
 struct nccl_ofi_gin_gdaki_dev_counter_handle {
-	/* Endpoint-common fields (qp, cq, addressing, sq_lock,
+	/* Endpoint-common fields (qp, addressing,
 	 * counter completion tracking). */
 	struct nccl_ofi_gin_gdaki_dev_endpoint_handle base;
 
@@ -265,18 +270,13 @@ struct nccl_ofi_gin_gdaki_dev_counter_handle {
  * All member pointers refer to GPU-accessible memory.
  */
 struct nccl_ofi_gin_gdaki_dev_handle {
-	/* Data endpoint (qp / cq / addressing / sq_lock /
-	 * counter completion tracking via local_cntr_value /
-	 * submitted_count / sq_size). The data endpoint binds a
-	 * FI_WRITE counter and populates data.local_cntr_value at
-	 * createContext time. */
+	/* Data endpoint (qp / addressing / submitted_count /
+	 * completed_count / sq_size). Per-QP completion is its FI_WRITE NIC counter
+	 * (completed_count). */
 	struct nccl_ofi_gin_gdaki_dev_endpoint_handle data;
 
-	/* Dedicated PutValue endpoint (qp / cq / addressing / sq_lock /
-	 * counter completion tracking via local_cntr_value /
-	 * submitted_count / sq_size). All PutValues post from here; it
-	 * binds a FI_WRITE counter and populates pvdata.local_cntr_value at
-	 * createContext time. */
+	/* Dedicated PutValue endpoint (same fields as data). All PutValues post from
+	 * here; per-QP completion is its own FI_WRITE NIC counter. */
 	struct nccl_ofi_gin_gdaki_dev_endpoint_handle pvdata;
 
 	/* Per-counter device handle array, [nCounters]. NULL when nCounters == 0. */
@@ -344,6 +344,41 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 	 * accepts); pool base lives on pvdata.putvalue_slice_base. */
 	uint32_t putvalue_lkey;
 	uint32_t putvalue_slot_size;
+
+	/* submitted_count_per_peer[p] (device-owned, [nranks]) counts the writes to
+	 * peer p doorbelled by this context, across every QP. The post path's
+	 * atomicAdd returns the write's position (pseq) in that sequence, which it
+	 * stamps into req_id; FlushAsync snapshots this counter at flush time. The
+	 * host only zero-initialises it.
+	 *
+	 * ordered_completed_count_per_peer[p] (host-published, [nranks]) is the
+	 * contiguous prefix of that peer's posting sequence: N means the peer's first
+	 * N writes on this context have all completed. Wait compares its snapshot
+	 * ticket against this one number. */
+	uint32_t *submitted_count_per_peer;
+	volatile uint32_t *ordered_completed_count_per_peer;
+
+	/* Per-peer outstanding cap, in writes: the post path refuses to create the
+	 * (peer_window + 1)-th outstanding write to any single peer.
+	 *
+	 * peer_window bounds the host's per-peer completion bitmap, which only has to
+	 * cover what can be outstanding, so a fixed cap keeps the bitmap a fixed size.
+	 * pseq wraps at peer_window, so it never aliases two live writes to one peer.
+	 * peer_window is a power of two. */
+	uint32_t peer_window;
+
+	/* Every QP in this context binds one completion queue, so unread CQEs summed
+	 * across every QP must stay within the CQ depth or the ring overflows and
+	 * completions are lost silently. The device bumps submitted_count_per_ctx once
+	 * per WQE; the host publishes completed_count_per_ctx (one increment per CQE
+	 * read); put blocks while (submitted - completed) >= cq_depth.
+	 *
+	 * submitted_count_per_ctx is device-owned, one uint64 in GPU memory.
+	 * completed_count_per_ctx is host-published via gdrcopy.
+	 * cq_depth is the context's CQ num_entries. */
+	uint64_t *submitted_count_per_ctx;
+	volatile uint64_t *completed_count_per_ctx;
+	uint32_t cq_depth;
 };
 
 #ifdef __cplusplus
