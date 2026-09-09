@@ -2597,6 +2597,7 @@ int rdma_recv_req::post()
 	nccl_net_ofi_rdma_recv_comm_rail_t *comm_rail = r_comm->get_control_rail(rail_id);
 	uint64_t remote_addr = r_comm->remote_mailbox_addr +
 			       slot * sizeof(nccl_net_ofi_ctrl_msg_t);
+	const bool inject = ep->use_inline_control_write(ctrl_msg_len);
 	struct iovec iov = {
 		.iov_base = &r_comm->ctrl_mailbox[slot],
 		.iov_len = ctrl_msg_len,
@@ -2617,7 +2618,9 @@ int rdma_recv_req::post()
 		.data = 0,
 	};
 
-	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, 0);
+	NCCL_OFI_TRACE(NCCL_NET, "Posting %zu-byte control message%s on rail %u",
+		       ctrl_msg_len, inject ? " with FI_INJECT" : "", rail_id);
+	ssize_t rc = fi_writemsg(comm_rail->local_ep, &msg, inject ? FI_INJECT : 0);
 
 	if (rc == 0) {
 		NCCL_OFI_TRACE_WRITE_CTRL_START(this->dev_id, rail_id, this->comm, this, this->msg_seq_num);
@@ -6577,10 +6580,19 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 					 nccl_net_ofi_rdma_domain_rail_t *domain_rail,
 					 nccl_net_ofi_rdma_ep_rail_t *ep_rail,
 					 nccl_net_ofi_rdma_cq_rail_t *cq_rail,
-					 uint32_t tclass)
+					 bool is_control)
 {
 	int ret = 0;
-	struct fi_info *rail_info = dev_rail->info;
+	ofi_info_ptr rail_info(fi_dupinfo(dev_rail->info));
+	if (!rail_info) {
+		NCCL_OFI_WARN("Could not duplicate endpoint provider information");
+		return -ENOMEM;
+	}
+
+	if (is_control) {
+		rail_info->tx_attr->tclass = ofi_nccl_use_low_lat_tc() ?
+			FI_TC_LOW_LATENCY : FI_TC_UNSPEC;
+	}
 
 	auto av_result = nccl_ofi_ofiutils_av_create(domain_rail->domain);
 	if (OFI_UNLIKELY(av_result.is_failure())) {
@@ -6589,28 +6601,29 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 	}
 	ep_rail->av = std::move(av_result.resource);
 
-	if (tclass != FI_TC_UNSPEC) {
-		rail_info = fi_dupinfo(rail_info);
-		if (rail_info == NULL) {
-			NCCL_OFI_WARN("Could not allocate new fi_info struct");
-			return -ENOMEM;
-		}
-
-		rail_info->tx_attr->tclass = tclass;
-	}
-
-	auto ep_result = nccl_ofi_ofiutils_ep_create(rail_info, domain_rail->domain,
+	auto ep_result = nccl_ofi_ofiutils_ep_create(rail_info.get(), domain_rail->domain,
 						     ep_rail->av, cq_rail->cq);
-	if (tclass != FI_TC_UNSPEC) {
-		fi_freeinfo(rail_info);
-	}
 	if (OFI_UNLIKELY(ep_result.is_failure())) {
 		NCCL_OFI_WARN("Could not create Libfabric endpoint on rail %u", rail_id);
 		return ep_result.error_code;
 	}
 	ep_rail->ofi_ep = std::move(ep_result.resource);
-
 	ep_rail->rail_id = rail_id;
+
+	if (is_control && rail_id == 0) {
+		ret = get_inject_rma_size_opt(ep_rail->ofi_ep.get(),
+					      &max_control_write_inline_size);
+		if (ret == -FI_ENOPROTOOPT) {
+			max_control_write_inline_size = rail_info->tx_attr->inject_size;
+			ret = 0;
+		} else if (ret != 0) {
+			NCCL_OFI_WARN("Failed to retrieve control endpoint RMA inject size");
+			return ret;
+		}
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Control rail RMA inject size %zu, TX queue size %zu",
+			       max_control_write_inline_size, rail_info->tx_attr->size);
+	}
 
 	ret = set_local_address(ep_rail->ofi_ep.get(), ep_rail);
 	if (ret != 0) {
@@ -6631,7 +6644,6 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 	nccl_net_ofi_rdma_ep_rail_t *rail;
 	nccl_net_ofi_rdma_ep_rail_t *control_rail;
 	nccl_net_ofi_rdma_cq_rail_t *cq_rail;
-	uint32_t tc = (ofi_nccl_use_low_lat_tc() == 0) ? FI_TC_UNSPEC : FI_TC_LOW_LATENCY;
 
 	/* Initialize libfabic resources of cq rails */
 	for (uint16_t rail_id = 0; rail_id != device->num_rails; ++rail_id) {
@@ -6662,8 +6674,8 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 		rail = this->rdma_endpoint_get_rail(rail_id);
 		cq_rail = this->rdma_endpoint_get_cq_rail(rail_id);
 
-		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev, 
-							   domain_rail, rail, cq_rail, FI_TC_UNSPEC);
+		ret = this->ep_rail_init(dev_id, rail_id, rail_dev,
+					 domain_rail, rail, cq_rail, false);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing rail %d failed", rail_id);
 			return ret;
@@ -6678,8 +6690,8 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 		control_rail = rdma_endpoint_get_control_rail(rail_id);
 		cq_rail = this->rdma_endpoint_get_cq_rail(rail_id);
 
-		ret = nccl_net_ofi_rdma_ep_t::ep_rail_init(dev_id, rail_id, rail_dev,
-							   domain_rail, control_rail, cq_rail, tc);
+		ret = this->ep_rail_init(dev_id, rail_id, rail_dev,
+					 domain_rail, control_rail, cq_rail, true);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Initializing control rail %d failed", rail_id);
 			return ret;
@@ -7126,6 +7138,12 @@ static void get_hints(struct fi_info *hints)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
+	/* Request enough inject space for one control message entry so that the
+	 * provider can copy a single-receive control message into the endpoint
+	 * during the post.  Leave tx_attr->size unset so the provider reports a
+	 * transmit queue depth compatible with the larger inline area. */
+	hints->tx_attr->inject_size = sizeof(nccl_net_ofi_ctrl_msg_entry_t);
+
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
 		FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
@@ -7302,6 +7320,14 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
 					      &provider_list, &num_providers);
+	if (ret == -FI_ENODATA && hints->tx_attr->inject_size != 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "No provider can inject a control message entry; retrying "
+			       "with the standard inject size");
+		hints->tx_attr->inject_size = 0;
+		ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
+						      &provider_list, &num_providers);
+	}
 	if (ret == 0) {
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
 			       FI_MAJOR(api_version),
@@ -7331,6 +7357,16 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 		NCCL_OFI_WARN("Querying provider capabilities failed: %d", ret);
 		return ret;
 	}
+
+	/* Summarize the control-message injection decision once per process.  The
+	 * inject size each endpoint actually reports is traced in ep_rail_init(). */
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+		      "Single-receive control-message injection %s "
+		      "(inject size %zu, TX queue size %zu)",
+		      (provider_list->tx_attr->inject_size >=
+		       sizeof(nccl_net_ofi_ctrl_msg_entry_t)) ? "enabled" : "disabled",
+		      provider_list->tx_attr->inject_size,
+		      provider_list->tx_attr->size);
 
 	if ((ssize_t)ofi_nccl_eager_max_size() > (ssize_t)ofi_nccl_min_stripe_size()) {
 		NCCL_OFI_WARN("Invalid value for EAGER_MAX_SIZE");
