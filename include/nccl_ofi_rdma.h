@@ -1537,6 +1537,14 @@ public:
 	}
 
 	/**
+	 * @brief Return whether a control message should use FI_INJECT.
+	 */
+	inline bool use_inline_control_write(size_t ctrl_msg_len) const
+	{
+		return ctrl_msg_len <= max_control_write_inline_size;
+	}
+
+	/**
 	 * @brief Return cq rail with index `rail_id`
 	 */
 	inline nccl_net_ofi_rdma_cq_rail_t *rdma_endpoint_get_cq_rail(uint16_t rail_id)
@@ -1749,6 +1757,9 @@ public:
 	nccl_net_ofi_scheduler *scheduler = nullptr;
 
 protected:
+	/* Maximum RMA inject size supported by the control endpoint. */
+	size_t max_control_write_inline_size = 0;
+
 	/**
 	 * @brief	Initialize rx buffer data of endpoint
 	 *
@@ -1796,12 +1807,12 @@ protected:
 	 */
 	void release_rdma_ep_resources(int dev_id);
 
-	static int ep_rail_init(int dev_id, uint16_t rail_id,
-				nccl_net_ofi_rdma_device_rail_t *dev_rail,
-				nccl_net_ofi_rdma_domain_rail_t *domain_rail,
-				nccl_net_ofi_rdma_ep_rail_t *ep_rail,
-				nccl_net_ofi_rdma_cq_rail_t *cq_rail,
-				uint32_t tclass);
+	int ep_rail_init(int dev_id, uint16_t rail_id,
+			 nccl_net_ofi_rdma_device_rail_t *dev_rail,
+			 nccl_net_ofi_rdma_domain_rail_t *domain_rail,
+			 nccl_net_ofi_rdma_ep_rail_t *ep_rail,
+			 nccl_net_ofi_rdma_cq_rail_t *cq_rail,
+			 bool is_control);
 
 	/**
 	 * Associated GIN resources object
