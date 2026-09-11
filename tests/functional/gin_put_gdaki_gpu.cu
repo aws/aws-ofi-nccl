@@ -6,9 +6,10 @@
  * GPU counterpart of the CPU gin_put_gdaki test this commit replaces.
  * Exercises the same plugin path (createContext on the reused proxy
  * domain, regMrSym for src + dst on the same domain), but builds and
- * posts the WQE and polls the CQ from a CUDA kernel using efa-dp-direct,
- * so the CPU-side WQE encoding and arch-specific MMIO fence handling
- * that broke aarch64 are gone. Buffers are GPU-resident.
+ * posts the WQE from a CUDA kernel using efa-dp-direct. The GIN progress
+ * callback drains the CQ on the host, so the CPU-side WQE encoding and
+ * arch-specific MMIO fence handling that broke aarch64 are gone.
+ * Buffers are GPU-resident.
  *
  * Built only when configure finds nvcc (HAVE_NVCC). Reuses the existing
  * functional-test scaffolding (CUDACHECK, OFINCCLCHECK, plugin loaders,
@@ -35,7 +36,7 @@ struct proc_handle {
  *
  * Single-thread (gridDim=1, blockDim=1). All other lanes early-return.
  */
-__global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle *dev,
+__global__ void gin_put_gpu_kernel(nccl_ofi_gin_gdaki_dev_handle_v2 *dev,
 				   int peer,
 				   uint64_t dst_addr,
 				   uint32_t dst_rkey,
@@ -208,7 +209,8 @@ int main(int argc, char *argv[])
 			      "R0: GPU writing to R%d lkey=0x%x rkey=0x%x addr=0x%lx",
 			      tgt, src_lkey, all_rkeys[tgt], all_dst_addrs[tgt]);
 
-		auto *dev_h = reinterpret_cast<nccl_ofi_gin_gdaki_dev_handle *>(devHandle->handle);
+		auto *dev_h =
+			reinterpret_cast<nccl_ofi_gin_gdaki_dev_handle_v2 *>(devHandle->handle);
 
 		gin_put_gpu_kernel<<<1, 1>>>(
 			dev_h, tgt,
@@ -221,7 +223,7 @@ int main(int argc, char *argv[])
 		 * completion and publishes completed_count_per_ctx. Drive it until that
 		 * count advances. Read the count's device pointer out of the dev handle,
 		 * then poll it. */
-		nccl_ofi_gin_gdaki_dev_handle h_dev = {};
+		nccl_ofi_gin_gdaki_dev_handle_v2 h_dev = {};
 		CUDACHECK(cudaMemcpy(&h_dev, dev_h, sizeof(h_dev), cudaMemcpyDeviceToHost));
 		const void *ctx_completed_dev = (const void *)h_dev.completed_count_per_ctx;
 

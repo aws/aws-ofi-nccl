@@ -93,15 +93,21 @@ static gdaki_efa_dp_context gdaki_create_efa_dp_context(int backend_version)
  * so FI_SOURCE is not requested. FI_HMEM is still needed because the endpoint
  * is used to access GPU memory.
  *
- * No mode bits are requested: without FI_CONTEXT2 the device stamps its own
- * request id into each WQE and efa-direct echoes it back as the completion's
- * op_context, which is what the host completion polling decodes. A nonzero
- * inject_size hint is rejected under mode zero, so the wide-WQE opt-in is
- * applied to the returned info instead (see gdaki_fi_endpoint::open).
+ * The mode is the caller's: backendVersion 2 requests mode zero, under which
+ * the device stamps its own request id into each WQE and efa-direct echoes it
+ * back as the completion's op_context — what host completion polling decodes.
+ * backendVersion 1 requests FI_CONTEXT2 (the only mode older providers offer);
+ * its CQ is device-polled, so no host read ever misreads the id. Endpoints
+ * sharing a CQ must agree on the mode (the first bound endpoint commits it),
+ * and both arrangements satisfy that: the v2 shared CQ is bound only by mode-0
+ * endpoints, and v1 CQs are private. A nonzero inject_size hint is rejected
+ * under mode zero, so the wide-WQE opt-in is applied to the returned info
+ * instead (see gdaki_fi_endpoint::open).
  */
-static void get_gdaki_hints(struct fi_info &hints, struct fi_info *ref_info)
+static void get_gdaki_hints(struct fi_info &hints, struct fi_info *ref_info, uint64_t mode)
 {
 	hints.caps = FI_MSG | FI_RMA | FI_HMEM;
+	hints.mode = mode;
 
 	hints.ep_attr->type = FI_EP_RDM;
 	hints.addr_format = FI_ADDR_EFA;
@@ -122,26 +128,27 @@ static void get_gdaki_hints(struct fi_info &hints, struct fi_info *ref_info)
 
 /*
  * Obtain a GDAKI-owned fi_info via fi_getinfo, narrowed to exactly the
- * fabric / domain the proxy reference points at. Requested at mode zero so
- * efa-direct returns the device-stamped request ID as the CQ op_context; a
- * provider predating efa-direct-without-FI_CONTEXT2 (ofiwg PR 12806) answers
- * -FI_ENODATA, which is a hard error here. The version matches the ABI the
- * proxy opened the shared fabric and domain at whenever GDAKI is compiled in
- * (see nccl_ofi_rdma.cpp).
+ * fabric / domain the proxy reference points at, at the caller's mode.
+ * A mode-zero request against a provider predating
+ * efa-direct-without-FI_CONTEXT2 (ofiwg PR 12806) answers -FI_ENODATA,
+ * which is a hard error: no silent fallback, because the caller asks for
+ * mode zero exactly when host completion polling depends on it. The version
+ * matches the ABI the proxy opened the shared fabric and domain at whenever
+ * GDAKI is compiled in (see nccl_ofi_rdma.cpp).
  */
-static struct fi_info *get_gdaki_info(struct fi_info *ref_info)
+static struct fi_info *get_gdaki_info(struct fi_info *ref_info, uint64_t mode)
 {
 	struct fi_info *hints = fi_allocinfo();
 	if (hints == nullptr) {
 		throw std::runtime_error("fi_allocinfo for GDAKI hints failed");
 	}
-	get_gdaki_hints(*hints, ref_info);
+	get_gdaki_hints(*hints, ref_info, mode);
 
 	struct fi_info *results = nullptr;
 	int ret = fi_getinfo(FI_VERSION(2, 5), nullptr, nullptr, 0ULL,
 			     hints, &results);
 	fi_freeinfo(hints);
-	if (ret == -FI_ENODATA) {
+	if (ret == -FI_ENODATA && mode == 0) {
 		throw std::runtime_error(
 			"gin GDAKI: no efa-direct without FI_CONTEXT2; libfabric "
 			"predates efa-direct-without-FI_CONTEXT2 support (ofiwg "
@@ -167,14 +174,22 @@ static struct fi_info *get_gdaki_info(struct fi_info *ref_info)
 
 void gdaki_fi_endpoint::open(struct fid_domain *domain,
 			     struct fi_info *ref_info,
-			     struct fid_cq *cq,
+			     struct fid_cq *shared_cq,
 			     uint32_t inline_write_size)
 {
-	if (ep || av || info) {
+	if (ep || cq || av || info) {
 		throw std::runtime_error("gdaki_fi_endpoint: double open");
 	}
 
-	info = get_gdaki_info(ref_info);
+	/*
+	 * Who reads the CQ decides the mode. A shared CQ is host-polled, so the
+	 * info must carry no FI_CONTEXT2: the device stamps its request id into
+	 * each WQE and efa-direct echoes it as the completion's op_context. No
+	 * shared CQ means backendVersion 1's private device-polled CQ, which no
+	 * host read ever touches, so request FI_CONTEXT2 — the only mode
+	 * providers predating ofiwg PR 12806 offer — and v1 keeps running there.
+	 */
+	info = get_gdaki_info(ref_info, shared_cq != nullptr ? 0 : FI_CONTEXT2);
 	inline_write_size_ = inline_write_size;
 
 	/*
@@ -192,9 +207,24 @@ void gdaki_fi_endpoint::open(struct fid_domain *domain,
 		info->tx_attr->size /= 2;
 	}
 
+	int ret;
+	if (shared_cq != nullptr) {
+		cq = shared_cq;
+	} else {
+		struct fi_cq_attr cq_attr = {};
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+		cq_attr.size = ofi_nccl_cq_size();
+		ret = fi_cq_open(domain, &cq_attr, &cq, nullptr);
+		if (ret != 0) {
+			throw std::runtime_error("fi_cq_open for backendVersion 1 failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+		owns_cq = true;
+	}
+
 	struct fi_av_attr av_attr = {};
 	av_attr.type = FI_AV_TABLE;
-	int ret = fi_av_open(domain, &av_attr, &av, nullptr);
+	ret = fi_av_open(domain, &av_attr, &av, nullptr);
 	if (ret != 0) {
 		throw std::runtime_error("fi_av_open on proxy domain failed: " +
 					 std::string(fi_strerror(-ret)));
@@ -206,7 +236,6 @@ void gdaki_fi_endpoint::open(struct fid_domain *domain,
 					 std::string(fi_strerror(-ret)));
 	}
 
-	/* Bind the borrowed cq; the caller owns and closes it. */
 	ret = fi_ep_bind(ep, &cq->fid, FI_TRANSMIT | FI_RECV);
 	if (ret != 0) {
 		throw std::runtime_error("fi_ep_bind CQ failed: " +
@@ -267,13 +296,8 @@ void gdaki_gpu_qp::build(int backend_version_in,
 		 * WQE geometry reported in sq_attr. */
 		attrs.sq_max_inline_data = sq_max_inline_data;
 		attrs.sq_max_rdma_sges = gdaki_max_rdma_sges;
-		/*
-		 * efa-dp-direct v1 writes 64-bit request IDs. NCCL uses the
-		 * FI_WRITE hardware counter for progress and never decodes a
-		 * transmit CQE request ID; its generated IDs also fit in the
-		 * low 16 bits. This keeps the upstream v1 layout on both narrow
-		 * and wide QPs without carrying a private narrow-WQE fallback.
-		 */
+		/* gdaki_endpoint::populate verified that the provider QP supports
+		 * the 64-bit request IDs used by host completion polling. */
 		attrs.sq_caps = EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID;
 		break;
 	default:
@@ -300,6 +324,39 @@ void gdaki_gpu_qp::build(int backend_version_in,
 	qp.commit();
 
 	dev_qp = reinterpret_cast<nccl_ofi_gin_gdaki_dev_qp *>(qp.dev);
+	backend_version = backend_version_in;
+}
+
+void gdaki_gpu_cq::build(int backend_version_in, const struct fi_efa_cq_attr &cq_attr)
+{
+	if (cq.size() != 0) {
+		throw std::runtime_error("gdaki_gpu_cq: double build");
+	}
+
+	auto ctx = gdaki_create_efa_dp_context(backend_version_in);
+	const int cq_size = efa_cuda_get_cq_size(ctx.get());
+	if (cq_size <= 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_cq: efa_cuda_get_cq_size failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " + std::to_string(cq_size));
+	}
+
+	efa_cuda_cq_attrs attrs = {};
+	attrs.buffer = static_cast<uint8_t *>(cq_attr.buffer);
+	attrs.num_entries = cq_attr.num_entries;
+	attrs.entry_size = cq_attr.entry_size;
+
+	cq.allocate(static_cast<size_t>(cq_size));
+	const int ret = efa_cuda_init_cq(
+		ctx.get(), cq.host, static_cast<uint32_t>(cq_size), &attrs, sizeof(attrs));
+	if (ret != 0) {
+		throw std::runtime_error(
+			"gdaki_gpu_cq: efa_cuda_init_cq failed for backendVersion " +
+			std::to_string(backend_version_in) + ": " + std::to_string(ret));
+	}
+	cq.commit();
+
+	dev_cq = reinterpret_cast<nccl_ofi_gin_gdaki_dev_cq *>(cq.dev);
 	backend_version = backend_version_in;
 }
 
@@ -432,10 +489,10 @@ void gdaki_target_addressing::populate(gdaki_fi_endpoint &endpoint,
 
 void gdaki_endpoint::open(struct fid_domain *domain,
 			  struct fi_info *ref_info,
-			  struct fid_cq *cq,
+			  struct fid_cq *shared_cq,
 			  uint32_t inline_write_size)
 {
-	endpoint.open(domain, ref_info, cq, inline_write_size);
+	endpoint.open(domain, ref_info, shared_cq, inline_write_size);
 	endpoint.enable();
 }
 
@@ -477,6 +534,16 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 	sq_size = sq_attr.num_entries;
 	sq_entry_size = sq_attr.entry_size;
 
+	if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+		struct fi_efa_cq_attr cq_attr = {};
+		ret = gda_ops->query_cq(endpoint.cq, &cq_attr);
+		if (ret != 0) {
+			throw std::runtime_error("gdaki_endpoint query_cq failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+		gpu_cq.build(backend_version, cq_attr);
+	}
+
 	/* Build the [total_slots*nranks] target table in GPU memory. */
 	targets.populate(endpoint, all_addrs, ep_addr_len, total_slots, nranks, gda_ops);
 }
@@ -517,7 +584,7 @@ void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info
 	write_cntr.create(gda_ops, domain);
 	remote_write_cntr.create(gda_ops, domain);
 
-	/* Open the inner endpoint on the context's shared CQ, without enable. */
+	/* Bind the v2 shared CQ or create the v1 private CQ, without enable. */
 	base.endpoint.open(domain, ref_info, cq, /* inline_write_size */ 0);
 
 	/* Bind counters before enabling. */
@@ -531,29 +598,62 @@ void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda
 				 const std::vector<uint8_t> &all_addrs,
 				 size_t ep_addr_len, int total_slots, int nranks)
 {
-	/* Delegate the shared work (QP query, MMIO map, GPU descriptors,
+	/* Delegate the shared work (QP/CQ query, MMIO map, GPU QP and CQ,
 	 * target table) to the inner endpoint. */
 	base.populate(backend_version, gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
 
+	if (backend_version != NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+		/* The v2 handles carry no device-visible CQ or lock; per-QP
+		 * completion is the FI_WRITE counter (local_cntr_value), and
+		 * signal arrival is the REMOTE_WRITE counter (cntr_value). */
+		auto fill_common_v2 = [&](nccl_ofi_gin_gdaki_dev_counter_handle_v2 &h) {
+			h.base.qp = base.gpu_qp.dev();
+			h.base.target_address_handles = base.targets.ahs.dev;
+			h.base.target_remote_qpns = base.targets.qpns.dev;
+			h.base.target_qkey = base.targets.qkeys.dev;
+			h.base.local_cntr_value = write_cntr.gpu_ptr();
+			h.base.submitted_count = 0;
+			h.base.sq_size = base.sq_size;
+			h.base.putvalue_pad = 0;
+			h.base.putvalue_slice_base = 0;
+			h.cntr_offset = 0;
+		};
+
+		counter_dev_handle_v2.allocate(1);
+		fill_common_v2(counter_dev_handle_v2.host[0]);
+		counter_dev_handle_v2.host[0].cntr_value = write_cntr.gpu_ptr();
+		counter_dev_handle_v2.commit();
+
+		signal_dev_handle_v2.allocate(1);
+		fill_common_v2(signal_dev_handle_v2.host[0]);
+		signal_dev_handle_v2.host[0].cntr_value = remote_write_cntr.gpu_ptr();
+		signal_dev_handle_v2.commit();
+		return;
+	}
+
 	/*
-	 * Build the two device handles. They share QP / CQ / target addressing /
-	 * sq_size / submitted_count / local_cntr_value layout — only cntr_value
-	 * differs. Per-QP completion is the FI_WRITE counter (local_cntr_value); the
-	 * counters below are the user-facing counter/signal values the kernel reads.
+	 * Build the two device handles. They share QP / CQ / target
+	 * addressing / sq_lock / sq_size / submitted_count layout — only
+	 * the (cntr_value, local_cntr_value) pair differs.
 	 *
-	 * - counter_dev_handle exposes the FI_WRITE counter via cntr_value (local
-	 *   write count). Returned to the kernel through counter_handles[].
-	 * - signal_dev_handle exposes the FI_REMOTE_WRITE counter via cntr_value
-	 *   (signal arrivals). Returned to the kernel through signal_handles[].
+	 * - counter_dev_handle exposes the WRITE counter via cntr_value
+	 *   (FI_WRITE — local completion). Returned to the kernel through
+	 *   counter_handles[].
+	 * - signal_dev_handle exposes the REMOTE_WRITE counter via cntr_value
+	 *   (FI_REMOTE_WRITE — signal arrival), and the WRITE counter via
+	 *   local_cntr_value (used by the device for backpressure / Flush).
+	 *   Returned to the kernel through signal_handles[].
 	 *
-	 * All pointers are set on the host before commit() pushes the struct to GPU
-	 * memory.
+	 * Both `cntr_value` and `local_cntr_value` are set on the host before
+	 * commit() pushes the struct to GPU memory.
 	 */
 	auto fill_common = [&](nccl_ofi_gin_gdaki_dev_counter_handle &h) {
 		h.base.qp = base.gpu_qp.dev();
+		h.base.cq = base.gpu_cq.dev();
 		h.base.target_address_handles = base.targets.ahs.dev;
 		h.base.target_remote_qpns = base.targets.qpns.dev;
 		h.base.target_qkey = base.targets.qkeys.dev;
+		h.base.sq_lock = 0;
 		h.base.submitted_count = 0;
 		h.base.sq_size = base.sq_size;
 		h.cntr_offset = 0;   /* offset-based reset baseline */

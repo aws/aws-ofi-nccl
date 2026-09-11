@@ -101,6 +101,8 @@ private:
 	size_t n_elements = 0;
 };
 
+using gdaki_counter_handle_ptr_buf_v2 = gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle_v2 *>;
+
 /**
  * A CUDA-mapped view of an EFA MMIO BAR region.
  *
@@ -159,9 +161,11 @@ public:
 /**
  * A libfabric endpoint opened on a borrowed domain.
  *
- * Owns: fid_ep, fid_av, fi_info.
- * Borrows: fid_domain (caller is responsible for its lifetime). open() binds a
- * caller-provided cq to the EP; the caller owns and closes it.
+ * Owns: fid_ep, fid_av, fi_info, and optionally fid_cq.
+ * Borrows: fid_domain (caller is responsible for its lifetime). For
+ * backendVersion 2, open() binds a caller-provided shared CQ. For
+ * backendVersion 1, the caller passes NULL and this object creates the
+ * private per-endpoint CQ represented in the v1 device ABI.
  *
  * The fi_info is obtained via fi_getinfo narrowed by the reference
  * info's fabric and domain names, so the EP is constrained to the
@@ -170,6 +174,7 @@ public:
 class gdaki_fi_endpoint {
 public:
 	struct fid_ep *ep = nullptr;
+	struct fid_cq *cq = nullptr;
 	struct fid_av *av = nullptr;
 	struct fi_info *info = nullptr;
 
@@ -182,6 +187,9 @@ public:
 		if (ep) {
 			fi_close(&ep->fid);
 		}
+		if (owns_cq && cq) {
+			fi_close(&cq->fid);
+		}
 		if (av) {
 			fi_close(&av->fid);
 		}
@@ -191,7 +199,9 @@ public:
 	}
 
 	/*
-	 * Open EP + AV on `domain`, bind `cq` and AV.
+	 * Open EP + AV on `domain`, bind a CQ and AV. `shared_cq` is the
+	 * context-wide host-polled CQ for backendVersion 2. If it is NULL,
+	 * create and own a FI_CQ_FORMAT_DATA CQ for backendVersion 1.
 	 * Does NOT enable — caller must call enable() after any
 	 * additional binds (e.g. counters).
 	 *
@@ -200,7 +210,7 @@ public:
 	 */
 	void open(struct fid_domain *domain,
 		  struct fi_info *ref_info,
-		  struct fid_cq *cq,
+		  struct fid_cq *shared_cq,
 		  uint32_t inline_write_size);
 
 	/*
@@ -222,6 +232,7 @@ public:
 
 private:
 	uint32_t inline_write_size_ = 0;
+	bool owns_cq = false;
 };
 
 /**
@@ -321,6 +332,43 @@ public:
 private:
 	gdaki_gpu_buf<uint8_t> qp;
 	nccl_ofi_gin_gdaki_dev_qp *dev_qp = nullptr;
+	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
+};
+
+/**
+ * A GPU-resident CQ descriptor for backendVersion 1.
+ *
+ * The v1 device ABI embeds one private CQ per endpoint. This descriptor is
+ * initialized through efa-dp-direct API major 0 and points at the endpoint's
+ * provider CQ ring. backendVersion 2 never builds this object; its shared CQ
+ * is drained by gdaki_completion_state on the host.
+ */
+class gdaki_gpu_cq {
+public:
+	gdaki_gpu_cq() = default;
+	~gdaki_gpu_cq() = default;
+	gdaki_gpu_cq(const gdaki_gpu_cq &) = delete;
+	gdaki_gpu_cq &operator=(const gdaki_gpu_cq &) = delete;
+	gdaki_gpu_cq(gdaki_gpu_cq &&) = delete;
+	gdaki_gpu_cq &operator=(gdaki_gpu_cq &&) = delete;
+
+	void build(int backend_version, const struct fi_efa_cq_attr &cq_attr);
+
+	/** GPU pointer to the CQ; its layout is version(). */
+	nccl_ofi_gin_gdaki_dev_cq *dev() const
+	{
+		return dev_cq;
+	}
+
+	/** backendVersion whose layout `dev()` points at; UNSET before build(). */
+	int version() const
+	{
+		return backend_version;
+	}
+
+private:
+	gdaki_gpu_buf<uint8_t> cq;
+	nccl_ofi_gin_gdaki_dev_cq *dev_cq = nullptr;
 	int backend_version = NCCL_OFI_GDAKI_BACKEND_VERSION_UNSET;
 };
 
@@ -498,12 +546,12 @@ private:
  * Used directly for the data (main) endpoint, and composed inside
  * gdaki_sc_endpoint for the signal/counter endpoints.
  *
- * Owns: fid_ep + fid_av (via gdaki_fi_endpoint; the CQ is borrowed),
+ * Owns: fid_ep + fid_av and, for v1, fid_cq (via gdaki_fi_endpoint);
  * GPU-mapped SQ buffer + doorbell BAR regions, a GPU-resident QP descriptor,
- * and the [total_slots*nranks] target ahn/qpn/qkey table in GPU
- * memory.
+ * an optional v1 GPU CQ descriptor, and the [total_slots*nranks] target
+ * ahn/qpn/qkey table in GPU memory.
  *
- * Destruction order (reverse declaration): targets, gpu_qp,
+ * Destruction order (reverse declaration): targets, gpu_cq, gpu_qp,
  * sq_doorbell, sq_buffer, endpoint. The libfabric EP closes last so any
  * GPU mappings of its BAR regions are torn down before the EP itself.
  * When this class is composed inside gdaki_sc_endpoint AFTER the
@@ -516,6 +564,7 @@ public:
 	gdaki_mmio_region       sq_buffer;
 	gdaki_mmio_region       sq_doorbell;
 	gdaki_gpu_qp            gpu_qp;
+	gdaki_gpu_cq            gpu_cq;
 	gdaki_target_addressing targets;   /* [total_slots*nranks] target table */
 	uint32_t                sq_size = 0;       /* SQ ring depth, populated by populate() */
 	uint32_t                sq_entry_size = 0; /* SQ WQE bytes, populated by populate() */
@@ -526,17 +575,19 @@ public:
 	gdaki_endpoint &operator=(const gdaki_endpoint &) = delete;
 
 	/**
-	 * Open EP + AV on the domain, bind `cq`, and enable.
+	 * Open EP + AV on the domain and enable. `shared_cq` is non-NULL
+	 * only for backendVersion 2.
 	 */
 	void open(struct fid_domain *domain,
 		  struct fi_info *ref_info,
-		  struct fid_cq *cq,
+		  struct fid_cq *shared_cq,
 		  uint32_t inline_write_size);
 
 	/**
-	 * Query EFA QP attributes, map the SQ MMIO regions for GPU access, build the
-	 * GPU-resident QP descriptor, and build the [total_slots*nranks] target table
-	 * from the batched allgather buffer. Must be called after open().
+	 * Query EFA QP attributes, map the SQ MMIO regions for GPU access,
+	 * build the GPU-resident QP descriptor and (for v1) CQ descriptor,
+	 * and build the [total_slots*nranks] target table from the batched
+	 * allgather buffer. Must be called after open().
 	 */
 	void populate(int backend_version, struct fi_efa_ops_gda *gda_ops,
 		      const std::vector<uint8_t> &all_addrs,
@@ -572,10 +623,9 @@ public:
 	gdaki_endpoint   base;          /* AFTER counter → EP closes first */
 
 	/**
-	 * Open the inner endpoint, bind the shared CQ, create the local-completion
-	 * counter, and bind it before enabling. cntr_flags names the operations the
-	 * counter counts: FI_WRITE for an endpoint that only writes,
-	 * FI_WRITE | FI_READ for one that also issues reads.
+	 * Open the inner endpoint, bind the v2 shared CQ or create the v1 private
+	 * CQ, create the local-completion counter, and bind it before enabling.
+	 * cntr_flags names the operations the counter counts.
 	 */
 	void open(struct fid_domain *domain,
 		  struct fi_info *ref_info,
@@ -631,13 +681,10 @@ public:
 	gdaki_hw_counter write_cntr;        /* FI_WRITE (local completion) */
 	gdaki_hw_counter remote_write_cntr; /* FI_REMOTE_WRITE (signal) */
 	gdaki_endpoint   base;          /* AFTER counters → EP closes first */
-	/* counter_dev_handle exposes the WRITE (local completion) counter via cntr_value.
-	 * Returned to the kernel through counter_handles[]. */
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle> counter_dev_handle;
-	/* signal_dev_handle exposes the REMOTE_WRITE (signal) counter via cntr_value.
-	 * Returned to the kernel through signal_handles[]. Same QP and addressing as
-	 * counter_dev_handle; only cntr_value differs. */
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle> signal_dev_handle;
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle_v2> counter_dev_handle_v2;
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle_v2> signal_dev_handle_v2;
 
 	/**
 	 * Open the inner endpoint with hardware counters bound. Creates
@@ -659,9 +706,9 @@ public:
 };
 
 /**
- * Per-rail registrations of the context's two SHARED local source buffers
- * (the signal-only scratch buffer and the PutValue source slot pool). Both
- * are only local sources for RDMA writes, never remote targets.
+ * Per-rail registrations of the signal-only scratch buffer and, for
+ * backendVersion 1, the PutValue source-slot pool. Both are only local
+ * sources for RDMA writes, never remote targets.
  *
  * The buffers are allocated once per createContext; each rail has its own
  * domain, so each is registered per rail, giving a distinct local lkey. A
@@ -888,12 +935,11 @@ struct nccl_ofi_gin_gdaki_context {
 	uint16_t num_rails = 0;
 	uint16_t effective_rails = 0;
 
-	/* Context-wide completion state: the GPU-published per-context and per-peer
-	 * completion counts the device reads, the host mirror the progress pass
-	 * publishes in one gdrcopy, the host-side working state that derives the ordered
-	 * per-peer counts, AND the per-context completion queues it drains. Declared
-	 * before the endpoint vectors below so it is destroyed after them, because a CQ
-	 * cannot close while endpoints are still bound to it. */
+	/* backendVersion 2 completion state: the GPU-published per-context and
+	 * per-peer completion counts, host mirror, ordered-prefix working state,
+	 * and one shared CQ per logical context. v1 leaves it unallocated and owns
+	 * one private device-visible CQ per endpoint instead. Declared before the
+	 * endpoint vectors so v2 CQs close after the endpoints bound to them. */
 	gdaki_completion_state completion_state;
 
 	/* Per-ctx data (main) endpoint: libfabric EP on the reused proxy domain plus
@@ -914,19 +960,20 @@ struct nccl_ofi_gin_gdaki_context {
 	 * accessed as sc_endpoints[c][i]. */
 	std::vector<std::vector<std::unique_ptr<gdaki_sc_endpoint>>> sc_endpoints;        /* [nContexts][n_sc]*/
 
-	/* Per-ctx GPU-resident pointer arrays for the kernel's
-	 * dev->counter_handles[] and dev->signal_handles[]. unique_ptr
-	 * for the same reason as `data` — gdaki_gpu_buf<T> is
-	 * non-movable. */
+	/* Per-ctx GPU-resident pointer arrays for the selected device ABI.
+	 * Only one version's pair is allocated. unique_ptr is required because
+	 * gdaki_gpu_buf<T> is non-movable. */
 	std::vector<std::unique_ptr<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>> d_counter_handles; /* [nContexts] */
 	std::vector<std::unique_ptr<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>> d_signal_handles;  /* [nContexts] */
+	std::vector<std::unique_ptr<gdaki_counter_handle_ptr_buf_v2>> d_counter_handles_v2;
+	std::vector<std::unique_ptr<gdaki_counter_handle_ptr_buf_v2>> d_signal_handles_v2;
 
-	/* Per-ctx submitted count, one device-owned uint64 each: the post path
+	/* v2-only per-ctx submitted count, one device-owned uint64 each: the post path
 	 * bumps it once per WQE, and put's per-context CQ-overflow gate compares
 	 * (submitted - completed) against cq_depth. The host allocates and zeroes it. */
 	std::vector<std::unique_ptr<gdaki_gpu_buf<uint64_t>>> submitted_per_ctx;   /* [nContexts] */
 
-	/* Per-ctx, per-peer submitted counts: submitted_count_per_peer[p] counts
+	/* v2-only per-ctx, per-peer submitted counts: submitted_count_per_peer[p] counts
 	 * writes to peer p across every QP of a logical context. Device-owned; the
 	 * post path's atomicAdd returns the write's position in that peer's sequence,
 	 * which lets a FlushAsync request carry a single number. The host allocates and
@@ -955,27 +1002,23 @@ struct nccl_ofi_gin_gdaki_context {
 	void *scratch_buf = nullptr;
 	uint64_t scratch_local_addr = 0;
 
-	/* Contiguous GPU-resident array of device handles, one entry per
-	 * logical context. The kernel reads
-	 *   &((nccl_ofi_gin_gdaki_dev_handle*)ctx.handle)[ctx.contextId]
-	 * to pick its entry. Populated last, after every per-ctx
-	 * endpoint is built, then committed once. */
+	/* Contiguous GPU-resident device-handle array in the exact layout NCCL
+	 * requested. Only the selected backendVersion's buffer is allocated. */
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handles;
+	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle_v2> dev_handles_v2;
 
-	/* PutValue source slot pool, shared across every logical context's
-	 * data endpoint and signal/counter endpoints.
+	/* PutValue source slot pool, shared across logical contexts. backendVersion
+	 * 1 consumes it; backendVersion 2 carries PutValue inline but retains the
+	 * published staging slots until the follow-up ABI cleanup.
 	 *
 	 * The pool lives in GPU memory allocated via the CUDA VMM API
 	 * (so DMA-BUF export is supported), registered with libfabric as
 	 * FI_HMEM_CUDA / FI_MR_DMABUF. The kernel writes srcVal to the
 	 * staging slot; the NIC DMAs it from GPU HBM directly.
 	 *
-	 * No dedicated PutValue endpoint: the WQE rides on whichever
-	 * endpoint matches the caller's signal request (data endpoint when
-	 * signal == NONE, sc_endpoints[signalId] otherwise). The pool is
-	 * sliced per endpoint, sized to the sum over every context of each
-	 * participating endpoint's sq_size; per-endpoint slice descriptors
-	 * are uploaded to the device via dev_handle->putvalue_slice_base.
+	 * Every context has one dedicated PutValue endpoint. The pool is
+	 * sliced per context, with pvdata[c].sq_size slots, and that slice
+	 * base is uploaded through dev_handle->pvdata.putvalue_slice_base.
 	 *
 	 * putvalue_buf         : GPU pointer (== putvalue_local_addr)
 	 * putvalue_pool_bytes  : VMM-rounded size; pass back to vmm_free

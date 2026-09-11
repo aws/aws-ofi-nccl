@@ -30,12 +30,12 @@ struct proc_handle {
 };
 
 /*
- * GPU kernel: build, post, and poll a single RDMA_WRITE WQE through the
- * signal endpoint's QP/CQ that the plugin populated in GPU memory.
+ * GPU kernel: build and post a single RDMA_WRITE WQE through the signal
+ * endpoint's QP. The host progress pass drains its completion.
  *
  * Single-thread (gridDim=1, blockDim=1). All other lanes early-return.
  */
-__global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle *sig,
+__global__ void gin_signal_gpu_kernel(nccl_ofi_gin_gdaki_dev_counter_handle_v2 *sig,
 				      int peer,
 				      int nranks,
 				      uint64_t dst_addr,
@@ -189,8 +189,8 @@ int main(int argc, char *argv[])
 	 * the kernel arg) and its cntr_value, the FI_REMOTE_WRITE counter the receiver
 	 * sees increment. */
 	auto *dev_h_gpu =
-		reinterpret_cast<nccl_ofi_gin_gdaki_dev_handle *>(devHandle->handle);
-	nccl_ofi_gin_gdaki_dev_handle h_dev = {};
+		reinterpret_cast<nccl_ofi_gin_gdaki_dev_handle_v2 *>(devHandle->handle);
+	nccl_ofi_gin_gdaki_dev_handle_v2 h_dev = {};
 	CUDACHECK(cudaMemcpy(&h_dev, dev_h_gpu, sizeof(h_dev), cudaMemcpyDeviceToHost));
 
 	if (h_dev.nSignals < 1 || h_dev.signal_handles == nullptr) {
@@ -199,11 +199,11 @@ int main(int argc, char *argv[])
 		return ncclInternalError;
 	}
 
-	nccl_ofi_gin_gdaki_dev_counter_handle *sig_dev_gpu = nullptr;
+	nccl_ofi_gin_gdaki_dev_counter_handle_v2 *sig_dev_gpu = nullptr;
 	CUDACHECK(cudaMemcpy(&sig_dev_gpu, h_dev.signal_handles,
 			     sizeof(sig_dev_gpu), cudaMemcpyDeviceToHost));
 
-	nccl_ofi_gin_gdaki_dev_counter_handle h_sig = {};
+	nccl_ofi_gin_gdaki_dev_counter_handle_v2 h_sig = {};
 	CUDACHECK(cudaMemcpy(&h_sig, sig_dev_gpu, sizeof(h_sig), cudaMemcpyDeviceToHost));
 
 	uint64_t rw_cntr_before = 0;
