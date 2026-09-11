@@ -517,6 +517,18 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 			"-byte SQ entries instead of 128-byte wide WQEs");
 	}
 
+	bool has_64_bit_req_id = false;
+#if HAVE_FI_EFA_WQ_ATTR_CAPS
+	has_64_bit_req_id =
+		(sq_attr.caps & FI_EFA_WQ_CAPS_64_BIT_REQ_ID) != 0;
+#endif
+	if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_2 &&
+	    !has_64_bit_req_id) {
+		throw std::runtime_error(
+			"gdaki_endpoint: backendVersion 2 completion polling "
+			"requires FI_EFA_WQ_CAPS_64_BIT_REQ_ID");
+	}
+
 	sq_buffer.map(sq_attr.buffer,
 		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
 
