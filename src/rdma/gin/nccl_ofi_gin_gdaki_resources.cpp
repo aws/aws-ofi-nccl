@@ -626,8 +626,8 @@ void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda
 			h.base.local_cntr_value = write_cntr.gpu_ptr();
 			h.base.submitted_count = 0;
 			h.base.sq_size = base.sq_size;
-			h.base.putvalue_pad = 0;
-			h.base.putvalue_slice_base = 0;
+			h.base.reserved0 = 0;
+			h.base.reserved1 = 0;
 			h.cntr_offset = 0;
 		};
 

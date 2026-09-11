@@ -159,7 +159,8 @@ struct nccl_ofi_gin_gdaki_dev_cq;
  *
  * v2 is the NCCL 2.32 layout. CQs are drained by the plugin, the lock is part
  * of the efa-dp-direct QP descriptor, and the top-level handle carries the
- * host-published completion state used by FlushAsync/Wait.
+ * host-published completion state used by FlushAsync/Wait. PutValue is inline,
+ * so v2 carries no staging-pool metadata.
  */
 
 /**
@@ -392,8 +393,13 @@ struct nccl_ofi_gin_gdaki_dev_endpoint_handle_v2 {
 	uint64_t submitted_count;
 	uint32_t sq_size;
 
-	uint32_t putvalue_pad;
-	uint64_t putvalue_slice_base;
+	/*
+	 * backendVersion 2 is already published with these unused legacy slots in
+	 * NCCL's mirror. Keep them reserved so the polling fields below retain
+	 * their frozen offsets, but do not expose or populate staging metadata.
+	 */
+	uint32_t reserved0;
+	uint64_t reserved1;
 };
 
 struct nccl_ofi_gin_gdaki_dev_counter_handle_v2 {
@@ -418,8 +424,9 @@ struct nccl_ofi_gin_gdaki_dev_handle_v2 {
 	uint64_t *scratch_remote_addrs;
 	uint32_t *scratch_remote_rkeys;
 
-	uint32_t putvalue_lkey;
-	uint32_t putvalue_slot_size;
+	/* Reserved offsets from the published v2 ABI; never staging metadata. */
+	uint32_t reserved0;
+	uint32_t reserved1;
 
 	uint32_t *submitted_count_per_peer;
 	volatile uint32_t *ordered_completed_count_per_peer;

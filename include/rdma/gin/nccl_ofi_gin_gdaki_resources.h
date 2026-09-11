@@ -1007,9 +1007,9 @@ struct nccl_ofi_gin_gdaki_context {
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle> dev_handles;
 	gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_handle_v2> dev_handles_v2;
 
-	/* PutValue source slot pool, shared across logical contexts. backendVersion
-	 * 1 consumes it; backendVersion 2 carries PutValue inline but retains the
-	 * published staging slots until the follow-up ABI cleanup.
+	/* backendVersion 1 PutValue source slot pool, shared across logical
+	 * contexts. backendVersion 2 carries PutValue inline and leaves every
+	 * field below unset.
 	 *
 	 * The pool lives in GPU memory allocated via the CUDA VMM API
 	 * (so DMA-BUF export is supported), registered with libfabric as
