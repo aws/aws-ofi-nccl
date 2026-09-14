@@ -45,7 +45,7 @@ int nccl_net_ofi_gpu_init(void)
 	              driverVersion,
 	              runtimeVersion);
 
-	cuda_flush = false;
+	nccl_ofi_use_cuda_flush = false;
 
 	return 0;
 }
