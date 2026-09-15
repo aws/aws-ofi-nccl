@@ -1039,6 +1039,22 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 			goto exit;
 		}
 		this->flush_buff.host_buffer = MAP_FAILED;
+#if HAVE_GPU
+		/* Deregister and free the dedicated GPU flush buffer */
+		if (this->flush_buff.gpu_mr_handle) {
+			delete this->flush_buff.gpu_mr_handle;
+			this->flush_buff.gpu_mr_handle = nullptr;
+		}
+		if (this->flush_buff.gpu_buffer_base) {
+			ret = nccl_net_ofi_gpu_mem_free(this->flush_buff.gpu_buffer_base);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Unable to deallocate GPU flush buffer (%d)", ret);
+				goto exit;
+			}
+			this->flush_buff.gpu_buffer_base = nullptr;
+			this->flush_buff.gpu_buffer = nullptr;
+		}
+#endif
 	}
 
 	delete this->nccl_ofi_reqs_fl;
@@ -1061,7 +1077,8 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 	int ret = 0;
 	nccl_net_ofi_sendrecv_req *req = NULL;
 	ssize_t rc = 0;
-	uint64_t cuda_key = 0ULL;
+	uint64_t flush_origin_key = 0ULL;
+	uint64_t flush_origin_addr = 0ULL;
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = NULL;
 	void *data = NULL;
 	void *flush_mr_desc = NULL;
@@ -1142,15 +1159,45 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 		flush_mr_desc = fi_mr_desc(this->flush_buff.mr_handle->mr.get());
 	}
 
+	/*
+	 * Determine the flush read origin (the buffer we read *from*).  The
+	 * non-GPU path comes first and the GPU path second, mirroring the
+	 * structure in nccl_ofi_rdma.cpp, so a dedicated Neuron flush buffer can
+	 * be slotted into the non-GPU branch later.
+	 */
+#if !HAVE_GPU
+	/*
+	 * Host / Neuron: read the user recv buffer directly (current behavior).
+	 * TODO(Neuron): allocate a dedicated Neuron flush buffer (as the GPU
+	 * branch below does) so the flush no longer reads the user buffer.
+	 */
 	if (mr_handle->mr) {
 		/* Extract remote key */
-		cuda_key = fi_mr_key(mr_handle->mr.get());
-		if (OFI_UNLIKELY(cuda_key == FI_KEY_NOTAVAIL)) {
+		flush_origin_key = fi_mr_key(mr_handle->mr.get());
+		if (OFI_UNLIKELY(flush_origin_key == FI_KEY_NOTAVAIL)) {
 			ret = -ENOTSUP;
 			NCCL_OFI_WARN("Memory registration may not have completed.");
 			goto error;
 		}
 	}
+	flush_origin_addr = (uint64_t)(virt_addr_mr ? data : 0);
+#else
+	/*
+	 * GPU: read our dedicated GPU flush buffer instead of the user recv
+	 * buffer.  A loopback fi_read from any buffer on the target GPU flushes
+	 * all prior writes to that GPU, so this is a valid flush without reading
+	 * the user buffer (mr_handle / data are unused on this path).
+	 */
+	(void)mr_handle;
+	(void)data;
+	flush_origin_key = fi_mr_key(this->flush_buff.gpu_mr_handle->mr.get());
+	if (OFI_UNLIKELY(flush_origin_key == FI_KEY_NOTAVAIL)) {
+		ret = -ENOTSUP;
+		NCCL_OFI_WARN("Flush buffer memory registration may not have completed.");
+		goto error;
+	}
+	flush_origin_addr = (uint64_t)(virt_addr_mr ? this->flush_buff.gpu_buffer : 0);
+#endif
 
 	NCCL_OFI_TRACE_FLUSH_SENDRECV(req, base_req);
 
@@ -1160,8 +1207,8 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 			     this->flush_buff.size,
 			     flush_mr_desc,
 			     this->local_ep_addr,
-			     (uint64_t)(virt_addr_mr ? data : 0),
-			     cuda_key, sendrecv_req_get_ofi_context(req));
+			     flush_origin_addr,
+			     flush_origin_key, sendrecv_req_get_ofi_context(req));
 		if (rc == 0) {
 			break;
 		} else if (rc == -FI_EAGAIN) {
@@ -1220,6 +1267,14 @@ int nccl_net_ofi_sendrecv_recv_comm::alloc_and_reg_flush_buff(nccl_net_ofi_sendr
 	int ret = 0;
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle = nullptr;
 
+#if HAVE_GPU
+	/* Ensure GPU flush-buffer fields are defined on every early-return path
+	 * so close() never frees/derefs uninitialized handles. */
+	this->flush_buff.gpu_buffer_base = nullptr;
+	this->flush_buff.gpu_buffer = nullptr;
+	this->flush_buff.gpu_mr_handle = nullptr;
+#endif
+
 	/* Verify that flush won't read more than the flush buffer size */
 	assert(this->flush_buff.size <= system_page_size);
 
@@ -1249,6 +1304,50 @@ int nccl_net_ofi_sendrecv_recv_comm::alloc_and_reg_flush_buff(nccl_net_ofi_sendr
 	}
 
 	this->flush_buff.mr_handle = mr_handle;
+
+#if HAVE_GPU
+	/*
+	 * Allocate and register a dedicated GPU buffer to serve as the flush read
+	 * origin, so the flush reads this buffer instead of the user recv buffer.
+	 * Allocate 2x the page size (GPU allocations are not guaranteed page
+	 * aligned) and register the page-aligned pointer.
+	 */
+	if (ret == 0) {
+		size_t gpu_alloc_size = 2 * system_page_size;
+		nccl_net_ofi_sendrecv_mr_handle_t *gpu_mr_handle = nullptr;
+
+		ret = nccl_net_ofi_gpu_mem_alloc(&(this->flush_buff.gpu_buffer_base),
+						 gpu_alloc_size);
+		if (OFI_UNLIKELY(ret != 0)) {
+			NCCL_OFI_WARN("Unable to allocate GPU flush buffer (%d)", ret);
+			return ret;
+		}
+
+		this->flush_buff.gpu_buffer =
+			(void *)NCCL_OFI_ROUND_UP((uintptr_t)this->flush_buff.gpu_buffer_base,
+						  (uintptr_t)system_page_size);
+
+		ret = sendrecv_mr_buffers_internal_register(domain_arg, ep_arg, key_pool,
+							    this->dev_id,
+							    this->flush_buff.gpu_buffer,
+							    system_page_size,
+							    NCCL_PTR_CUDA, &gpu_mr_handle);
+		if (OFI_UNLIKELY(ret != 0)) {
+			int rc;
+			NCCL_OFI_WARN("Could not register GPU flush buffer, dev: %d",
+				      this->dev_id);
+			rc = nccl_net_ofi_gpu_mem_free(this->flush_buff.gpu_buffer_base);
+			if (rc != 0) {
+				NCCL_OFI_WARN("Unable to deallocate GPU flush buffer (%d)", rc);
+			}
+			this->flush_buff.gpu_buffer_base = nullptr;
+			this->flush_buff.gpu_buffer = nullptr;
+			return ret;
+		}
+
+		this->flush_buff.gpu_mr_handle = gpu_mr_handle;
+	}
+#endif
 
 	return ret;
 }
