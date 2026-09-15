@@ -104,6 +104,11 @@ extern bool virt_addr_mr;
 /* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
 extern bool data_progress_auto;
 
+/* Indicates if PCIe relaxed ordering (RO) should be requested on EFA data MRs.
+ * Resolved once at init from OFI_NCCL_PCI_RELAXED_ORDERING, the compile-time
+ * OFI_NCCL_EFA_MR_RELAXED_ORDERING support, and provider==efa.  Default false. */
+extern bool nccl_ofi_use_relaxed_ordering;
+
 /* Size of system memory pages */
 extern size_t system_page_size;
 

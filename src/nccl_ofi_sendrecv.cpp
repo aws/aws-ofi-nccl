@@ -506,7 +506,8 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 					int dev_id,
 					nccl_ofi_mr_ckey_ref ckey,
 					int type,
-					nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+					nccl_net_ofi_sendrecv_mr_handle_t **mr_handle,
+					bool allow_relaxed_ordering)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
@@ -573,6 +574,13 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 		}
 		ret_handle->mr_key = static_cast<uint64_t>(key);
 		mr_attr.requested_key = ret_handle->mr_key;
+	}
+
+	/* PCIe relaxed ordering on user data buffers whose role allows it. Rides in
+	 * the fi_mr_regattr() flags arg; OFI_NCCL_EFA_MR_RELAXED_ORDERING is 0 when
+	 * compiled out, so this is a no-op on older libfabric. */
+	if (nccl_ofi_use_relaxed_ordering && allow_relaxed_ordering) {
+		regattr_flags |= OFI_NCCL_EFA_MR_RELAXED_ORDERING;
 	}
 
 	mr_result = nccl_ofi_ofiutils_mr_regattr(domain->domain,
@@ -675,14 +683,16 @@ static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t 
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
-	return sendrecv_mr_buffers_register(domain, ep->ofi_ep.get(), key_pool, dev_id, &cache_key, type, mr_handle);
+	return sendrecv_mr_buffers_register(domain, ep->ofi_ep.get(), key_pool, dev_id, &cache_key,
+					    type, mr_handle, /*allow_relaxed_ordering=*/false);
 }
 
 
 static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid_ep *ofi_ep,
 				     nccl_ofi_idpool_t *key_pool, int dev_id,
 				     nccl_ofi_mr_ckey_ref ckey, int type,
-				     nccl_net_ofi_sendrecv_mr_handle_t **mhandle)
+				     nccl_net_ofi_sendrecv_mr_handle_t **mhandle,
+				     bool allow_relaxed_ordering)
 {
 	/* Validate type of buffer */
 	bool valid_buffer_type = false;
@@ -699,7 +709,8 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 		return -EINVAL;
 	}
 
-	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, ckey, type, mhandle);
+	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, ckey, type, mhandle,
+					    allow_relaxed_ordering);
 }
 
 
@@ -743,7 +754,8 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 				     nccl_ofi_mr_ckey_ref ckey,
 				     int type,
-				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle,
+				     bool allow_relaxed_ordering)
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
@@ -792,7 +804,8 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 
 		key_pool = domain->mr_rkey_pool;
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-						dev_id, ckey, type, &ret_handle);
+						dev_id, ckey, type, &ret_handle,
+						allow_relaxed_ordering);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 			*mr_handle = nullptr;
 			return ret;
@@ -810,7 +823,8 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 	} else {
 		key_pool = domain->mr_rkey_pool;
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-						dev_id, ckey, type, &ret_handle);
+						dev_id, ckey, type, &ret_handle,
+						allow_relaxed_ordering);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 			*mr_handle = nullptr;
 			return ret;
@@ -823,12 +837,26 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 
 int nccl_net_ofi_sendrecv_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey, int type_param, void **mhandle)
 {
-    return sendrecv_comm_mr_base_reg(this, ckey, type_param, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
+	/* User send buffer: source of fi_send, never a flush read origin -> RO safe. */
+	return sendrecv_comm_mr_base_reg(this, ckey, type_param,
+					 reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle),
+					 /*allow_relaxed_ordering=*/true);
 }
 
 int nccl_net_ofi_sendrecv_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey, int type_param, void **mhandle)
 {
-    return sendrecv_comm_mr_base_reg(this, ckey, type_param, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
+	/* User recv buffer: safe to relax only where the flush reads a dedicated buffer.
+	 * SendRecv GPU flush is redirected to a dedicated GPU buffer, so recv RO is safe
+	 * on GPU builds; the non-GPU (Neuron) flush still reads the user buffer, so defer
+	 * recv RO for Neuron. */
+#if HAVE_GPU
+	const bool allow_relaxed_ordering = true;
+#else
+	const bool allow_relaxed_ordering = false;
+#endif
+	return sendrecv_comm_mr_base_reg(this, ckey, type_param,
+					 reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle),
+					 allow_relaxed_ordering);
 }
 
 int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)

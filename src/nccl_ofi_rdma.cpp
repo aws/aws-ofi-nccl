@@ -317,7 +317,7 @@ exit:
  */ 
 static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
-			   int type, struct fi_mr_attr *mr_attr)
+			   int type, struct fi_mr_attr *mr_attr, bool allow_relaxed_ordering)
 {
 	int ret = 0;
 	mr_attr->access = FI_SEND | FI_RECV;
@@ -373,6 +373,14 @@ static int set_mr_req_attr(uint64_t mr_key,
 	}
 
 	mr_attr->requested_key = mr_key;
+
+	/* PCIe relaxed ordering: request it on user data buffers whose role allows
+	 * relaxed ordering, when enabled at init.  It rides in the fi_mr_regattr()
+	 * flags argument (not mr_attr->access). OFI_NCCL_EFA_MR_RELAXED_ORDERING is
+	 * 0 when compiled out, so this is a no-op on older libfabric. */
+	if (nccl_ofi_use_relaxed_ordering && allow_relaxed_ordering) {
+		*flags |= OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+	}
 
  exit:
 	return ret;
@@ -3069,7 +3077,8 @@ int nccl_net_ofi_rdma_domain_t::mr_bind_and_enable(struct fid_mr *mr,
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
 						 nccl_net_ofi_rdma_ep_t *ep,
-						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
+						 nccl_net_ofi_rdma_mr_handle_t **mhandle,
+						 bool allow_relaxed_ordering)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
@@ -3103,7 +3112,8 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr,
+			      allow_relaxed_ordering);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      this->rdma_domain_get_device()->dev_id);
@@ -3184,7 +3194,8 @@ error:
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
 				       nccl_net_ofi_rdma_ep_t *ep,
-				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
+				       nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				       bool allow_relaxed_ordering)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -3206,7 +3217,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		}
 		/* Cache miss */
 
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, allow_relaxed_ordering);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3221,7 +3232,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, allow_relaxed_ordering);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3268,10 +3279,13 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User send buffer: source of fi_write/fi_send, never a flush read origin,
+	 * so relaxed ordering is always safe here. */
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      /*allow_relaxed_ordering=*/true);
 }
 
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
@@ -3283,10 +3297,22 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User recv buffer: this is the inbound-write target where the RO gain is.
+	 * It is only safe to relax when the GDR flush reads a dedicated buffer
+	 * rather than the user buffer.  The GPU flush reads ep->flush_buff (RO=0),
+	 * so recv RO is safe on GPU builds. The Neuron flush still reads the user
+	 * buffer, so defer recv RO on Neuron builds until a dedicated Neuron flush
+	 * buffer exists */
+#if HAVE_GPU
+	const bool allow_relaxed_ordering = true;
+#else
+	const bool allow_relaxed_ordering = false;
+#endif
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      allow_relaxed_ordering);
 }
 
 /**
