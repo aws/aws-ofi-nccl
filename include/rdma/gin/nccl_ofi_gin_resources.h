@@ -95,8 +95,10 @@ public:
 	 * Register memory region with this endpoint
 	 *
 	 * @param ckey: cache key, created by nccl_ofi_mr_ckey_mk_vec or nccl_ofi_mr_ckey_mk_dmabuf
+	 * @param mr_flags: MR flags for this registration (e.g. NCCL_OFI_MR_FLAG_*)
 	 */
-	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle);
+	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle,
+		   uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 	void dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr);
 

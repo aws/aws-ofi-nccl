@@ -316,12 +316,15 @@ exit:
  * @param	flags	Output registration flags (optional)
  * @param	type	Pointer type
  * @param	mr_attr	Output attribute structure
+ * @param	mr_flags	MR flags for this registration (e.g. NCCL_NET_MR_FLAG_*)
+ * @param	prov_name	Selected provider name, used to gate relaxed ordering to EFA
  *
  * @return	0 on success, negative error code on failure
  */ 
 static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
-			   int type, struct fi_mr_attr *mr_attr)
+			   int type, struct fi_mr_attr *mr_attr, uint64_t mr_flags,
+			   const char *prov_name)
 {
 	int ret = 0;
 	mr_attr->access = FI_SEND | FI_RECV;
@@ -377,6 +380,12 @@ static int set_mr_req_attr(uint64_t mr_key,
 	}
 
 	mr_attr->requested_key = mr_key;
+
+	/* PCIe relaxed ordering: request it unless the caller forces strong
+	 * ordering via the FORCE_SO flag (internal buffers, flush origins,
+	 * ordering-sensitive MRs). The helper also gates on the enable parameter
+	 * and EFA provider, and returns 0 (no-op) when compiled out. */
+	*flags |= nccl_ofi_ofiutils_mr_relaxed_ordering_flag(prov_name, mr_flags);
 
  exit:
 	return ret;
@@ -3071,12 +3080,15 @@ int nccl_net_ofi_rdma_domain_t::mr_bind_and_enable(struct fid_mr *mr,
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
 						 nccl_net_ofi_rdma_ep_t *ep,
-						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
+						 nccl_net_ofi_rdma_mr_handle_t **mhandle,
+						 uint64_t mr_flags)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
 	nccl_ofi_idpool_t *key_pool = this->mr_rkey_pool;
+	const char *prov_name =
+		this->rdma_domain_get_device()->get_ofi_info(0)->fabric_attr->prov_name;
 
 	*mhandle = NULL;
 
@@ -3105,7 +3117,8 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr,
+			      mr_flags, prov_name);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      this->rdma_domain_get_device()->dev_id);
@@ -3186,7 +3199,8 @@ error:
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
 				       nccl_net_ofi_rdma_ep_t *ep,
-				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
+				       nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				       uint64_t mr_flags)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -3208,7 +3222,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		}
 		/* Cache miss */
 
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, mr_flags);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3223,7 +3237,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, mr_flags);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3237,27 +3251,29 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr(void *data,
 					size_t size, int type,
 					nccl_net_ofi_rdma_ep_t *ep,
-					nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					nccl_net_ofi_rdma_mr_handle_t **mhandle,
+					uint64_t mr_flags)
 {
 	assert(system_page_size > 0);
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
-	return this->reg_mr(&ckey, type, ep, mhandle);
+	return this->reg_mr(&ckey, type, ep, mhandle, mr_flags);
 }
 
 #if HAVE_DECL_FI_MR_DMABUF
 int nccl_net_ofi_rdma_domain_t::reg_internal_mr_dma_buf(void *data,
 					int fd, uint64_t offset, size_t size, int type,
 					nccl_net_ofi_rdma_ep_t *ep,
-					nccl_net_ofi_rdma_mr_handle_t **mhandle)
+					nccl_net_ofi_rdma_mr_handle_t **mhandle,
+					uint64_t mr_flags)
 {
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	const nccl_ofi_mr_ckey_t ckey = nccl_ofi_mr_ckey_mk_dmabuf(fd, offset, size, data, ep);
-	return this->reg_mr(&ckey, type, ep, mhandle);
+	return this->reg_mr(&ckey, type, ep, mhandle, mr_flags);
 }
 #endif
 
@@ -3270,10 +3286,13 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User send buffer: source of fi_write/fi_send, never a flush read origin,
+	 * so relaxed ordering is always safe here. */
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      /*mr_flags=*/0);
 }
 
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
@@ -3285,10 +3304,15 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User recv buffer: the inbound-write target where the RO gain is. Relaxed
+	 * ordering is safe for every memory type, including a buffer that a flush
+	 * reads: EFA read requests are always ordered behind earlier writes, and
+	 * only the read response is affected by the RO bit. */
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      /*mr_flags=*/0);
 }
 
 int freelist_regmr_ep_ctx_t::regmr(void *data, size_t size, void **handle)
@@ -3302,7 +3326,10 @@ int freelist_regmr_ep_ctx_t::regmr(void *data, size_t size, void **handle)
 		return -ENOMEM;
 	}
 
-	int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle);
+	/* Freelist buffers are read origins, send sources, or targets consumed only
+	 * after a CQ completion (or a sentinel poll), so they can use RO. */
+	int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle,
+					  /*mr_flags=*/0);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
 		free(freelist_handle);
@@ -3784,8 +3811,11 @@ int nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff(int dev_id,
 	/* make sure flush destination address does not overflow beyond host buffer */
 	assert(((NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * this->num_rails) + fb.size) <= system_page_size);
 
+	/* The flush buffer is only read (flush source) or written by a read
+	 * response (flush destination); neither needs strict ordering. */
 	ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
-				NCCL_PTR_HOST, bind_ep, &mr_handle);
+				NCCL_PTR_HOST, bind_ep, &mr_handle,
+				/*mr_flags=*/0);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
                              dev_id);
@@ -3884,16 +3914,19 @@ int nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff(int dev_id,
 				ret = rdma_domain->reg_internal_mr_dma_buf(fb.buffer, fd, offset,
 								    system_page_size,
 								    NCCL_PTR_CUDA,
-								    bind_ep, &mr_handle);
+								    bind_ep, &mr_handle,
+								    /*mr_flags=*/0);
 				close(fd);
 			} else {
 				ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
-							    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+							    NCCL_PTR_CUDA, bind_ep, &mr_handle,
+							    /*mr_flags=*/0);
 			}
 		}
 #else
 		ret = rdma_domain->reg_internal_mr(fb.buffer, system_page_size,
-					    NCCL_PTR_CUDA, bind_ep, &mr_handle);
+					    NCCL_PTR_CUDA, bind_ep, &mr_handle,
+					    /*mr_flags=*/0);
 #endif
 
 		if (OFI_UNLIKELY(ret != 0)) {

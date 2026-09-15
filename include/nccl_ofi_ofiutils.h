@@ -5,10 +5,46 @@
 #ifndef NCCL_OFI_OFIUTILS_H
 #define NCCL_OFI_OFIUTILS_H
 
+#include "config.h"
+
 #include <rdma/fabric.h>
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 
 #include "nccl_ofi_param.h"
 #include "ofi/resource_wrapper.h"
+
+/*
+ * Single compile-time constant for the EFA PCIe relaxed-ordering MR flag.
+ * Equals FI_EFA_MR_RELAXED_ORDERING when libfabric defines it, else 0.
+ * so call sites can OR it into the fi_mr_regattr() flags argument
+ * unconditionally (a harmless no-op on older libfabric).
+ */
+#if HAVE_DECL_FI_EFA_MR_RELAXED_ORDERING
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING FI_EFA_MR_RELAXED_ORDERING
+#else
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING 0
+#endif
+
+/**
+ * @brief	Resolve whether PCIe relaxed ordering should be requested for a
+ *		memory registration.
+ *
+ * Centralizes the enable policy so registration sites do not duplicate it:
+ *   - compiled in (OFI_NCCL_EFA_MR_RELAXED_ORDERING != 0),
+ *   - enabled via the OFI_NCCL_PCI_RELAXED_ORDERING parameter,
+ *   - the selected provider is EFA (bit 61 is EFA-specific; invalid elsewhere),
+ *   - the caller did not force strong ordering (NCCL_OFI_MR_FLAG_FORCE_SO).
+ *
+ * Evaluated in the slow (registration) path, so no cached global is needed.
+ *
+ * @param prov_name:	Selected provider name (fabric_attr->prov_name).
+ * @param mr_flags:	NCCL MR flags for this registration (FORCE_SO honored).
+ * @return		OFI_NCCL_EFA_MR_RELAXED_ORDERING to OR into the
+ *			fi_mr_regattr() flags, or 0 when RO must not be set.
+ */
+uint64_t nccl_ofi_ofiutils_mr_relaxed_ordering_flag(const char *prov_name, uint64_t mr_flags);
 
 /*
  * Memeory util functions to ensure that the compiler does not optimize
