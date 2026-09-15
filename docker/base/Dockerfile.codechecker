@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM public.ecr.aws/ubuntu/ubuntu:22.04
 
 # Implementation of https://github.com/whisperity/codechecker-action
 # This Dockerfile provides a pre-built environment for running CodeChecker analysis
