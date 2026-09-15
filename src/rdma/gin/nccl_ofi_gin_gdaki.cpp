@@ -995,7 +995,11 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data
 	int ret;
 	{
 		std::lock_guard scoped_ep_lock(comm->get_ep_lock());
-		ret = comm->regMrSymDmaBufCommon(&cache_key, data, size, type, &mr_handle);
+		/* Pass NCCL's mrFlags through; the registration path relaxes ordering
+		 * on GIN symmetric data buffers unless the caller forces strict
+		 * ordering (FORCE_SO) for ordering-sensitive MRs. */
+		ret = comm->regMrSymDmaBufCommon(&cache_key, data, size, type, &mr_handle,
+						 mrFlags);
 	}
 	if (ret != 0) {
 		return nccl_net_ofi_retval_translate(ret);

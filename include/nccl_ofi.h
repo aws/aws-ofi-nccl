@@ -79,6 +79,18 @@
 /* Initial number of entries in the MR cache of a device */
 #define NCCL_OFI_MR_CACHE_INIT_SIZE     128
 
+/* Plugin-internal alias for NCCL's "force strong ordering" MR flag. The CUDA
+ * NCCL net API defines NCCL_NET_MR_FLAG_FORCE_SO; the Neuron API omits it.
+ * Alias to the NCCL flag where present, otherwise fall back to the same bit
+ * value. NCCL only passes MR flags on the CUDA path (GIN / regMrSym); on Neuron
+ * the plugin synthesizes this flag itself to mark strict-ordering
+ * registrations, so a self-consistent plugin constant is sufficient. */
+#ifdef NCCL_NET_MR_FLAG_FORCE_SO
+#define NCCL_OFI_MR_FLAG_FORCE_SO NCCL_NET_MR_FLAG_FORCE_SO
+#else
+#define NCCL_OFI_MR_FLAG_FORCE_SO (1 << 0)
+#endif
+
 /* Indicates if GPUDirect is supported by libfabric provider */
 enum gdr_support_level_t {GDR_UNKNOWN, GDR_SUPPORTED, GDR_UNSUPPORTED};
 extern enum gdr_support_level_t support_gdr;
