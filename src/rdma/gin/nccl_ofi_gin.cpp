@@ -12,6 +12,7 @@
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
+#include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_param.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_tracepoint.h"
@@ -345,6 +346,18 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 	return ret;
 }
 
+/**
+ * Translate NCCL's MR flags into libfabric MR flags. This is the only place NCCL's flag space
+ * meets libfabric's; the registration path below it takes libfabric flags (0 = none).
+ *
+ * GIN symmetric buffers use PCIe relaxed ordering unless NCCL asks for strong ordering
+ * (NCCL_NET_MR_FLAG_FORCE_SO), as it does for ordering-sensitive MRs such as signals.
+ */
+static uint64_t gin_mr_flags_to_fi(uint64_t mrFlags)
+{
+	return (mrFlags & NCCL_NET_MR_FLAG_FORCE_SO) ? 0 : OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+}
+
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
 				      int type, uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out)
 {
@@ -353,7 +366,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 	/* Shared core: dedup/refcount, local EFA registration, MR-map insert,
 	   per-rank key all-gather. */
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
-	int ret = regMrSymDmaBufCommon(ckey, data_ptr, size, type, &mr_handle);
+	int ret = regMrSymDmaBufCommon(ckey, data_ptr, size, type, &mr_handle, mrFlags);
 	if (ret != 0) {
 		return ret;
 	}
@@ -378,7 +391,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 }
 
 int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+				      uint64_t mrFlags)
 {
 	auto &gin_ep = get_resources().get_ep();
 
@@ -390,7 +404,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 	/**
 	 * Local registration with the endpoint
 	 */
-	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle);
+	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle,
+				gin_mr_flags_to_fi(mrFlags));
 	if (ret != 0) {
 		NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
 		delete mr_handle;
@@ -429,7 +444,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 }
 
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+				      uint64_t mrFlags)
 {
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
 	int ret = 0;
@@ -448,7 +464,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, 
 		it->second.refcnt++;
 		mr_handle = it->second.handle;
 	} else {
-		ret = regMrSymLocal(ckey, data_ptr, size, type, &mr_handle);
+		ret = regMrSymLocal(ckey, data_ptr, size, type, &mr_handle, mrFlags);
 		if (ret != 0) {
 			return ret;
 		}

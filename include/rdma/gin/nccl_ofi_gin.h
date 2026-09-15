@@ -487,7 +487,8 @@ public:
 	 * @param data_ptr: base virtual address of the registered data
 	 * @param size: size of data to be registered
 	 * @param type: type of registration (NCCL_PTR_HOST, NCCL_PTR_CUDA)
-	 * @param mrFlags: flags to be used for registration (currently not used)
+	 * @param mrFlags: NCCL MR flags (NCCL_NET_MR_FLAG_*). FORCE_SO selects strong ordering
+	 *		   for the registration; SIGNAL_NEVER_RESET is recorded on the handle.
 	 * @param mr_handle_out: handle to be returned to caller
 	 *
 	 * @return: 0 on success, non-zero on failure
@@ -498,16 +499,21 @@ public:
 	/* Shared core behind the proxy regMrSymDmaBuf and the GDAKI regMrSymDmaBuf
 	 * entry point: duplicate detection/refcount, local EFA registration, MR-map
 	 * insertion, and the per-rank key all-gather. Leaves gdr_handle == nullptr;
-	 * GDRCopy (proxy only) is layered on top by the caller. Caller holds ep_lock. */
+	 * GDRCopy (proxy only) is layered on top by the caller. Caller holds ep_lock.
+	 * mrFlags are NCCL's MR flags (NCCL_NET_MR_FLAG_*), as passed to regMrSymDmaBuf. */
 	int regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
-				 nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				 nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+				 uint64_t mrFlags)
 		REQUIRES(get_ep_lock());
 
 	/* Local part of symmetric memory registration: allocate the handle,
 	 * register data_ptr with the endpoint, and fill in this rank's entry of
-	 * the handle's per-rank metadata table. Caller must hold ep_lock. */
+	 * the handle's per-rank metadata table. Caller must hold ep_lock.
+	 * mrFlags are NCCL's MR flags (NCCL_NET_MR_FLAG_*); they are translated to
+	 * libfabric MR flags here (see gin_mr_flags_to_fi). */
 	int regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size, int type,
-			  nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+			  nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+			  uint64_t mrFlags)
 		REQUIRES(get_ep_lock());
 
 	int deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_handle) EXCLUDES(get_ep_lock()) override;

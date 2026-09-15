@@ -95,8 +95,13 @@ public:
 	 * Register memory region with this endpoint
 	 *
 	 * @param ckey: cache key, created by nccl_ofi_mr_ckey_mk_vec or nccl_ofi_mr_ckey_mk_dmabuf
+	 * @param opt_mr_flags: optional libfabric MR flags, applied only where the domain allows
+	 *		    them (filter_mr_flags()). 0 means none. Currently the only such flag
+	 *		    is OFI_NCCL_EFA_MR_RELAXED_ORDERING (PCIe relaxed ordering); new
+	 *		    flags are enabled via nccl_ofi_ofiutils_mr_flag_mask().
 	 */
-	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle);
+	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle,
+		   uint64_t opt_mr_flags);
 
 	void dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr);
 
