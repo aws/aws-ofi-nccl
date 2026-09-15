@@ -1,5 +1,5 @@
 # docker/base/Dockerfile.ubuntu
-FROM ubuntu:22.04
+FROM public.ecr.aws/ubuntu/ubuntu:22.04
 
 # Accept build arguments
 ARG CC_TYPE=gcc
