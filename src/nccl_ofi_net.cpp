@@ -844,7 +844,8 @@ nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 		   system_page_size),
 	  mr_cache_enabled(!ofi_nccl_mr_cache_disable()),
 	  device(device_arg),
-	  domain_key(domain_key_arg)
+	  domain_key(domain_key_arg),
+	  mr_flag_mask(nccl_ofi_ofiutils_mr_flag_mask(device_arg->get_ofi_info(0)->fabric_attr->prov_name))
 {
 	assert(this->device != nullptr);
 

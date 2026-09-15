@@ -5,10 +5,44 @@
 #ifndef NCCL_OFI_OFIUTILS_H
 #define NCCL_OFI_OFIUTILS_H
 
+#include "config.h"
+
 #include <rdma/fabric.h>
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 
 #include "nccl_ofi_param.h"
 #include "ofi/resource_wrapper.h"
+
+/*
+ * Single compile-time constant for the EFA PCIe relaxed-ordering MR flag.
+ * Equals FI_EFA_MR_RELAXED_ORDERING when libfabric defines it, else 0,
+ * so call sites can OR it into the fi_mr_regattr() flags argument
+ * unconditionally (a harmless no-op on older libfabric).
+ */
+#if HAVE_DECL_FI_EFA_MR_RELAXED_ORDERING
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING FI_EFA_MR_RELAXED_ORDERING
+#else
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING 0
+#endif
+
+/**
+ * @brief	Libfabric MR registration flags a provider may be given.
+ *
+ * Today the mask holds one bit, PCIe relaxed ordering (EFA-specific; invalid
+ * elsewhere), set only when:
+ *   - compiled in (OFI_NCCL_EFA_MR_RELAXED_ORDERING != 0),
+ *   - enabled via the OFI_NCCL_PCI_RELAXED_ORDERING parameter,
+ *   - the selected provider is EFA.
+ *
+ * Evaluated once, when a domain is constructed, and stored in the domain.
+ * Add further provider-dependent flags here.
+ *
+ * @param prov_name:	Selected provider name (fabric_attr->prov_name).
+ * @return		Mask of libfabric MR flags that may be requested.
+ */
+uint64_t nccl_ofi_ofiutils_mr_flag_mask(const char *prov_name) __attribute__((nonnull));
 
 /*
  * Memeory util functions to ensure that the compiler does not optimize

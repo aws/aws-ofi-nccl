@@ -203,7 +203,7 @@ void nccl_ofi_rdma_gin_ep_t::close_ofi_eps()
  * Set mr attrs. This function closely resembles the same one in RDMA
  */
 static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t *flags, int type,
-			   struct fi_mr_attr *mr_attr)
+			   struct fi_mr_attr *mr_attr, uint64_t opt_mr_flags)
 {
 	int ret = 0;
 
@@ -237,11 +237,16 @@ static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t 
 
 	mr_attr->requested_key = mr_key;
 
+	/* Add the optional libfabric flags (e.g. PCIe relaxed ordering) supported by this domain.
+	 * This must stay after nccl_ofi_mr_ckey_fill_mr_attrs(), which resets *flags.
+	 */
+	*flags |= opt_mr_flags;
+
 	return ret;
 }
 
 int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
-			      nccl_ofi_gin_mr_handle_t **mhandle)
+			      nccl_ofi_gin_mr_handle_t **mhandle, uint64_t opt_mr_flags)
 {
 	int ret = 0;
 
@@ -269,7 +274,8 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 	auto ret_handle =
 		std::make_unique<nccl_ofi_gin_mr_handle_t>(this->domain, num_rails, mr_key);
 
-	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr,
+			      domain.filter_mr_flags(opt_mr_flags));
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      domain.get_device()->dev_id);
@@ -308,7 +314,7 @@ int nccl_ofi_rdma_gin_ep_t::freelist_regmr_fn(void *ep_ptr, void *data, size_t s
 	/* Setting ep to nullptr for the cache key -- we don't use the MR cache for GIN */
 	auto ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 	return ep->reg_mr(&ckey, NCCL_PTR_HOST,
-			  reinterpret_cast<nccl_ofi_gin_mr_handle_t **>(mhandle));
+			  reinterpret_cast<nccl_ofi_gin_mr_handle_t **>(mhandle), 0);
 }
 
 int nccl_ofi_rdma_gin_ep_t::freelist_deregmr_fn(void *handle)
@@ -538,7 +544,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 	try {
 		auto ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle) != 0) {
+		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle, 0) != 0) {
 			throw std::runtime_error("Failed to register flush buffer");
 		}
 
@@ -547,7 +553,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 		}
 
 		auto gpu_ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff_gpu, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle) != 0) {
+		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle, 0) != 0) {
 			throw std::runtime_error("Failed to register GPU flush buffer");
 		}
 

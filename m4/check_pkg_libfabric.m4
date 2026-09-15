@@ -62,7 +62,8 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
                   FI_OPT_SHARED_MEMORY_PERMITTED,
                   FI_MR_DMABUF,
 		      FI_OPT_INJECT_RMA_SIZE,
-                  FI_EFA_FEATURE_OPS],
+                  FI_EFA_FEATURE_OPS,
+                  FI_EFA_MR_RELAXED_ORDERING],
                   [], [], [AC_INCLUDES_DEFAULT
 [#include <rdma/fi_endpoint.h>
 #ifdef HAVE_RDMA_FI_EXT_H

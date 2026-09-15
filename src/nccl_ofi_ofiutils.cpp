@@ -25,6 +25,16 @@
 #define EFA_PROVIDER_NAME "efa"
 #define IS_EFA_PROVIDER(NAME) (strcmp((NAME), EFA_PROVIDER_NAME)==0)
 
+uint64_t nccl_ofi_ofiutils_mr_flag_mask(const char *prov_name)
+{
+	if (OFI_NCCL_EFA_MR_RELAXED_ORDERING != 0 &&
+	    ofi_nccl_pci_relaxed_ordering() &&
+	    IS_EFA_PROVIDER(prov_name)) {
+		return OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+	}
+	return 0;
+}
+
 static int in_list(const char *item, const char *list)
 {
 	int ret = 0;

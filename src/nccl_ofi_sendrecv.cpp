@@ -506,7 +506,8 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 					int dev_id,
 					nccl_ofi_mr_ckey_ref ckey,
 					int type,
-					nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+					nccl_net_ofi_sendrecv_mr_handle_t **mr_handle,
+					uint64_t opt_mr_flags)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
@@ -574,6 +575,11 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 		ret_handle->mr_key = static_cast<uint64_t>(key);
 		mr_attr.requested_key = ret_handle->mr_key;
 	}
+
+	/* Add the optional libfabric flags (e.g. PCIe relaxed ordering) supported by this domain.
+	 * This must stay after nccl_ofi_mr_ckey_fill_mr_attrs(), which resets regattr_flags.
+	 */
+	regattr_flags |= domain->filter_mr_flags(opt_mr_flags);
 
 	mr_result = nccl_ofi_ofiutils_mr_regattr(domain->domain,
 						 &mr_attr,
@@ -659,6 +665,12 @@ exit:
  *		Pointer to MR. MR must be aligned to system memory page size.
  * @param	size
  *		Size of MR. Size must be a multiple of system memory page size.
+ * @param	opt_mr_flags
+ *		Optional libfabric MR flags for this registration, applied only
+ *		where the domain allows them (filter_mr_flags()). 0 means no optional
+ *		flags (strong ordering). Currently the only such flag is
+ *		OFI_NCCL_EFA_MR_RELAXED_ORDERING (PCIe relaxed ordering); new
+ *		flags are enabled via nccl_ofi_ofiutils_mr_flag_mask().
  *
  * @return	OFI memory handle for data transfer operations
  * @return	0 on success
@@ -668,21 +680,24 @@ static int sendrecv_mr_buffers_internal_register(nccl_net_ofi_sendrecv_domain_t 
 						 nccl_net_ofi_sendrecv_ep_t *ep,
 						 nccl_ofi_idpool_t *key_pool, int dev_id,
 						 void *data, size_t size, int type,
-						 nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+						 nccl_net_ofi_sendrecv_mr_handle_t **mr_handle,
+						 uint64_t opt_mr_flags)
 {
 	assert(system_page_size > 0);
 	assert(NCCL_OFI_IS_PTR_ALIGNED(data, system_page_size));
 	assert(NCCL_OFI_IS_ALIGNED(size, system_page_size));
 
 	nccl_ofi_mr_ckey_t cache_key = nccl_ofi_mr_ckey_mk_vec(data, size, ep);
-	return sendrecv_mr_buffers_register(domain, ep->ofi_ep.get(), key_pool, dev_id, &cache_key, type, mr_handle);
+	return sendrecv_mr_buffers_register(domain, ep->ofi_ep.get(), key_pool, dev_id, &cache_key,
+					    type, mr_handle, opt_mr_flags);
 }
 
 
 static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid_ep *ofi_ep,
 				     nccl_ofi_idpool_t *key_pool, int dev_id,
 				     nccl_ofi_mr_ckey_ref ckey, int type,
-				     nccl_net_ofi_sendrecv_mr_handle_t **mhandle)
+				     nccl_net_ofi_sendrecv_mr_handle_t **mhandle,
+				     uint64_t opt_mr_flags)
 {
 	/* Validate type of buffer */
 	bool valid_buffer_type = false;
@@ -699,7 +714,8 @@ static int sendrecv_mr_base_register(nccl_net_ofi_sendrecv_domain_t *domain, fid
 		return -EINVAL;
 	}
 
-	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, ckey, type, mhandle);
+	return sendrecv_mr_buffers_register(domain, ofi_ep, key_pool, dev_id, ckey, type, mhandle,
+					    opt_mr_flags);
 }
 
 
@@ -743,7 +759,8 @@ static void sendrecv_comm_mr_base_dereg(nccl_net_ofi_sendrecv_mr_handle_t *mr_ha
 static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 				     nccl_ofi_mr_ckey_ref ckey,
 				     int type,
-				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle)
+				     nccl_net_ofi_sendrecv_mr_handle_t **mr_handle,
+				     uint64_t opt_mr_flags)
 {
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_sendrecv_ep_t *ep =
@@ -792,7 +809,8 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 
 		key_pool = domain->mr_rkey_pool;
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-						dev_id, ckey, type, &ret_handle);
+						dev_id, ckey, type, &ret_handle,
+						opt_mr_flags);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 			*mr_handle = nullptr;
 			return ret;
@@ -810,7 +828,8 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 	} else {
 		key_pool = domain->mr_rkey_pool;
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
-						dev_id, ckey, type, &ret_handle);
+						dev_id, ckey, type, &ret_handle,
+						opt_mr_flags);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
 			*mr_handle = nullptr;
 			return ret;
@@ -823,12 +842,21 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 
 int nccl_net_ofi_sendrecv_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey, int type_param, void **mhandle)
 {
-    return sendrecv_comm_mr_base_reg(this, ckey, type_param, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
+	/* User send buffer: source of fi_send, never a flush read origin -> relaxed ordering safe. */
+	return sendrecv_comm_mr_base_reg(this, ckey, type_param,
+					 reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle),
+					 OFI_NCCL_EFA_MR_RELAXED_ORDERING);
 }
 
 int nccl_net_ofi_sendrecv_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey, int type_param, void **mhandle)
 {
-    return sendrecv_comm_mr_base_reg(this, ckey, type_param, reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle));
+	/* User recv buffer: the inbound-write target where the RO gain is. Relaxed ordering is
+	 * safe for every memory type, including the flush origin: the flush is a read, EFA read
+	 * requests are always ordered behind earlier writes, and only the read response is
+	 * affected by the RO bit. */
+	return sendrecv_comm_mr_base_reg(this, ckey, type_param,
+					 reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t **>(mhandle),
+					 OFI_NCCL_EFA_MR_RELAXED_ORDERING);
 }
 
 int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
@@ -1235,7 +1263,8 @@ int nccl_net_ofi_sendrecv_recv_comm::alloc_and_reg_flush_buff(nccl_net_ofi_sendr
 	ret = sendrecv_mr_buffers_internal_register(domain_arg, ep_arg, key_pool, this->dev_id,
 						    this->flush_buff.host_buffer,
 						    system_page_size,
-						    NCCL_PTR_HOST, &mr_handle);
+						    NCCL_PTR_HOST, &mr_handle,
+						    OFI_NCCL_EFA_MR_RELAXED_ORDERING);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not register dummy buffer for flush, dev: %d",
 			      this->dev_id);

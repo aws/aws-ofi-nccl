@@ -481,6 +481,21 @@ public:
 	std::mutex domain_lock;
 
 	/**
+	 * @brief	Limit requested libfabric MR flags to those this domain may use.
+	 *
+	 * Callers pass the optional flags they would like (e.g. the EFA
+	 * relaxed-ordering flag) without knowing whether they apply on this
+	 * domain's provider and configuration; the flags that do not are dropped.
+	 *
+	 * @param opt_mr_flags:	Optional libfabric MR flags requested (0 = none)
+	 * @return		The subset of opt_mr_flags allowed for this domain
+	 */
+	inline uint64_t filter_mr_flags(uint64_t opt_mr_flags) const
+	{
+		return opt_mr_flags & mr_flag_mask;
+	}
+
+	/**
 	 * @brief       Erase all ep_table elements matching the provided ep
 	 */
 	void remove_ep_from_map(nccl_net_ofi_ep_t *ep);
@@ -499,6 +514,12 @@ protected:
 
 	/* The Domain index or a key in the device domain table */
 	const unsigned int domain_key;
+
+	/* Libfabric MR registration flags this domain may use (e.g. the EFA
+	 * relaxed-ordering bit). Fixed at construction from the build, the
+	 * parameters and the provider; 0 for providers that accept none. Applied
+	 * through filter_mr_flags(). */
+	const uint64_t mr_flag_mask;
 
 	/**
 	 * Release all endpoints by clearing the ep_table.
