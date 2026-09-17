@@ -383,6 +383,23 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
+				/* PAT region for multi-rank-per-node jobs. On NCCL versions
+				 * that don't support multi-rank-per-node PAT (e.g. 2.30.x,
+				 * which only allows one rank per node), NCCL marks
+				 * PAT/Simple as NCCL_ALGO_PROTO_IGNORE in the cost table, so
+				 * the region loop in region_get_coll_info_internal_v3() skips
+				 * this polygon and falls through to the Ring regions below. */
+				{.algorithm = NCCL_ALGO_PAT,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 7,
+				 .vertices = {
+					{0, 16},
+					{131072, 16},
+					{131072, 32},
+					{262144, 64},
+					{2097152, 128},
+					{2097152, TUNER_MAX_RANKS},
+					{0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL,
 				 .num_vertices = 9,
@@ -440,6 +457,23 @@ static ncclResult_t region_init_internal_p5en(nccl_ofi_tuner_region_context_t *r
 							  (nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
+				/* PAT region for multi-rank-per-node jobs. On NCCL versions
+				 * that don't support multi-rank-per-node PAT (e.g. 2.30.x,
+				 * which only allows one rank per node), NCCL marks
+				 * PAT/Simple as NCCL_ALGO_PROTO_IGNORE in the cost table, so
+				 * the region loop in region_get_coll_info_internal_v3() skips
+				 * this polygon and falls through to the Ring regions below. */
+				{.algorithm = NCCL_ALGO_PAT,
+				 .protocol = NCCL_PROTO_SIMPLE,
+				 .num_vertices = 7,
+				 .vertices = {
+					{0, 16},
+					{131072, 16},
+					{131072, 32},
+					{262144, 64},
+					{2097152, 128},
+					{2097152, TUNER_MAX_RANKS},
+					{0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 				 .protocol = NCCL_PROTO_LL,
 				 .num_vertices = 7,
@@ -1068,6 +1102,23 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
+				/* PAT region for multi-rank-per-node jobs. On NCCL versions
+				 * that don't support multi-rank-per-node PAT (e.g. 2.30.x,
+				 * which only allows one rank per node), NCCL marks
+				 * PAT/Simple as NCCL_ALGO_PROTO_IGNORE in the cost table, so
+				 * the region loop in region_get_coll_info_internal_v3() skips
+				 * this polygon and falls through to the Ring regions below. */
+				{.algorithm = NCCL_ALGO_PAT,
+					.protocol = NCCL_PROTO_SIMPLE,
+					.num_vertices = 7,
+					.vertices = {
+						{0, 16},
+						{131072, 16},
+						{131072, 32},
+						{262144, 64},
+						{2097152, 128},
+						{2097152, TUNER_MAX_RANKS},
+						{0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 					.protocol = NCCL_PROTO_LL,
 					.num_vertices = 10,
@@ -1129,6 +1180,23 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 							(nccl_ofi_tuner_point_t){TUNER_MAX_SIZE, TUNER_MAX_RANKS});
 
 			const nccl_ofi_tuner_region_t regions[] = {
+				/* PAT region for multi-rank-per-node jobs. On NCCL versions
+				 * that don't support multi-rank-per-node PAT (e.g. 2.30.x,
+				 * which only allows one rank per node), NCCL marks
+				 * PAT/Simple as NCCL_ALGO_PROTO_IGNORE in the cost table, so
+				 * the region loop in region_get_coll_info_internal_v3() skips
+				 * this polygon and falls through to the Ring regions below. */
+				{.algorithm = NCCL_ALGO_PAT,
+					.protocol = NCCL_PROTO_SIMPLE,
+					.num_vertices = 7,
+					.vertices = {
+						{0, 16},
+						{131072, 16},
+						{131072, 32},
+						{262144, 64},
+						{2097152, 128},
+						{2097152, TUNER_MAX_RANKS},
+						{0, TUNER_MAX_RANKS}}},
 				{.algorithm = NCCL_ALGO_RING,
 					.protocol = NCCL_PROTO_LL,
 					.num_vertices = 11,
