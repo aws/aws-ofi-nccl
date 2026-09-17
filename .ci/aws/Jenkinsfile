@@ -257,7 +257,7 @@ pipeline {
                     def nvidia_test_list = "--test-list test_nccl_test test_ofi_nccl_functional"
                     def neuron_test_list = "--test-list test_nccom_test"
 
-                    def base_os = "alinux2"
+                    def base_os = "alinux2023"
                     def p5en_base_os = "ubuntu2204"
 
                     def p3_p4_addl_args = "${base_args} ${container_addl_args} ${nvidia_test_list}"
