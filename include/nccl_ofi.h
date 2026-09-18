@@ -7,7 +7,6 @@
 
 #include <unordered_map>
 #include <memory>
-#include <optional>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -266,8 +265,6 @@ typedef struct nccl_ofi_properties {
 	size_t max_p2p_bytes;
 	/** Max transfer size for collective operations **/
 	size_t max_coll_bytes;
-	/** Support eager **/
-	bool eager_support;
 } nccl_ofi_properties_t;
 
 /**
@@ -290,7 +287,7 @@ public:
 			      int device_index,
 			      struct fi_info *info);
 
-	virtual int get_properties(nccl_ofi_properties_t *props) = 0;
+	virtual int get_properties(nccl_ofi_properties_t *props) const = 0;
 
 	/**
 	 * Retrieve an fi_info object associated with this device to be used for connection
@@ -441,7 +438,7 @@ public:
 	/**
 	 * @brief       Returns number of rails.
 	 */
-	virtual uint16_t get_ofi_num_rails() = 0;
+	virtual uint16_t get_ofi_num_rails() const = 0;
 
 	/* Create a new endpoint
 	 *
@@ -452,7 +449,7 @@ public:
 	/**
 	 * @brief	Returns the base domain's device back-pointer.
 	 */
-	inline nccl_net_ofi_device_t *get_device()
+	inline nccl_net_ofi_device_t *get_device() const
 	{
 		return device;
 	}
@@ -470,7 +467,10 @@ public:
 	/*
 	 * Protocol-agnostic MR cache for this device.
 	 */
-	std::optional<nccl_ofi_mr_cache> mr_cache;
+	nccl_ofi_mr_cache mr_cache;
+
+	/* Whether the MR cache is enabled for this domain */
+	const bool mr_cache_enabled;
 
 	/* Lock protecting mr_cache operations */
 	std::mutex mr_cache_lock;
@@ -610,7 +610,7 @@ public:
 	 * Get reference to the back-pointed net domain object associated with
 	 * this endpoint
 	 */
-	inline nccl_net_ofi_domain_t &get_domain()
+	inline nccl_net_ofi_domain_t &get_domain() const
 	{
 		return *domain;
 	}
