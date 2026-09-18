@@ -96,7 +96,8 @@ public:
 	 *
 	 * @param ckey: cache key, created by nccl_ofi_mr_ckey_mk_vec or nccl_ofi_mr_ckey_mk_dmabuf
 	 */
-	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle);
+	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle,
+		   bool allow_relaxed_ordering = false);
 
 	void dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr);
 

@@ -5,10 +5,27 @@
 #ifndef NCCL_OFI_OFIUTILS_H
 #define NCCL_OFI_OFIUTILS_H
 
+#include "config.h"
+
 #include <rdma/fabric.h>
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 
 #include "nccl_ofi_param.h"
 #include "ofi/resource_wrapper.h"
+
+/*
+ * Single compile-time constant for the EFA PCIe relaxed-ordering MR flag.
+ * Equals FI_EFA_MR_RELAXED_ORDERING when libfabric defines it, else 0.
+ * so call sites can OR it into the fi_mr_regattr() flags argument
+ * unconditionally (a harmless no-op on older libfabric).
+ */
+#if HAVE_DECL_FI_EFA_MR_RELAXED_ORDERING
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING FI_EFA_MR_RELAXED_ORDERING
+#else
+#define OFI_NCCL_EFA_MR_RELAXED_ORDERING 0
+#endif
 
 /*
  * Memeory util functions to ensure that the compiler does not optimize

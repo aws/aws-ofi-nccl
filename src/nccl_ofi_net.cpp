@@ -87,6 +87,10 @@ bool virt_addr_mr = false;
 /* Indicates if provider's data progress model is FI_PROGRESS_AUTO */
 bool data_progress_auto = false;
 
+/* Resolved once at init from OFI_NCCL_PCI_RELAXED_ORDERING + compile-time
+ * support + provider==efa.  See nccl_net_ofi_query_provider_capabilities(). */
+bool nccl_ofi_use_relaxed_ordering = false;
+
 /* Size of a memory page */
 size_t system_page_size = 0;
 
@@ -689,6 +693,22 @@ int nccl_net_ofi_query_provider_capabilities(const struct fi_info *selected_prov
 					selected_provider->fabric_attr->prov_name,
 					selected_provider->domain_attr->data_progress);
 		data_progress_auto = false;
+	}
+
+	/* Resolve the PCIe relaxed-ordering (RO) master switch once, here, where
+	 * the selected provider is known. RO is requested on data MRs only when
+	 * it is compiled in (OFI_NCCL_EFA_MR_RELAXED_ORDERING != 0), enabled via
+	 * OFI_NCCL_PCI_RELAXED_ORDERING, and the provider is EFA. Per-buffer role
+	 * still decides RO=1 vs RO=0 at each registration site (wired separately). */
+	{
+		/* Local avoids a tautological "0 != 0" when the flag is compiled out. */
+		const uint64_t ro_flag = OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+		nccl_ofi_use_relaxed_ordering =
+			(ro_flag != 0) && ofi_nccl_pci_relaxed_ordering() &&
+			(strncmp("efa", selected_provider->fabric_attr->prov_name,
+				 strlen("efa")) == 0);
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "PCIe relaxed ordering on data MRs: %s",
+			       nccl_ofi_use_relaxed_ordering ? "enabled" : "disabled");
 	}
 
 	return 0;

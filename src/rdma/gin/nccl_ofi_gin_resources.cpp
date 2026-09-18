@@ -174,7 +174,7 @@ void nccl_ofi_rdma_gin_ep_t::close_ofi_eps()
  * Set mr attrs. This function closely resembles the same one in RDMA
  */
 static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t *flags, int type,
-			   struct fi_mr_attr *mr_attr)
+			   struct fi_mr_attr *mr_attr, bool allow_relaxed_ordering)
 {
 	int ret = 0;
 
@@ -208,11 +208,18 @@ static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t 
 
 	mr_attr->requested_key = mr_key;
 
+	/* PCIe relaxed ordering on GIN symmetric data buffers when enabled and the
+	 * buffer role permits it (allow_relaxed_ordering; strict via FORCE_SO).
+	 * OFI_NCCL_EFA_MR_RELAXED_ORDERING is 0 when compiled out. */
+	if (nccl_ofi_use_relaxed_ordering && allow_relaxed_ordering) {
+		*flags |= OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+	}
+
 	return ret;
 }
 
 int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
-			      nccl_ofi_gin_mr_handle_t **mhandle)
+			      nccl_ofi_gin_mr_handle_t **mhandle, bool allow_relaxed_ordering)
 {
 	int ret = 0;
 
@@ -240,7 +247,8 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 	auto ret_handle =
 		std::make_unique<nccl_ofi_gin_mr_handle_t>(this->domain, num_rails, mr_key);
 
-	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr,
+			      allow_relaxed_ordering);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      domain.get_device()->dev_id);
