@@ -676,8 +676,10 @@ private:
 	   -1 means no pin (consult get_next_rail()). Guarded by ep_lock. */
 	int pinned_rail_id = -1;
 	/* Count of ops coalesced onto pinned_rail_id so far. The pin rotates to
-	   the next rail after GIN_REQS_PER_DOORBELL. Guarded by ep_lock. */
+	   the next rail after reqs_per_doorbell. Guarded by ep_lock. */
 	uint32_t pinned_rail_run = 0;
+	/* Validated runtime doorbell interval (OFI_NCCL_GIN_REQS_PER_DOORBELL). */
+	uint32_t reqs_per_doorbell;
 	/* For each rail, direct-indexed table of fi_addr => peer comm rank.
 	 * Requires FI_AV_TABLE so that fi_addr_t values are dense 0-based
 	 * indices. Unused slots are set to UINT32_MAX as a sentinel. */

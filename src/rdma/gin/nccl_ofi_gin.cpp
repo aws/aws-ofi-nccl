@@ -36,11 +36,29 @@ struct gin_connect_handle {
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
 };
 
+static uint32_t get_validated_reqs_per_doorbell()
+{
+	constexpr uint32_t min_reqs_per_doorbell = 1;
+	constexpr uint32_t max_reqs_per_doorbell =
+		NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL;
+
+	const uint32_t requested = ofi_nccl_gin_reqs_per_doorbell();
+	if (requested < min_reqs_per_doorbell || requested > max_reqs_per_doorbell) {
+		NCCL_OFI_WARN("OFI_NCCL_GIN_REQS_PER_DOORBELL must be between %u and %u; "
+			      "using default %u", min_reqs_per_doorbell,
+			      max_reqs_per_doorbell,
+			      NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL);
+		return NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL;
+	}
+	return requested;
+}
+
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
 				     nccl_net_ofi_recv_comm *r_comm_)
     : resources(resources_arg), resource_releaser { resources },
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
+      reqs_per_doorbell(get_validated_reqs_per_doorbell()),
       rank(rank_), nranks(nranks_),
       ag_comm(s_comm_, r_comm_, rank_, nranks_)
 {
@@ -659,7 +677,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	     defer      This op withholds its doorbell (posts FI_MORE) so a later
 	                op on the pinned rail rings it. Set for a single-stripe op
 	                that is aggregating, EXCEPT on the rotation-boundary op
-	                (every GIN_REQS_PER_DOORBELL) which rings instead, to
+	                (every reqs_per_doorbell) which rings instead, to
 	                flush the rail so the pin can move to a fresh rail.
 
 	   A single-stripe op also rides the open pinned rail (if any) so its
@@ -749,7 +767,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			}
 		}
 		defer = (num_xfers == 1) && aggregate &&
-			(pinned_rail_run + 1 < GIN_REQS_PER_DOORBELL);
+			(pinned_rail_run + 1 < reqs_per_doorbell);
 
 		nseg += num_xfers;
 		assert_always(nseg > 0);
@@ -813,7 +831,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			? static_cast<uint16_t>(pinned_rail_id)
 			: resources.get_next_rail();
 		defer = aggregate &&
-			(pinned_rail_run + 1 < GIN_REQS_PER_DOORBELL);
+			(pinned_rail_run + 1 < reqs_per_doorbell);
 	}
 
 	if (has_signal) {
