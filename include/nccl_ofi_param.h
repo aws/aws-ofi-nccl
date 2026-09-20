@@ -112,7 +112,8 @@ OFI_NCCL_PARAM(size_t, gin_cq_process_max_iter, "GIN_CQ_PROCESS_MAX_ITER", 4);
 
 /*
  * Number of consecutive single-stripe GIN puts counted between doorbell
- * boundaries. Values outside the supported range use the default.
+ * boundaries by the round-robin one-tail-per-rail doorbell policy. Values
+ * outside the supported range use the default.
  */
 inline constexpr uint32_t NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL = 16;
 OFI_NCCL_PARAM(uint32_t, gin_reqs_per_doorbell, "GIN_REQS_PER_DOORBELL",

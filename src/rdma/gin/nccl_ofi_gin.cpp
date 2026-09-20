@@ -59,6 +59,7 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
     : resources(resources_arg), resource_releaser { resources },
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       reqs_per_doorbell(get_validated_reqs_per_doorbell()),
+      tail_engine(resources_arg.get_ep().get_num_rails(), reqs_per_doorbell),
       rank(rank_), nranks(nranks_),
       ag_comm(s_comm_, r_comm_, rank_, nranks_)
 {
@@ -519,6 +520,15 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 
 	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
 
+	/* Drain any retained one-tail-per-rail tails before waiting below.
+	   The normal nonaggregate end-of-batch already empties every tail, but
+	   draining here (executing the engine's drain_all plan) guarantees no
+	   retained request is ever left un-rung so the wait cannot hang. */
+	{
+		std::lock_guard<std::mutex> lock(get_ep_lock());
+		close_drain();
+	}
+
 	/* Wait until all ACKs we requested have been received. Only ops
 	   that set is_ack_requested on the wire will generate a standalone
 	   ACK from the receiver. We track the sequence number of the last
@@ -581,30 +591,112 @@ int nccl_ofi_rdma_gin_put_comm::await_tx_window(nccl_ofi_gin_peer_rank_info &ran
 static inline void clear_write_reqs_pending_back_pointers(
 	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> &write_reqs)
 {
-	/* For posted write requests, clear their back-pointers only */
+	/* For posted write requests, detach every back-pointer into the
+	   umbrella we are about to return to the pool: both the pending flag
+	   and the status back-pointer. Clearing status too ensures no later
+	   hard-error record writes through a recycled umbrella. */
 	for (uint16_t i = 0; i < MAX_NUM_RAILS; i++) {
 		if (write_reqs[i]) {
 			write_reqs[i]->pending_flag = nullptr;
+			write_reqs[i]->status = nullptr;
 		}
 	}
 }
 
-void nccl_ofi_rdma_gin_put_comm::update_pin(bool defer, uint16_t rail_id)
+/* Assign the final flag on a never-posted write request and post it exactly
+   once. See the declaration for the ownership contract. Caller holds ep_lock. */
+int nccl_ofi_rdma_gin_put_comm::post_tail_request(nccl_net_ofi_gin_write_req_t *wreq,
+						  uint16_t rail, bool fi_more)
 {
-	if (defer) {
-		/* This op withheld its doorbell (FI_MORE) on rail_id. Hold the
-		   rail so the next op batches onto it, and count it toward the
-		   rotation interval. */
-		pinned_rail_id = static_cast<int>(rail_id);
-		pinned_rail_run++;
-	} else {
-		/* This op rang its doorbell, so nothing is left deferred on the
-		   pinned rail. Release the pin: the next op starts a fresh batch
-		   on whatever rail the scheduler hands it. This keeps the
-		   invariant that an open pin always means a waiting doorbell. */
-		pinned_rail_id = -1;
-		pinned_rail_run = 0;
+	/* Assign the final and only flag set for this never-posted request. */
+	wreq->set_flags(fi_more ? (uint64_t)(FI_REMOTE_CQ_DATA | FI_MORE)
+				: (uint64_t)FI_REMOTE_CQ_DATA);
+
+	int ret = wreq->post();
+	if (OFI_LIKELY(ret == 0)) {
+		return 0;
 	}
+
+	if (ret == -FI_EAGAIN) {
+		/* SQ full: hand to the existing pending queue. Retry there drops
+		   FI_MORE, so the rail will ring. Ownership moves to the queue;
+		   the back-pointers stay valid so completion clears them. */
+		resources.add_pending_req(wreq);
+		return 0;
+	}
+
+	/* Hard transport error: attribute it to the umbrella that OWNS this
+	   write (the original umbrella, even for a retained tail flushed by a
+	   later op) through the status back-pointer, clear the pending flag so
+	   that umbrella cannot stay permanently pending, detach both
+	   back-pointers, return the request to the pool, and surface the code. */
+	NCCL_OFI_WARN("GIN tail: write post failed on rail %u: %d", rail, ret);
+	if (wreq->status != nullptr) {
+		*(wreq->status) = ret;
+		wreq->status = nullptr;
+	}
+	if (wreq->pending_flag != nullptr) {
+		*(wreq->pending_flag) = false;
+		wreq->pending_flag = nullptr;
+	}
+	resources.return_req_to_pool(wreq);
+	return ret;
+}
+
+/* Execute one fixed-size tail plan in order. A prior-tail (non-current) hard
+   error is recorded on that tail's own umbrella by post_tail_request and must
+   NOT fail the current call; a current-action hard error fails the current
+   call. Caller holds ep_lock. */
+int nccl_ofi_rdma_gin_put_comm::execute_tail_plan(const tail_engine_type::plan &plan)
+{
+	int current_err = 0;
+	for (uint16_t i = 0; i < plan.count; i++) {
+		const auto &act = plan.actions[i];
+		int rc = post_tail_request(act.handle, act.rail, act.fi_more);
+		if (OFI_UNLIKELY(rc != 0 && rc != -FI_EAGAIN)) {
+			if (act.is_current) {
+				/* Fail the current call safely; post_tail_request
+				   already cleared this write's back-pointers and
+				   returned it to the pool. */
+				current_err = rc;
+			} else {
+				/* Prior-tail error: already recorded on its own
+				   umbrella. Do not fail the current call. */
+				NCCL_OFI_WARN("GIN tail: prior retained-tail flush "
+					      "failed (%d); current op unaffected", rc);
+			}
+		}
+	}
+	return current_err;
+}
+
+/* Execute a plan whose actions all belong to earlier operations. Validate the
+   contract before posting anything, then consume the shared executor's result:
+   prior-tail hard errors are recorded on their owners and cannot produce a
+   current-action error here. Caller holds ep_lock. */
+void nccl_ofi_rdma_gin_put_comm::execute_prior_tail_plan(
+	const tail_engine_type::plan &plan)
+{
+	for (uint16_t i = 0; i < plan.count; i++) {
+		assert_always(!plan.actions[i].is_current);
+	}
+
+	const int current_err = execute_tail_plan(plan);
+	assert_always(current_err == 0);
+}
+
+/* Drain every retained tail by executing the engine's drain_all plan with real
+   no-FI_MORE posts. Caller holds ep_lock. */
+void nccl_ofi_rdma_gin_put_comm::close_drain()
+{
+	const uint16_t open = tail_engine.open_tails();
+	if (open == 0) {
+		return;
+	}
+	NCCL_OFI_WARN("GIN tail: %u retained tail(s) present at close; draining "
+		      "(no FI_MORE)", open);
+	tail_engine_type::plan plan = tail_engine.drain_all();
+	execute_prior_tail_plan(plan);
 }
 
 int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr_handle_t *srcMhandle, size_t size,
@@ -613,7 +705,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 				  uint64_t signalValue, uint32_t signalOp, uint32_t optFlags,
 				  nccl_ofi_gin_req_t **request)
 {
-	/* NCCL's hint that more ops for this peer follow (see the defer decision below). */
+	/* NCCL's hint that more ops for this peer follow. */
 	const bool aggregate = (optFlags & ncclRmaOptFlagsAggregateRequests) != 0;
 	auto *src_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(srcMhandle);
 	auto *dst_mr = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(dstMhandle);
@@ -630,9 +722,6 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 	uint16_t msg_seq_num = rank_comm.tx_head & GIN_IMM_SEQ_MASK;
 	uint32_t remote_comm_id = rank_comm.comm_id;
 	auto scheduler = gin_ep.get_scheduler();
-	/* Rail for this op's write(s) and metadata send; assigned in the
-	   size branch below (both size>0 and signal-only paths set it). */
-	uint16_t rail_id;
 
 	/* Wait for a free slot in the TX window if full. */
 	{
@@ -641,19 +730,11 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			return ret;
 	}
 
-	/* Determine if this message needs an ACK.
-	 *
-	 * Same policy for SIGNAL, PUT-SIGNAL, and PUT-only: ask the receiver
-	 * to emit a standalone ACK once the outstanding window is at least
-	 * half full, and only every GIN_ACK_INTERVAL'th op above that
-	 * threshold (hysteresis -- otherwise we'd request an ACK on every op
-	 * once above 50% and flood the receiver with standalone ACKs). Once
-	 * an ACK arrives, tx_tail jumps forward and outstanding drops back
-	 * below the threshold, resetting the gate. */
-	bool has_signal = (signalOp != 0);
+	/* Same ACK policy as before: request a standalone ACK once the
+	   outstanding window is at least half full, with hysteresis. */
+	const bool has_signal = (signalOp != 0);
 	bool is_ack_requested = false;
 	const uint32_t outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
-
 	if (OFI_UNLIKELY(outstanding >= GIN_ACK_REQ_THRESHOLD)) {
 		if (OFI_UNLIKELY(rank_comm.consecutive_puts_without_ack++ >= GIN_ACK_INTERVAL)) {
 			is_ack_requested = true;
@@ -668,37 +749,6 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		rank_comm.has_pending_ack_request = true;
 	}
 
-	/* Two flags drive doorbell coalescing; both set in the size branch below.
-
-	     aggregate  NCCL's per-op hint that another op for this peer is already
-	                queued, so batching this op's doorbell is worthwhile.
-	                (Derived from optFlags at the top of the function.)
-
-	     defer      This op withholds its doorbell (posts FI_MORE) so a later
-	                op on the pinned rail rings it. Set for a single-stripe op
-	                that is aggregating, EXCEPT on the rotation-boundary op
-	                (every reqs_per_doorbell) which rings instead, to
-	                flush the rail so the pin can move to a fresh rail.
-
-	   A single-stripe op also rides the open pinned rail (if any) so its
-	   doorbell batches with the ops already queued there. A multi-stripe
-	   (large) op never defers or pins: it stripes across all rails and rings
-	   each one.
-
-	   No hang: defer implies aggregate, and NCCL ends every batch with a
-	   non-aggregate op. That op does not defer and is forced onto the pinned
-	   rail, so it rings the deferred doorbell. The rotation boundary is a
-	   second flush point. */
-	bool defer = false;
-
-	/* Determine how many segments to send */
-	uint16_t nseg = 0;
-	if (has_signal) {
-		/* For signal operations (putSignal or signal only), send
-		   metadata message */
-		nseg += 1;
-	}
-
 	NCCL_OFI_TRACE(NCCL_NET,
 		       "iputSignal srcOff %lu srcMhandle %p size %zu dstOff %lu"
 		       " dstMhandle %p dst_rank %u signalOff %lu signalMhandle %p"
@@ -706,16 +756,16 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		       srcOff, srcMhandle, size, dstOff, dstMhandle, dst_rank, signalOff,
 		       signalMhandle, signalValue, signalOp, msg_seq_num, is_ack_requested);
 
-
-	/* Create umbrella request for tracing */
 	auto *req = resources.get_req_from_pool<nccl_ofi_rdma_gin_iputsignal_req>(
 		*this, dst_rank, msg_seq_num);
-	/* Hold write_reqs for error clean up */
-	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs {};
-
-	int ret = 0;
 
 	NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_BEGIN(dev, size, this, dst_rank, msg_seq_num, req);
+
+	/* Hold posted write reqs for metadata-failure back-pointer cleanup. */
+	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs {};
+
+	uint16_t rail_id = 0; /* metadata rail */
+	uint16_t nseg = has_signal ? 1 : 0;
 
 	if (OFI_LIKELY(size > 0)) {
 		void *src = static_cast<uint8_t *>(src_mr->input_address) + srcOff;
@@ -723,132 +773,206 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		auto &dest_remote_mr = dst_mr->remote_mr[dst_rank];
 		uint64_t dest = dest_remote_mr.address_offset + dstOff;
 
-		/* Let the scheduler lay out the stripes. A multi-stripe (large) message
-		   stripes across rails and never defers; a single-stripe (small)
-		   message may ride one pinned rail when aggregating (or when a pin
-		   is already open). */
 		nccl_net_ofi_schedule_t *schedule =
 			scheduler->get_schedule(size, gin_ep.get_num_rails());
 		if (OFI_UNLIKELY(schedule == nullptr)) {
-			clear_write_reqs_pending_back_pointers(write_reqs);
 			resources.return_req_to_pool(req);
 			return -ENOMEM;
 		}
 		nccl_net_ofi_xfer_info_t *xfers = schedule->rail_xfer_infos;
 		uint16_t num_xfers = schedule->num_xfer_infos;
 
-		if (num_xfers == 1 && pinned_rail_id >= 0) {
-			/* A pin is open: a prior op left a deferred (un-rung)
-			   doorbell on pinned_rail_id. Land this single-stripe op on
-			   that same rail so the batch continues and the eventual
-			   non-deferring op (the rotation boundary, or the app
-			   clearing the aggregate hint) flushes it there; otherwise
-			   the scheduler would round-robin us elsewhere and strand
-			   the pinned rail. Overwriting xfers[0] is safe: num_xfers
-			   == 1, so there is no second stripe to collide with here. */
-			xfers[0].rail_id = static_cast<uint16_t>(pinned_rail_id);
-		} else if (num_xfers > 1 && pinned_rail_id >= 0) {
-			/* A multi-stripe op ran while a pin was open. It does not
-			   defer, so update_pin() releases the pin below; the pinned
-			   rail's deferred doorbell must be rung now or it strands. A
-			   striped op rings a doorbell on every rail it touches -- but
-			   with num_stripes < num_rails it may not touch pinned_rail_id.
-			   If so, redirect one stripe onto it (stripes carry distinct
-			   rails, so this only swaps a rail, never doubles one). */
-			bool touches_pin = false;
-			for (uint16_t i = 0; i < num_xfers; i++) {
-				if (xfers[i].rail_id == pinned_rail_id) {
-					touches_pin = true;
-					break;
-				}
-			}
-			if (!touches_pin) {
-				xfers[0].rail_id = static_cast<uint16_t>(pinned_rail_id);
-			}
+		/* Strict RR placement: a single-stripe op rides the RR-selected
+		   rail; the scheduler's multi-stripe layout is NOT redirected. */
+		if (num_xfers == 1) {
+			xfers[0].rail_id = tail_engine.select_rail();
 		}
-		defer = (num_xfers == 1) && aggregate &&
-			(pinned_rail_run + 1 < reqs_per_doorbell);
-
-		nseg += num_xfers;
-		assert_always(nseg > 0);
-		uint64_t data = GIN_IMM_SEG_DATA(remote_comm_id, msg_seq_num, nseg, is_ack_requested);
-
-		/* The metadata send (if any) colocates with the first stripe's rail. */
 		rail_id = xfers[0].rail_id;
+		nseg += num_xfers;
 
-		for (uint16_t rail_it = 0; rail_it < num_xfers; rail_it++) {
-			nccl_net_ofi_xfer_info_t *xfer_info = &xfers[rail_it];
-			const uint16_t rail = xfer_info->rail_id;
+		uint64_t data =
+			GIN_IMM_SEG_DATA(remote_comm_id, msg_seq_num, nseg, is_ack_requested);
+
+		if (num_xfers == 1 && !has_signal) {
+			/* Ordinary single-stripe payload put: build the real request
+			   but do not post it yet. The engine plan decides whether it
+			   is retained as a tail or terminates its rail now. */
+			nccl_net_ofi_xfer_info_t *xi = &xfers[0];
+			const uint16_t rail = xi->rail_id;
 			void *desc = fi_mr_desc(src_mhandle->get_mr(rail));
 
-			/* FI_MORE defers this rail's doorbell: for the first stripe of a
-			   put+signal (the metadata send that follows flushes it), or while
-			   deferring, to batch with the next op on the pinned rail. A striped
-			   op never defers, so it rings per stripe. */
-			uint64_t wr_flags = FI_REMOTE_CQ_DATA;
-			if ((has_signal && rail_it == 0) || defer)
-				wr_flags |= FI_MORE;
-
-			auto write_req = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
+			auto wreq = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
 				gin_ep.get_rail(rail).ofi_ep.get(),
-				(void *)((uintptr_t)src + xfer_info->offset), xfer_info->msg_size,
-				desc, data, rank_comm.address[rail],
-				dest + xfer_info->offset, dest_remote_mr.mr_key[rail],
-				this, wr_flags);
-
-			write_req->pending_flag = &(req->reqs_pending[rail_it]);
+				(void *)((uintptr_t)src + xi->offset), xi->msg_size, desc,
+				data, rank_comm.address[rail], dest + xi->offset,
+				dest_remote_mr.mr_key[rail], this,
+				(uint64_t)FI_REMOTE_CQ_DATA);
+			wreq->pending_flag = &(req->reqs_pending[0]);
+			wreq->status = &(req->status);
 #if HAVE_NVTX_TRACING || HAVE_LIBLTTNG_UST
-			write_req->set_info(dev, dst_rank, msg_seq_num);
+			wreq->set_info(dev, dst_rank, msg_seq_num);
 #endif
-			req->reqs_pending[rail_it] = true;
-			write_reqs[rail_it] = write_req;
+			req->reqs_pending[0] = true;
 
-			NCCL_OFI_TRACE_GIN_WRITE_BEGIN(dev, rail, xfer_info->msg_size, this,
-						       dst_rank, msg_seq_num, write_req);
-			ret = write_req->post();
-			if (OFI_UNLIKELY(ret != 0)) {
-				if (ret == -FI_EAGAIN) {
-					/* SQ full: queue for retry (FI_MORE dropped on retry). */
-					resources.add_pending_req(write_req);
+			NCCL_OFI_TRACE_GIN_WRITE_BEGIN(dev, rail, xi->msg_size, this,
+						       dst_rank, msg_seq_num, wreq);
+
+			/* Ask the engine for the fixed-size plan. The current
+			   request's handle is carried in the plan, so the executor
+			   posts it (and any retained tails) without any out-of-band
+			   pointer. */
+			tail_engine_type::plan plan =
+				tail_engine.on_single_stripe(rail, wreq, aggregate);
+
+			/* Execute every planned action even when the current request is
+			   retained: that plan can contain an older same-rail tail that
+			   the current request proved non-last. A retained current request
+			   itself is not present in the plan. */
+			int cur_err = execute_tail_plan(plan);
+			if (plan.current_retained) {
+				/* Its umbrella pending flag and status back-pointer stay live
+				   so a later flush attributes any hard error to this owner. */
+				nccl_net_ofi_release_schedule(scheduler, schedule);
+				rank_comm.tx_head = gin_cursor_inc(rank_comm.tx_head);
+				*request = req;
+				return 0;
+			}
+
+			/* At a doorbell boundary the plan also carries the current
+			   request. A current-action hard error fails this call; prior-tail
+			   errors are attributed to their own umbrellas and do not. */
+			nccl_net_ofi_release_schedule(scheduler, schedule);
+			if (OFI_UNLIKELY(cur_err != 0)) {
+				/* The current write was cleaned up (back-pointers
+				   dropped, returned to pool) by post_tail_request;
+				   release the current umbrella and fail safely. */
+				resources.return_req_to_pool(req);
+				return cur_err;
+			}
+			rank_comm.tx_head = gin_cursor_inc(rank_comm.tx_head);
+			*request = req;
+			return 0;
+		}
+
+		/* Build every current stripe before asking the engine for a plan. A
+		   non-signal aggregate request can retain one stripe per touched rail;
+		   signal requests force a boundary because metadata must follow data. */
+		tail_engine_type::current_by_rail current_by_rail {};
+		uint64_t touched_mask = 0;
+		for (uint16_t i = 0; i < num_xfers; i++) {
+			nccl_net_ofi_xfer_info_t *xi = &xfers[i];
+			const uint16_t rail = xi->rail_id;
+			void *desc = fi_mr_desc(src_mhandle->get_mr(rail));
+			assert(current_by_rail[rail] == nullptr &&
+			       "multi-stripe schedule repeats a rail");
+
+			/* A put-with-signal boundary posts its first stripe with
+			   FI_MORE because the metadata SEND follows on that rail. For
+			   retained stripes this initial value is replaced at the one
+			   real post by post_tail_request(). */
+			uint64_t wr_flags = FI_REMOTE_CQ_DATA;
+			if (has_signal && i == 0) {
+				wr_flags |= FI_MORE;
+			}
+
+			auto wreq = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
+				gin_ep.get_rail(rail).ofi_ep.get(),
+				(void *)((uintptr_t)src + xi->offset), xi->msg_size, desc,
+				data, rank_comm.address[rail], dest + xi->offset,
+				dest_remote_mr.mr_key[rail], this, wr_flags);
+			wreq->pending_flag = &(req->reqs_pending[i]);
+			wreq->status = &(req->status);
+#if HAVE_NVTX_TRACING || HAVE_LIBLTTNG_UST
+			wreq->set_info(dev, dst_rank, msg_seq_num);
+#endif
+			req->reqs_pending[i] = true;
+			write_reqs[i] = wreq;
+			current_by_rail[rail] = wreq;
+			touched_mask |= UINT64_C(1) << rail;
+
+			NCCL_OFI_TRACE_GIN_WRITE_BEGIN(dev, rail, xi->msg_size, this,
+						       dst_rank, msg_seq_num, wreq);
+		}
+
+		/* Multi-stripe puts now share the same logical doorbell interval as
+		   single-stripe puts. At a non-boundary every current stripe remains
+		   unposted as its rail's new tail. A signal always closes the interval. */
+		tail_engine_type::plan plan = tail_engine.on_multistripe(
+			touched_mask, current_by_rail, aggregate && !has_signal);
+		execute_prior_tail_plan(plan);
+
+		if (plan.current_retained) {
+			nccl_net_ofi_release_schedule(scheduler, schedule);
+			rank_comm.tx_head = gin_cursor_inc(rank_comm.tx_head);
+			*request = req;
+			return 0;
+		}
+
+		/* At a boundary, the plan has already posted older touched tails
+		   with FI_MORE and rung untouched tails. Post each current stripe
+		   now; absent a signal, these no-FI_MORE posts ring the touched rails. */
+		for (uint16_t i = 0; i < num_xfers; i++) {
+			auto *wreq = write_reqs[i];
+			int rc = wreq->post();
+			if (OFI_UNLIKELY(rc != 0)) {
+				if (rc == -FI_EAGAIN) {
+					resources.add_pending_req(wreq);
 					continue;
 				}
-				NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
-				/* Drop our slot's back-pointer before returning the req to
-				   the pool, so clear_write_reqs_pending_back_pointers() below
-				   does not write through a pooled pointer. */
-				write_reqs[rail_it] = nullptr;
-				resources.return_req_to_pool(write_req);
+
+				NCCL_OFI_WARN("GIN tail: write failed seq %hu", msg_seq_num);
+				write_reqs[i] = nullptr;
+				req->reqs_pending[i] = false;
+				wreq->pending_flag = nullptr;
+				wreq->status = nullptr;
+				resources.return_req_to_pool(wreq);
+
+				/* Requests after i were allocated for possible retention but
+				   have not been posted. Reclaim them before releasing their
+				   umbrella; earlier posted requests only need back-pointers
+				   detached by the common cleanup below. */
+				for (uint16_t j = i + 1; j < num_xfers; j++) {
+					auto *unposted = write_reqs[j];
+					if (unposted == nullptr) {
+						continue;
+					}
+					write_reqs[j] = nullptr;
+					req->reqs_pending[j] = false;
+					unposted->pending_flag = nullptr;
+					unposted->status = nullptr;
+					resources.return_req_to_pool(unposted);
+				}
+
 				nccl_net_ofi_release_schedule(scheduler, schedule);
 				clear_write_reqs_pending_back_pointers(write_reqs);
 				resources.return_req_to_pool(req);
-				return ret;
+				return rc;
 			}
 		}
+		rail_id = xfers[0].rail_id;
 		nccl_net_ofi_release_schedule(scheduler, schedule);
 	} else {
-		/* Signal-only: no data write, inherently single rail (pin-eligible). */
-		rail_id = (pinned_rail_id >= 0)
-			? static_cast<uint16_t>(pinned_rail_id)
-			: resources.get_next_rail();
-		defer = aggregate &&
-			(pinned_rail_run + 1 < reqs_per_doorbell);
+		/* Signal-only: RR-select the metadata rail. Terminate this rail's
+		   retained tail (if any) with FI_MORE (the metadata SEND rings
+		   it) and all other rails' tails with no FI_MORE, via the plan. */
+		rail_id = tail_engine.select_rail();
+		tail_engine_type::plan plan = tail_engine.on_signal_only(rail_id);
+		execute_prior_tail_plan(plan);
 	}
 
 	if (has_signal) {
-		/* Post metadata send with signal information */
-		nccl_ofi_freelist::fl_entry *metadata_elem = nullptr;
-
-		metadata_elem = metadata_fl.get()->entry_alloc();
+		nccl_ofi_freelist::fl_entry *metadata_elem = metadata_fl.get()->entry_alloc();
 		if (!metadata_elem) {
 			NCCL_OFI_WARN("Failed to allocate metadata freelist entry");
+			/* Put-with-signal writes may already be posted above; clear
+			   every posted write's back-pointers before returning the
+			   umbrella so no in-flight completion writes through it. */
 			clear_write_reqs_pending_back_pointers(write_reqs);
 			resources.return_req_to_pool(req);
 			return -ENOMEM;
 		}
-
 		auto *metadata_send =
 			static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(metadata_elem->ptr);
-
 		metadata_send->header.msg_type = GIN_MSG_TYPE_METADATA;
 		metadata_send->header.remote_comm_id = remote_comm_id;
 		metadata_send->header.seq_num = msg_seq_num;
@@ -865,42 +989,42 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			metadata_send->signal_value = 0;
 		}
 
-		/* Rings the pinned write's doorbell too -- unless this op is
-		   deferring, in which case the send is also deferred and flushed
-		   by a later op on this rail. */
-		const bool defer_doorbell = defer;
-		nccl_net_ofi_gin_metadata_send_req_t *send_req;
-		send_req = resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
-			gin_ep.get_rail(rail_id).ofi_ep.get(), rail_id, metadata_elem,
-			rank_comm.address[rail_id], metadata_fl.get(), this,
-			defer_doorbell ? (uint64_t)FI_MORE : 0);
+		/* The metadata SEND terminates the signal or put-with-signal
+		   doorbell interval on its rail (no FI_MORE). */
+		auto *send_req =
+			resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
+				gin_ep.get_rail(rail_id).ofi_ep.get(), rail_id, metadata_elem,
+				rank_comm.address[rail_id], metadata_fl.get(), this,
+				/*flags=*/0);
 
-		NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(dev, rail_id, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), this, dst_rank, msg_seq_num,
-						       send_req);
-		ret = send_req->post();
-		if (OFI_UNLIKELY(ret != 0)) {
-			if (ret == -FI_EAGAIN) {
+		NCCL_OFI_TRACE_GIN_METADATA_SEND_BEGIN(
+			dev, rail_id, sizeof(nccl_net_ofi_gin_signal_metadata_msg_t), this,
+			dst_rank, msg_seq_num, send_req);
+
+		int rc = send_req->post();
+		if (OFI_UNLIKELY(rc != 0)) {
+			if (rc == -FI_EAGAIN) {
 				resources.add_pending_req(send_req);
-				ret = 0;
 			} else {
-				NCCL_OFI_WARN("Metadata send failed for seq_num %hu", msg_seq_num);
+				NCCL_OFI_WARN("GIN tail: metadata send failed seq %hu",
+					      msg_seq_num);
 				resources.return_req_to_pool(send_req);
-				resources.return_req_to_pool(req);
+				/* Posted put-with-signal writes reference this
+				   umbrella; clear their back-pointers before
+				   returning it to the pool. */
 				clear_write_reqs_pending_back_pointers(write_reqs);
-				return ret;
+				resources.return_req_to_pool(req);
+				return rc;
 			}
 		}
-		send_req->pending_flag = &(req->reqs_pending[MAX_NUM_RAILS]); // last one
+		send_req->pending_flag = &(req->reqs_pending[MAX_NUM_RAILS]);
 #if HAVE_NVTX_TRACING || HAVE_LIBLTTNG_UST
 		send_req->set_info(dev, dst_rank, msg_seq_num);
 #endif
 		req->reqs_pending[MAX_NUM_RAILS] = true;
 	}
 
-	update_pin(defer, rail_id);
-
 	rank_comm.tx_head = gin_cursor_inc(rank_comm.tx_head);
-
 	*request = req;
 	return 0;
 }

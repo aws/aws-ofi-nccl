@@ -235,6 +235,16 @@ public:
 	static_assert(sizeof(reqs_pending) <= sizeof(any_reqs_pending),
 		      "any_reqs_pending must cover all reqs_pending bytes");
 
+	/* Aggregate status for this umbrella. Starts at 0 (success) and is set
+	   to a negative errno by the tail-flush executor if a write this
+	   umbrella OWNS hits a hard post error. Because a retained tail keeps a
+	   back-pointer to the umbrella that created it, a tail posted by a later
+	   umbrella still records its failure here, on the original owner. test()
+	   returns this once every pending subrequest has completed, so the error
+	   is surfaced against the op it belongs to and never against whichever
+	   op happened to trigger the flush. Guarded by ep_lock. */
+	int status = 0;
+
 private:
 	/* Associated Comm object */
 	nccl_ofi_rdma_gin_put_comm &gin_comm;
@@ -386,6 +396,23 @@ public:
 	int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
 			    uint16_t rail_id) override;
 
+	/**
+	 * Set the fi_writemsg flags on a NEVER-POSTED request.
+	 *
+	 * The round-robin one-tail-per-rail doorbell policy may retain a
+	 * request UNPOSTED as a rail's tail and only later assign its final
+	 * FI_MORE / no-FI_MORE decision immediately before its single post().
+	 * A request is posted exactly once, so mutating flags here does not
+	 * change any already-posted WQE (whose FI_MORE cannot be altered). Do
+	 * not call after post().
+	 *
+	 * @param new_flags: the complete fi_writemsg flag set to use on post().
+	 */
+	void set_flags(uint64_t new_flags)
+	{
+		flags = new_flags;
+	}
+
 private:
 	struct fid_ep *ep;
 	void *src;
@@ -397,7 +424,8 @@ private:
 	uint64_t key;
 	/* Flags for fi_writemsg. On retry FI_MORE is dropped as the
 	   request must be handled immediately and should not remain
-	   pending in the queue. */
+	   pending in the queue. Also settable via set_flags() while the
+	   request is retained UNPOSTED by the one-tail-per-rail policy. */
 	uint64_t flags;
 public:
 	/* Placed after private fields for cache locality with post() hot path above.
@@ -408,6 +436,14 @@ public:
 	   (e.g. recv_req_t), so we keep it here. */
 	void *comm;
 	bool *pending_flag;
+	/* Back-pointer to the `status` field of the umbrella iputSignal request
+	   that owns this write. A retained tail keeps pointing at the ORIGINAL
+	   umbrella that created it, even after later umbrellas post it. On a hard
+	   post error the executor records the failure through this pointer so the
+	   error is attributed to the owning umbrella (surfaced by its test()),
+	   never to whatever umbrella happened to flush the tail. Nullptr once the
+	   request is done or detached. */
+	int *status = nullptr;
 };
 
 /**
