@@ -126,8 +126,10 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size)
 	return ret == hipSuccess ? 0 : -EINVAL;
 }
 
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size,
+				    bool pcie_mapping, int *fd, size_t *offset)
 {
+	(void)pcie_mapping;
 #if HAVE_DECL_HIPMEMRANGEHANDLETYPEDMABUFFD
 	hipError_t ret = hipMemGetHandleForAddressRange(fd, (hipDeviceptr_t)aligned_ptr, aligned_size,
 						      hipMemRangeHandleTypeDmaBufFd, 0);

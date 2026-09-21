@@ -53,11 +53,13 @@ int nccl_net_ofi_gpu_mem_copy_host_to_device(void *dst, void *src, size_t size);
 
 /*
  * @brief Obtain the fd and offset for a dma buf.
- * The ptr and size provided as input must be aligned to page size
+ * The ptr and size provided as input must be aligned to page size.
+ * ROCm does not select a mapping type, so pcie_mapping is ignored.
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size,
+				    bool pcie_mapping, int *fd, size_t *offset);
 
 bool nccl_net_ofi_gpu_have_dma_buf_attr(void);
 bool nccl_net_ofi_gpu_have_gdr_support_attr(void);

@@ -484,7 +484,8 @@ int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr)
 	return 0;
 }
 
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset)
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size,
+				    bool pcie_mapping, int *fd, size_t *offset)
 {
 #if HAVE_CUDA_DMABUF_SUPPORT
 	unsigned long long flags = 0;
@@ -493,7 +494,9 @@ int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int 
 	assert(NCCL_OFI_IS_ALIGNED(aligned_size, system_page_size));
 
 # if HAVE_CUDA_DMABUF_MAPPING_TYPE_PCIE
-	flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+	if (pcie_mapping) {
+		flags = CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE;
+	}
 # endif
 
 	CUresult ret = pfn_cuMemGetHandleForAddressRange(fd, (uintptr_t)aligned_ptr, aligned_size,
