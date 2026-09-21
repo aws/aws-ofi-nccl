@@ -6,6 +6,7 @@ ep_addr_list
 freelist
 idpool
 mr
+topo
 msgbuff
 region_based_tuner
 scheduler
