@@ -3858,8 +3858,28 @@ int nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff(int dev_id,
 				size_t offset = 0;
 				int fd;
 
+				/* The flush has to reach the GPU the same way the
+				 * data it orders did, so only ask for the PCIe
+				 * BAR1 mapping when this device's NIC reaches its
+				 * GPU through a PCIe switch. */
+				bool pcie_mapping = false;
+				const nccl_ofi_topo_t *topo =
+					rdma_domain->rdma_domain_get_device()->rdma_device_get_plugin()->get_topo();
+				ret = nccl_ofi_topo_nic_gpu_share_pcie_switch(topo, nic_prov,
+									      &pcie_mapping);
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Unable to determine flush buffer DMA-BUF mapping (%d)", ret);
+					rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
+					if (rc != 0) {
+						NCCL_OFI_WARN("Unable to deallocate flush buffer (%d)", rc);
+					}
+					fb.buffer_base = nullptr;
+					return ret;
+				}
+
 				ret = nccl_net_ofi_gpu_get_dma_buf_fd(fb.buffer,
 								      system_page_size,
+								      pcie_mapping,
 								      &fd, &offset);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("Unable to retrieve flush buffer fd (%d)", ret);

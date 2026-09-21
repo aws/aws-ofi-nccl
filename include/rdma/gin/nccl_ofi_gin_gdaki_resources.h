@@ -421,7 +421,8 @@ public:
 		 * 8 bytes we logically use. */
 		int fd = -1;
 		size_t offset = 0;
-		if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_mem, actual_size, &fd, &offset) != 0) {
+		if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_mem, actual_size, false,
+						    &fd, &offset) != 0) {
 			nccl_net_ofi_gpu_vmm_free(gpu_mem, actual_size);
 			throw std::runtime_error("gdaki_hw_counter: get_dma_buf_fd failed");
 		}

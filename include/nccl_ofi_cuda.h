@@ -107,13 +107,20 @@ int nccl_net_ofi_gpu_host_get_device_pointer(void **dev_ptr, void *host_ptr);
 
 /*
  * @brief Uses cuMemGetHandleForAddressRange() to obtain
- * the fd and offset for a dma buf. In case CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE
+ * the fd and offset for a dma buf.
+ *
+ * A standalone export cannot know which NIC will import the fd, so the caller
+ * states whether the handle should be mapped via PCIe BAR1
+ * (CU_MEM_RANGE_FLAG_DMA_BUF_MAPPING_TYPE_PCIE).  That mapping is only
+ * meaningful on a platform where the GPU is reachable over both PCIe and C2C.
+ * When pcie_mapping is false no mapping type is requested.  In case the mapping
  * is not supported we retry with flags set to 0.
  * The ptr and size provided as input must be aligned to page size
  * @return	0 on success
  *		-1 on error
  */
-int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size, int *fd, size_t *offset);
+int nccl_net_ofi_gpu_get_dma_buf_fd(void *aligned_ptr, size_t aligned_size,
+				    bool pcie_mapping, int *fd, size_t *offset);
 
 /*
  * @brief Allocate GPU memory using the CUDA VMM API (cuMemCreate + cuMemMap)

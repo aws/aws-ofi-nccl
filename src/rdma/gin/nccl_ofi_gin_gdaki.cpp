@@ -369,7 +369,8 @@ static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 	 * (rounded to VMM granularity), not just the bytes we use. */
 	int pv_fd = -1;
 	size_t pv_fd_offset = 0;
-	if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_pool, actual_size, &pv_fd, &pv_fd_offset) != 0) {
+	if (nccl_net_ofi_gpu_get_dma_buf_fd(gpu_pool, actual_size, false,
+					    &pv_fd, &pv_fd_offset) != 0) {
 		/* putvalue_buf / putvalue_pool_bytes are already set, so the ctx
 		 * destructor frees the VMM allocation on this throw path, the
 		 * same way it does for the get_gpu_device_for_addr and
