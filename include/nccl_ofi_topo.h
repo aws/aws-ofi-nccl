@@ -314,6 +314,33 @@ int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists);
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
 
 /*
+ * @brief	Test whether two topology nodes sit under a common PCIe switch
+ *
+ * The nearest common ancestor is found from parent links because hwloc gives
+ * I/O objects virtual depths based on object type rather than structural
+ * depth, so depth comparison cannot locate an ancestor when the two branches
+ * hold different numbers of bridges.
+ *
+ * @return	true if the closest common ancestor is a PCI-to-PCI bridge
+ */
+bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
+
+/*
+ * @brief	Test whether a NIC reaches its closest GPU through a PCIe switch
+ *
+ * Uses the GPU that NIC grouping already associated with the NIC's group.
+ * Callers use this to decide whether GPU memory the NIC accesses should be
+ * exported with the PCIe BAR1 DMA-BUF mapping.  A NIC or GPU that topology
+ * cannot place is not evidence of a PCIe switch path, so `result` is false.
+ *
+ * @return	0, on success
+ *		non-zero, on error
+ */
+int nccl_ofi_topo_nic_gpu_share_pcie_switch(const nccl_ofi_topo_t *topo,
+					    struct fi_info *nic_info,
+					    bool *result);
+
+/*
  * @brief	Check if topology has EFA/ENA devices
  *
  * @param	topo

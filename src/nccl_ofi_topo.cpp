@@ -320,6 +320,93 @@ static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 	return 0;
 }
 
+bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second)
+{
+	if (first == NULL || second == NULL) {
+		return false;
+	}
+
+	/*
+	 * Find the nearest common ancestor by comparing objects, walking one
+	 * branch at a time.
+	 *
+	 * hwloc_get_common_ancestor_obj() is not usable here. It lifts whichever
+	 * object reports the greater depth until the two depths match, but hwloc
+	 * gives I/O objects a virtual depth per object type (every bridge is
+	 * HWLOC_TYPE_DEPTH_BRIDGE, every PCI device is
+	 * HWLOC_TYPE_DEPTH_PCI_DEVICE) rather than a position in the tree, and
+	 * documents that those values must not be compared. Two branches holding
+	 * different numbers of bridges therefore never line up: the walk passes
+	 * the common ancestor, decides the root is deeper than a bridge, and
+	 * follows the root's NULL parent. A NIC on a host bridge and a GPU behind
+	 * a PCIe switch is exactly that shape.
+	 *
+	 * Comparing object identity needs no depth, and NULL ends each walk.
+	 */
+	hwloc_obj_t common = NULL;
+	for (hwloc_obj_t first_up = first; first_up != NULL && common == NULL;
+	     first_up = first_up->parent) {
+		for (hwloc_obj_t second_up = second; second_up != NULL;
+		     second_up = second_up->parent) {
+			if (first_up == second_up) {
+				common = first_up;
+				break;
+			}
+		}
+	}
+
+	/*
+	 * A bridge entered from PCI is a PCIe switch, so both objects are behind
+	 * the same switch. Meeting anywhere else, such as on a host bridge or at
+	 * the machine root, means the two only share a path through the host.
+	 */
+	return common != NULL && common->type == HWLOC_OBJ_BRIDGE &&
+	       common->attr != NULL &&
+	       common->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
+}
+
+int nccl_ofi_topo_nic_gpu_share_pcie_switch(const nccl_ofi_topo_t *topo,
+					    struct fi_info *nic_info,
+					    bool *result)
+{
+	if (topo == NULL || topo->topo == NULL || nic_info == NULL || result == NULL) {
+		return -EINVAL;
+	}
+
+	*result = false;
+
+	/*
+	 * Reuse the lookup that grouping uses to tie a provider to its PCI
+	 * device node.
+	 */
+	hwloc_obj_t nic = NULL;
+	int ret = get_hwloc_pcidev_by_fi_info(topo->topo, nic_info, &nic);
+	if (ret != 0) {
+		return ret;
+	}
+
+	/*
+	 * A NIC that hwloc does not report, or that grouping never attached user
+	 * data to, tells us nothing about how it reaches a GPU. Report no PCIe
+	 * switch rather than guessing, since that is the mapping that works
+	 * wherever a NIC can reach GPU memory at all.
+	 */
+	if (nic == NULL || nic->userdata == NULL) {
+		return 0;
+	}
+
+	/*
+	 * gpu_group_node is the GPU that NIC grouping already found closest to
+	 * this NIC's group; see propagate_accel_count() and
+	 * create_groups_from_info_list(). It is NULL when no accelerator was
+	 * associated, which nccl_ofi_topo_share_pcie_switch() reports as false.
+	 */
+	nccl_ofi_topo_data_t *data = (nccl_ofi_topo_data_t *)nic->userdata;
+	*result = nccl_ofi_topo_share_pcie_switch(nic, data->gpu_group_node);
+
+	return 0;
+}
+
 /*
  * brief	Checks if PCI device node has any accelerators at the same level
  *

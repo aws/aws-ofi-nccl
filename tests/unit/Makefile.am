@@ -23,6 +23,7 @@ noinst_PROGRAMS = \
 	idpool \
 	ep_addr_list \
 	mr \
+	topo \
 	histogram_binner \
 	histogram \
 	dlopen_c_test \
@@ -60,6 +61,7 @@ msgbuff_SOURCES = $(base_sources) msgbuff.cpp
 scheduler_SOURCES = $(base_sources) scheduler.cpp
 ep_addr_list_SOURCES = $(base_sources) ep_addr_list.cpp
 mr_SOURCES = $(base_sources) mr.cpp
+topo_SOURCES = $(base_sources) topo.cpp
 aws_platform_mapper_SOURCES = $(base_sources) aws_platform_mapper.cpp
 histogram_binner_SOURCES = $(base_sources) histogram_binner.cpp
 histogram_SOURCES = $(base_sources) histogram.cpp
