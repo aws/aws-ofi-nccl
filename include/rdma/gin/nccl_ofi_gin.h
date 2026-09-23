@@ -8,6 +8,7 @@
 #include "rdma/gin/nccl_ofi_gin_allgather.h"
 #include "rdma/gin/nccl_ofi_gin_resources.h"
 #include "rdma/gin/nccl_ofi_gin_types.h"
+#include "rdma/gin/nccl_ofi_gin_rr_tail.h"
 #include "nccl_ofi_dlist.h"
 #include "nccl_ofi_mpsc_ring.h"
 #include "nccl_ofi_spsc_ring.h"
@@ -591,6 +592,41 @@ public:
 		       nccl_ofi_gin_symm_mr_handle_t *signalMhandle, uint64_t signalValue, uint32_t signalOp,
 		       uint32_t optFlags, nccl_ofi_gin_req_t **request) override;
 
+	/* Type of the strict round-robin, one-unposted-tail-per-rail doorbell
+	   policy engine, bound to the concrete retained-write handle. */
+	using tail_engine_type = nccl_ofi_gin_tail_engine<nccl_net_ofi_gin_write_req_t *>;
+
+	/* Assign the final FI_MORE / no-FI_MORE flag on a never-posted write
+	 * request and post it exactly once. On -FI_EAGAIN, ownership moves to
+	 * the existing pending queue (retry drops FI_MORE and rings the rail).
+	 * On a hard error the failure is recorded through the request's `status`
+	 * back-pointer onto its ORIGINAL umbrella, its pending flag and status
+	 * back-pointers are cleared, and the request is returned to the pool.
+	 * Returns the post() result. Caller holds ep_lock. */
+	int post_tail_request(nccl_net_ofi_gin_write_req_t *wreq, uint16_t rail,
+			      bool fi_more) REQUIRES(get_ep_lock());
+
+	/* Execute one fixed-size tail plan: post every action's carried handle
+	 * in order. An action marked is_current posts the caller's current
+	 * request; a hard error on a NON-current (prior-tail) action is recorded
+	 * on that tail's original umbrella by post_tail_request and does NOT fail
+	 * the current call, while a hard error on the current action fails the
+	 * current call. Returns 0 on success or the current action's hard-error
+	 * code. Caller holds ep_lock. */
+	int execute_tail_plan(const tail_engine_type::plan &plan) REQUIRES(get_ep_lock());
+
+	/* Execute a plan that must contain only prior retained tails. Their hard
+	 * errors are recorded on their original umbrellas, so this caller has no
+	 * error to consume. Production assertions keep this void contract honest
+	 * if a future engine change adds a current action. Caller holds ep_lock. */
+	void execute_prior_tail_plan(const tail_engine_type::plan &plan)
+		REQUIRES(get_ep_lock());
+
+	/* Drain every retained tail (executes the engine's drain_all plan) with
+	 * real no-FI_MORE posts. Used at communicator close/quiesce so no
+	 * retained request is ever left un-rung. Caller holds ep_lock. */
+	void close_drain() REQUIRES(get_ep_lock());
+
 	int iget(uint64_t remoteOff, nccl_ofi_gin_symm_mr_handle_t *remoteMhandle,
 		 size_t size, uint64_t localOff, nccl_ofi_gin_symm_mr_handle_t *localMhandle,
 		 uint32_t rank, uint32_t optFlags, nccl_ofi_gin_req_t **request) override;
@@ -671,13 +707,17 @@ private:
 	CUcontext gdrcopy_cuda_ctx = nullptr;
 
 	/* --- TIER 2: Receiver side — every CQ completion --- */
-	/* Rail pinned across an aggregated iputSignal sequence: when an op is
-	   posted with FI_MORE, the next op must reuse this rail to flush it.
-	   -1 means no pin (consult get_next_rail()). Guarded by ep_lock. */
-	int pinned_rail_id = -1;
-	/* Count of ops coalesced onto pinned_rail_id so far. The pin rotates to
-	   the next rail after GIN_REQS_PER_DOORBELL. Guarded by ep_lock. */
-	uint32_t pinned_rail_run = 0;
+	/* Validated runtime doorbell interval (OFI_NCCL_GIN_REQS_PER_DOORBELL). */
+	uint32_t reqs_per_doorbell;
+	/* Strict round-robin, one-unposted-tail-per-rail doorbell policy engine.
+	   This is the sole iputSignal doorbell policy: writes are placed round
+	   robin across all active rails while doorbell aggregation is retained by
+	   holding exactly one real, never-posted "tail" request per rail. Stored
+	   by value and initialized with the active rail count and the validated
+	   doorbell interval. Every tail decision -- including ordinary
+	   single-stripe puts -- goes through this engine's fixed-size plans.
+	   Guarded by ep_lock. */
+	tail_engine_type tail_engine;
 	/* For each rail, direct-indexed table of fi_addr => peer comm rank.
 	 * Requires FI_AV_TABLE so that fi_addr_t values are dense 0-based
 	 * indices. Unused slots are set to UINT32_MAX as a sentinel. */
@@ -729,14 +769,6 @@ private:
 	 */
 	int send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, uint32_t peer_rank,
 		     uint32_t rx_consumed) REQUIRES(get_ep_lock());
-
-	/* Update the pinned-rail state after an op posted on `rail_id`:
-	   - deferring: this op kept its doorbell (FI_MORE); hold the rail and
-	     count it toward the rotation interval.
-	   - otherwise: this op rang its doorbell, so nothing is left deferred;
-	     release the pin (the next op re-pins on the scheduler's rail). */
-	void update_pin(bool defer, uint16_t rail_id)
-		REQUIRES(get_ep_lock());
 
 	/* Look up the signal's GDRCopy handle in mr_handle_map and fill `work`
 	   with everything the worker needs to apply the read-modify-write.

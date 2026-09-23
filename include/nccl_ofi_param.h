@@ -5,6 +5,8 @@
 #ifndef NCCL_OFI_PARAM_H_
 #define NCCL_OFI_PARAM_H_
 
+#include <cstdint>
+
 #include "nccl_ofi_param_impl.h"
 
 // If these macros are not already defined, define them for use as a normal
@@ -107,6 +109,15 @@ OFI_NCCL_PARAM(size_t, cq_read_count, "CQ_READ_COUNT", 4);
  * Maximum number of iterations for GIN CQ processing loop.
  */
 OFI_NCCL_PARAM(size_t, gin_cq_process_max_iter, "GIN_CQ_PROCESS_MAX_ITER", 4);
+
+/*
+ * Number of consecutive single-stripe GIN puts counted between doorbell
+ * boundaries by the round-robin one-tail-per-rail doorbell policy. Values
+ * outside the supported range use the default.
+ */
+inline constexpr uint32_t NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL = 16;
+OFI_NCCL_PARAM(uint32_t, gin_reqs_per_doorbell, "GIN_REQS_PER_DOORBELL",
+	       NCCL_OFI_GIN_DEFAULT_REQS_PER_DOORBELL);
 
 /*
  * Completion queue size. Defaults to EFA RDM path size.

@@ -213,6 +213,11 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 		/* All sub-requests done; mark done and release the umbrella. */
 		auto &gin_ep = gin_comm.get_resources().get_ep();
 		*done = 1;
+		/* Surface the aggregate status recorded by the tail-flush
+		   executor (0 on success). A hard post error on a write this
+		   umbrella owns is reported here, once every subrequest is
+		   complete, regardless of which op flushed the tail. */
+		const int result = this->status;
 		std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
 			       this->msg_seq_num);
@@ -221,7 +226,7 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 		NCCL_OFI_TRACE_GIN_TEST_FUNC_END(gin_comm.get_dev(), &gin_comm,
 						 peer_rank, msg_seq_num, this, 1, 1);
 		gin_comm.get_resources().return_req_to_pool(this);
-		return 0;
+		return result;
 	} else {
 		/* NCCL GIN Proxy only calls test() when state->done == 0,
 		 * so skip the redundant store (*done = 0) for now.
@@ -275,6 +280,9 @@ int nccl_net_ofi_gin_write_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entr
 	if (OFI_LIKELY(pending_flag != nullptr)) {
 		*pending_flag = false;
 	}
+	/* A successful completion records no error; drop the status
+	   back-pointer so nothing writes through it after we recycle. */
+	status = nullptr;
 
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(comm);
 	gin_comm->get_resources().return_req_to_pool(this);
