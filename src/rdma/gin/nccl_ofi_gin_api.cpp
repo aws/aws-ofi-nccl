@@ -338,15 +338,22 @@ ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 	   worker, so outstanding_gdrcopy stays zero and the worker can never
 	   reference this comm again. */
 	while (true) {
-		std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
-		if (gin_comm->has_outstanding_ack_sends()) {
-			ret = gin_comm->get_resources().progress();
-			if (OFI_UNLIKELY(ret != 0)) {
-				return nccl_net_ofi_retval_translate(ret);
+		{
+			std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
+			if (gin_comm->has_outstanding_ack_sends()) {
+				ret = gin_comm->get_resources().progress();
+				if (OFI_UNLIKELY(ret != 0)) {
+					return nccl_net_ofi_retval_translate(ret);
+				}
+				continue;
 			}
-			continue;
+			gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
 		}
-		gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
+		/* Delete outside ep_lock: the comm may hold the last shared_ptr to the
+		   resources, so ~gin_comm can destroy gin_ep and with it the very
+		   ep_lock we would otherwise still be holding. remove_comm above already
+		   unlinked the comm from the resources under the lock, so no CQ path can
+		   reach it once the lock is dropped. */
 		delete gin_comm;
 		break;
 	}
