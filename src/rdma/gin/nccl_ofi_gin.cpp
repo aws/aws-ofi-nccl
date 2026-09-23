@@ -13,7 +13,6 @@
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_param.h"
-#include "nccl_ofi_rdma.h"
 #include "nccl_ofi_tracepoint.h"
 
 #include <system_error>
@@ -36,15 +35,15 @@ struct gin_connect_handle {
 	nccl_ofi_addr ep_names[MAX_NUM_RAILS];
 };
 
-nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
+nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
 				     nccl_net_ofi_recv_comm *r_comm_)
-    : resources(resources_arg), resource_releaser { resources },
+    : resources_sp(std::move(resources_arg)),
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       rank(rank_), nranks(nranks_),
       ag_comm(s_comm_, r_comm_, rank_, nranks_)
 {
-	auto &ep = resources.get_ep();
+	auto &ep = get_resources().get_ep();
 
 	std::lock_guard scoped_ep_lock(ep.ep_lock);
 
@@ -65,15 +64,14 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 	}
 #endif
 
-	size_t comm_id = resources.alloc_comm_id(); /* TODO free */
+	size_t comm_id = get_resources().alloc_comm_id(); /* TODO free */
 	if (OFI_UNLIKELY(comm_id == FI_KEY_NOTAVAIL)) {
 		NCCL_OFI_WARN("No comm id available");
 		throw std::runtime_error("No comm id available");
 	}
 	this->local_comm_id = comm_id;
 
-	resources.set_comm(local_comm_id, *this);
-	resources.increment_ref_cnt();
+	get_resources().set_comm(local_comm_id, *this);
 
 #if HAVE_CUDA
 	/* Capture the app's context on this context-bearing thread so discovery
@@ -98,7 +96,7 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &r
 		(void)nccl_ofi_gin_gdrcopy_worker::get();
 	} catch (const std::exception &err) {
 		NCCL_OFI_WARN("Failed to start GIN gdrcopy worker: %s", err.what());
-		resources.remove_comm(local_comm_id);
+		get_resources().remove_comm(local_comm_id);
 		throw;
 	}
 }
@@ -197,21 +195,17 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 		}
 	}
 
-	/* Create a GIN resources object on the endpoint if it does not exist */
-	auto *rdma_ep = static_cast<nccl_net_ofi_rdma_ep_t *>(ep.get());
-	auto *resources = rdma_ep->get_gin_resources();
-	if (resources == nullptr) {
-		resources = new nccl_ofi_gin_resources(*ep);
-		rdma_ep->set_gin_resources(resources);
-	}
+	/* Look up (or create on first use) the GIN resources for this endpoint.
+	   GIN owns this association; the net endpoint does not know about GIN. */
+	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
-		new nccl_ofi_rdma_gin_put_comm(*resources, rank, nranks, s_comm, r_comm);
+		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];
 
-	auto &gin_ep = gin_comm->resources.get_ep();
+	auto &gin_ep = gin_comm->get_resources().get_ep();
 
 	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 	const int num_rails = static_cast<int>(gin_ep.get_num_rails());
@@ -274,8 +268,8 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 	auto &rank_comm = gin_comm.rank_comms[peer_rank];
 	uint32_t peer_comm_id = rank_comm.comm_id;
 
-	auto &ep = gin_comm.resources.get_ep();
-	auto *ack_fl = gin_comm.resources.get_ack_send_fl();
+	auto &ep = gin_comm.get_resources().get_ep();
+	auto *ack_fl = gin_comm.get_resources().get_ack_send_fl();
 
 	auto *ack_elem = ack_fl->entry_alloc();
 	if (!ack_elem) {
@@ -293,7 +287,7 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 
 	nccl_net_ofi_gin_sendack_req_t *req;
 	try {
-		req = gin_comm.resources.get_req_from_pool<nccl_net_ofi_gin_sendack_req_t>(
+		req = gin_comm.get_resources().get_req_from_pool<nccl_net_ofi_gin_sendack_req_t>(
 			gin_comm, ofi_ep, rail_id, ack_elem,
 			rank_comm.address[rail_id], ack_fl);
 	} catch (...) {
@@ -305,10 +299,10 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 
 	int ret = req->post();
 	if (ret == -FI_EAGAIN) {
-		gin_comm.resources.add_pending_req(req);
+		gin_comm.get_resources().add_pending_req(req);
 		ret = 0;
 	} else if (ret != 0) {
-		gin_comm.resources.return_req_to_pool(req);
+		gin_comm.get_resources().return_req_to_pool(req);
 	}
 
 	return ret;
@@ -349,7 +343,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
 				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
 {
-	auto &gin_ep = resources.get_ep();
+	auto &gin_ep = get_resources().get_ep();
 
 	auto *mr_handle = new nccl_ofi_rdma_gin_symm_mr_handle {};
 
@@ -497,7 +491,7 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSymLocked(nccl_ofi_rdma_gin_symm_mr_handl
 int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 {
 	int ret = 0;
-	auto &ep_lock = resources.get_ep().ep_lock;
+	auto &ep_lock = get_resources().get_ep().ep_lock;
 
 	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
 
@@ -523,7 +517,7 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 				}
 			}
 			if (any_pending) {
-				ret = resources.progress();
+				ret = get_resources().progress();
 				if (OFI_UNLIKELY(ret != 0)) {
 					return ret;
 				}
@@ -545,7 +539,7 @@ int nccl_ofi_rdma_gin_put_comm::await_tx_window(nccl_ofi_gin_peer_rank_info &ran
 	while (OFI_UNLIKELY(outstanding >= (uint32_t)(GIN_IMM_SEQ_MASK + 1))) {
 		{
 			std::lock_guard<std::mutex> lock(get_ep_lock());
-			int ret = resources.progress();
+			int ret = get_resources().progress();
 			if (OFI_UNLIKELY(ret != 0)) {
 				return ret;
 			}
@@ -607,7 +601,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		return -EINVAL;
 	}
 
-	auto &gin_ep = resources.get_ep();
+	auto &gin_ep = get_resources().get_ep();
 	auto &rank_comm = rank_comms[dst_rank];
 	uint16_t msg_seq_num = rank_comm.tx_head & GIN_IMM_SEQ_MASK;
 	uint32_t remote_comm_id = rank_comm.comm_id;
@@ -690,7 +684,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 
 
 	/* Create umbrella request for tracing */
-	auto *req = resources.get_req_from_pool<nccl_ofi_rdma_gin_iputsignal_req>(
+	auto *req = get_resources().get_req_from_pool<nccl_ofi_rdma_gin_iputsignal_req>(
 		*this, dst_rank, msg_seq_num);
 	/* Hold write_reqs for error clean up */
 	std::array<nccl_net_ofi_gin_write_req_t *, MAX_NUM_RAILS> write_reqs {};
@@ -713,7 +707,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			scheduler->get_schedule(size, gin_ep.get_num_rails());
 		if (OFI_UNLIKELY(schedule == nullptr)) {
 			clear_write_reqs_pending_back_pointers(write_reqs);
-			resources.return_req_to_pool(req);
+			get_resources().return_req_to_pool(req);
 			return -ENOMEM;
 		}
 		nccl_net_ofi_xfer_info_t *xfers = schedule->rail_xfer_infos;
@@ -771,7 +765,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			if ((has_signal && rail_it == 0) || defer)
 				wr_flags |= FI_MORE;
 
-			auto write_req = resources.get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
+			auto write_req = get_resources().get_req_from_pool<nccl_net_ofi_gin_write_req_t>(
 				gin_ep.get_rail(rail).ofi_ep.get(),
 				(void *)((uintptr_t)src + xfer_info->offset), xfer_info->msg_size,
 				desc, data, rank_comm.address[rail],
@@ -791,7 +785,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 			if (OFI_UNLIKELY(ret != 0)) {
 				if (ret == -FI_EAGAIN) {
 					/* SQ full: queue for retry (FI_MORE dropped on retry). */
-					resources.add_pending_req(write_req);
+					get_resources().add_pending_req(write_req);
 					continue;
 				}
 				NCCL_OFI_WARN("Write failed for seq_num %hu", msg_seq_num);
@@ -799,10 +793,10 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 				   the pool, so clear_write_reqs_pending_back_pointers() below
 				   does not write through a pooled pointer. */
 				write_reqs[rail_it] = nullptr;
-				resources.return_req_to_pool(write_req);
+				get_resources().return_req_to_pool(write_req);
 				nccl_net_ofi_release_schedule(scheduler, schedule);
 				clear_write_reqs_pending_back_pointers(write_reqs);
-				resources.return_req_to_pool(req);
+				get_resources().return_req_to_pool(req);
 				return ret;
 			}
 		}
@@ -811,7 +805,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		/* Signal-only: no data write, inherently single rail (pin-eligible). */
 		rail_id = (pinned_rail_id >= 0)
 			? static_cast<uint16_t>(pinned_rail_id)
-			: resources.get_next_rail();
+			: get_resources().get_next_rail();
 		defer = aggregate &&
 			(pinned_rail_run + 1 < GIN_REQS_PER_DOORBELL);
 	}
@@ -824,7 +818,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		if (!metadata_elem) {
 			NCCL_OFI_WARN("Failed to allocate metadata freelist entry");
 			clear_write_reqs_pending_back_pointers(write_reqs);
-			resources.return_req_to_pool(req);
+			get_resources().return_req_to_pool(req);
 			return -ENOMEM;
 		}
 
@@ -852,7 +846,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		   by a later op on this rail. */
 		const bool defer_doorbell = defer;
 		nccl_net_ofi_gin_metadata_send_req_t *send_req;
-		send_req = resources.get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
+		send_req = get_resources().get_req_from_pool<nccl_net_ofi_gin_metadata_send_req_t>(
 			gin_ep.get_rail(rail_id).ofi_ep.get(), rail_id, metadata_elem,
 			rank_comm.address[rail_id], metadata_fl.get(), this,
 			defer_doorbell ? (uint64_t)FI_MORE : 0);
@@ -862,12 +856,12 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		ret = send_req->post();
 		if (OFI_UNLIKELY(ret != 0)) {
 			if (ret == -FI_EAGAIN) {
-				resources.add_pending_req(send_req);
+				get_resources().add_pending_req(send_req);
 				ret = 0;
 			} else {
 				NCCL_OFI_WARN("Metadata send failed for seq_num %hu", msg_seq_num);
-				resources.return_req_to_pool(send_req);
-				resources.return_req_to_pool(req);
+				get_resources().return_req_to_pool(send_req);
+				get_resources().return_req_to_pool(req);
 				clear_write_reqs_pending_back_pointers(write_reqs);
 				return ret;
 			}
@@ -910,7 +904,7 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 	(void)optFlags;
 	auto *remote_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(remoteMhandle);
 	auto *local_mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(localMhandle);
-	auto &gin_ep = resources.get_ep();
+	auto &gin_ep = get_resources().get_ep();
 	auto &rank_comm = rank_comms[dst_rank];
 	auto &remote_mr = remote_mr_handle->remote_mr[dst_rank];
 	auto *local_handle = local_mr_handle->local_handle;
@@ -918,7 +912,7 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 
 	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
 
-	auto *iget_req = resources.get_req_from_pool<nccl_ofi_gin_iget_req>(resources);
+	auto *iget_req = get_resources().get_req_from_pool<nccl_ofi_gin_iget_req>(get_resources());
 	std::array<nccl_net_ofi_gin_read_req_t *, MAX_NUM_RAILS> read_reqs {};
 
 	const auto schedule = scheduler->get_schedule(size, gin_ep.get_num_rails());
@@ -932,8 +926,8 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 		void *desc = fi_mr_desc(local_handle->get_mr(xfer_info->rail_id));
 		uint64_t remote_offset = remote_mr.address_offset + remoteOff + xfer_info->offset;
 
-		auto *read_req = resources.get_req_from_pool<nccl_net_ofi_gin_read_req_t>(
-			resources,
+		auto *read_req = get_resources().get_req_from_pool<nccl_net_ofi_gin_read_req_t>(
+			get_resources(),
 			gin_ep.get_rail(xfer_info->rail_id).ofi_ep.get(),
 			local_buf, xfer_info->msg_size, desc,
 			rank_comm.address[xfer_info->rail_id],
@@ -945,13 +939,13 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 
 		int ret = read_req->post();
 		if (ret == -FI_EAGAIN) {
-			resources.add_pending_req(read_req);
+			get_resources().add_pending_req(read_req);
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("fi_read iget failed on rail %u: %d",
 				      xfer_info->rail_id, ret);
 			nccl_net_ofi_release_schedule(scheduler, schedule);
 			clear_read_reqs_pending_back_pointers(read_reqs);
-			resources.return_req_to_pool(iget_req);
+			get_resources().return_req_to_pool(iget_req);
 			return ret;
 		}
 	}
@@ -968,10 +962,10 @@ int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle
 {
 	/* mhandle and dst_rank are unused — flush is a local loopback fi_read
 	   that fences all prior igets on every rail, regardless of peer or MR. */
-	auto &gin_ep = resources.get_ep();
-	auto *flush_host_buff = resources.get_flush_buff();
-	auto *flush_host_mr = resources.get_flush_buff_mr_handle();
-	auto *flush_gpu_mr = resources.get_flush_buff_gpu_mr_handle();
+	auto &gin_ep = get_resources().get_ep();
+	auto *flush_host_buff = get_resources().get_flush_buff();
+	auto *flush_host_mr = get_resources().get_flush_buff_mr_handle();
+	auto *flush_gpu_mr = get_resources().get_flush_buff_gpu_mr_handle();
 	auto &self_rank_comm = rank_comms[rank];
 	const uint16_t num_rails = gin_ep.get_num_rails();
 
@@ -985,8 +979,8 @@ int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle
 		*slot = 0;
 	}
 
-	auto *iflush_req = resources.get_req_from_pool<nccl_ofi_gin_iflush_req>(
-		resources, flush_host_buff, num_rails);
+	auto *iflush_req = get_resources().get_req_from_pool<nccl_ofi_gin_iflush_req>(
+		get_resources(), flush_host_buff, num_rails);
 
 	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {
 		/* Destination: per-rail slot in host flush buffer */
@@ -999,11 +993,11 @@ int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle
 		uint64_t gpu_key = fi_mr_key(flush_gpu_mr->get_mr(rail_id));
 		fi_addr_t loopback_addr = self_rank_comm.address[rail_id];
 		uint64_t remote_offset = virt_addr_mr
-			? (uintptr_t)resources.get_flush_buff_gpu()
+			? (uintptr_t)get_resources().get_flush_buff_gpu()
 			: 0;
 
-		auto *read_req = resources.get_req_from_pool<nccl_net_ofi_gin_read_req_t>(
-			resources,
+		auto *read_req = get_resources().get_req_from_pool<nccl_net_ofi_gin_read_req_t>(
+			get_resources(),
 			gin_ep.get_rail(rail_id).ofi_ep.get(),
 			local_buf, NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc,
 			loopback_addr, remote_offset, gpu_key);
@@ -1013,11 +1007,11 @@ int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle
 
 		int ret = read_req->post();
 		if (ret == -FI_EAGAIN) {
-			resources.add_pending_req(read_req);
+			get_resources().add_pending_req(read_req);
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("fi_read iflush failed on rail %u: %d",
 				      rail_id, ret);
-			resources.return_req_to_pool(iflush_req);
+			get_resources().return_req_to_pool(iflush_req);
 			return ret;
 		}
 	}
@@ -1398,7 +1392,7 @@ int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 
 		if (req->gdrcopy_pool_return_deferred) {
 			req->gdrcopy_pool_return_deferred = false;
-			this->resources.return_req_to_pool(req);
+			this->get_resources().return_req_to_pool(req);
 		}
 
 		int retire_ret = retire_completed_peer_iput_ops(done.peer_rank);
@@ -1704,7 +1698,7 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			if (OFI_UNLIKELY(ret != 0)) {
 				return ret;
 			}
-			this->resources.return_req_to_pool(req);
+			this->get_resources().return_req_to_pool(req);
 			continue;
 		}
 
@@ -1777,7 +1771,7 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			/* cur_req is an interior member: erase + recycle it now. */
 			size_t n_removed = this->outstanding_iput_signal_recv_reqs.erase(cur_key);
 			assert_always(n_removed == 1);
-			this->resources.return_req_to_pool(cur_req);
+			this->get_resources().return_req_to_pool(cur_req);
 
 			cur_seq = peek_seq;
 			cur_key = peek_key;
@@ -1806,7 +1800,7 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 			break;
 		}
 
-		this->resources.return_req_to_pool(gate_req);
+		this->get_resources().return_req_to_pool(gate_req);
 	}
 
 	/* If the sender requested an ACK, emit a standalone ACK now. */
@@ -1834,7 +1828,7 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_metadata_completion(
 	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
 	nccl_net_ofi_gin_iputsignal_recv_req *req;
 	if (it == outstanding_iput_signal_recv_reqs.end()) {
-		req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
+		req = get_resources().get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
 
 		req->num_seg_completions = 1;
 		req->total_segments = num_segments;
@@ -1915,7 +1909,7 @@ int nccl_ofi_rdma_gin_put_comm::handle_signal_write_completion(struct fi_cq_data
 	auto it = outstanding_iput_signal_recv_reqs.find(map_key);
 	nccl_net_ofi_gin_iputsignal_recv_req *req;
 	if (it == outstanding_iput_signal_recv_reqs.end()) {
-		req = resources.get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
+		req = get_resources().get_req_from_pool<nccl_net_ofi_gin_iputsignal_recv_req>();
 
 		req->num_seg_completions = 1;
 		req->total_segments = total_segms;

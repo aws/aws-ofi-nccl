@@ -65,18 +65,6 @@ public:
 };
 
 /**
- * Resource releaser, just to make sure it is cleaned up properly.
- */
-struct nccl_ofi_gin_resource_releaser {
-	nccl_ofi_gin_resources &resources;
-
-	~nccl_ofi_gin_resource_releaser()
-	{
-		resources.release();
-	}
-};
-
-/**
  * Represents per-peer-rank data associated with a collective communicator.
  *
  * The collective communicator stores a vector of these structures, of size
@@ -444,19 +432,19 @@ private:
  */
 class nccl_ofi_rdma_gin_put_comm : public nccl_ofi_gin_put_comm_t {
 public:
-	nccl_ofi_rdma_gin_put_comm(nccl_ofi_gin_resources &resources_arg, int rank_, int nranks_,
+	nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
 			  nccl_net_ofi_send_comm *s_comm_, nccl_net_ofi_recv_comm *r_comm_);
 
 	~nccl_ofi_rdma_gin_put_comm();
 
 	nccl_ofi_gin_resources &get_resources()
 	{
-		return resources;
+		return *resources_sp;
 	}
 
-	std::mutex &get_ep_lock() RETURN_CAPABILITY(resources.get_ep().ep_lock)
+	std::mutex &get_ep_lock() RETURN_CAPABILITY(get_resources().get_ep().ep_lock)
 	{
-		return resources.get_ep().ep_lock;
+		return get_resources().get_ep().ep_lock;
 	}
 
 	uint32_t get_local_comm_id() const
@@ -647,11 +635,14 @@ public:
 private:
 	/* Member layout is ordered by access frequency (higher to lower). */
 	/* --- TIER 1: every iputSignal + every CQ completion --- */
-	nccl_ofi_gin_resources &resources;
-	/* Keep resource_releaser declared before free lists, to destroy it
-	   late after metadata_fl and other members whose destructors need the
-	   resources/endpoint alive. */
-	nccl_ofi_gin_resource_releaser resource_releaser;
+	/* Shared ownership of the endpoint's GIN resources. The resources are
+	   destroyed once the last comm on the endpoint drops this reference;
+	   the GIN resources registry (see gin_resources_registry) then drops its slot
+	   for that endpoint. Declared first so it is destroyed last, after the
+	   members below whose destructors need the resources/endpoint alive.
+	   Access via get_resources(); the shared_ptr deref is free under
+	   optimization, so there is no separate reference member to keep in sync. */
+	std::shared_ptr<nccl_ofi_gin_resources> resources_sp;
 
 	/* Remote comm info book */
 	std::vector<nccl_ofi_gin_peer_rank_info> rank_comms;

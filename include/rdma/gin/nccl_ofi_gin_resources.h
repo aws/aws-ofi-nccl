@@ -9,6 +9,7 @@
 
 #include <array>
 #include <deque>
+#include <mutex>
 #include <stdexcept>
 #include <vector>
 #include <unordered_map>
@@ -17,7 +18,6 @@
 #include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_gin_base.h"
 #include "nccl_ofi_freelist.h"
-#include "nccl_ofi_rdma.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_tsa.h"
 
@@ -189,32 +189,44 @@ private:
 };
 
 /**
- * This struct exists solely to increment and decrement the ep's refcount
- * when the nccl_ofi_gin_resources object is created and destroyed.
+ * Registry mapping a net endpoint to the GIN resources built on top of it.
  *
- * This really should be a shared/weak pointer pattern, but that will involve
- * refactoring the base nccl_net_ofi_ep_t class, so deferring that.
+ * GIN owns this endpoint->resources association itself so that the net
+ * transport does not need to know GIN exists. Entries are weak references:
+ * the resources live only as long as some GIN comm holds the shared_ptr
+ * returned by get(), and the slot is dropped by release() when the last comm
+ * lets go.
+ *
+ * TODO: This registry only exists because the net transport, not the common
+ * layer, owns endpoint creation and caching (device::get_ep / domain::
+ * create_endpoint / ep_table). Once that machinery is lifted to the common
+ * layer, GIN endpoints can be cached there the same way net endpoints are and
+ * this GIN-private registry (and its global state) goes away.
  */
-struct nccl_ofi_gin_ep_holder {
-	std::shared_ptr<nccl_net_ofi_ep_t> ep;
+class nccl_ofi_gin_resources_registry {
+public:
+	/* Return the resources for `ep`, creating them on first use. */
+	std::shared_ptr<nccl_ofi_gin_resources>
+	get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep);
 
-	nccl_ofi_gin_ep_holder(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
-		: ep(ep_arg)
-	{
-	}
+	/* Drop the slot for `ep`; called by the resources destructor. */
+	void release(nccl_net_ofi_ep_t *ep);
 
-	~nccl_ofi_gin_ep_holder()
-	{
-		static_cast<nccl_net_ofi_rdma_ep_t &>(*ep).set_gin_resources(nullptr);
-	}
+private:
+	std::mutex lock;
+	std::unordered_map<nccl_net_ofi_ep_t *, std::weak_ptr<nccl_ofi_gin_resources>>
+		by_ep;
 };
+
+/* Process-wide registry instance. */
+nccl_ofi_gin_resources_registry &gin_resources_registry();
 
 /**
  * Resources associated with a plugin per-thread endpoint
  */
 class nccl_ofi_gin_resources {
 public:
-	nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg);
+	nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg);
 
 	~nccl_ofi_gin_resources();
 
@@ -373,30 +385,12 @@ public:
 	 */
 	int progress();
 
-	/**
-	 * Called when a new communicator is associated with this resource object
-	 */
-	void increment_ref_cnt()
-	{
-		this->ref_cnt++;
-	}
-
-	/**
-	 * Called when an associated communicator is closed
-	 */
-	void release()
-	{
-		this->ref_cnt--;
-		if (this->ref_cnt == 0) {
-			delete this;
-		}
-	}
-
 private:
 	void init_flush_buffers(uint16_t num_rails);
 
 	/* === Tier 1 — accessed every CQ completion and/or iputSignal === */
-	nccl_ofi_gin_ep_holder ep_holder;
+	/* Keeps the underlying net endpoint alive for the resources' lifetime. */
+	std::shared_ptr<nccl_net_ofi_ep_t> ep_holder;
 
 	nccl_ofi_rdma_gin_ep_t gin_ep;
 
@@ -438,9 +432,6 @@ private:
 
 	/* === Tier 3 — accessed only at connect/disconnect time === */
 	nccl_ofi_idpool_t comm_id_pool;
-
-	/* Number of associated comms */
-	size_t ref_cnt = 0;
 
 	/* === Self-contained lookup — 8KB array at end to avoid pushing
 	   other hot members apart === */
