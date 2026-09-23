@@ -121,6 +121,17 @@ OFI_NCCL_PARAM_VALUE_SET(PROTOCOL, (SENDRECV)(RDMA))
 OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
 
 /*
+ * PCIe relaxed ordering (RO) master switch for EFA data memory registrations,
+ * mirroring NCCL IB's NCCL_IB_PCI_RELAXED_ORDERING.  false (default) never
+ * requests RO; true requests it on data MRs whose buffer role permits. EFA has
+ * no queryable RO capability and silently ignores the flag where unsupported,
+ * so requesting it is always API-safe. This switch is combined with the
+ * compile-time support and EFA-provider checks at each registration site by
+ * nccl_ofi_ofiutils_mr_relaxed_ordering_flag().
+ */
+OFI_NCCL_PARAM(bool, pci_relaxed_ordering, "PCI_RELAXED_ORDERING", false);
+
+/*
  * Disable the native RDMA write support check when using the "RDMA" protocol
  * for send/recv operations on AWS platforms. When the check is disabled, the
  * "RDMA" protocol can be used even on platforms where native RDMA write is not

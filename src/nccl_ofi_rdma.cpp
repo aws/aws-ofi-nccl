@@ -312,12 +312,15 @@ exit:
  * @param	flags	Output registration flags (optional)
  * @param	type	Pointer type
  * @param	mr_attr	Output attribute structure
+ * @param	mr_flags	MR flags for this registration (e.g. NCCL_NET_MR_FLAG_*)
+ * @param	prov_name	Selected provider name, used to gate relaxed ordering to EFA
  *
  * @return	0 on success, negative error code on failure
  */ 
 static int set_mr_req_attr(uint64_t mr_key,
 			   nccl_ofi_mr_ckey_ref ckey, uint64_t *flags,
-			   int type, struct fi_mr_attr *mr_attr)
+			   int type, struct fi_mr_attr *mr_attr, uint64_t mr_flags,
+			   const char *prov_name)
 {
 	int ret = 0;
 	mr_attr->access = FI_SEND | FI_RECV;
@@ -373,6 +376,12 @@ static int set_mr_req_attr(uint64_t mr_key,
 	}
 
 	mr_attr->requested_key = mr_key;
+
+	/* PCIe relaxed ordering: request it unless the caller forces strong
+	 * ordering via the FORCE_SO flag (internal buffers, flush origins,
+	 * ordering-sensitive MRs). The helper also gates on the enable parameter
+	 * and EFA provider, and returns 0 (no-op) when compiled out. */
+	*flags |= nccl_ofi_ofiutils_mr_relaxed_ordering_flag(prov_name, mr_flags);
 
  exit:
 	return ret;
@@ -3069,12 +3078,15 @@ int nccl_net_ofi_rdma_domain_t::mr_bind_and_enable(struct fid_mr *mr,
 int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 						 int type,
 						 nccl_net_ofi_rdma_ep_t *ep,
-						 nccl_net_ofi_rdma_mr_handle_t **mhandle)
+						 nccl_net_ofi_rdma_mr_handle_t **mhandle,
+						 uint64_t mr_flags)
 {
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
 	nccl_ofi_idpool_t *key_pool = this->mr_rkey_pool;
+	const char *prov_name =
+		this->rdma_domain_get_device()->get_ofi_info(0)->fabric_attr->prov_name;
 
 	*mhandle = NULL;
 
@@ -3103,7 +3115,8 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	}
 
 	/* Create memory registration request */
-	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
+	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr,
+			      mr_flags, prov_name);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
 			      this->rdma_domain_get_device()->dev_id);
@@ -3184,7 +3197,8 @@ error:
 int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 				       int type,
 				       nccl_net_ofi_rdma_ep_t *ep,
-				       nccl_net_ofi_rdma_mr_handle_t **mhandle)
+				       nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				       uint64_t mr_flags)
 {
 	int ret = 0;
 	nccl_net_ofi_rdma_mr_handle_t *ret_handle = NULL;
@@ -3206,7 +3220,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		}
 		/* Cache miss */
 
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, mr_flags);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3221,7 +3235,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr(nccl_ofi_mr_ckey_ref ckey,
 			return ret;
 		}
 	} else {
-		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle);
+		ret = this->reg_mr_on_device(ckey, type, ep, &ret_handle, mr_flags);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
@@ -3268,10 +3282,13 @@ int nccl_net_ofi_rdma_send_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User send buffer: source of fi_write/fi_send, never a flush read origin,
+	 * so relaxed ordering is always safe here. */
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      /*mr_flags=*/0);
 }
 
 int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
@@ -3283,10 +3300,22 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 
 	std::lock_guard domain_lock(domain->domain_lock);
 
+	/* User recv buffer: this is the inbound-write target where the RO gain is.
+	 * It is only safe to relax when the GDR flush reads a dedicated buffer
+	 * rather than the user buffer.  The GPU flush reads ep->flush_buff (RO=0),
+	 * so recv RO is safe on GPU builds. The Neuron flush still reads the user
+	 * buffer, so defer recv RO on Neuron builds until a dedicated Neuron flush
+	 * buffer exists */
+#if HAVE_GPU
+	const uint64_t mr_flags = 0;
+#else
+	const uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO;
+#endif
 	return domain->reg_mr(ckey,
 			      type_param,
 			      endpoint_mr ? endpoint : nullptr,
-			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
+			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle,
+			      mr_flags);
 }
 
 /**

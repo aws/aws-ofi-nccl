@@ -1234,7 +1234,8 @@ public:
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		   int type,
 		   nccl_net_ofi_rdma_ep_t *ep,
-		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
+		   nccl_net_ofi_rdma_mr_handle_t **mhandle,
+		   uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 	/**
 	 * @brief	Register memory region on RDMA endpoint
@@ -1327,7 +1328,8 @@ private:
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			     int type,
 			     nccl_net_ofi_rdma_ep_t *ep,
-			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
+			     nccl_net_ofi_rdma_mr_handle_t **mhandle,
+			     uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 	/**
 	 * @brief	Bind and enable a memory region on an endpoint
