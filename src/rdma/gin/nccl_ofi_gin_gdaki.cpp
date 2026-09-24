@@ -2,10 +2,12 @@
  * Copyright (c) 2026 Amazon.com, Inc. or its affiliates. All rights reserved.
  *
  * GDAKI plugin for the GIN API. Shared APIs (init, devices, listen, connect,
- * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, ginProgress, finalize)
- * are reused from the proxy-side implementations in nccl_ofi_gin_api.cpp.
- * Only the GDAKI-specific APIs (createContext/destroyContext/get_properties/
- * queryLastError) live here.
+ * regMrSym[DmaBuf], deregMrSym, closeColl, closeListen, finalize) are reused
+ * from the proxy-side implementations in nccl_ofi_gin_api.cpp. The
+ * GDAKI-specific APIs (createContext/destroyContext/get_properties/
+ * ginProgress/queryLastError) live here. ginProgress needs its own
+ * implementation because it receives our ginCtx, a nccl_ofi_gin_gdaki_context*,
+ * whereas the shared proxy path expects the collComm it returns.
  *
  * Lifecycle-managed ctx resources are implemented as standalone owner
  * classes in rdma/gin/nccl_ofi_gin_gdaki_resources.{h,cpp}; this file
@@ -312,25 +314,19 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 }
 
 /*
- * Set up the PutValue source slot pool, shared across every logical
- * context's data endpoint and signal/counter (sc) endpoints.
+ * Set up the backendVersion 1 PutValue source slot pool, shared across
+ * every logical context's dedicated PutValue endpoint.
  *
- * EFA's RDMA_WRITE WQE cannot use inline data, so PutValue stages each
- * value through a registered local source slot then RDMA-writes the
- * slot to the user's destination. The same WQE arrival on the receiver's
- * sc_endpoint bumps that endpoint's FI_REMOTE_WRITE counter, giving us
- * value-and-signal in one WQE; routing matches Put.
+ * The v1 device path stages each value through a registered local source
+ * slot, then RDMA-writes it to the user's destination. backendVersion 2
+ * uses inline data and never calls this function.
  *
- * No QP/EP is opened here: the WQE rides on whichever endpoint the
- * kernel selects (data or sc). The pool is one contiguous GPU-VMM
- * region registered as a single FI_HMEM_CUDA / FI_MR_DMABUF MR, sized
- * to the sum over all contexts of (data.sq_size + sum sc_endpoints[i].
- * sq_size) slots. Per-endpoint slice descriptors are uploaded so the
- * kernel can locate its slot range without sharing an allocator across
- * endpoints.
+ * No QP/EP is opened here. The pool is one contiguous GPU-VMM region,
+ * registered as a single FI_HMEM_CUDA / FI_MR_DMABUF MR and sliced into
+ * pvdata[c].sq_size slots for each context's dedicated PutValue endpoint.
  *
- * Must be called after every context's data and sc_endpoints have been
- * populated so each sq_size is finalized.
+ * Must be called after every context's pvdata endpoint has been populated
+ * so each sq_size is finalized.
  */
 static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 				nccl_ofi_rdma_gin_put_comm *put_comm)
@@ -436,12 +432,6 @@ static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 }
 
 
-/*
- * Fill one entry of the contiguous dev_handles[] GPU array for logical
- * context `ctx_id`. Caller (createContext) owns the GPU buffer; this
- * function only writes the host-side copy. The whole array is committed
- * to GPU memory once after every entry is filled.
- */
 static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 				const nccl_ofi_gin_gdaki_context *ctx,
 				int ctx_id,
@@ -498,6 +488,58 @@ static void populate_dev_handle(nccl_ofi_gin_gdaki_dev_handle &h,
 	 * is filled. */
 	h.putvalue_lkey            = rs.putvalue_lkey;
 	h.putvalue_slot_size       = (uint32_t)ctx->putvalue_slot_size;
+}
+
+/* v2 sibling of populate_dev_handle: the same handle minus the device-visible
+ * CQs and locks, plus the host-published completion state FlushAsync and Wait
+ * read. */
+static void populate_dev_handle_v2(nccl_ofi_gin_gdaki_dev_handle_v2 &h,
+				   const nccl_ofi_gin_gdaki_context *ctx,
+				   int ctx_id,
+				   int nranks, int rank)
+{
+	h.data.qp = ctx->data[ctx_id]->base.gpu_qp.dev();
+	h.data.target_address_handles = ctx->data[ctx_id]->base.targets.ahs.dev;
+	h.data.target_remote_qpns     = ctx->data[ctx_id]->base.targets.qpns.dev;
+	h.data.target_qkey            = ctx->data[ctx_id]->base.targets.qkeys.dev;
+	h.data.local_cntr_value = ctx->data[ctx_id]->local_cntr.gpu_ptr();
+	h.data.submitted_count = 0;
+	h.data.sq_size = ctx->data[ctx_id]->base.sq_size;
+
+	h.pvdata.qp = ctx->pvdata[ctx_id]->base.gpu_qp.dev();
+	h.pvdata.target_address_handles = ctx->pvdata[ctx_id]->base.targets.ahs.dev;
+	h.pvdata.target_remote_qpns     = ctx->pvdata[ctx_id]->base.targets.qpns.dev;
+	h.pvdata.target_qkey            = ctx->pvdata[ctx_id]->base.targets.qkeys.dev;
+	h.pvdata.local_cntr_value = ctx->pvdata[ctx_id]->local_cntr.gpu_ptr();
+	h.pvdata.submitted_count = 0;
+	h.pvdata.sq_size = ctx->pvdata[ctx_id]->base.sq_size;
+
+	h.counter_handles = (ctx->nCounters > 0) ? ctx->d_counter_handles_v2[ctx_id]->dev : nullptr;
+	h.signal_handles  = (ctx->nSignals  > 0) ? ctx->d_signal_handles_v2[ctx_id]->dev  : nullptr;
+	h.nCounters = ctx->nCounters;
+	h.nSignals  = ctx->nSignals;
+	h.nranks = nranks;
+	h.rank = rank;
+
+	const uint16_t rail_id = (uint16_t)(ctx_id % ctx->num_rails);
+	const auto &rs = *ctx->rail_shared[rail_id];
+	h.rail_id = rail_id;
+
+	h.scratch_lkey         = rs.scratch_lkey;
+	h.scratch_pad          = 0;
+	h.scratch_local_addr   = ctx->scratch_local_addr;
+	h.scratch_remote_addrs = rs.scratch_remote_addrs_buf.dev;
+	h.scratch_remote_rkeys = rs.scratch_remote_rkeys_buf.dev;
+	h.reserved0 = 0;
+	h.reserved1 = 0;
+
+	h.submitted_count_per_peer = ctx->submitted_per_peer[ctx_id]->dev;
+	h.ordered_completed_count_per_peer =
+		ctx->completion_state.dev_ordered_completed_count_per_peer(ctx_id);
+	h.peer_window = NCCL_OFI_GDAKI_PEER_WINDOW;
+	h.submitted_count_per_ctx = ctx->submitted_per_ctx[ctx_id]->dev;
+	h.completed_count_per_ctx = ctx->completion_state.completed_count_ctx_dev(ctx_id);
+	h.cq_depth = ctx->completion_state.cq_depth();
 }
 
 /* `backend_version` must already be validated by the caller; see
@@ -564,8 +606,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 	/*
 	 * The ctx holds every lifecycle-managed resource. Per-logical-context
 	 * state is held in vectors of size nContexts; the device-visible
-	 * dev_handles[] array is contiguous so the kernel can index by
-	 * ctx.contextId.
+	 * selected version's device-handle array is contiguous so the kernel
+	 * can index by ctx.contextId.
 	 *
 	 * RAII unwinds members in reverse declaration order if anything
 	 * throws below.
@@ -681,13 +723,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			proxy_info_rail[r] = info_r;
 		}
 
-		/* Pre-size all per-ctx vectors and the contiguous dev_handles[]
-		 * GPU array. data / d_counter_handles / d_signal_handles hold
-		 * unique_ptrs whose targets are constructed inside the per-ctx
-		 * loop below; sc_endpoints holds vectors-of-unique_ptr too.
-		 * Resizing here just creates the slots (default-initialized
-		 * empty unique_ptrs); endpoints / GPU buffers are allocated
-		 * later only after we successfully open them. */
+		/* Pre-size all per-ctx vectors and the selected contiguous
+		 * device-handle GPU array. Resizing creates empty unique_ptr slots;
+		 * endpoints and GPU buffers are allocated only after setup succeeds. */
 		ctx->data.resize(nContexts);
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++)
 			ctx->data[ctx_id] = std::make_unique<gdaki_data_endpoint>();
@@ -695,15 +733,27 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++)
 			ctx->pvdata[ctx_id] = std::make_unique<gdaki_data_endpoint>();
 		ctx->sc_endpoints.resize(nContexts);
-		ctx->d_counter_handles.resize(nContexts);
-		ctx->d_signal_handles.resize(nContexts);
-		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
-			ctx->d_counter_handles[ctx_id] =
-			    std::make_unique<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>();
-			ctx->d_signal_handles[ctx_id] =
-			    std::make_unique<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>();
+		if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+			ctx->d_counter_handles.resize(nContexts);
+			ctx->d_signal_handles.resize(nContexts);
+			for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
+				ctx->d_counter_handles[ctx_id] =
+					std::make_unique<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>();
+				ctx->d_signal_handles[ctx_id] =
+					std::make_unique<gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *>>();
+			}
+			ctx->dev_handles.allocate(nContexts);
+		} else {
+			ctx->d_counter_handles_v2.resize(nContexts);
+			ctx->d_signal_handles_v2.resize(nContexts);
+			for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
+				ctx->d_counter_handles_v2[ctx_id] =
+					std::make_unique<gdaki_counter_handle_ptr_buf_v2>();
+				ctx->d_signal_handles_v2[ctx_id] =
+					std::make_unique<gdaki_counter_handle_ptr_buf_v2>();
+			}
+			ctx->dev_handles_v2.allocate(nContexts);
 		}
-		ctx->dev_handles.allocate(nContexts);
 
 		/*
 		 * Step 3: Allocate the signal-only scratch buffer once per
@@ -722,9 +772,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 
 		/*
 		 * Per-context loop: build (data EP + sc EPs + counter/signal
-		 * handle arrays) for each logical context. The dev_handles[]
-		 * slots are filled in a second loop below, after the PutValue
-		 * pool is allocated and slice bases are assigned.
+		 * handle arrays) for each logical context. The device-handle
+		 * slots are filled after endpoint setup (and, for v1, after the
+		 * PutValue pool assigns slice bases).
 		 *
 		 * local_n_sc  = this rank's sc-endpoint count.
 		 * global_n_sc = max over ranks; every rank must run this many
@@ -746,6 +796,25 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		 * as nullptr (zero address). This is also the target-slot layout
 		 * of each poster's target addressing table. */
 		const size_t total_slots = 1 + (size_t)global_n_sc;
+
+		/* v2 publishes host-polled completion state and uses one shared CQ per
+		 * logical context. v1 instead creates a private CQ per endpoint. */
+		if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_2) {
+			ctx->completion_state.allocate(nContexts, nranks);
+
+			for (int i = 0; i < nContexts; i++) {
+				auto counts = std::make_unique<gdaki_gpu_buf<uint32_t>>();
+				counts->allocate((size_t)nranks);
+				counts->commit();
+				ctx->submitted_per_peer.push_back(std::move(counts));
+
+				auto ctx_count = std::make_unique<gdaki_gpu_buf<uint64_t>>();
+				ctx_count->allocate(1);
+				ctx_count->commit();
+				ctx->submitted_per_ctx.push_back(std::move(ctx_count));
+			}
+		}
+
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
 			/* This context's endpoints open on rail
 			 * (ctx_id % num_rails)'s domain. Distinct contextIds
@@ -761,13 +830,23 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			 * slots have no local endpoint. All open on this ctx's rail
 			 * domain (ofi_domain / proxy_info / gda_ops selected above by
 			 * rail_id = ctx_id % num_rails).
+			 *
+			 * v2 first creates this logical context's shared CQ; data, pvdata
+			 * and every sc EP bind it. v1 passes NULL below, causing each
+			 * endpoint to create the private CQ represented in its device handle.
 			 */
-			/* The data endpoint issues both Put and Get, so it counts reads too. */
+			struct fid_cq *scq = nullptr;
+			if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_2) {
+				scq = ctx->completion_state.open_cq(
+					ctx_id, ofi_domain, ofi_nccl_cq_size(), gda_ops);
+			}
+
 			/* Put and Get carry their payload through the SGE, so the data
 			 * endpoint keeps the 64B entry and the full SQ depth. */
 			ctx->data[ctx_id]->open(ofi_domain,
 						proxy_info,
 						gda_ops,
+						scq,
 						FI_WRITE | FI_READ,
 						/* inline_write_size */ 0);
 			if (local_n_sc > 0) {
@@ -775,15 +854,14 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			}
 			for (int i = 0; i < local_n_sc; i++) {
 				ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
-				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
+				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops, scq);
 			}
 			/* Dedicated PutValue poster endpoint. */
 			/* PutValue only writes. */
-			/* Backend version 2 and later carry up to eight bytes as WQE
-			 * inline data, so their PutValue endpoint takes the wide entry
-			 * (at half SQ depth). Backend version 1 keeps the narrow entry. */
+			/* v2 carries PutValue inline and requests that payload capacity,
+			 * while v1 stages through an SGE and requests no inline data. */
 			ctx->pvdata[ctx_id]->open(
-				ofi_domain, proxy_info, gda_ops, FI_WRITE, putvalue_inline_size);
+				ofi_domain, proxy_info, gda_ops, scq, FI_WRITE, putvalue_inline_size);
 
 			/*
 			 * Step 5: Exchange ALL of this ctx's endpoint addresses in a
@@ -847,8 +925,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			/* Build this rank's own counter/signal handle arrays from
 			 * its LOCAL counts (these are the endpoints this rank
 			 * exposes as targets / uses as counters). */
-			auto build_handle_array = [&](gdaki_gpu_buf<nccl_ofi_gin_gdaki_dev_counter_handle *> &buf,
-						      int count, auto get_dev_handle) {
+			auto build_handle_array = [&](auto &buf, int count, auto get_dev_handle) {
 				if (count > 0) {
 					buf.allocate(count);
 					for (int i = 0; i < count; i++)
@@ -856,10 +933,33 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 					buf.commit();
 				}
 			};
-			build_handle_array(*ctx->d_counter_handles[ctx_id], config->nCounters,
-				[&](int i) { return ctx->sc_endpoints[ctx_id][i]->counter_dev_handle.dev; });
-			build_handle_array(*ctx->d_signal_handles[ctx_id], config->nSignals,
-				[&](int i) { return ctx->sc_endpoints[ctx_id][i]->signal_dev_handle.dev; });
+			if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+				build_handle_array(*ctx->d_counter_handles[ctx_id],
+						   config->nCounters,
+						   [&](int i) {
+							   return ctx->sc_endpoints[ctx_id][i]
+								   ->counter_dev_handle.dev;
+						   });
+				build_handle_array(*ctx->d_signal_handles[ctx_id],
+						   config->nSignals,
+						   [&](int i) {
+							   return ctx->sc_endpoints[ctx_id][i]
+								   ->signal_dev_handle.dev;
+						   });
+			} else {
+				build_handle_array(*ctx->d_counter_handles_v2[ctx_id],
+						   config->nCounters,
+						   [&](int i) {
+							   return ctx->sc_endpoints[ctx_id][i]
+								   ->counter_dev_handle_v2.dev;
+						   });
+				build_handle_array(*ctx->d_signal_handles_v2[ctx_id],
+						   config->nSignals,
+						   [&](int i) {
+							   return ctx->sc_endpoints[ctx_id][i]
+								   ->signal_dev_handle_v2.dev;
+						   });
+			}
 		}
 
 		NCCL_OFI_INFO(NCCL_NET,
@@ -870,30 +970,28 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			      ctx->pvdata[0]->base.sq_size,
 			      ctx->pvdata[0]->base.sq_entry_size);
 
-		/*
-		 * Step 7: PutValue source slot pool. Must run after every
-		 * context's data and sc endpoints are populated so their
-		 * sq_sizes are finalized. Allocates the shared GPU-VMM pool
-		 * and assigns each endpoint's slice base (the sc endpoints
-		 * commit their counter/signal dev handles inline; the data
-		 * endpoint's slice base is stashed for populate_dev_handle).
-		 */
-		setup_putvalue_pool(ctx.get(), put_comm);
-
-		/*
-		 * Step 8: Fill every context's slot in dev_handles[]. Done in
-		 * a second pass because populate_dev_handle reads the data
-		 * endpoint's putvalue_slice_base, which setup_putvalue_pool
-		 * only assigns once all sq_sizes are known. Don't commit per
-		 * entry — the whole array is committed once below.
-		 */
-		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
-			populate_dev_handle(ctx->dev_handles.host[ctx_id], ctx.get(),
-					    ctx_id, nranks, rank);
+		/* v1 stages PutValue through a registered source pool. v2 carries
+		 * PutValue inline and deliberately allocates no staging resources. */
+		if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+			setup_putvalue_pool(ctx.get(), put_comm);
+			for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
+				populate_dev_handle(ctx->dev_handles.host[ctx_id],
+						    ctx.get(),
+						    ctx_id,
+						    nranks,
+						    rank);
+			}
+			ctx->dev_handles.commit();
+		} else {
+			for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
+				populate_dev_handle_v2(ctx->dev_handles_v2.host[ctx_id],
+						    ctx.get(),
+						    ctx_id,
+						    nranks,
+						    rank);
+			}
+			ctx->dev_handles_v2.commit();
 		}
-
-		/* Commit the whole dev_handles[] array (host → GPU) once. */
-		ctx->dev_handles.commit();
 
 		/*
 		 * Step 9: Publish the host-side ncclNetDeviceHandle_v11_t.
@@ -908,9 +1006,17 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		}
 		dev_handle_out->netDeviceType = NCCL_NET_DEVICE_GIN_EFA_GDA;
 		dev_handle_out->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
-		dev_handle_out->handle = ctx->dev_handles.dev;
-		dev_handle_out->size = sizeof(nccl_ofi_gin_gdaki_dev_handle);
-		dev_handle_out->needsProxyProgress = 0;
+		if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+			dev_handle_out->handle = ctx->dev_handles.dev;
+			dev_handle_out->size = sizeof(nccl_ofi_gin_gdaki_dev_handle);
+			dev_handle_out->needsProxyProgress = 0;
+		} else {
+			dev_handle_out->handle = ctx->dev_handles_v2.dev;
+			dev_handle_out->size = sizeof(nccl_ofi_gin_gdaki_dev_handle_v2);
+			/* Makes NCCL run the thread that drains the shared CQs through
+			 * this backend's ginProgress callback. */
+			dev_handle_out->needsProxyProgress = 1;
+		}
 
 		NCCL_OFI_INFO(NCCL_NET,
 			      "gin GDAKI: createContext done (nranks=%d rank=%d "
@@ -1195,9 +1301,67 @@ static ncclResult_t nccl_ofi_gin_gdaki_deregMrSym(void *collComm, void *mhandle)
 	return nccl_ofi_gin_deregMrSym(collComm, mhandle);
 }
 
+/*
+ * GDAKI ginProgress: drain every shared CQ this context owns and publish the
+ * counts the device waits on. NCCL calls it from the "NCCL GIN Progress" thread
+ * for every context whose devHandle set needsProxyProgress. progress() is bounded
+ * per call and returns success even on a CQ completion error (see the CQ progress
+ * pass header for that contract); only a host-side fault (a failed gdrcopy)
+ * escapes.
+ *
+ * GDAKI needs its own ginProgress rather than the shared nccl_ofi_gin_ginProgress:
+ * the shared one casts ginCtx to nccl_ofi_rdma_gin_put_comm*, correct only for the
+ * proxy backend (whose createContext returns the collComm), whereas GDAKI's
+ * createContext returns a nccl_ofi_gin_gdaki_context*.
+ */
+static ncclResult_t nccl_ofi_gin_gdaki_ginProgress(void *ginCtx)
+{
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+
+	if (OFI_UNLIKELY(ctx == nullptr)) {
+		return ncclSuccess;
+	}
+	if (ctx->backend_version != NCCL_OFI_GDAKI_BACKEND_VERSION_2) {
+		return ncclSuccess;
+	}
+
+	int ret = ctx->completion_state.progress(ofi_nccl_gin_cq_process_max_iter());
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("gin GDAKI: completions table publish failed: %d", ret);
+		return nccl_net_ofi_retval_translate(ret);
+	}
+	return ncclSuccess;
+}
+
+/*
+ * GDAKI queryLastError: surface a NIC-reported completion failure to NCCL so
+ * ncclCommGetAsyncError reports it. Reports true once a failed completion has
+ * been seen on this context's CQs, and false otherwise.
+ */
 static ncclResult_t nccl_ofi_gin_gdaki_queryLastError(void *ginCtx, bool *hasError)
 {
-	*hasError = false;
+	if (hasError == nullptr) {
+		return ncclInvalidArgument;
+	}
+
+	auto *ctx = static_cast<nccl_ofi_gin_gdaki_context *>(ginCtx);
+	if (ctx == nullptr) {
+		*hasError = false;
+		return ncclSuccess;
+	}
+	if (ctx->backend_version != NCCL_OFI_GDAKI_BACKEND_VERSION_2) {
+		*hasError = false;
+		return ncclSuccess;
+	}
+
+	std::string msg;
+	if (ctx->completion_state.query_error(msg)) {
+		NCCL_OFI_WARN("gin GDAKI: %s", msg.c_str());
+		*hasError = true;
+	} else {
+		*hasError = false;
+	}
+
 	return ncclSuccess;
 }
 
@@ -1268,7 +1432,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
 	.closeColl = nccl_ofi_gin_gdaki_closeColl,
 	.closeListen = nccl_ofi_gin_closeListen,
-	.ginProgress = nccl_ofi_gin_ginProgress,
+	.ginProgress = nccl_ofi_gin_gdaki_ginProgress,
 	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
 	.finalize = nccl_ofi_gin_finalize
 };
