@@ -20,6 +20,35 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
+std::shared_ptr<nccl_ofi_gin_resources>
+nccl_ofi_gin_resources_registry::get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep)
+{
+	std::lock_guard<std::mutex> guard(lock);
+
+	auto it = by_ep.find(ep.get());
+	if (it != by_ep.end()) {
+		if (auto existing = it->second.lock()) {
+			return existing;
+		}
+	}
+
+	auto resources = std::make_shared<nccl_ofi_gin_resources>(ep);
+	by_ep[ep.get()] = resources;
+	return resources;
+}
+
+void nccl_ofi_gin_resources_registry::release(nccl_net_ofi_ep_t *ep)
+{
+	std::lock_guard<std::mutex> guard(lock);
+	by_ep.erase(ep);
+}
+
+nccl_ofi_gin_resources_registry &gin_resources_registry()
+{
+	static nccl_ofi_gin_resources_registry registry;
+	return registry;
+}
+
 nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain(domain_arg)
 {
 	this->num_rails = domain.get_ofi_num_rails();
@@ -447,10 +476,10 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 	}
 }
 
-nccl_ofi_gin_resources::nccl_ofi_gin_resources(nccl_net_ofi_ep_t &ep_arg)
-    : ep_holder(ep_arg.shared_from_this()),
-      gin_ep(ep_arg.get_domain()),
-      dev(ep_arg.get_domain().get_device()->dev_id),
+nccl_ofi_gin_resources::nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
+    : ep_holder(ep_arg),
+      gin_ep(ep_arg->get_domain()),
+      dev(ep_arg->get_domain().get_device()->dev_id),
       req_fl(nullptr, &freelist_deleter),
       rx_buff_fl(nullptr, &freelist_deleter),
       ack_send_fl(nullptr, &freelist_deleter),
@@ -544,6 +573,11 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
 {
+	/* Drop our slot in the registry. The entry is a weak_ptr so a stale one
+	   would be harmless, but releasing keeps the table from accumulating dead
+	   keys as endpoints come and go. */
+	gin_resources_registry().release(ep_holder.get());
+
 	/* Deregister and free flush buffer before closing endpoints */
 	if (flush_buff_gpu_mr_handle) {
 		gin_ep.dereg_mr(flush_buff_gpu_mr_handle);
