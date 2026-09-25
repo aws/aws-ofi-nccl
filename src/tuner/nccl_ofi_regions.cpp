@@ -1261,9 +1261,11 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						{0, 131072},}},
 				{.algorithm = NCCL_ALGO_TREE,
 				 .protocol = NCCL_PROTO_LL128,
-				 .num_vertices = 6,
+				 .num_vertices = 9,
 				 .vertices = {{32768, 2},
 						{131072, 2},
+						{3145728, 8},
+						{12582912, 16},
 						{8388608, 128},
 						{8589934592, 131072},
 						{32768, 131072},
@@ -1311,11 +1313,12 @@ static ncclResult_t region_init_internal_p6(nccl_ofi_tuner_region_context_t *reg
 						{65536, 4},}},
 				{.algorithm = NCCL_ALGO_PAT,
 				 .protocol = NCCL_PROTO_SIMPLE,
-				 .num_vertices = 9,
+				 .num_vertices = 10,
 				 .vertices = {{0, 2},
 						{65536, 4},
 						{1048576, 4},
-						{4194305, 16},
+						{25165824, 8},
+						{50331648, 16},
 						{12582912, 48},
 						{88080384, 48},
 						{248512512, 128},
@@ -2342,6 +2345,146 @@ static size_t chunkSizeTuningTreeLL128P5en(size_t nBytes, int log2_nnodes)
 	return tunedChunkSize;
 }
 
+static size_t chunkSizeTuningAllGatherPatSimpleP6(size_t nBytes, size_t nNodes)
+{
+	/*
+	 * Steps DOWN a power-of-2 ladder from a per-cluster ceiling, choosing the
+	 * largest chunk that still yields at least T chunks for the current zone.
+	 * nNodes < 16: 1048576 -> 524288 -> 262144 -> 131072 -> 65536
+	 * nNodes >= 16:           524288 -> 262144 -> 131072 -> 65536
+	 * NCCL later grains these to the sizes it actually uses.
+	 *
+	 * Why chunk count matters for PAT: PAT's time is ~ log2(nNodes)*RTT (latency)
+	 * + serialization, and the latency term is paid per phase -- PAT pipelines
+	 * within a phase but not across phases. Phase count is set by how the per-
+	 * channel data fragments against PAT's inflight budget (NCCL_STEPS = 8 per
+	 * channel): if nchunks fits the 8-steps buffer, the collective runs as one
+	 * pipelined phase; if nchunks exceeds it, the channel must drain/refill mid-
+	 * collective, splitting into multiple non-pipelined phases and paying the
+	 * latency term again. So fewer chunks (larger size) keep it single-phase
+	 * (helps mid/large messages); more chunks (smaller size) fill the recursive
+	 * doubling pipeline faster (helps latency-bound small messages). */
+
+	/*
+	 * Ceiling: small clusters can use a larger single-phase chunk on big messages.
+	 * Larger clusters partition data across more ranks and top out a lower saturation
+	 * chunk size. */
+	size_t satChunkSize = nNodes >= 16 ? 524288 : 1048576;
+
+	/*
+	 * Per-zone minimum chunk counts.
+	 * Differences from P5EN:
+	 * 1. For large clusters T1 is 16 instead of 32 (halves the PAT phases)
+	 * 2. The extra term "+ 1" was removed, generally keeping the chunk size a bit higher
+	 * for mid/large message sizes, as required according to observation made in
+	 * experiments.
+	 * 3. T3 is unused since the third step was removed
+	 */
+	size_t T1 = nNodes >= 16 ? 16 : std::min(nNodes, (size_t)8);			/* cap zone */
+	size_t T2 = std::min(nNodes, (size_t)16);                    			/* mid zone */
+	size_t T3 = nNodes >= 16 ? 2 * nNodes : std::min(nNodes, (size_t)8);	/* low zone */
+
+	size_t tunedChunkSize = satChunkSize;
+
+	/*
+	 * Step 1 (cap): one conditional halve off the ceiling. Let big messages use
+	 * larger chunk size to force it single-phase. */
+	while (nBytes / tunedChunkSize < T1 && tunedChunkSize > satChunkSize / 2)
+		tunedChunkSize /= 2;
+
+	/* Step 2 (mid): walk the mid chunks down to 64K chunk */
+	while (nBytes / tunedChunkSize < T2 && tunedChunkSize > 65536)
+		tunedChunkSize /= 2;
+
+	/*
+	 * Step 3 (low): final 64K->32K. At these sizes, the single-phase gain is
+	 * gone and only pipeline fill masters, so the threshold is the lowest.
+	 * Note that for larger clusters we use double of the original cap.
+	 */
+	size_t extra = nNodes >= 16 ? 1 : 0;
+	while (nBytes / tunedChunkSize < (T3 + extra) && tunedChunkSize > 32768)
+		tunedChunkSize /= 2;
+
+	return tunedChunkSize;
+}
+
+static size_t chunkSizeTuningTreeLL128P6(size_t nBytes, int log2_nnodes)
+{
+	/*
+	 * Picks a chunk size by stepping down a power-of-2 ladder
+	 * (288000 -> 144000 -> 72000 -> 36000) based on how many chunks the
+	 * per-channel message would be split into. NCCL later grains these to the
+	 * sizes it actually uses (e.g. 36000 -> 34560, 72000 -> 71040).
+	 *
+	 * Key quantities:
+	 * nBytes = per-channel byte count (roughly msg_size / nChannels).
+	 * nsteps = 1 + log2(nNodes)
+	 *                         = tree depth (levels per direction). The tree is a
+	 *                           multi-level pipeline (reduce up, broadcast down);
+	 *                           keeping it full needs roughly one in-flight chunk
+	 *                           per level, so every threshold scales with nsteps.
+	 * nBytes / tunedChunkSize = number of chunks at the current chunk size. Few
+	 *                           chunks => shallow pipeline; many chunks => full
+	 *                           pipeline.
+	 *
+	 * Trade-off at every chunk size: larger chunks put more bytes in flight, which
+	 * EFA rewards only up to its inflight saturation point; smaller chunks give more
+	 * chunks to keep a deep tree pipeline full. */
+	size_t nsteps = 1 + log2_nnodes;
+
+	/*
+	 * The network path saturates once the in-flight data per rank fills the link's
+	 * capacity; beyond that point additional in-flight data only adds queuing
+	 * latency without improving throughput. For large message sizes, a chunk size
+	 * of 288,000 Bytes keeps in-flight data near this saturation point while still
+	 * producing enough chunks to keep the pipeline full. Larger chunk sizes push
+	 * in-flight data past saturation, adding queuing latency with no throughput
+	 * gain. */
+	size_t tunedChunkSize = 288000;
+
+	/*
+	 * Step 1: 288000 → 144000 (threshold: 1 × nsteps² - extra)
+	 * The quadratic scaling captures the observation that larger clusters need
+	 * proportionally many more chunks before the biggest chunk size becomes
+	 * beneficial. Choosing chunk size of 144,000 Bytes will keep inflight at
+	 * 1MB while having more chunks to maximize the pipeline efficiency. Deeper
+	 * trees need more chunks in the pipeline to keep all links busy
+	 * simultaneously, because there are more hops to fill. 
+	 * Note: for small clusters this limit is reduced by a constant as experiemnt
+	 * results suggest. */
+	size_t extra = log2_nnodes < 3 ? 4 : 0;
+	if (nBytes / tunedChunkSize < 2 * nsteps * nsteps - extra)
+		tunedChunkSize /= 2;
+
+	/*
+	 * Step 2: 144000 → 72000 (threshold: 1.5 × nsteps + extra)
+	 * At the 144 KB chunk size, decide whether there are enough chunks to keep
+	 * 144 KB or whether to step down to 72 KB for better pipelining on smaller
+	 * messages. Keeping a deeper pipeline full needs roughly "one chunk per
+	 * level," so the threshold scales linearly with depth.
+	 * Note: for larger cluster (8 nodes and above), this limit is extended by a
+	 * constant as experiment results suggest. */
+	extra = log2_nnodes < 3 ? 0 : 2;
+	if (nBytes / tunedChunkSize < (size_t)(1.5 * nsteps + extra))
+		tunedChunkSize /= 2;
+
+	/*
+	 * Step 3: 72000 → 36000 (threshold: nsteps + 0/2 for smaller/lrager clusters)
+	 * At small chunk chunk sizes, per-chunk inflight is small, and the EFA bandwidth
+	 * benefit of larger chunks is negligible, so the only concern is filling
+	 * the pipeline. That needs about one chunk per tree level.
+	 *
+	 * Differences from P5EN:
+	 * 1. lower bound is 36000 instead of 18000
+	 * 2. extra term is zero on small cluster and 2 on larger clusters (instead of 1)
+	 */
+	extra = log2_nnodes < 4 ? 0 : 2;
+	while (nBytes / tunedChunkSize < nsteps + extra && tunedChunkSize > 36000)
+		tunedChunkSize /= 2;
+
+	return tunedChunkSize;
+}
+
 ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 					    ncclFunc_t collType,
 					    size_t nBytes,
@@ -2361,12 +2504,16 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 		    proto == NCCL_PROTO_LL128) {
 			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
 				*chunkSize = chunkSizeTuningTreeLL128P5en(nBytes, region_ctx->log2_nnodes);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6) {
+				*chunkSize = chunkSizeTuningTreeLL128P6(nBytes, region_ctx->log2_nnodes);
 			}
 		}
 		if (collType == ncclFuncAllGather && algo == NCCL_ALGO_PAT &&
 		    proto == NCCL_PROTO_SIMPLE) {
 			if (region_ctx->platform == NCCL_OFI_TUNER_P5EN) {
 				*chunkSize = chunkSizeTuningAllGatherPatSimpleP5en(nBytes, region_ctx->dims.num_nodes);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6) {
+				*chunkSize = chunkSizeTuningAllGatherPatSimpleP6(nBytes, region_ctx->dims.num_nodes);
 			}
 		}
 	}
