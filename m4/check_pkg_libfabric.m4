@@ -86,6 +86,20 @@ AC_DEFUN([CHECK_PKG_LIBFABRIC], [
 #include <rdma/fi_ext_efa.h>
 #endif]])])
 
+  dnl Check whether query_qp_wqs reports work-queue capabilities. Older
+  dnl libfabric releases expose fi_efa_wq_attr without the caps member.
+  AS_IF([test "${check_pkg_found}" = "yes"],
+        [AC_CHECK_MEMBER([struct fi_efa_wq_attr.caps],
+                  [have_fi_efa_wq_attr_caps=1],
+                  [have_fi_efa_wq_attr_caps=0],
+                  [AC_INCLUDES_DEFAULT
+[#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif]])
+         AC_DEFINE_UNQUOTED([HAVE_FI_EFA_WQ_ATTR_CAPS],
+                            [$have_fi_efa_wq_attr_caps],
+                            [Define to 1 if fi_efa_wq_attr has a caps member, 0 otherwise])])
+
   dnl Check for hardware counter support (cntr_open_ext) in the GDA ops.
   AS_IF([test "${check_pkg_found}" = "yes"],
         [AC_CHECK_TYPES([struct fi_efa_comp_cntr_init_attr],
