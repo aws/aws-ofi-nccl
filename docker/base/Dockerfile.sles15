@@ -1,0 +1,80 @@
+FROM registry.suse.com/bci/bci-base:15.7
+
+ARG CC_TYPE=gcc-14
+ARG CUDA_VERSION=12-6
+ARG EFA_INSTALLER_VERSION=latest
+ARG HWLOC_VERSION=2.11.2
+ARG HWLOC_SHA256=866ac8ef07b350a6a2ba0c6826c37d78e8994dcbcd443bdd2b436350de19d540
+
+# SLES ships GCC only under versioned names, so split CC_TYPE (e.g. gcc-14)
+# into family and version like the Ubuntu images.
+#
+# libfabric-devel is pinned to 2.0.0: this is the proxy-only libfabric (no
+# GDAKI), and pinning keeps that coverage reproducible so a future SLES update
+# cannot silently introduce GDAKI and collapse the proxy path. Bump this
+# deliberately if the proxy baseline should move.
+RUN cc_version="${CC_TYPE##*-}" && \
+    zypper --non-interactive addrepo \
+        https://developer.download.nvidia.com/compute/cuda/repos/sles15/x86_64/ cuda && \
+    zypper --gpg-auto-import-keys --non-interactive refresh && \
+    zypper --non-interactive install --no-recommends \
+        autoconf automake libtool \
+        gcc${cc_version} gcc${cc_version}-c++ \
+        make git curl tar gzip bzip2 xz m4 gawk diffutils findutils which \
+        pkg-config libxml2-devel libpciaccess-devel libnl3-devel \
+        rdma-core-devel libfabric-devel=2.0.0 openmpi4-devel \
+        cuda-cudart-devel-${CUDA_VERSION} cuda-crt-${CUDA_VERSION} && \
+    zypper clean --all
+
+# hwloc development files are not in the free SLE_BCI repository (only the
+# runtime library), and the SLE HPC module that ships hwloc-devel requires a
+# paid registration that is not available in CI. Build the pinned release.
+RUN cc_version="${CC_TYPE##*-}" && \
+    curl -fsSL \
+        "https://download.open-mpi.org/release/hwloc/v2.11/hwloc-${HWLOC_VERSION}.tar.gz" \
+        -o /tmp/hwloc.tar.gz && \
+    echo "${HWLOC_SHA256}  /tmp/hwloc.tar.gz" | sha256sum --check --strict && \
+    mkdir /tmp/hwloc && \
+    tar -xzf /tmp/hwloc.tar.gz -C /tmp/hwloc --strip-components=1 && \
+    cd /tmp/hwloc && \
+    CC=gcc-${cc_version} CXX=g++-${cc_version} \
+        ./configure --prefix=/opt/hwloc \
+        --disable-cairo --disable-opencl --disable-nvml && \
+    make -j"$(nproc)" && \
+    make install && \
+    rm -rf /tmp/hwloc /tmp/hwloc.tar.gz
+
+# Container-mode EFA install for the GDAKI-capable libfabric under
+# /opt/amazon/efa. Use --enable-ngc because the installer's SUSE efa-config RPM
+# runs an unconditional "systemctl enable/start efa-config" in its %post, which
+# fails inside a container (no running systemd) and aborts the install.
+# --enable-ngc is the installer's container mode and skips that host setup
+# (implies --skip-kmod --skip-limit-conf --no-verify --yes). The Debian package
+# does not hit this because its postinst defers to debhelper's container-aware
+# systemd handling rather than calling systemctl directly. --skip-mpi avoids
+# pulling the installer's Open MPI (whose hwloc dependency is unsatisfiable
+# here) and keeps the SLES Open MPI for the proxy-only path.
+RUN curl -fsSL \
+        "https://efa-installer.amazonaws.com/aws-efa-installer-${EFA_INSTALLER_VERSION}.tar.gz" \
+        -o /tmp/efa-installer.tar.gz && \
+    mkdir /tmp/efa-installer && \
+    tar -xzf /tmp/efa-installer.tar.gz \
+        -C /tmp/efa-installer --strip-components=1 && \
+    cd /tmp/efa-installer && \
+    ./efa_installer.sh --enable-ngc --skip-mpi && \
+    cd / && \
+    rm -rf /tmp/efa-installer /tmp/efa-installer.tar.gz && \
+    zypper clean --all
+
+# Point the unversioned compiler names at the requested GCC, after the EFA
+# install so the GCC 7 that EFA pulls in through dkms cannot win. Open MPI's
+# wrappers invoke a bare "gcc"/"g++", so this lets them resolve to the intended
+# compiler without per-consumer OMPI_CC/OMPI_CXX overrides.
+RUN cc_version="${CC_TYPE##*-}" && \
+    ln -sf gcc-${cc_version} /usr/bin/gcc && \
+    ln -sf g++-${cc_version} /usr/bin/g++ && \
+    ln -sf cpp-${cc_version} /usr/bin/cpp && \
+    ln -sf gcc-${cc_version} /usr/bin/cc && \
+    ln -sf g++-${cc_version} /usr/bin/c++
+
+WORKDIR /workspace
