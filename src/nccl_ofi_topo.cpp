@@ -20,6 +20,30 @@
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
 
+/*
+ * @brief	Opaque implementation state owned by nccl_ofi_topo_t
+ *
+ * Holds the members that used to be public fields of the topology
+ * struct. Keeping them here keeps hwloc ownership, the data vector, and
+ * the mutable group counter out of the public interface.
+ */
+struct nccl_ofi_topo_state {
+	/* Hardware topology. Each topology node stores a pointer to a
+	 * different object of vector 'data_vec'. */
+	hwloc_topology_t topo;
+
+	/* Maximum number of libfabric NICs in a group */
+	int max_group_size;
+
+	/* Vector of topology node user data. The user data objects of
+	 * the vector are the vehicle to store temporary data as well
+	 * as NIC info lists in the topology nodes. There is a
+	 * one-to-one relationship between each topology node of
+	 * 'topo' and user data objects of this vector. */
+	nccl_ofi_topo_data_vec_t *data_vec;
+};
+
+
 #if HAVE_CUDA
 static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
 static const unsigned short target_vendor_ids[] = { 0x10de }; /* NVIDIA */
@@ -79,20 +103,25 @@ static nccl_ofi_topo_data_vec_t *nccl_ofi_topo_data_vec_create(size_t size)
 	return vec;
 }
 
-int nccl_ofi_topo_set_to_begin(const nccl_ofi_topo_t *topo, nccl_ofi_topo_data_iterator_t *iter)
+/*
+ * @brief	Set topology user data iterator to the first element of the
+ *		implementation state's user data array
+ */
+static int state_set_to_begin(const nccl_ofi_topo_state *state,
+			      nccl_ofi_topo_data_iterator_t *iter)
 {
-	if (!topo) {
+	if (!state) {
 		NCCL_OFI_WARN("Invalid NCCL OFI topology");
 		return -EINVAL;
 	}
 
-	if (!topo->data_vec) {
+	if (!state->data_vec) {
 		NCCL_OFI_WARN("Invalid NCCL OFI topology user data");
 		return -EINVAL;
 	}
 
-	iter->begin = topo->data_vec->data;
-	iter->end = topo->data_vec->data + topo->data_vec->size;
+	iter->begin = state->data_vec->data;
+	iter->end = state->data_vec->data + state->data_vec->size;
 
 	return 0;
 }
@@ -191,15 +220,22 @@ static int is_accelerator_dev(hwloc_obj_t obj, bool *res)
         return 0;
 }
 
-void nccl_ofi_topo_free(nccl_ofi_topo_t *topo)
+/*
+ * @brief	Release the hwloc topology, user data vector, and NIC info
+ *		lists owned by the implementation state
+ *
+ * The state struct itself is owned by the nccl_ofi_topo_t instance and
+ * is not freed here.
+ */
+static void state_release(nccl_ofi_topo_state *state)
 {
-	if (!topo) return;
+	if (!state) return;
 
-	if (topo->topo) hwloc_topology_destroy(topo->topo);
+	if (state->topo) hwloc_topology_destroy(state->topo);
 
-	if (topo->data_vec) {
+	if (state->data_vec) {
 		nccl_ofi_topo_data_iterator_t data_iter;
-		nccl_ofi_topo_set_to_begin(topo, &data_iter);
+		state_set_to_begin(state, &data_iter);
 
 		/* Free libfabric NIC info lists */
 		nccl_ofi_topo_data_t *data = nccl_ofi_get_user_data(&data_iter);
@@ -211,11 +247,10 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo)
 		}
 
 		/* Free data array and vector */
-		free(topo->data_vec->data);
-		free(topo->data_vec);
+		free(state->data_vec->data);
+		free(state->data_vec);
+		state->data_vec = NULL;
 	}
-
-	free(topo);
 }
 
 /*
@@ -365,11 +400,11 @@ bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second)
 	       common->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
 }
 
-int nccl_ofi_topo_nic_gpu_share_pcie_switch(const nccl_ofi_topo_t *topo,
-					    struct fi_info *nic_info,
-					    bool *result)
+static int state_nic_gpu_share_pcie_switch(const nccl_ofi_topo_state *state,
+					   struct fi_info *nic_info,
+					   bool *result)
 {
-	if (topo == NULL || topo->topo == NULL || nic_info == NULL || result == NULL) {
+	if (state == NULL || state->topo == NULL || nic_info == NULL || result == NULL) {
 		return -EINVAL;
 	}
 
@@ -380,7 +415,7 @@ int nccl_ofi_topo_nic_gpu_share_pcie_switch(const nccl_ofi_topo_t *topo,
 	 * device node.
 	 */
 	hwloc_obj_t nic = NULL;
-	int ret = get_hwloc_pcidev_by_fi_info(topo->topo, nic_info, &nic);
+	int ret = get_hwloc_pcidev_by_fi_info(state->topo, nic_info, &nic);
 	if (ret != 0) {
 		return ret;
 	}
@@ -814,7 +849,7 @@ static hwloc_obj_t mark_nccl_cpuid(hwloc_topology_t topo,
  *		List of libfabric NIC info structs used to identify topology nodes corresponding to NICs
  * @return
  */
-static int set_user_data(nccl_ofi_topo_t *ofi_topo,
+static int set_user_data(nccl_ofi_topo_state *ofi_topo,
 				  struct fi_info *info_list)
 {
 	int ret = 0;
@@ -858,7 +893,7 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 		NCCL_OFI_WARN("Could not create user data vector.");
 		return -ENOMEM;
 	}
-	nccl_ofi_topo_set_to_begin(ofi_topo, &data_iter);
+	state_set_to_begin(ofi_topo, &data_iter);
 
 	/* Iterate over all PCI topology nodes and find nodes
 	 * corresponding to NICs and Nvidia GPUs. From those nodes,
@@ -911,51 +946,47 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	return 0;
 }
 
-nccl_ofi_topo_t *nccl_ofi_topo_create()
+nccl_ofi_topo_t::nccl_ofi_topo_t()
+	: state_(std::make_unique<nccl_ofi_topo_state>())
+{
+}
+
+nccl_ofi_topo_t::~nccl_ofi_topo_t()
+{
+	state_release(this->state_.get());
+}
+
+std::unique_ptr<nccl_ofi_topo_t> nccl_ofi_topo_t::create()
 {
 	/* Allocate NCCL OFI topology */
-	nccl_ofi_topo_t *ofi_topo = (nccl_ofi_topo_t *)calloc(1, sizeof(nccl_ofi_topo_t));
-	if (!ofi_topo) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "Unable to allocate nccl_ofi_topo");
-		goto error;
-	}
+	std::unique_ptr<nccl_ofi_topo_t> ofi_topo(new nccl_ofi_topo_t());
 
 	/*
 	 * Load hardware topology
 	 */
-	if (hwloc_topology_init(&ofi_topo->topo) != 0) {
+	if (hwloc_topology_init(&ofi_topo->state_->topo) != 0) {
 		NCCL_OFI_WARN("Unable to initialize hardware topology.");
-		goto error;
+		return nullptr;
 	}
 
 	/* Prepare hardware topology ready to load IO nodes as well */
-	enable_hwloc_io_types(ofi_topo->topo);
-	if (hwloc_topology_load(ofi_topo->topo) != 0) {
+	enable_hwloc_io_types(ofi_topo->state_->topo);
+	if (hwloc_topology_load(ofi_topo->state_->topo) != 0) {
 		NCCL_OFI_WARN("Unable to load hardware topology.");
-		goto error;
+		return nullptr;
 	}
 
 	return ofi_topo;
-
- error:
-	nccl_ofi_topo_free(ofi_topo);
-	return NULL;
 }
 
-int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list)
+int nccl_ofi_topo_t::populate(struct fi_info *info_list)
 {
 	int ret = 0;
-
-	if (!ofi_topo) {
-		NCCL_OFI_WARN("Invalid topology");
-		return -EINVAL;
-	}
 
 	/* Add user data to topology nodes that have a nic or NVIDIA
 	 * GPU in their subtree. Also, add libfabric NIC info structs
 	 * to user data to topology nodes corresponding to the NICs. */
-	ret = set_user_data(ofi_topo, info_list);
+	ret = set_user_data(this->state_.get(), info_list);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Data decoration failed.");
 		return ret;
@@ -968,14 +999,14 @@ int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list)
  * @brief	Mark all topology nodes that store a libfabric NIC info
  *		struct in their subtrees
  */
-static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_t *topo)
+static int mark_topo_nodes_with_ofi_info_subtree(nccl_ofi_topo_state *topo)
 {
 	int status;
 	nccl_ofi_topo_data_t *data = NULL;
 
 	/* Iterate over user data that stores libfabric NIC info structs */
 	nccl_ofi_topo_data_iterator_t data_iter;
-	if ((status = nccl_ofi_topo_set_to_begin(topo, &data_iter)) < 0) {
+	if ((status = state_set_to_begin(topo, &data_iter)) < 0) {
 		return status;
 	}
 
@@ -1081,7 +1112,7 @@ static int propagate_accel_group_counts(hwloc_topology_t topo)
  * @brief	Lift libfabric NIC info objects, stored in the user data of
  *		topology nodes, up to nodes with group count of one or more
  */
-static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
+static int lift_up_ofi_infos(nccl_ofi_topo_state *topo)
 {
 	nccl_ofi_topo_data_t *source_data = NULL;
 	nccl_ofi_topo_data_t *target_data = NULL;
@@ -1091,7 +1122,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
 	 * "accelerator topology nodes" it their subtree, all info
 	 * structs are found. */
 	nccl_ofi_topo_data_iterator_t data_iter = {};
-	nccl_ofi_topo_set_to_begin(topo, &data_iter);
+	state_set_to_begin(topo, &data_iter);
 	while ((source_data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
 		if (!source_data->info_list) {
@@ -1176,7 +1207,7 @@ static int lift_up_ofi_infos(nccl_ofi_topo_t *topo)
  * @return	0, on success
  * 		-EINVAL, on others
  */
-static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
+static int create_groups_from_info_list(nccl_ofi_topo_state *topo,
 						 struct fi_info **info_list,
 						 int num_infos,
 						 hwloc_obj_t gpu_group_node,
@@ -1268,13 +1299,13 @@ static int create_groups_from_info_list(nccl_ofi_topo_t *topo,
  * @return	0, on success
  * 		-errno code, on others
  */
-static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
+static int create_groups_from_info_lists(nccl_ofi_topo_state *topo)
 {
 	nccl_ofi_topo_data_t *data = NULL;
 
 	/* Iterate over user data of topology nodes */
 	nccl_ofi_topo_data_iterator_t data_iter = {};
-	nccl_ofi_topo_set_to_begin(topo, &data_iter);
+	state_set_to_begin(topo, &data_iter);
 	while ((data = nccl_ofi_get_user_data(&data_iter))) {
 		nccl_ofi_inc_user_data_iter(&data_iter);
 		if (!data->info_list) {
@@ -1310,10 +1341,10 @@ static int create_groups_from_info_lists(nccl_ofi_topo_t *topo)
 /*
  * @brief	Print libfabric NIC info lists stored in user data of topology nodes
  */
-static void print_nic_groups(nccl_ofi_topo_t *topo) {
+static void print_nic_groups(nccl_ofi_topo_state *topo) {
 	nccl_ofi_topo_data_t *data = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter = {};
-	nccl_ofi_topo_set_to_begin(topo, &data_iter);
+	state_set_to_begin(topo, &data_iter);
 
 	int group_idx = 0;
 	while ((data = nccl_ofi_get_user_data(&data_iter))) {
@@ -1343,9 +1374,10 @@ static void print_nic_groups(nccl_ofi_topo_t *topo) {
 	}
 }
 
-int nccl_ofi_topo_group(nccl_ofi_topo_t *topo)
+int nccl_ofi_topo_t::group()
 {
 	int ret = 0;
+	nccl_ofi_topo_state *topo = this->state_.get();
 
         ret = mark_topo_nodes_with_ofi_info_subtree(topo);
 	if (ret != 0) {
@@ -1926,7 +1958,7 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	return ret;
 }
 
-int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file)
+int nccl_ofi_topo_t::write(FILE *file) const
 {
 	int ret = 0;
 	int bridge_depth = 0;
@@ -1938,7 +1970,7 @@ int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file)
 		return -errno;
 	}
 
-	ret = write_nccl_topo_rec(topo->topo, hwloc_get_root_obj(topo->topo),
+	ret = write_nccl_topo_rec(this->state_->topo, hwloc_get_root_obj(this->state_->topo),
 				   file, indent, bridge_depth);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to write topology to NCCL topology file");
@@ -1954,16 +1986,21 @@ int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file)
 	return ret;
 }
 
-int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists)
+int nccl_ofi_topo_t::set_to_begin(nccl_ofi_topo_data_iterator_t *iter) const
 {
-	if (!topo || !topo->data_vec) {
+	return state_set_to_begin(this->state_.get(), iter);
+}
+
+int nccl_ofi_topo_t::num_info_lists(int *num_lists) const
+{
+	if (!this->state_ || !this->state_->data_vec) {
 		NCCL_OFI_WARN("Invalid topology. Topology is not initialized.");
 		return -EINVAL;
 	}
 
 	nccl_ofi_topo_data_t *data = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
-	nccl_ofi_topo_set_to_begin(topo, &data_iter);
+	state_set_to_begin(this->state_.get(), &data_iter);
 
 	*num_lists = 0;
 	while ((data = nccl_ofi_get_user_data(&data_iter))) {
@@ -1991,13 +2028,23 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 	return info_list;
 }
 
-bool nccl_ofi_topo_has_efa_ena_devices(const nccl_ofi_topo_t* topo) {
-	if (topo == nullptr || topo->topo == nullptr) {
+int nccl_ofi_topo_t::nic_gpu_share_pcie_switch(struct fi_info *nic_info, bool *result) const
+{
+	return state_nic_gpu_share_pcie_switch(this->state_.get(), nic_info, result);
+}
+
+int nccl_ofi_topo_t::max_group_size() const
+{
+	return this->state_->max_group_size;
+}
+
+bool nccl_ofi_topo_t::has_efa_ena_devices() const {
+	if (this->state_ == nullptr || this->state_->topo == nullptr) {
 		return false;
 	}
 
 	hwloc_obj_t obj = nullptr;
-	while ((obj = hwloc_get_next_pcidev(topo->topo, obj)) != nullptr) {
+	while ((obj = hwloc_get_next_pcidev(this->state_->topo, obj)) != nullptr) {
 		// Check Amazon vendor id
 		if (obj->attr->pcidev.vendor_id == 0x1D0F) {
 			auto device_id = obj->attr->pcidev.device_id;
