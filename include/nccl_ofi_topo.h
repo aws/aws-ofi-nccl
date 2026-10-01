@@ -206,6 +206,8 @@ public:
 private:
 	nccl_ofi_topo_t();
 
+	static bool share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
+
 	std::unique_ptr<nccl_ofi_topo_state> state_;
 };
 
@@ -221,18 +223,6 @@ private:
  *		NULL, if end of vector is reached and no list has been found
  */
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
-
-/*
- * @brief	Test whether two topology nodes sit under a common PCIe switch
- *
- * The nearest common ancestor is found from parent links because hwloc gives
- * I/O objects virtual depths based on object type rather than structural
- * depth, so depth comparison cannot locate an ancestor when the two branches
- * hold different numbers of bridges.
- *
- * @return	true if the closest common ancestor is a PCI-to-PCI bridge
- */
-bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
 
 /*
  * Grouping algorithm description for nccl_ofi_topo_t::group():

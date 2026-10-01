@@ -355,7 +355,7 @@ static int get_hwloc_pcidev_by_fi_info(hwloc_topology_t topo,
 	return 0;
 }
 
-bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second)
+bool nccl_ofi_topo_t::share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second)
 {
 	if (first == NULL || second == NULL) {
 		return false;
@@ -398,48 +398,6 @@ bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second)
 	return common != NULL && common->type == HWLOC_OBJ_BRIDGE &&
 	       common->attr != NULL &&
 	       common->attr->bridge.upstream_type == HWLOC_OBJ_BRIDGE_PCI;
-}
-
-static int state_nic_gpu_share_pcie_switch(const nccl_ofi_topo_state *state,
-					   struct fi_info *nic_info,
-					   bool *result)
-{
-	if (state == NULL || state->topo == NULL || nic_info == NULL || result == NULL) {
-		return -EINVAL;
-	}
-
-	*result = false;
-
-	/*
-	 * Reuse the lookup that grouping uses to tie a provider to its PCI
-	 * device node.
-	 */
-	hwloc_obj_t nic = NULL;
-	int ret = get_hwloc_pcidev_by_fi_info(state->topo, nic_info, &nic);
-	if (ret != 0) {
-		return ret;
-	}
-
-	/*
-	 * A NIC that hwloc does not report, or that grouping never attached user
-	 * data to, tells us nothing about how it reaches a GPU. Report no PCIe
-	 * switch rather than guessing, since that is the mapping that works
-	 * wherever a NIC can reach GPU memory at all.
-	 */
-	if (nic == NULL || nic->userdata == NULL) {
-		return 0;
-	}
-
-	/*
-	 * gpu_group_node is the GPU that NIC grouping already found closest to
-	 * this NIC's group; see propagate_accel_count() and
-	 * create_groups_from_info_list(). It is NULL when no accelerator was
-	 * associated, which nccl_ofi_topo_share_pcie_switch() reports as false.
-	 */
-	nccl_ofi_topo_data_t *data = (nccl_ofi_topo_data_t *)nic->userdata;
-	*result = nccl_ofi_topo_share_pcie_switch(nic, data->gpu_group_node);
-
-	return 0;
 }
 
 /*
@@ -2030,7 +1988,37 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 
 int nccl_ofi_topo_t::nic_gpu_share_pcie_switch(struct fi_info *nic_info, bool *result) const
 {
-	return state_nic_gpu_share_pcie_switch(this->state_.get(), nic_info, result);
+	if (this->state_ == nullptr || this->state_->topo == nullptr ||
+	    nic_info == nullptr || result == nullptr) {
+		return -EINVAL;
+	}
+
+	*result = false;
+
+	/* Reuse the lookup that grouping uses to tie a provider to its PCI
+	 * device node. */
+	hwloc_obj_t nic = nullptr;
+	int ret = get_hwloc_pcidev_by_fi_info(this->state_->topo, nic_info, &nic);
+	if (ret != 0) {
+		return ret;
+	}
+
+	/* A NIC that hwloc does not report, or that grouping never attached user
+	 * data to, tells us nothing about how it reaches a GPU. Report no PCIe
+	 * switch rather than guessing, since that is the mapping that works
+	 * wherever a NIC can reach GPU memory at all. */
+	if (nic == nullptr || nic->userdata == nullptr) {
+		return 0;
+	}
+
+	/* gpu_group_node is the GPU that NIC grouping already found closest to
+	 * this NIC's group; see propagate_accel_count() and
+	 * create_groups_from_info_list(). It is nullptr when no accelerator was
+	 * associated, which share_pcie_switch() reports as false. */
+	nccl_ofi_topo_data_t *data = (nccl_ofi_topo_data_t *)nic->userdata;
+	*result = share_pcie_switch(nic, data->gpu_group_node);
+
+	return 0;
 }
 
 int nccl_ofi_topo_t::max_group_size() const
