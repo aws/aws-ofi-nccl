@@ -8,6 +8,8 @@
 #include <hwloc.h>
 #include <rdma/fabric.h>
 
+#include <memory>
+
 /*
  * @brief	User data of topology nodes
  *
@@ -15,7 +17,8 @@
  * data is used by NCCL OFI topology and its associated functions.
  *
  * User data stores members that are temporarily used by libfabric NIC
- * info grouping functions nccl_ofi_topo_create() and nccl_ofi_topo_group().
+ * info grouping functions nccl_ofi_topo_t::create() and
+ * nccl_ofi_topo_t::group().
  *
  * The 'info_list' member of user data is used to store Libfabric NIC
  * info structs in topology nodes: After loading a NCCL OFI topology,
@@ -84,43 +87,145 @@ typedef struct nccl_ofi_topo_data_iterator {
 	nccl_ofi_topo_data_t *end;
 } nccl_ofi_topo_data_iterator_t;
 
+struct nccl_ofi_topo_state;
+
 /*
  * @brief	NCCL OFI topology containing hardware topology and topology node user data
- */
-typedef struct nccl_ofi_topo {
-	/* Hardware topology. Each topology node stores a pointer to a
-	 * different object of vector 'data_vec'. */
-	hwloc_topology_t topo;
-
-	/* Maximum number of libfabric NICs in a group */
-	int max_group_size;
-
-	/* Vector of topology node user data. The user data objects of
-	 * the vector are the vehicle to store temporary data as well
-	 * as NIC info lists in the topology nodes. There is a
-	 * one-to-one relationship between each topology node of
-	 * 'topo' and user data objects of this vector. */
-	nccl_ofi_topo_data_vec_t *data_vec;
-} nccl_ofi_topo_t;
-
-/*
- * @brief	Set topology user data iterator to the first element of NCCL OFI
- *		topologies's user data array
- */
-int nccl_ofi_topo_set_to_begin(const nccl_ofi_topo_t *topo,
-			       nccl_ofi_topo_data_iterator_t *iter);
-
-/*
- * @brief 	Free NCCL OFI topology
  *
- * Free NCCL OFI topology including its hardware topology, hardware
- * topology user data, and the libfabric NIC info lists stored in the
- * user data. Operation is only executed if input topology is not NULL.
+ * The class owns an hwloc topology and the libfabric NIC info lists
+ * attached to its topology nodes. Lifetime is managed through RAII: use
+ * create() to obtain an instance and let the owning std::unique_ptr
+ * destroy it. Callers interact with topology state only through the
+ * methods below.
  */
-void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
+class nccl_ofi_topo_t {
+public:
+	/*
+	 * @brief	Allocate and initialize an nccl_ofi_topo_t instance
+	 *
+	 * Create an nccl_ofi_topo_t that stores the hardware topology of
+	 * the machine. Hwloc is initialized, complete I/O discovery is
+	 * enabled, and the running system topology is loaded.
+	 *
+	 * @return	NCCL OFI hardware topology, on success
+	 *		nullptr, on others
+	 */
+	static std::unique_ptr<nccl_ofi_topo_t> create();
+
+	/*
+	 * @brief	Free NCCL OFI topology
+	 *
+	 * Free the hardware topology, hardware topology user data, and the
+	 * libfabric NIC info lists stored in the user data.
+	 */
+	~nccl_ofi_topo_t();
+
+	nccl_ofi_topo_t(const nccl_ofi_topo_t &) = delete;
+	nccl_ofi_topo_t &operator=(const nccl_ofi_topo_t &) = delete;
+
+	/*
+	 * @brief	Populate topology with provider data
+	 *
+	 * @param	info_list
+	 *		List of libfabric NIC info structs
+	 * @return	0, on success
+	 *		non-zero, on others
+	 */
+	int populate(struct fi_info *info_list);
+
+	/*
+	 * @brief	Group libfabric NIC info structs according to locality
+	 *		to GPU topology nodes
+	 *
+	 * See the grouping algorithm description below for the full set of
+	 * steps performed.
+	 *
+	 * @return	0, on success
+	 * 		-EINVAL, if unable to extract libfabric
+	 * 		NIC info from topology via bus id
+	 * 		-ENOMEM, on others
+	 */
+	int group();
+
+	/*
+	 * @brief	Write NCCL topology file based on NCCL OFI topology
+	 *
+	 * @param	file
+	 *		File to write to
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	int write(FILE *file) const;
+
+	/*
+	 * @brief	Set topology user data iterator to the first element of
+	 *		the NCCL OFI topology's user data array
+	 *
+	 * @return	0, on success
+	 *		-EINVAL, if the topology is not initialized
+	 */
+	int set_to_begin(nccl_ofi_topo_data_iterator_t *iter) const;
+
+	/*
+	 * @brief	Return number of topology nodes that store a libfabric
+	 *		NIC info list
+	 *
+	 * @return	0, on success
+	 *		-EINVAL, if the topology is not initialized
+	 */
+	int num_info_lists(int *num_lists) const;
+
+	/*
+	 * @brief	Test whether a NIC reaches its closest GPU through a
+	 *		PCIe switch
+	 *
+	 * Uses the GPU that NIC grouping already associated with the NIC's
+	 * group. Callers use this to decide whether GPU memory the NIC
+	 * accesses should be exported with the PCIe BAR1 DMA-BUF mapping. A
+	 * NIC or GPU that topology cannot place is not evidence of a PCIe
+	 * switch path, so `result` is false.
+	 *
+	 * @return	0, on success
+	 *		non-zero, on error
+	 */
+	int nic_gpu_share_pcie_switch(struct fi_info *nic_info, bool *result) const;
+
+	/*
+	 * @brief	Check if topology has EFA/ENA devices
+	 *
+	 * @return	true, if EFA or ENA device detected
+	 *		false, otherwise
+	 */
+	bool has_efa_ena_devices() const;
+
+	/*
+	 * @brief	Return maximum number of libfabric NICs in a group
+	 */
+	int max_group_size() const;
+
+private:
+	nccl_ofi_topo_t();
+
+	static bool share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
+
+	std::unique_ptr<nccl_ofi_topo_state> state_;
+};
 
 /*
- * @brief 	Group libfabric NIC info structs according to locality to GPU topology nodes
+ * @brief	Return next libfabric NIC info list from NCCL OFI topology
+ *
+ * This function iterates over the user data of the NCCL OFI topology
+ * and returns the next libfabric NIC info list.
+ *
+ * @param	iter
+ *		NCCL OFI topology user data iterator
+ * @return	next libfabric NIC info list, if available
+ *		NULL, if end of vector is reached and no list has been found
+ */
+struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
+
+/*
+ * Grouping algorithm description for nccl_ofi_topo_t::group():
  *
  * The grouping algorithm performs the following steps:
  *
@@ -178,7 +283,7 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  * 
  * 
  * Initial state after NCCL OFI topology has been created via function
- * nccl_ofi_topo_create().
+ * nccl_ofi_topo_t::create().
  * 
  *                            /
  *                        B:0u
@@ -239,115 +344,6 @@ void nccl_ofi_topo_free(nccl_ofi_topo_t *topo);
  *                    NIC0                 NIC2
  *                    |                    |
  *                    NIC1                 NIC3
- * 
- * @param	topo
- *		The NCCL OFI topology.
- *
- * @return	0, on success
- * 		-EINVAL, if unable to extract libfabric
- * 		NIC info from topology via bus id
- * 		-ENOMEM, on others
  */
-int nccl_ofi_topo_group(nccl_ofi_topo_t *topo);
-
-/*
- * @brief	Allocate and initialize nccl_ofi_topo_t struct
- *
- * Create a nccl_ofi_topo_t struct that stores the hardware topology
- * of the machine.
- *
- * @return	NCCL OFI hardware topology, on success
- *		NULL, on others
- */
-nccl_ofi_topo_t *nccl_ofi_topo_create();
-
-/*
- * @brief	Populate topology with provider data
- *
- * @param	ofi_topo
- *		NCCL OFI topology created with nccl_ofi_topo_create()
- * @param	info_list
- *		List of libfabric NIC info structs
- * @return	0, on success
- *		non-zero, on others
- */
-int nccl_ofi_topo_populate(nccl_ofi_topo_t *ofi_topo, struct fi_info *info_list);
-
-/*
- * @brief	Write NCCL topology file based on NCCL OFI topology
- *
- * @param	topo
- *		NCCL OFI topology
- * @param	file
- *		File to write to
- * @return	0, on success
- *		non-zero, on error
- */
-int nccl_ofi_topo_write(const nccl_ofi_topo_t *topo, FILE *file);
-
-/*
- * @brief	Return number of topology nodes that store a libfabric NIC info
- *		list
- *
- * @param	topo
- *		The NCCL OFI topology
- *
- * @return	Number of lists, on success
- * 		undefined, on others
- * @return	ncclInvalidArgument, if topology is not initialized
- *		ncclSuccess, on success
- *
- */
-int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists);
-
-/*
- * @brief	Return next libfabric NIC info list from NCCL OFI topology
- *
- * This function iterates over the user data of the NCCL OFI topology
- * and returns the next libfabric NIC info list.
- *
- * @param	topo
- *		NCCL OFI topology
- * @return	next libfabric NIC info list, if available
- *		NULL, if end of vector is reached and no list has been found
- */
-struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
-
-/*
- * @brief	Test whether two topology nodes sit under a common PCIe switch
- *
- * The nearest common ancestor is found from parent links because hwloc gives
- * I/O objects virtual depths based on object type rather than structural
- * depth, so depth comparison cannot locate an ancestor when the two branches
- * hold different numbers of bridges.
- *
- * @return	true if the closest common ancestor is a PCI-to-PCI bridge
- */
-bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
-
-/*
- * @brief	Test whether a NIC reaches its closest GPU through a PCIe switch
- *
- * Uses the GPU that NIC grouping already associated with the NIC's group.
- * Callers use this to decide whether GPU memory the NIC accesses should be
- * exported with the PCIe BAR1 DMA-BUF mapping.  A NIC or GPU that topology
- * cannot place is not evidence of a PCIe switch path, so `result` is false.
- *
- * @return	0, on success
- *		non-zero, on error
- */
-int nccl_ofi_topo_nic_gpu_share_pcie_switch(const nccl_ofi_topo_t *topo,
-					    struct fi_info *nic_info,
-					    bool *result);
-
-/*
- * @brief	Check if topology has EFA/ENA devices
- *
- * @param	topo
- * 		The topology
- * @return	true, if EFA or ENA device detected
- *		false, topo is null or EFA/ENA device not detected.
- */
-bool nccl_ofi_topo_has_efa_ena_devices(const nccl_ofi_topo_t* topo);
 
 #endif // End NCCL_NET_OFI_TOPO_H_

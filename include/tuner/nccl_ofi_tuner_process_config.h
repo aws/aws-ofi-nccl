@@ -20,8 +20,8 @@ class TunerProcessConfig {
 public:
 	TunerProcessConfig() {
 		/* Create topology for platform detection */
-		topo = nccl_ofi_topo_create();
-		PlatformManager::register_all_platforms(topo);
+		topo = nccl_ofi_topo_t::create();
+		PlatformManager::register_all_platforms(topo.get());
 
 		/*
 		 * Retrieve platform type and pass to Region and Model based tuner support check functions.
@@ -57,11 +57,7 @@ public:
 		force_num_rails_set = (ofi_nccl_force_num_rails.get_source() != ParamSource::DEFAULT);
 	}
 
-	~TunerProcessConfig() {
-		if (topo != nullptr) {
-			nccl_ofi_topo_free(topo);
-		}
-	}
+	~TunerProcessConfig() = default;
 
 	/**
 	 * Check if OFI tuner should be used.
@@ -111,14 +107,14 @@ public:
 	}
 
 
-	nccl_ofi_topo_t* get_topo() const { return topo; }
+	nccl_ofi_topo_t* get_topo() const { return topo.get(); }
 	const char* get_platform_type() const { return platform_type; }
 	enum nccl_ofi_tuner_platform get_tuner_platform() const { return tuner_platform; }
 	bool should_use_internal_tuner() const { return use_internal_tuner; }
 	bool should_force_model_tuner() const { return force_model_tuner; }
 	bool is_force_num_rails_set() const { return force_num_rails_set; }
 private:
-	nccl_ofi_topo_t *topo;
+	std::unique_ptr<nccl_ofi_topo_t> topo;
 	const char *platform_type;
 	enum nccl_ofi_tuner_platform tuner_platform;
 	bool use_internal_tuner;

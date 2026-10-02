@@ -11,7 +11,7 @@ AM_CPPFLAGS = -I$(top_srcdir)/include
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party
 AM_CPPFLAGS += -isystem $(abs_top_srcdir)/3rd-party/nccl/$(DEVICE_INTERFACE)/include
 LDADD = $(top_builddir)/src/libinternal_plugin.la
-noinst_HEADERS = unit_test.h
+noinst_HEADERS = unit_test.h topo_fixture.h
 
 noinst_PROGRAMS = \
 	assert \
@@ -23,7 +23,6 @@ noinst_PROGRAMS = \
 	idpool \
 	ep_addr_list \
 	mr \
-	topo \
 	histogram_binner \
 	histogram \
 	dlopen_c_test \
@@ -38,6 +37,15 @@ noinst_PROGRAMS += aws_platform_mapper
 endif
 
 base_sources = unit_test.cpp
+
+if HAVE_CUDA
+noinst_PROGRAMS += topo
+topo_SOURCES = $(base_sources) topo.cpp topo_fixture.cpp
+# Topology fixtures resolve from the source tree so the test works both in-tree
+# and in VPATH/out-of-tree builds; NCCL_OFI_TOPO_FIXTURE_DIR overrides it.
+topo_CPPFLAGS = $(AM_CPPFLAGS) \
+	-DTOPO_FIXTURE_DIR=\"$(abs_srcdir)/fixtures/topology\"
+endif
 
 
 if !ENABLE_NEURON
@@ -61,7 +69,6 @@ msgbuff_SOURCES = $(base_sources) msgbuff.cpp
 scheduler_SOURCES = $(base_sources) scheduler.cpp
 ep_addr_list_SOURCES = $(base_sources) ep_addr_list.cpp
 mr_SOURCES = $(base_sources) mr.cpp
-topo_SOURCES = $(base_sources) topo.cpp
 aws_platform_mapper_SOURCES = $(base_sources) aws_platform_mapper.cpp
 histogram_binner_SOURCES = $(base_sources) histogram_binner.cpp
 histogram_SOURCES = $(base_sources) histogram.cpp
@@ -74,3 +81,17 @@ mpsc_ring_SOURCES = $(base_sources) mpsc_ring.cpp
 
 TESTS = $(noinst_PROGRAMS)
 endif
+
+# Ship the topology fixtures (the sanitized XML captures), their provenance,
+# and the reusable sanitizer in release archives, independent of whether tests
+# are enabled in the configuration used to produce the archive. Platform
+# expectations and scenarios are static arrays in topo_fixture.cpp. Adding a
+# platform requires a topology.xml, its arrays, and one fixture_registry entry.
+EXTRA_DIST = \
+	fixtures/topology/README.md \
+	fixtures/topology/sanitize_hwloc.py \
+	fixtures/topology/p4d/topology.xml \
+	fixtures/topology/p5en/topology.xml \
+	fixtures/topology/p6-b200/topology.xml \
+	fixtures/topology/p6-b300/topology.xml \
+	fixtures/topology/p6e-gb200/topology.xml

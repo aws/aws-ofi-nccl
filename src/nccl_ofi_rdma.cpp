@@ -267,7 +267,7 @@ static int write_topo_file(const nccl_ofi_topo_t *topo)
 		goto exit;
 	}
 
-	ret = nccl_ofi_topo_write(topo, file);
+	ret = topo->write(file);
 	if (ret) {
 		NCCL_OFI_WARN("Failed to write NCCL topology using file descriptor. RC: %d", ret);
 		goto error;
@@ -410,7 +410,7 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	/* Scale speed by the total number of rails. Assume that all
 	 * reails have the same speed. */
 	if (ret == 0) {
-		props->port_speed *= plugin_ptr->get_topo()->max_group_size;
+		props->port_speed *= plugin_ptr->get_topo()->max_group_size();
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
 					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		static_assert(NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS + NCCL_OFI_RDMA_RECV_IDX_BITS + NUM_NUM_SEG_BITS == 32,
@@ -3865,8 +3865,8 @@ int nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff(int dev_id,
 				bool pcie_mapping = false;
 				const nccl_ofi_topo_t *topo =
 					rdma_domain->rdma_domain_get_device()->rdma_device_get_plugin()->get_topo();
-				ret = nccl_ofi_topo_nic_gpu_share_pcie_switch(topo, nic_prov,
-									      &pcie_mapping);
+				ret = topo->nic_gpu_share_pcie_switch(nic_prov,
+								      &pcie_mapping);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("Unable to determine flush buffer DMA-BUF mapping (%d)", ret);
 					rc = nccl_net_ofi_gpu_mem_free(fb.buffer_base);
@@ -7203,7 +7203,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
-	if (this->topo->max_group_size > 1) {
+	if (this->topo->max_group_size() > 1) {
 		ret = write_topo_file(this->topo);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to write NCCL topology file");
@@ -7212,7 +7212,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 	}
 
 	/* Initialize user data iterator */
-	ret = nccl_ofi_topo_set_to_begin(this->topo, &data_iter);
+	ret = this->topo->set_to_begin(&data_iter);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to set iterator to begin of user data vector");
 		return ret;
@@ -7256,25 +7256,25 @@ nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_
 	/* Use topology parameter directly; the caller sets plugin->topo
 	 * to a non-owning pointer after construction. */
 
-	ret = nccl_ofi_topo_populate(global_topo, provider_list);
+	ret = global_topo->populate(provider_list);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to populate topology");
 		throw std::runtime_error("rdma plugin constructor: topology population failed");
 	}
 
-	ret = nccl_ofi_topo_group(global_topo);
+	ret = global_topo->group();
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to group NICs");
 		throw std::runtime_error("rdma plugin constructor: NIC grouping failed");
 	}
 
-	if (global_topo->max_group_size < 1 || global_topo->max_group_size > MAX_NUM_RAILS) {
+	if (global_topo->max_group_size() < 1 || global_topo->max_group_size() > MAX_NUM_RAILS) {
 		NCCL_OFI_WARN("Unexpected topo group size of %d (minimum 1, maximum %d)",
-			      global_topo->max_group_size, MAX_NUM_RAILS);
+			      global_topo->max_group_size(), MAX_NUM_RAILS);
 		throw std::runtime_error("rdma plugin constructor: invalid topo group size");
 	}
 
-	ret = nccl_ofi_topo_num_info_lists(global_topo, &num_devices);
+	ret = global_topo->num_info_lists(&num_devices);
 	if (ret != 0) {
 		throw std::runtime_error("rdma plugin constructor: failed to get num info lists");
 	} else if (num_devices <= 0)  {
@@ -7455,7 +7455,7 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	 * link speed reported to NCCL to account for the other rails. This
 	 * requires generating a topology file that will be passed to NCCL.
 	 */
-	if (topo->max_group_size > 1) {
+	if (topo->max_group_size() > 1) {
 		*found_multiple_rails = true;
 	}
 
