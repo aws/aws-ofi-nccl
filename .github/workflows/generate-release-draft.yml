@@ -136,11 +136,36 @@ jobs:
       contents: write      # create the draft release and upload assets
     env:
       TAG: ${{ needs.metadata.outputs.tag }}
+      IS_ALPHA: ${{ needs.metadata.outputs.is_alpha }}
       TARBALL: ${{ needs.metadata.outputs.tarball }}
       DSC: ${{ needs.metadata.outputs.dsc }}
       DEBIAN_TAR: ${{ needs.metadata.outputs.debian_tar }}
       SRPM: ${{ needs.metadata.outputs.srpm }}
+      REPO: ${{ github.repository }}
     steps:
+      # Runs first so that a rerun for a tag that already has a release stops
+      # before anything is attested or uploaded for it.
+      - name: Refuse an existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Never modify an existing release for this tag (drafts included;
+          # GitHub allows several drafts per tag). A candidate is immutable:
+          # fix forward with the next alpha instead.
+          existing=$(gh api "repos/${REPO}/releases" --paginate \
+                       --jq '.[] | select(.tag_name == env.TAG) | .html_url')
+          if [ -n "${existing}" ]; then
+            echo "::error title=Release already exists::${TAG} already has a release: ${existing}"
+            echo "Refusing to modify an existing release; release candidates are immutable." >&2
+            echo "- If that release is complete or was handed to qualification, fix forward" >&2
+            echo "  with the next alpha tag." >&2
+            echo "- If it is an incomplete draft that nobody has qualified (for example, an" >&2
+            echo "  asset upload failed), a maintainer may delete the draft release (never" >&2
+            echo "  the tag) and rerun this workflow." >&2
+            exit 1
+          fi
+
       - name: Checkout release notes
         uses: actions/checkout@v7
         with:
@@ -186,17 +211,19 @@ jobs:
           printf "\nChecksum (sha512) for the release tarball \`%s\`:\n\n\`\`\`\n%s\n\`\`\`\n" \
             "${TARBALL}" "${CHECKSUM}" >> RELEASE_NOTES.md
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v1
-        with:
-          name: AWS OFI NCCL ${{ needs.metadata.outputs.tag }}
-          draft: true
-          prerelease: ${{ needs.metadata.outputs.is_alpha == 'true' }}
-          body_path: RELEASE_NOTES.md
-          files: |
-            release-artifacts/${{ needs.metadata.outputs.tarball }}
-            release-artifacts/${{ needs.metadata.outputs.dsc }}
-            release-artifacts/${{ needs.metadata.outputs.debian_tar }}
-            release-artifacts/${{ needs.metadata.outputs.srpm }}
+      - name: Create draft release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          args=(--repo "${REPO}" --verify-tag --draft
+                --title "AWS OFI NCCL ${TAG}" --notes-file RELEASE_NOTES.md)
+          if [ "${IS_ALPHA}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          url=$(gh release create "${TAG}" "${args[@]}" \
+                  "release-artifacts/${TARBALL}" \
+                  "release-artifacts/${DSC}" \
+                  "release-artifacts/${DEBIAN_TAR}" \
+                  "release-artifacts/${SRPM}")
+          echo "Created draft: ${url}"
