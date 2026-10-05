@@ -1,10 +1,12 @@
 name: make `make dist` tarball
 on:
   workflow_dispatch:
+  # v* release tags are built, distchecked, and packaged by
+  # generate-release-draft.yml; building them here as well produced a second,
+  # unrelated tarball for the same tag.
   push:
     tags:
       - release/**
-      - v**
 
 permissions:
   contents: read

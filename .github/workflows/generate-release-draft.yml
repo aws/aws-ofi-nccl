@@ -17,7 +17,44 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      tag: ${{ steps.parse.outputs.tag }}
+      version: ${{ steps.parse.outputs.version }}
+      is_alpha: ${{ steps.parse.outputs.is_alpha }}
+      tarball: ${{ steps.parse.outputs.tarball }}
+      dsc: ${{ steps.parse.outputs.dsc }}
+      debian_tar: ${{ steps.parse.outputs.debian_tar }}
+      srpm: ${{ steps.parse.outputs.srpm }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: contrib/scripts/release_version
+          sparse-checkout-cone-mode: false
+
+      - name: Parse release tag
+        id: parse
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          chmod +x contrib/scripts/release_version
+          eval "$(contrib/scripts/release_version "$RELEASE_TAG")"
+          {
+            echo "tag=${TAG}"
+            echo "version=${VERSION}"
+            echo "is_alpha=${IS_ALPHA}"
+            echo "tarball=${TARBALL}"
+            echo "dsc=${DSC}"
+            echo "debian_tar=${DEBIAN_TAR}"
+            echo "srpm=${SRPM}"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: metadata
     permissions:
       contents: read
       packages: read
@@ -35,7 +72,11 @@ jobs:
     container: ${{ matrix.container }}
     name: Build for ${{ matrix.name }}
     env:
-      RELEASE_TAG: ${{ github.ref_name }}
+      PLUGIN_TAG: ${{ needs.metadata.outputs.tag }}
+      TARBALL: ${{ needs.metadata.outputs.tarball }}
+      DSC: ${{ needs.metadata.outputs.dsc }}
+      DEBIAN_TAR: ${{ needs.metadata.outputs.debian_tar }}
+      SRPM: ${{ needs.metadata.outputs.srpm }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -60,34 +101,21 @@ jobs:
       - name: Generate source packages
         if: matrix.generate_packages
         run: |
-          echo "Attempting to generate packages for tag: ${RELEASE_TAG}"
-          ./contrib/scripts/generate_source_packages.sh "${RELEASE_TAG}"
+          echo "Generating packages for tag: ${PLUGIN_TAG}"
+          ./contrib/scripts/generate_source_packages.sh "${PLUGIN_TAG}"
 
-      - name: Prepare release notes
+      - name: Validate expected artifacts
         if: matrix.generate_packages
         run: |
-          VERSION="${RELEASE_TAG}"
-          awk -v version="$VERSION" '
-          BEGIN { found=0; printing=0; }
-          $0 ~ "^# " version " \\(" { found=1; printing=1; print; next }
-          printing==1 && $0 ~ "^# v[0-9]" { printing=0; exit }
-          printing==1 { print }
-          END {
-            if (!found) {
-              print "No specific release notes found for version " version > "/dev/stderr"
+          set -e
+          for f in "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}"; do
+            if [ ! -f "${f}" ]; then
+              echo "ERROR: Expected artifact missing: ${f}" >&2
+              find . -maxdepth 1 -type f \( -name '*.tar*' -o -name '*.dsc' -o -name '*.rpm' \) -print
               exit 1
-            }
-          }' RELEASENOTES.md > RELEASE_NOTES.md
-
-          # Extract version without 'v' prefix for tarball name
-          TARBALL_VERSION="${VERSION#v}"
-          TARBALL_NAME="aws-ofi-nccl-${TARBALL_VERSION}.tar.gz"
-
-          # Calculate SHA512 checksum for the tarball and format it properly
-          CHECKSUM=$(sha512sum "${TARBALL_NAME}")
-
-          # Append checksum information to release notes in the exact format of the v1.16.0 release
-          echo -e "\nChecksum (sha512) for the release tarball \`aws-ofi-nccl-${TARBALL_VERSION}.tar.gz\`:\n\n\`\`\`\n${CHECKSUM}\n\`\`\`" >> RELEASE_NOTES.md
+            fi
+          done
+          echo "All four expected artifacts present."
 
       - name: Upload artifacts
         if: matrix.generate_packages
@@ -95,35 +123,80 @@ jobs:
         with:
           name: packages-${{ matrix.name }}
           path: |
-            *.tar*
-            *.dsc
-            *.rpm
-            RELEASE_NOTES.md
+            ${{ needs.metadata.outputs.tarball }}
+            ${{ needs.metadata.outputs.dsc }}
+            ${{ needs.metadata.outputs.debian_tar }}
+            ${{ needs.metadata.outputs.srpm }}
           if-no-files-found: error
 
   create-release:
-    needs: build
+    needs: [metadata, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the draft release and upload assets
+    env:
+      TAG: ${{ needs.metadata.outputs.tag }}
+      TARBALL: ${{ needs.metadata.outputs.tarball }}
+      DSC: ${{ needs.metadata.outputs.dsc }}
+      DEBIAN_TAR: ${{ needs.metadata.outputs.debian_tar }}
+      SRPM: ${{ needs.metadata.outputs.srpm }}
     steps:
-      - name: Download all artifacts
+      - name: Checkout release notes
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+          sparse-checkout: RELEASENOTES.md
+          sparse-checkout-cone-mode: false
+
+      - name: Download release artifacts
         uses: actions/download-artifact@v8
         with:
           name: packages-ubuntu
+          path: release-artifacts
 
-      - name: Display structure of downloaded files
-        run: ls -R
+      - name: Validate artifact set
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}" | sort)
+          actual=$(find release-artifacts -maxdepth 1 -type f -printf '%f\n' | sort)
+          if [ "${expected}" != "${actual}" ]; then
+            echo "ERROR: release artifact set does not match the expected four files" >&2
+            diff <(echo "${expected}") <(echo "${actual}") >&2 || true
+            exit 1
+          fi
+          echo "Artifact set matches exactly:"
+          (cd release-artifacts && sha256sum "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}")
+
+      - name: Prepare release notes
+        run: |
+          set -euo pipefail
+          awk -v tag="${TAG}" '
+          index($0, "# " tag " (") == 1 { found = 1; printing = 1; print; next }
+          printing && /^# v[0-9]/ { exit }
+          printing { print }
+          END {
+            if (!found) {
+              print "No specific release notes found for " tag > "/dev/stderr"
+              exit 1
+            }
+          }' RELEASENOTES.md > RELEASE_NOTES.md
+
+          CHECKSUM=$(cd release-artifacts && sha512sum "${TARBALL}")
+          printf "\nChecksum (sha512) for the release tarball \`%s\`:\n\n\`\`\`\n%s\n\`\`\`\n" \
+            "${TARBALL}" "${CHECKSUM}" >> RELEASE_NOTES.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v1
         with:
-          name: AWS OFI NCCL ${{ github.ref_name }}
+          name: AWS OFI NCCL ${{ needs.metadata.outputs.tag }}
           draft: true
-          prerelease: false
+          prerelease: ${{ needs.metadata.outputs.is_alpha == 'true' }}
           body_path: RELEASE_NOTES.md
           files: |
-            aws-ofi-nccl*
-            libnccl-ofi-*
+            release-artifacts/${{ needs.metadata.outputs.tarball }}
+            release-artifacts/${{ needs.metadata.outputs.dsc }}
+            release-artifacts/${{ needs.metadata.outputs.debian_tar }}
+            release-artifacts/${{ needs.metadata.outputs.srpm }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
