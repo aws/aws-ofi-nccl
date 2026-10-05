@@ -24,6 +24,7 @@ jobs:
     outputs:
       tag: ${{ steps.parse.outputs.tag }}
       version: ${{ steps.parse.outputs.version }}
+      base_version: ${{ steps.parse.outputs.base_version }}
       is_alpha: ${{ steps.parse.outputs.is_alpha }}
       tarball: ${{ steps.parse.outputs.tarball }}
       dsc: ${{ steps.parse.outputs.dsc }}
@@ -46,6 +47,7 @@ jobs:
           {
             echo "tag=${TAG}"
             echo "version=${VERSION}"
+            echo "base_version=${BASE_VERSION}"
             echo "is_alpha=${IS_ALPHA}"
             echo "tarball=${TARBALL}"
             echo "dsc=${DSC}"
@@ -134,14 +136,20 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write      # create the draft release and upload assets
+      id-token: write      # obtain the OIDC token used to sign attestations
+      attestations: write  # store the attestations
     env:
       TAG: ${{ needs.metadata.outputs.tag }}
+      VERSION: ${{ needs.metadata.outputs.version }}
+      BASE_VERSION: ${{ needs.metadata.outputs.base_version }}
       IS_ALPHA: ${{ needs.metadata.outputs.is_alpha }}
       TARBALL: ${{ needs.metadata.outputs.tarball }}
       DSC: ${{ needs.metadata.outputs.dsc }}
       DEBIAN_TAR: ${{ needs.metadata.outputs.debian_tar }}
       SRPM: ${{ needs.metadata.outputs.srpm }}
       REPO: ${{ github.repository }}
+      SERVER_URL: ${{ github.server_url }}
+      COMMIT: ${{ github.sha }}
     steps:
       # Runs first so that a rerun for a tag that already has a release stops
       # before anything is attested or uploaded for it.
@@ -166,12 +174,14 @@ jobs:
             exit 1
           fi
 
-      - name: Checkout release notes
+      - name: Checkout release notes and tooling
         uses: actions/checkout@v7
         with:
           ref: ${{ github.ref }}
           persist-credentials: false
-          sparse-checkout: RELEASENOTES.md
+          sparse-checkout: |
+            RELEASENOTES.md
+            .github/scripts
           sparse-checkout-cone-mode: false
 
       - name: Download release artifacts
@@ -193,31 +203,49 @@ jobs:
           echo "Artifact set matches exactly:"
           (cd release-artifacts && sha256sum "${TARBALL}" "${DSC}" "${DEBIAN_TAR}" "${SRPM}")
 
-      - name: Prepare release notes
+      - name: Attest build provenance
+        id: attest
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-artifacts/${{ needs.metadata.outputs.tarball }}
+            release-artifacts/${{ needs.metadata.outputs.dsc }}
+            release-artifacts/${{ needs.metadata.outputs.debian_tar }}
+            release-artifacts/${{ needs.metadata.outputs.srpm }}
+
+      - name: Find previous final release
+        id: prev
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          awk -v tag="${TAG}" '
-          index($0, "# " tag " (") == 1 { found = 1; printing = 1; print; next }
-          printing && /^# v[0-9]/ { exit }
-          printing { print }
-          END {
-            if (!found) {
-              print "No specific release notes found for " tag > "/dev/stderr"
-              exit 1
-            }
-          }' RELEASENOTES.md > RELEASE_NOTES.md
+          PREV_TAG=$(gh api "repos/${REPO}/releases" --paginate \
+                       --jq '.[] | select(.draft == false and .prerelease == false) | .tag_name' \
+                     | bash .github/scripts/find-previous-release.sh "${BASE_VERSION}")
+          echo "Previous final release: ${PREV_TAG:-(none)}"
+          echo "tag=${PREV_TAG}" >> "$GITHUB_OUTPUT"
 
-          CHECKSUM=$(cd release-artifacts && sha512sum "${TARBALL}")
-          printf "\nChecksum (sha512) for the release tarball \`%s\`:\n\n\`\`\`\n%s\n\`\`\`\n" \
-            "${TARBALL}" "${CHECKSUM}" >> RELEASE_NOTES.md
+      - name: Render release body
+        env:
+          PREV_TAG: ${{ steps.prev.outputs.tag }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/render-release-body.sh \
+            "release-artifacts/${TARBALL}" \
+            "release-artifacts/${DSC}" \
+            "release-artifacts/${DEBIAN_TAR}" \
+            "release-artifacts/${SRPM}" > RELEASE_BODY.md
+          cat RELEASE_BODY.md
 
       - name: Create draft release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           args=(--repo "${REPO}" --verify-tag --draft
-                --title "AWS OFI NCCL ${TAG}" --notes-file RELEASE_NOTES.md)
+                --title "AWS OFI NCCL ${TAG}" --notes-file RELEASE_BODY.md)
           if [ "${IS_ALPHA}" = "true" ]; then
             args+=(--prerelease)
           fi
@@ -226,4 +254,28 @@ jobs:
                   "release-artifacts/${DSC}" \
                   "release-artifacts/${DEBIAN_TAR}" \
                   "release-artifacts/${SRPM}")
+          echo "url=${url}" >> "$GITHUB_OUTPUT"
           echo "Created draft: ${url}"
+
+      - name: Release summary
+        env:
+          RELEASE_URL: ${{ steps.release.outputs.url }}
+          ATTESTATION_URL: ${{ steps.attest.outputs.attestation-url }}
+        run: |
+          {
+            echo "## Draft release ${TAG}"
+            echo
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Version | \`${VERSION}\` |"
+            echo "| Alpha | ${IS_ALPHA} |"
+            echo "| Commit | [\`${COMMIT}\`](${SERVER_URL}/${REPO}/commit/${COMMIT}) |"
+            echo "| Draft release | ${RELEASE_URL} |"
+            echo "| Attestation | ${ATTESTATION_URL} |"
+            echo
+            echo "<details><summary>Release body</summary>"
+            echo
+            cat RELEASE_BODY.md
+            echo
+            echo "</details>"
+          } >> "$GITHUB_STEP_SUMMARY"
