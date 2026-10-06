@@ -489,20 +489,32 @@ void gdaki_data_endpoint::populate(int backend_version, struct fi_efa_ops_gda *g
 }
 
 void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
-			     struct fi_efa_ops_gda *gda_ops)
+			     struct fi_efa_ops_gda *gda_ops, bool want_write_cntr,
+			     bool want_remote_write_cntr)
 {
 	/* Create hardware counters first; they will be bound to the inner
-	 * endpoint between open() and enable(). */
-	write_cntr.create(gda_ops, domain);
-	remote_write_cntr.create(gda_ops, domain);
+	 * endpoint between open() and enable(). This endpoint creates the counter
+	 * for each role it fills: a counter endpoint reports its own posts through
+	 * FI_WRITE, and a signal endpoint reports a peer's arrivals through
+	 * FI_REMOTE_WRITE. */
+	if (want_write_cntr) {
+		write_cntr.create(gda_ops, domain);
+	}
+	if (want_remote_write_cntr) {
+		remote_write_cntr.create(gda_ops, domain);
+	}
 
 	/* Open the inner endpoint without enable. Use the same CQ sizing as
 	 * the data endpoint so callers get consistent capacity per env config. */
 	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size(), /* inline_write_size */ 0);
 
 	/* Bind counters before enabling. */
-	base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
-	base.endpoint.bind(&remote_write_cntr.get()->fid, FI_REMOTE_WRITE);
+	if (want_write_cntr) {
+		base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
+	}
+	if (want_remote_write_cntr) {
+		base.endpoint.bind(&remote_write_cntr.get()->fid, FI_REMOTE_WRITE);
+	}
 
 	base.endpoint.enable();
 }
@@ -524,9 +536,16 @@ void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda
 	 *   (FI_WRITE — local completion). Returned to the kernel through
 	 *   counter_handles[].
 	 * - signal_dev_handle exposes the REMOTE_WRITE counter via cntr_value
-	 *   (FI_REMOTE_WRITE — signal arrival), and the WRITE counter via
-	 *   local_cntr_value (used by the device for backpressure / Flush).
-	 *   Returned to the kernel through signal_handles[].
+	 *   (FI_REMOTE_WRITE — signal arrival). Returned to the kernel through
+	 *   signal_handles[].
+	 *
+	 * signal_dev_handle's local_cntr_value carries this slot's FI_WRITE
+	 * counter where the slot also serves as a counter, and is null on a
+	 * signal-only slot, which has no FI_WRITE counter to report. The device
+	 * reads local_cntr_value in the send-queue credit check in postRdmaWrite
+	 * and in Flush, and both of those only ever see the data endpoint, the
+	 * PutValue endpoint and counter_handles[i] for i < nCounters, so a
+	 * signal-only slot's null is never dereferenced.
 	 *
 	 * Both `cntr_value` and `local_cntr_value` are set on the host before
 	 * commit() pushes the struct to GPU memory.
