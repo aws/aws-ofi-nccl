@@ -9,10 +9,26 @@ Build-Depends: debhelper-compat (= 10), libhwloc-dev
 Standards-Version: 4.5.0
 Rules-Requires-Root: no
 
+# Declare hwloc explicitly in each package's Depends below. libhwloc15 is
+# hwloc 2.x, which covers all currently supported deb distros.
+#
+# Why it isn't automatic: libnccl-net-ofi.so has a mandatory runtime link on
+# libhwloc.so.15 (src/nccl_ofi_topo.cpp), but it is not auto-derived into
+# ${shlib:Depends} because override_dh_shlibdeps (debian/rules) runs with
+# --ignore-missing-info, which currently drops every NEEDED lib it can't map
+# in the build env -- the EFA-provided libfabric (intentional) and hwloc (by
+# mistake).
+#
+# A fuller fix (which needs more testing) may be: drop --ignore-missing-info
+# and run dh_shlibdeps with -l/opt/amazon/efa/lib (so shlibdeps can locate
+# libfabric) plus -x libfabric1-aws (to keep libfabric out of Depends).
+# Making libfabric1-aws a hard dependency may break the EFA installer's apt
+# install in the NGC / --build-ngc path, since libfabric1-aws is not a
+# distro-repo package (installer-local .deb only).
 Package: libnccl-ofi
 Section: contrib/libs
 Architecture: any
-Depends: ${misc:Depends}, ${shlib:Depends}
+Depends: ${misc:Depends}, ${shlib:Depends}, libhwloc15
 Description: NCCL libfabric plugin
  AWS OFI NCCL is a plug-in which enables EC2 developers to use libfabric as a
  network provider while running NVIDIA's NCCL based applications. Machine
@@ -27,18 +43,18 @@ Description: NCCL libfabric plugin
 Package: libnccl-ofi-ngc-v1
 Section: contrib/libs
 Architecture: any
-Depends: ${misc:Depends}, ${shlib:Depends}
+Depends: ${misc:Depends}, ${shlib:Depends}, libhwloc15
 Description: NCCL libfabric plugin variant for NGC containers for old NGC containers
 
 Package: libnccl-ofi-ngc-v2
 Section: contrib/libs
 Architecture: any
-Depends: ${misc:Depends}, ${shlib:Depends}
+Depends: ${misc:Depends}, ${shlib:Depends}, libhwloc15
 Description: NCCL libfabric plugin variant for NGC containers for newer NGC containers
 
 Package: libnccl-ofi-ngc-v3
 Section: contrib/libs
 Architecture: any
-Depends: ${misc:Depends}, ${shlib:Depends}
+Depends: ${misc:Depends}, ${shlib:Depends}, libhwloc15
 Description: NCCL libfabric plugin variant for future NGC containers
 
