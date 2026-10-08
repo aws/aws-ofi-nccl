@@ -6054,43 +6054,6 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 	   this properly by tracking and freeing posted RX buffers. */
 	const bool enable_freelist_leak_detection = false;
 
-	/* We maintain this for only connection close messages */
-	this->rx_buff_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size,
-						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
-						      rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
-						      "Rx Buffer Requests",
-						      enable_freelist_leak_detection);
-
-	/* Allocate a context for freelist MR registration callbacks.
-	 * In FI_MR_ENDPOINT mode ep is set so newly registered MRs are
-	 * bound and enabled against this endpoint; otherwise ep is nullptr.
-	 * Must outlive the freelists; freed in fini_rx_buffers(). */
-	freelist_regmr_ep_ctx_t *rx_ctx = new freelist_regmr_ep_ctx_t{domain_ptr, endpoint_mr ? this : nullptr};
-	this->rx_buff_regmr_ctx = rx_ctx;
-
-	/* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the unified
-	 * MR handle binds to both data and ctrl ep rails so rx_ctx works for both. */
-	this->ctrl_rx_buff_fl = new nccl_ofi_freelist(this->ctrl_rx_buff_size,
-						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
-						      NULL, NULL,
-						      freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
-						      rx_ctx, 1,
-						      "Ctrl Rx Buffer",
-						      enable_freelist_leak_detection);
-
-	if (this->eager_rx_buff_size > 0) {
-		/* Eager rx buffers are posted on data ep rails; use rx_ctx. */
-		this->eager_rx_buff_fl = new nccl_ofi_freelist(this->eager_rx_buff_size,
-							       ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
-							       NULL, NULL,
-							       freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
-							       rx_ctx, EAGER_RX_BUFFER_ALIGNMENT,
-							       "Eager Rx Buffer",
-							       enable_freelist_leak_detection);
-	} else {
-		this->eager_rx_buff_fl = NULL;
-	}
-
 	/*
 	 * The *_rx_buff_posted limits are used in the progress engine to
 	 * determine if the receive queue is hydrated with sufficient buffers.
@@ -6130,6 +6093,47 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->is_ctrl = false;
 	}
 
+	/* From here on fini_rx_buffers() must run to undo this function,
+	 * even if a later step fails or throws. */
+	this->rx_buffers_initialized = true;
+
+	/* We maintain this for only connection close messages */
+	this->rx_buff_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size,
+						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
+						      rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
+						      "Rx Buffer Requests",
+						      enable_freelist_leak_detection);
+
+	/* Allocate a context for freelist MR registration callbacks.
+	 * In FI_MR_ENDPOINT mode ep is set so newly registered MRs are
+	 * bound and enabled against this endpoint; otherwise ep is nullptr.
+	 * Must outlive the freelists; freed in fini_rx_buffers(). */
+	freelist_regmr_ep_ctx_t *rx_ctx = new freelist_regmr_ep_ctx_t{domain_ptr, endpoint_mr ? this : nullptr};
+	this->rx_buff_regmr_ctx = rx_ctx;
+
+	/* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the unified
+	 * MR handle binds to both data and ctrl ep rails so rx_ctx works for both. */
+	this->ctrl_rx_buff_fl = new nccl_ofi_freelist(this->ctrl_rx_buff_size,
+						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
+						      NULL, NULL,
+						      freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+						      rx_ctx, 1,
+						      "Ctrl Rx Buffer",
+						      enable_freelist_leak_detection);
+
+	if (this->eager_rx_buff_size > 0) {
+		/* Eager rx buffers are posted on data ep rails; use rx_ctx. */
+		this->eager_rx_buff_fl = new nccl_ofi_freelist(this->eager_rx_buff_size,
+							       ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
+							       NULL, NULL,
+							       freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+							       rx_ctx, EAGER_RX_BUFFER_ALIGNMENT,
+							       "Eager Rx Buffer",
+							       enable_freelist_leak_detection);
+	} else {
+		this->eager_rx_buff_fl = NULL;
+	}
+
 #if HAVE_GPU || HAVE_NEURON
 	{
 		nccl_net_ofi_rdma_device_t *dev = domain_ptr->rdma_domain_get_device();
@@ -6151,15 +6155,23 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 	int ret = 0;
 	nccl_net_ofi_rdma_ep_rail_t *rail;
 
+	if (!this->rx_buffers_initialized) {
+		return ret;
+	}
+
 	delete this->ctrl_rx_buff_fl;
+	this->ctrl_rx_buff_fl = nullptr;
 
 	if (this->eager_rx_buff_fl != NULL) {
 		delete this->eager_rx_buff_fl;
+		this->eager_rx_buff_fl = nullptr;
 	}
 
 	delete this->rx_buff_reqs_fl;
+	this->rx_buff_reqs_fl = nullptr;
 
 	delete this->rx_buff_regmr_ctx;
+	this->rx_buff_regmr_ctx = nullptr;
 
 	/* Deregister the flush buffer MR (always owned by this endpoint). */
 	if (this->flush_buff_mr_handle != nullptr) {
@@ -6194,6 +6206,8 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 		rail = this->rdma_endpoint_get_control_rail(rail_id);
 		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
 	}
+
+	this->rx_buffers_initialized = false;
 
 	return ret;
 }
@@ -6722,7 +6736,7 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 }
 
 
-nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
+void nccl_net_ofi_rdma_ep_t::cleanup_resources()
 {
 	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
 
@@ -6749,7 +6763,7 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 	if (endpoint_mr) {
 		err_code = this->fini_rx_buffers();
 		if (err_code != 0) {
-			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
+			NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
 		}
 
 		this->release_rdma_ep_resources(device->dev_id);
@@ -6758,14 +6772,20 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 
 		err_code = this->fini_rx_buffers();
 		if (err_code != 0) {
-			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
+			NCCL_OFI_WARN("rdma endpoint cleanup: tearing down freelists failed, rc %d", err_code);
 		}
 	}
 
 	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
 	if (err_code != 0) {
-		NCCL_OFI_WARN("rdma endpoint destructor: destroying pending_reqs_lock mutex failed, rc %d", err_code);
+		NCCL_OFI_WARN("rdma endpoint cleanup: destroying pending_reqs_lock mutex failed, rc %d", err_code);
 	}
+}
+
+
+nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
+{
+	this->cleanup_resources();
 }
 
 static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
@@ -6859,23 +6879,28 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 	this->eager_rx_buff_size = (this->eager_send_size <= 0) ?
 		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
 
-	ret = this->init_rail_ofi_resources(device, domain_arg.get());
-	if (ret != 0) {
-		throw std::runtime_error("rdma endpoint constructor: initializing rails failed");
+	try {
+		ret = this->init_rail_ofi_resources(device, domain_arg.get());
+		if (ret != 0) {
+			throw std::runtime_error("rdma endpoint constructor: initializing rails failed");
+		}
+
+		ret = this->init_rx_buffers();
+		if (ret != 0) {
+			NCCL_OFI_WARN("Preparation of rx buffers failed");
+			throw std::runtime_error("rdma endpoint constructor: initializing rx_buffers failed");
+		}
+
+		/* Connection manager for this endpoint */
+		this->cm = new nccl_ofi_connection_manager
+			(*domain_arg, *this, sizeof(nccl_ofi_rdma_connection_info_t));
+
+		/* Create scheduler */
+		this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
+	} catch (...) {
+		this->cleanup_resources();
+		throw;
 	}
-
-	ret = this->init_rx_buffers();
-	if (ret != 0) {
-		NCCL_OFI_WARN("Preparation of rx buffers failed");
-		throw std::runtime_error("rdma endpoint constructor: initializing rx_buffers failed");
-	}
-
-	/* Connection manager for this endpoint */
-	this->cm = new nccl_ofi_connection_manager
-		(*domain_arg, *this, sizeof(nccl_ofi_rdma_connection_info_t));
-
-	/* Create scheduler */
-	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
 }
 
 
