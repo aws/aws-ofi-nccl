@@ -775,7 +775,12 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 			}
 			for (int i = 0; i < local_n_sc; i++) {
 				ctx->sc_endpoints[ctx_id].push_back(std::make_unique<gdaki_sc_endpoint>());
-				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops);
+				/* Slot i serves as counter i while i < nCounters and as
+				 * signal i while i < nSignals, so it takes a counter for
+				 * each role it fills. */
+				ctx->sc_endpoints[ctx_id][i]->open(ofi_domain, proxy_info, gda_ops,
+								   i < config->nCounters,
+								   i < config->nSignals);
 			}
 			/* Dedicated PutValue poster endpoint. */
 			/* PutValue only writes. */

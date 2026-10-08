@@ -36,8 +36,6 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 		ofi_log_function = logFunction;
 	}
 
-	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Initializing");
-
 	/* GIN requires the OFI NET plugin to be initialized first. If NCCL
 	   selected a different NET transport (e.g. NCCL_NET=Socket), the
 	   plugin will be NULL and GIN cannot operate. */
@@ -439,7 +437,6 @@ ncclResult_t nccl_ofi_gin_finalize(void *ctx)
 	nccl_ofi_gin_context *context = static_cast<nccl_ofi_gin_context *>(ctx);
 	delete context;
 
-	NCCL_OFI_INFO(NCCL_NET | NCCL_INIT, "gin: Finalizing");
 	return ncclSuccess;
 }
 

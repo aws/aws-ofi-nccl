@@ -636,8 +636,16 @@ public:
 	 * the counters, opens the inner EP without enable, binds the
 	 * counters, then enables.
 	 */
+	/* want_write_cntr / want_remote_write_cntr: an sc endpoint takes a
+	 * counter only for the role it actually fills. Slot i serves as counter i
+	 * while i < nCounters and as signal i while i < nSignals, and those two
+	 * ranges are requested independently, so a slot past nCounters is
+	 * signal-only and posts nothing -- its FI_WRITE counter would never be
+	 * read. Creating it anyway costs a scarce EFA hardware counter, which is
+	 * what limits how many contexts a rank can open. */
 	void open(struct fid_domain *domain, struct fi_info *ref_info,
-		  struct fi_efa_ops_gda *gda_ops);
+		  struct fi_efa_ops_gda *gda_ops, bool want_write_cntr,
+		  bool want_remote_write_cntr);
 
 	/**
 	 * Populate the inner endpoint's GPU descriptors, build the
