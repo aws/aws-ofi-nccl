@@ -44,7 +44,7 @@
  * Caller is assumed to hold the ep lock
  */
 #define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
-	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
+	if (OFI_UNLIKELY(!endpoint->is_active())) { \
 		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
@@ -453,7 +453,7 @@ int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(ep->ep_lock);
+	std::lock_guard eplock(ep->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
 
@@ -905,7 +905,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "recv");
 
@@ -993,7 +993,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 
 void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 {
-	std::lock_guard lock(this->ep_lock);
+	std::lock_guard lock(this->get_ep_lock());
 
 	int device_id = this->domain->get_device()->dev_id;
 
@@ -1070,7 +1070,7 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 
 	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep.get());
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "flush");
 
@@ -1413,7 +1413,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 	nccl_net_ofi_sendrecv_domain_t *domain = endpoint->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "accept");
 
@@ -1607,7 +1607,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
-	std::lock_guard eplock(this->ep_lock);
+	std::lock_guard eplock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
@@ -1702,7 +1702,7 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "send");
 
@@ -1925,7 +1925,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
-	std::lock_guard eplock(this->ep_lock);
+	std::lock_guard eplock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "connect");
 

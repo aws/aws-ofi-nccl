@@ -116,7 +116,7 @@
  * Caller is assumed to hold the endpoint lock
  */
 #define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
-	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
+	if (OFI_UNLIKELY(!endpoint->is_active())) { \
 		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
@@ -2244,7 +2244,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)base_comm->ep.get();
 	assert(ep != NULL);
 
-	std::lock_guard eplock(ep->ep_lock);
+	std::lock_guard eplock(ep->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(ep, "test");
 
@@ -3607,7 +3607,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	device = endpoint->rdma_endpoint_get_device();
 	assert(device != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "recv");
 
@@ -4050,8 +4050,8 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		r_comm->ep.get();
 
-	std::lock_guard eplock(ep->ep_lock);
-	if (!ep->ep_active) {
+	std::lock_guard eplock(ep->get_ep_lock());
+	if (!ep->is_active()) {
 		/**
 		 * If the endpoint is not active, no need to send the
 		 * close message. Just destroy the communicator
@@ -4234,8 +4234,8 @@ static inline int progress_closing_send_comm(nccl_net_ofi_rdma_send_comm *s_comm
 	nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)
 		s_comm->ep.get();
 
-	std::lock_guard eplock(ep->ep_lock);
-	if (!ep->ep_active) {
+	std::lock_guard eplock(ep->get_ep_lock());
+	if (!ep->is_active()) {
 		/**
 		 * If the endpoint is not active, no need to wait for the
 		 * close message. Just destroy the communicator
@@ -4348,7 +4348,7 @@ void nccl_net_ofi_rdma_ep_t::rdma_endpoint_abort()
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 	int dev_id = domain_ptr->get_device()->dev_id;
 
-	std::lock_guard eplock(this->ep_lock);
+	std::lock_guard eplock(this->get_ep_lock());
 
 	this->release_rdma_ep_resources(dev_id);
 	this->invalidate();
@@ -4450,7 +4450,7 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 	bool network_busy = false;
 	nccl_net_ofi_rdma_ep_t *endpoint = this->get_ep();
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "flush");
 
@@ -4694,7 +4694,7 @@ int nccl_net_ofi_rdma_recv_comm::read(void* dest, size_t size, void* mhandle,
 	endpoint = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
 	assert(endpoint != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "read");
 
@@ -5190,7 +5190,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 	nccl_net_ofi_rdma_domain_t *domain = l_comm_ep->rdma_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "accept");
 
@@ -5336,7 +5336,7 @@ int nccl_net_ofi_rdma_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	int dev_id = device->dev_id;
 
-	std::lock_guard lock(this->ep_lock);
+	std::lock_guard lock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
@@ -5714,7 +5714,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	endpoint = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(endpoint != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "send");
 
@@ -6245,7 +6245,7 @@ static int rma_write_impl(nccl_net_ofi_send_comm *send_comm, void* src, size_t s
 	ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 	assert(ep != NULL);
 
-	std::lock_guard eplock(ep->ep_lock);
+	std::lock_guard eplock(ep->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(ep, "write");
 
@@ -6457,7 +6457,7 @@ int nccl_net_ofi_rdma_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_rdma_send_comm *s_comm =
 		reinterpret_cast<nccl_net_ofi_rdma_send_comm *>(comm_state->comm);
 
-	std::lock_guard lock(this->ep_lock);
+	std::lock_guard lock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "connect");
 
