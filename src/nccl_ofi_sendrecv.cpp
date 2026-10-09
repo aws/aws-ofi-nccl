@@ -790,7 +790,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 		}
 		/* Cache miss */
 
-		key_pool = domain->mr_rkey_pool;
+		key_pool = domain->get_mr_rkey_pool();
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
 						dev_id, ckey, type, &ret_handle);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
@@ -808,7 +808,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 			return ret;
 		}
 	} else {
-		key_pool = domain->mr_rkey_pool;
+		key_pool = domain->get_mr_rkey_pool();
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
 						dev_id, ckey, type, &ret_handle);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
@@ -852,7 +852,7 @@ int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->get_mr_rkey_pool(), domain);
 	return 0;
 }
 
@@ -1303,7 +1303,7 @@ nccl_net_ofi_sendrecv_recv_comm *nccl_net_ofi_sendrecv_recv_comm::create(nccl_ne
 	fi_addr_t remote_ep;
 	nccl_net_ofi_sendrecv_recv_comm *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req);
-	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = domain->get_mr_rkey_pool();
 	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1681,7 +1681,7 @@ int nccl_net_ofi_sendrecv_send_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->get_mr_rkey_pool(), domain);
 	return 0;
 }
 

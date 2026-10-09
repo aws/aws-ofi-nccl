@@ -2982,8 +2982,8 @@ void nccl_net_ofi_rdma_domain_t::dereg_mr_on_device(nccl_net_ofi_rdma_mr_handle_
 		return;
 	}
 
-	if (this->mr_rkey_pool->get_size() != 0) {
-		this->mr_rkey_pool->free_id(mr_handle->mr_key);
+	if (this->get_mr_rkey_pool()->get_size() != 0) {
+		this->get_mr_rkey_pool()->free_id(mr_handle->mr_key);
 	}
 
 	delete mr_handle;
@@ -3074,7 +3074,7 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	int ret = 0;
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
-	nccl_ofi_idpool_t *key_pool = this->mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = this->get_mr_rkey_pool();
 
 	*mhandle = NULL;
 

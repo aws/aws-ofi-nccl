@@ -253,7 +253,7 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 
 	*mhandle = NULL;
 
-	nccl_ofi_idpool_t *key_pool = this->domain.mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = this->domain.get_mr_rkey_pool();
 	uint64_t mr_key = 0;
 
 	if (key_pool->get_size() != 0) {
@@ -445,7 +445,7 @@ nccl_ofi_gin_mr_handle_t::nccl_ofi_gin_mr_handle_t(nccl_net_ofi_domain_t &domain
 						   uint16_t num_rails, uint64_t mr_key_arg)
     : nccl_net_ofi_mr_handle_t(mr_key_arg), mr(num_rails), domain(domain_arg)
 {
-	auto &mr_rkey_pool = *(domain.mr_rkey_pool);
+	auto &mr_rkey_pool = *(domain.get_mr_rkey_pool());
 
 	if (mr_rkey_pool.get_size() != 0) {
 		mr_key = mr_rkey_pool.allocate_id();
@@ -458,7 +458,7 @@ nccl_ofi_gin_mr_handle_t::nccl_ofi_gin_mr_handle_t(nccl_net_ofi_domain_t &domain
 
 nccl_ofi_gin_mr_handle_t::~nccl_ofi_gin_mr_handle_t()
 {
-	auto *mr_rkey_pool = domain.mr_rkey_pool;
+	auto *mr_rkey_pool = domain.get_mr_rkey_pool();
 
 	if (mr_rkey_pool->get_size() != 0) {
 		mr_rkey_pool->free_id(this->mr_key);

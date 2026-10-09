@@ -14,7 +14,7 @@ using namespace nccl_ofi_cm;
 
 endpoint::endpoint(nccl_net_ofi_domain_t &domain, nccl_net_ofi_ep_t &ep) :
 	ofi_domain(domain.get_ofi_domain_for_cm()),
-	mr_key_pool(domain.mr_rkey_pool)
+	mr_key_pool(domain.get_mr_rkey_pool())
 {
 	fi_info *info = domain.get_device()->get_ofi_info_for_cm();
 	ofi_cq_ptr &cq = ep.get_ofi_cq_for_cm();

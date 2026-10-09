@@ -475,8 +475,13 @@ public:
 	/* Lock protecting mr_cache operations */
 	std::mutex mr_cache_lock;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
+	/**
+	 * @brief	Returns the domain's memory registration key pool.
+	 */
+	inline nccl_ofi_idpool_t *get_mr_rkey_pool()
+	{
+		return mr_rkey_pool;
+	}
 
 	std::mutex domain_lock;
 
@@ -515,6 +520,11 @@ protected:
 	 * get_ep() miss.
 	 */
 	std::unordered_map<long, std::weak_ptr<nccl_net_ofi_ep_t>> ep_table;
+
+private:
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
 };
 
 
