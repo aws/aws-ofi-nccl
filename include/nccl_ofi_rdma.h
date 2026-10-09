@@ -1466,9 +1466,9 @@ public:
 	/**
 	 * @brief	Destructor.
 	 * 
-	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
-	 * Cleans up RDMA endpoint resources (OFI resources, rx buffers,
-	 * freelists, mutexes).
+	 * Overrides base endpoint class virtual destructor. Cleans up RDMA
+	 * endpoint resources (OFI resources, rx buffers, freelists, mutexes)
+	 * via cleanup_resources().
 	 */
 	~nccl_net_ofi_rdma_ep_t() override;
 
@@ -1686,6 +1686,9 @@ public:
 	/* Lock for `pending_reqs_queue` */
 	pthread_mutex_t pending_reqs_lock;
 
+	/* True once init_rx_buffers() has initialized the per-rail rx
+	 * buffer state; cleared by fini_rx_buffers(). */
+	bool rx_buffers_initialized = false;
 	/* Free list of ctrl rx buffers */
 	nccl_ofi_freelist *ctrl_rx_buff_fl = nullptr;
 	/* Free list of eager rx buffers */
@@ -1786,6 +1789,15 @@ protected:
 	 *		non-zero, on error
 	 */
 	int fini_rx_buffers();
+
+	/**
+	 * @brief	Release all resources owned by the endpoint
+	 *
+	 * Deletes the connection manager and scheduler, deregisters rx
+	 * buffers and closes the libfabric endpoints in the order required
+	 * by the provider's MR mode, then destroys pending_reqs_lock.
+	 */
+	void cleanup_resources();
 
 	/**
 	 * @brief	Release libfabric resources of rdma endpoint
