@@ -32,6 +32,10 @@
       "tracing": ["lttng", "none"],
       "sdk": ["cuda", "neuron"]
     },
+    "sles15": {
+      "cc": ["gcc-14"],
+      "sdk": ["cuda"]
+    },
     "codechecker": {
       "sdk": ["cuda", "neuron"]
     }
