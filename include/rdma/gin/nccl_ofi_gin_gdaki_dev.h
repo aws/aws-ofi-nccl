@@ -24,6 +24,7 @@
 #ifndef NCCL_OFI_GIN_GDAKI_DEV_H_
 #define NCCL_OFI_GIN_GDAKI_DEV_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -125,6 +126,42 @@ struct nccl_ofi_gin_gdaki_mr_handle {
 struct nccl_ofi_gin_gdaki_dev_qp;
 struct nccl_ofi_gin_gdaki_dev_cq;
 
+/* req_id is echoed by the CQE. The device splits req_id into a peer
+ * id and a per-peer sequence number (pseq). These three macros size the pseq
+ * field and the per-peer completion bitmask that pseq indexes.
+ *
+ * NCCL_OFI_GDAKI_PSEQ_BITS is the number of req_id bits that hold pseq.
+ * NCCL_OFI_GDAKI_PEER_WINDOW is an independent knob: it is both the maximum number
+ * of writes outstanding to one peer (the cap put enforces) and the width in bits of
+ * that peer's completion bitmask, so pseq wraps at PEER_WINDOW without aliasing a
+ * live write. It must not exceed 2^PSEQ_BITS. NCCL_OFI_GDAKI_PEER_BITS_WORDS is
+ * PEER_WINDOW expressed in 64-bit words, which is that bitmask's storage size.
+ *
+ * The window is deep because it caps how many writes put may have outstanding to one
+ * peer: SRD completion latency has a long tail, so a window sized for typical latency
+ * stalls put on the slowest completions rather than on the link. The cost is the
+ * bitmask, at PEER_WINDOW/8 bytes of host memory per (context, peer).
+ *
+ * The host publishes PEER_WINDOW into dev_handle.peer_window at context setup.
+ * The device reads it as the per-peer backpressure cap in put, and put stamps
+ * each write's req_id with the same PSEQ_BITS split. */
+#define NCCL_OFI_GDAKI_PSEQ_BITS 32u
+#define NCCL_OFI_GDAKI_PSEQ_MASK ((1ull << NCCL_OFI_GDAKI_PSEQ_BITS) - 1ull)
+#define NCCL_OFI_GDAKI_PEER_WINDOW (1u << 20)
+#define NCCL_OFI_GDAKI_PEER_BITS_WORDS (NCCL_OFI_GDAKI_PEER_WINDOW / 64u)
+
+/*
+ * The device ABI is versioned as a whole, including the endpoint and
+ * counter-handle layouts embedded in the top-level handle.
+ *
+ * v1 is the NCCL 2.31 layout. Each endpoint exposes a device-visible CQ and
+ * lock, and PutValue stages through a registered source-slot pool.
+ *
+ * v2 is the NCCL 2.32 layout. CQs are drained by the plugin, the lock is part
+ * of the efa-dp-direct QP descriptor, and the top-level handle carries the
+ * host-published completion state used by FlushAsync/Wait. PutValue is inline,
+ * so v2 carries no staging-pool metadata.
+ */
 
 /**
  * Common per-endpoint state shared by the data, counter, and signal
@@ -346,8 +383,76 @@ struct nccl_ofi_gin_gdaki_dev_handle {
 	uint32_t putvalue_slot_size;
 };
 
+
+struct nccl_ofi_gin_gdaki_dev_endpoint_handle_v2 {
+	struct nccl_ofi_gin_gdaki_dev_qp *qp;
+	uint16_t *target_address_handles;
+	uint16_t *target_remote_qpns;
+	uint32_t *target_qkey;
+	volatile uint64_t *local_cntr_value;
+	uint64_t submitted_count;
+	uint32_t sq_size;
+
+	/*
+	 * backendVersion 2 is already published with these unused legacy slots in
+	 * NCCL's mirror. Keep them reserved so the polling fields below retain
+	 * their frozen offsets, but do not expose or populate staging metadata.
+	 */
+	uint32_t reserved0;
+	uint64_t reserved1;
+};
+
+struct nccl_ofi_gin_gdaki_dev_counter_handle_v2 {
+	struct nccl_ofi_gin_gdaki_dev_endpoint_handle_v2 base;
+	volatile uint64_t *cntr_value;
+	uint64_t cntr_offset;
+};
+
+struct nccl_ofi_gin_gdaki_dev_handle_v2 {
+	struct nccl_ofi_gin_gdaki_dev_endpoint_handle_v2 data;
+	struct nccl_ofi_gin_gdaki_dev_endpoint_handle_v2 pvdata;
+	struct nccl_ofi_gin_gdaki_dev_counter_handle_v2 **counter_handles;
+	struct nccl_ofi_gin_gdaki_dev_counter_handle_v2 **signal_handles;
+	int32_t nCounters;
+	int32_t nSignals;
+	int32_t nranks;
+	int32_t rank;
+	uint32_t rail_id;
+	uint32_t scratch_lkey;
+	uint32_t scratch_pad;
+	uint64_t scratch_local_addr;
+	uint64_t *scratch_remote_addrs;
+	uint32_t *scratch_remote_rkeys;
+
+	/* Reserved offsets from the published v2 ABI; never staging metadata. */
+	uint32_t reserved0;
+	uint32_t reserved1;
+
+	uint32_t *submitted_count_per_peer;
+	volatile uint32_t *ordered_completed_count_per_peer;
+	uint32_t peer_window;
+	uint64_t *submitted_count_per_ctx;
+	volatile uint64_t *completed_count_per_ctx;
+	uint32_t cq_depth;
+};
+
 #ifdef __cplusplus
 }
+
+#if UINTPTR_MAX == UINT64_MAX
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_endpoint_handle) == 80);
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_counter_handle) == 96);
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_handle) == 240);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_endpoint_handle, cq) == 8);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_endpoint_handle, putvalue_slice_base) == 72);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_handle, putvalue_lkey) == 232);
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_endpoint_handle_v2) == 64);
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_counter_handle_v2) == 80);
+static_assert(sizeof(nccl_ofi_gin_gdaki_dev_handle_v2) == 256);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_endpoint_handle_v2, local_cntr_value) == 32);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_handle_v2, submitted_count_per_peer) == 208);
+static_assert(offsetof(nccl_ofi_gin_gdaki_dev_handle_v2, submitted_count_per_ctx) == 232);
+#endif
 #endif
 
 #endif /* NCCL_OFI_GIN_GDAKI_DEV_H_ */

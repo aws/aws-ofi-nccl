@@ -7,17 +7,22 @@
 
 #include "config.h"
 
+#include <algorithm>
+#include <bit>
+
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 #include "nccl_ofi_param.h"
+#include "rdma/gin/nccl_ofi_gin.h"
 #include "rdma/gin/nccl_ofi_gin_gdaki_resources.h"
 
 #include "efa_cuda_dp.h"
 
-#include <algorithm>
 #include <rdma/fi_cm.h>
 #include <rdma/fi_ext_efa.h>
 
+static constexpr uint32_t gdaki_narrow_wqe_inline_size = 32;
+static constexpr uint32_t gdaki_wide_wqe_size = 128;
 static constexpr uint32_t gdaki_max_rdma_sges = 1;
 
 #define NCCL_OFI_GDAKI_EFA_DP_API_MAJOR_V0 0
@@ -71,6 +76,9 @@ static gdaki_efa_dp_context gdaki_create_efa_dp_context(int backend_version)
 	return gdaki_efa_dp_context(ctx, efa_cuda_host_context_destroy);
 }
 
+/* Completions read from the CQ per fi_cq_readfrom call. */
+#define GDAKI_CQ_READ_BATCH 32u
+
 /*
  * Build fi_getinfo hints for the GDAKI endpoint.
  *
@@ -83,14 +91,23 @@ static gdaki_efa_dp_context gdaki_create_efa_dp_context(int backend_version)
  * GDAKI does not register memory on this EP — the proxy's regMrSym
  * registers on the shared domain — and does not do fi_cq_readfrom,
  * so FI_SOURCE is not requested. FI_HMEM is still needed because the endpoint
- * is used to access GPU memory. efa-direct requires FI_CONTEXT2 per fi_efa(7).
+ * is used to access GPU memory.
+ *
+ * The mode is the caller's: backendVersion 2 requests mode zero, under which
+ * the device stamps its own request id into each WQE and efa-direct echoes it
+ * back as the completion's op_context — what host completion polling decodes.
+ * backendVersion 1 requests FI_CONTEXT2 (the only mode older providers offer);
+ * its CQ is device-polled, so no host read ever misreads the id. Endpoints
+ * sharing a CQ must agree on the mode (the first bound endpoint commits it),
+ * and both arrangements satisfy that: the v2 shared CQ is bound only by mode-0
+ * endpoints, and v1 CQs are private. A nonzero inject_size hint is rejected
+ * under mode zero, so the wide-WQE opt-in is applied to the returned info
+ * instead (see gdaki_fi_endpoint::open).
  */
-static void get_gdaki_hints(struct fi_info &hints,
-			    struct fi_info *ref_info,
-			    uint32_t inline_write_size)
+static void get_gdaki_hints(struct fi_info &hints, struct fi_info *ref_info, uint64_t mode)
 {
 	hints.caps = FI_MSG | FI_RMA | FI_HMEM;
-	hints.mode = FI_CONTEXT2;
+	hints.mode = mode;
 
 	hints.ep_attr->type = FI_EP_RDM;
 	hints.addr_format = FI_ADDR_EFA;
@@ -102,17 +119,6 @@ static void get_gdaki_hints(struct fi_info &hints,
 	hints.domain_attr->control_progress = FI_PROGRESS_AUTO;
 	hints.domain_attr->data_progress = FI_PROGRESS_AUTO;
 
-	/*
-	 * EFA uses inject_size above its default inline limit as the opt-in for
-	 * RDMA-write inline and a wide WQE. Request the smallest value that both
-	 * crosses that provider-reported limit and carries the required payload.
-	 */
-	if (inline_write_size != 0) {
-		hints.tx_attr->inject_size =
-			std::max(ref_info->tx_attr->inject_size + 1,
-				 static_cast<size_t>(inline_write_size));
-	}
-
 	/* Narrow fi_getinfo to the provider / fabric / domain the proxy
 	 * already opened. Names are required to obtain exactly one result. */
 	hints.fabric_attr->prov_name = strdup(ref_info->fabric_attr->prov_name);
@@ -122,26 +128,32 @@ static void get_gdaki_hints(struct fi_info &hints,
 
 /*
  * Obtain a GDAKI-owned fi_info via fi_getinfo, narrowed to exactly the
- * fabric / domain the proxy reference points at.
+ * fabric / domain the proxy reference points at, at the caller's mode.
+ * A mode-zero request against a provider predating
+ * efa-direct-without-FI_CONTEXT2 (ofiwg PR 12806) answers -FI_ENODATA,
+ * which is a hard error: no silent fallback, because the caller asks for
+ * mode zero exactly when host completion polling depends on it. The version
+ * matches the ABI the proxy opened the shared fabric and domain at whenever
+ * GDAKI is compiled in (see nccl_ofi_rdma.cpp).
  */
-static struct fi_info *get_gdaki_info(struct fi_info *ref_info, uint32_t inline_write_size)
+static struct fi_info *get_gdaki_info(struct fi_info *ref_info, uint64_t mode)
 {
-	if (inline_write_size != 0 &&
-	    (ref_info == nullptr || ref_info->tx_attr == nullptr)) {
-		throw std::runtime_error(
-			"gin GDAKI: reference info has no transmit attributes");
-	}
-
 	struct fi_info *hints = fi_allocinfo();
 	if (hints == nullptr) {
 		throw std::runtime_error("fi_allocinfo for GDAKI hints failed");
 	}
-	get_gdaki_hints(*hints, ref_info, inline_write_size);
+	get_gdaki_hints(*hints, ref_info, mode);
 
 	struct fi_info *results = nullptr;
-	int ret = fi_getinfo(FI_VERSION(1, 18), nullptr, nullptr, 0ULL,
+	int ret = fi_getinfo(FI_VERSION(2, 5), nullptr, nullptr, 0ULL,
 			     hints, &results);
 	fi_freeinfo(hints);
+	if (ret == -FI_ENODATA && mode == 0) {
+		throw std::runtime_error(
+			"gin GDAKI: no efa-direct without FI_CONTEXT2; libfabric "
+			"predates efa-direct-without-FI_CONTEXT2 support (ofiwg "
+			"PR 12806), which host completion polling requires");
+	}
 	if (ret != 0) {
 		throw std::runtime_error("fi_getinfo for GDAKI info failed: " +
 					 std::string(fi_strerror(-ret)));
@@ -159,25 +171,55 @@ static struct fi_info *get_gdaki_info(struct fi_info *ref_info, uint32_t inline_
 	return results;
 }
 
+
 void gdaki_fi_endpoint::open(struct fid_domain *domain,
 			     struct fi_info *ref_info,
-			     size_t cq_size,
+			     struct fid_cq *shared_cq,
 			     uint32_t inline_write_size)
 {
 	if (ep || cq || av || info) {
 		throw std::runtime_error("gdaki_fi_endpoint: double open");
 	}
 
-	info = get_gdaki_info(ref_info, inline_write_size);
+	/*
+	 * Who reads the CQ decides the mode. A shared CQ is host-polled, so the
+	 * info must carry no FI_CONTEXT2: the device stamps its request id into
+	 * each WQE and efa-direct echoes it as the completion's op_context. No
+	 * shared CQ means backendVersion 1's private device-polled CQ, which no
+	 * host read ever touches, so request FI_CONTEXT2 — the only mode
+	 * providers predating ofiwg PR 12806 offer — and v1 keeps running there.
+	 */
+	info = get_gdaki_info(ref_info, shared_cq != nullptr ? 0 : FI_CONTEXT2);
 	inline_write_size_ = inline_write_size;
 
-	struct fi_cq_attr cq_attr = {};
-	cq_attr.format = FI_CQ_FORMAT_DATA;
-	cq_attr.size = cq_size;
-	int ret = fi_cq_open(domain, &cq_attr, &cq, nullptr);
-	if (ret != 0) {
-		throw std::runtime_error("fi_cq_open on proxy domain failed: " +
-					 std::string(fi_strerror(-ret)));
+	/*
+	 * EFA uses inject_size above its default inline limit as the opt-in for
+	 * RDMA-write inline and a wide WQE. Set it on the returned info because
+	 * mode-0 fi_getinfo rejects a nonzero inject_size hint. The SQ is a fixed
+	 * byte budget, so a wide entry halves its depth. Keep this provider opt-in
+	 * separate from inline_write_size, which is the payload capacity required
+	 * by the device-side encoder.
+	 */
+	if (inline_write_size != 0) {
+		info->tx_attr->inject_size =
+			std::max(static_cast<size_t>(gdaki_narrow_wqe_inline_size + 1),
+				 static_cast<size_t>(inline_write_size));
+		info->tx_attr->size /= 2;
+	}
+
+	int ret;
+	if (shared_cq != nullptr) {
+		cq = shared_cq;
+	} else {
+		struct fi_cq_attr cq_attr = {};
+		cq_attr.format = FI_CQ_FORMAT_DATA;
+		cq_attr.size = ofi_nccl_cq_size();
+		ret = fi_cq_open(domain, &cq_attr, &cq, nullptr);
+		if (ret != 0) {
+			throw std::runtime_error("fi_cq_open for backendVersion 1 failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+		owns_cq = true;
 	}
 
 	struct fi_av_attr av_attr = {};
@@ -254,13 +296,8 @@ void gdaki_gpu_qp::build(int backend_version_in,
 		 * WQE geometry reported in sq_attr. */
 		attrs.sq_max_inline_data = sq_max_inline_data;
 		attrs.sq_max_rdma_sges = gdaki_max_rdma_sges;
-		/*
-		 * efa-dp-direct v1 writes 64-bit request IDs. NCCL uses the
-		 * FI_WRITE hardware counter for progress and never decodes a
-		 * transmit CQE request ID; its generated IDs also fit in the
-		 * low 16 bits. This keeps the upstream v1 layout on both narrow
-		 * and wide QPs without carrying a private narrow-WQE fallback.
-		 */
+		/* gdaki_endpoint::populate verified that the provider QP supports
+		 * the 64-bit request IDs used by host completion polling. */
 		attrs.sq_caps = EFA_CUDA_WQ_CAPS_64_BIT_REQ_ID;
 		break;
 	default:
@@ -322,6 +359,45 @@ void gdaki_gpu_cq::build(int backend_version_in, const struct fi_efa_cq_attr &cq
 	dev_cq = reinterpret_cast<nccl_ofi_gin_gdaki_dev_cq *>(cq.dev);
 	backend_version = backend_version_in;
 }
+
+void gdaki_host_cq::open(struct fid_domain *domain, size_t cq_size)
+{
+	if (cq_ != nullptr) {
+		throw std::runtime_error("gdaki_host_cq: double open");
+	}
+	struct fi_cq_attr cq_attr = {};
+	cq_attr.format = FI_CQ_FORMAT_CONTEXT;
+	cq_attr.size = cq_size;
+	int ret = fi_cq_open(domain, &cq_attr, &cq_, nullptr);
+	if (ret != 0) {
+		throw std::runtime_error("gdaki_host_cq: fi_cq_open failed: " +
+					 std::string(fi_strerror(-ret)));
+	}
+}
+
+void gdaki_host_cq::build(struct fi_efa_ops_gda *gda_ops, int ctx_id)
+{
+	if (cq_ == nullptr) {
+		throw std::runtime_error("gdaki_host_cq: build before open");
+	}
+
+	struct fi_efa_cq_attr efa_cq_attr = {};
+	int ret = gda_ops->query_cq(cq_, &efa_cq_attr);
+	if (ret != 0) {
+		throw std::runtime_error("gdaki_host_cq: query_cq failed: " +
+					 std::string(fi_strerror(-ret)));
+	}
+	if (efa_cq_attr.buffer == nullptr || efa_cq_attr.entry_size == 0 ||
+	    efa_cq_attr.num_entries == 0) {
+		throw std::runtime_error("gdaki_host_cq: invalid CQ geometry for ctx" + std::to_string(ctx_id));
+	}
+	if ((efa_cq_attr.num_entries & (efa_cq_attr.num_entries - 1)) != 0) {
+		throw std::runtime_error("gdaki_host_cq: CQ num_entries not power of two for ctx" + std::to_string(ctx_id));
+	}
+
+	num_entries = efa_cq_attr.num_entries;
+}
+
 
 /*
  * Sentinel for "this peer has no endpoint at this slot". A rank that did
@@ -413,10 +489,10 @@ void gdaki_target_addressing::populate(gdaki_fi_endpoint &endpoint,
 
 void gdaki_endpoint::open(struct fid_domain *domain,
 			  struct fi_info *ref_info,
-			  size_t cq_size,
+			  struct fid_cq *shared_cq,
 			  uint32_t inline_write_size)
 {
-	endpoint.open(domain, ref_info, cq_size, inline_write_size);
+	endpoint.open(domain, ref_info, shared_cq, inline_write_size);
 	endpoint.enable();
 }
 
@@ -430,6 +506,28 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 	if (ret != 0)
 		throw std::runtime_error("gdaki_endpoint query_qp_wqs failed: " +
 					 std::string(fi_strerror(-ret)));
+
+	if (endpoint.inline_write_size() != 0 &&
+	    sq_attr.entry_size != gdaki_wide_wqe_size) {
+		throw std::runtime_error(
+			"gdaki_endpoint: requested " +
+			std::to_string(endpoint.inline_write_size()) +
+			" bytes of RDMA-write inline data, but provider returned " +
+			std::to_string(sq_attr.entry_size) +
+			"-byte SQ entries instead of 128-byte wide WQEs");
+	}
+
+	bool has_64_bit_req_id = false;
+#if HAVE_FI_EFA_WQ_ATTR_CAPS
+	has_64_bit_req_id =
+		(sq_attr.caps & FI_EFA_WQ_CAPS_64_BIT_REQ_ID) != 0;
+#endif
+	if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_2 &&
+	    !has_64_bit_req_id) {
+		throw std::runtime_error(
+			"gdaki_endpoint: backendVersion 2 completion polling "
+			"requires FI_EFA_WQ_CAPS_64_BIT_REQ_ID");
+	}
 
 	sq_buffer.map(sq_attr.buffer,
 		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
@@ -448,14 +546,15 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 	sq_size = sq_attr.num_entries;
 	sq_entry_size = sq_attr.entry_size;
 
-	/* Query CQ and build GPU CQ. */
-	struct fi_efa_cq_attr efa_cq_attr = {};
-	ret = gda_ops->query_cq(endpoint.cq, &efa_cq_attr);
-	if (ret != 0)
-		throw std::runtime_error("gdaki_endpoint query_cq failed: " +
-					 std::string(fi_strerror(-ret)));
-
-	gpu_cq.build(backend_version, efa_cq_attr);
+	if (backend_version == NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+		struct fi_efa_cq_attr cq_attr = {};
+		ret = gda_ops->query_cq(endpoint.cq, &cq_attr);
+		if (ret != 0) {
+			throw std::runtime_error("gdaki_endpoint query_cq failed: " +
+						 std::string(fi_strerror(-ret)));
+		}
+		gpu_cq.build(backend_version, cq_attr);
+	}
 
 	/* Build the [total_slots*nranks] target table in GPU memory. */
 	targets.populate(endpoint, all_addrs, ep_addr_len, total_slots, nranks, gda_ops);
@@ -464,18 +563,19 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 void gdaki_data_endpoint::open(struct fid_domain *domain,
 			       struct fi_info *ref_info,
 			       struct fi_efa_ops_gda *gda_ops,
+			       struct fid_cq *cq,
 			       uint64_t cntr_flags,
 			       uint32_t inline_write_size)
 {
-	/* Create the counter first; it will be bound to the inner endpoint
-	 * between open() and enable(). */
+	/* Create the counter first; it is bound to the inner endpoint between
+	 * open() and enable() and is this QP's per-QP completion source
+	 * (SQ ring reuse + blocking Flush). */
 	local_cntr.create(gda_ops, domain);
 
 	/* Open the inner endpoint without enable. */
-	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size(), inline_write_size);
+	base.endpoint.open(domain, ref_info, cq, inline_write_size);
 
 	base.endpoint.bind(&local_cntr.get()->fid, cntr_flags);
-
 	base.endpoint.enable();
 }
 
@@ -489,16 +589,15 @@ void gdaki_data_endpoint::populate(int backend_version, struct fi_efa_ops_gda *g
 }
 
 void gdaki_sc_endpoint::open(struct fid_domain *domain, struct fi_info *ref_info,
-			     struct fi_efa_ops_gda *gda_ops)
+			     struct fi_efa_ops_gda *gda_ops, struct fid_cq *cq)
 {
 	/* Create hardware counters first; they will be bound to the inner
 	 * endpoint between open() and enable(). */
 	write_cntr.create(gda_ops, domain);
 	remote_write_cntr.create(gda_ops, domain);
 
-	/* Open the inner endpoint without enable. Use the same CQ sizing as
-	 * the data endpoint so callers get consistent capacity per env config. */
-	base.endpoint.open(domain, ref_info, ofi_nccl_cq_size(), /* inline_write_size */ 0);
+	/* Bind the v2 shared CQ or create the v1 private CQ, without enable. */
+	base.endpoint.open(domain, ref_info, cq, /* inline_write_size */ 0);
 
 	/* Bind counters before enabling. */
 	base.endpoint.bind(&write_cntr.get()->fid, FI_WRITE);
@@ -514,6 +613,35 @@ void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda
 	/* Delegate the shared work (QP/CQ query, MMIO map, GPU QP and CQ,
 	 * target table) to the inner endpoint. */
 	base.populate(backend_version, gda_ops, all_addrs, ep_addr_len, total_slots, nranks);
+
+	if (backend_version != NCCL_OFI_GDAKI_BACKEND_VERSION_1) {
+		/* The v2 handles carry no device-visible CQ or lock; per-QP
+		 * completion is the FI_WRITE counter (local_cntr_value), and
+		 * signal arrival is the REMOTE_WRITE counter (cntr_value). */
+		auto fill_common_v2 = [&](nccl_ofi_gin_gdaki_dev_counter_handle_v2 &h) {
+			h.base.qp = base.gpu_qp.dev();
+			h.base.target_address_handles = base.targets.ahs.dev;
+			h.base.target_remote_qpns = base.targets.qpns.dev;
+			h.base.target_qkey = base.targets.qkeys.dev;
+			h.base.local_cntr_value = write_cntr.gpu_ptr();
+			h.base.submitted_count = 0;
+			h.base.sq_size = base.sq_size;
+			h.base.reserved0 = 0;
+			h.base.reserved1 = 0;
+			h.cntr_offset = 0;
+		};
+
+		counter_dev_handle_v2.allocate(1);
+		fill_common_v2(counter_dev_handle_v2.host[0]);
+		counter_dev_handle_v2.host[0].cntr_value = write_cntr.gpu_ptr();
+		counter_dev_handle_v2.commit();
+
+		signal_dev_handle_v2.allocate(1);
+		fill_common_v2(signal_dev_handle_v2.host[0]);
+		signal_dev_handle_v2.host[0].cntr_value = remote_write_cntr.gpu_ptr();
+		signal_dev_handle_v2.commit();
+		return;
+	}
 
 	/*
 	 * Build the two device handles. They share QP / CQ / target
@@ -556,4 +684,250 @@ void gdaki_sc_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda
 	signal_dev_handle.host[0].cntr_value = remote_write_cntr.gpu_ptr();
 	signal_dev_handle.host[0].base.local_cntr_value = write_cntr.gpu_ptr();
 	signal_dev_handle.commit();
+}
+
+gdaki_completion_state::~gdaki_completion_state()
+{
+	if (completions_table_reg != nullptr) {
+		get_device_copy().deregister_region(completions_table_reg);
+		completions_table_reg = nullptr;
+	}
+	if (completions_table_dev != nullptr) {
+		nccl_net_ofi_gpu_mem_free(completions_table_dev);
+		completions_table_dev = nullptr;
+	}
+}
+
+void gdaki_completion_state::allocate(int nContexts_in, int nranks_in)
+{
+	if (completions_table_dev != nullptr) {
+		throw std::runtime_error("gdaki_completion_state: allocate called twice");
+	}
+	if (nContexts_in <= 0 || nranks_in <= 0) {
+		throw std::runtime_error("gdaki_completion_state: allocate with zero contexts/ranks");
+	}
+	nContexts = nContexts_in;
+	nranks = nranks_in;
+
+	/* Completions table: per-context completed counts [nContexts] as uint64, then
+	 * per-peer ordered counts [nContexts * nranks] as uint32. Per-QP completion
+	 * lives in each endpoint's FI_WRITE NIC counter. */
+	ctx_byte_base = 0;
+	peer_byte_base = (size_t)nContexts * sizeof(uint64_t);
+	completions_table_bytes = peer_byte_base + (size_t)nContexts * (size_t)nranks * sizeof(uint32_t);
+
+	void *dev = nullptr;
+	if (nccl_net_ofi_gpu_mem_alloc(&dev, completions_table_bytes) != 0) {
+		throw std::runtime_error("gdaki_completion_state: gpu_mem_alloc failed");
+	}
+	completions_table_dev = static_cast<uint8_t *>(dev);
+
+	nccl_ofi_device_copy::RegHandle *reg = nullptr;
+	if (get_device_copy().register_region(completions_table_dev, completions_table_bytes, reg) != 0) {
+		throw std::runtime_error("gdaki_completion_state: gdrcopy register_region failed");
+	}
+	completions_table_reg = reg;
+
+	/* Every count starts at 0. completions_table_host is the persistent contiguous
+	 * mirror, sized in uint64 elements so it covers the byte total and is aligned
+	 * for the per-ctx view; this method publishes it once to initialise the device
+	 * copy. */
+	completions_table_host.assign((completions_table_bytes + sizeof(uint64_t) - 1) / sizeof(uint64_t), 0);
+	if (get_device_copy().copy_to_device(completions_table_host.data(), *completions_table_reg, 0,
+					     completions_table_bytes) != 0) {
+		throw std::runtime_error("gdaki_completion_state: initial copy_to_device failed");
+	}
+
+	peer_bits.assign((size_t)nContexts_in * (size_t)nranks_in, {});
+	ordered_completed_count_per_peer.assign((size_t)nContexts_in * (size_t)nranks_in, 0);
+	has_error.assign((size_t)nContexts_in, 0);
+	err_prov_errno.assign((size_t)nContexts_in, 0);
+	err_text.assign((size_t)nContexts_in, std::string());
+	err_peer.assign((size_t)nContexts_in, 0);
+	err_pseq.assign((size_t)nContexts_in, 0);
+	host_cq_.resize((size_t)nContexts_in);
+}
+
+struct fid_cq *gdaki_completion_state::open_cq(int ctx_id, struct fid_domain *domain, size_t cq_size,
+					       struct fi_efa_ops_gda *gda_ops)
+{
+	host_cq_[(size_t)ctx_id] = std::make_unique<gdaki_host_cq>();
+	host_cq_[(size_t)ctx_id]->open(domain, cq_size);
+	host_cq_[(size_t)ctx_id]->build(gda_ops, ctx_id);
+	return host_cq_[(size_t)ctx_id]->cq();
+}
+
+int gdaki_completion_state::progress(size_t max_iter)
+{
+	bool dirty = false;
+	for (size_t i = 0; i < host_cq_.size(); ++i) {
+		if (!host_cq_[i]) continue;
+		if (progress_cq(*host_cq_[i], (int)i, max_iter) > 0) {
+			dirty = true;
+		}
+	}
+	if (dirty) {
+		return publish();
+	}
+	return 0;
+}
+
+bool gdaki_completion_state::query_error(std::string &msg) const
+{
+	const int idx = error_ctx_plus_one.load(std::memory_order_acquire);
+	if (idx == 0) return false;
+	const int ctx_id = idx - 1;
+	msg = "GDAKI CQ completion error on ctx" + std::to_string(ctx_id) + ": prov_errno=" +
+		  std::to_string(err_prov_errno[ctx_id]) + " (" + err_text[ctx_id] + ")" +
+		  " peer=" + std::to_string((unsigned)err_peer[ctx_id]) +
+		  " pseq=" + std::to_string((unsigned)err_pseq[ctx_id]);
+	return true;
+}
+
+uint32_t gdaki_completion_state::progress_cq(gdaki_host_cq &cq, int ctx_id, size_t max_iter)
+{
+	uint32_t consumed = 0;
+	uint64_t *ctx_counts = host_ctx_counts();
+	uint32_t *peer_counts = host_peer_counts(ctx_id);
+
+	/* The CQ is opened FI_CQ_FORMAT_CONTEXT, so libfabric reports each completion as
+	 * one op_context holding the request id the device stamped. fi_cq_readfrom reaches
+	 * the provider's own reader; on the efa-direct bypass ops only readfrom does, since
+	 * read routes through the util completion queue this path leaves empty. Reading
+	 * through libfabric advances the provider's cursor, so a completion this pass
+	 * consumes is no longer visible to the drain inside fi_close. */
+	struct fi_cq_entry entries[GDAKI_CQ_READ_BATCH];
+
+	while ((size_t)consumed < max_iter) {
+		const size_t want = std::min(max_iter - (size_t)consumed,
+					     (size_t)GDAKI_CQ_READ_BATCH);
+		const ssize_t nread = fi_cq_readfrom(cq.cq(), entries, want, nullptr);
+		if (nread == -FI_EAGAIN) {
+			break;
+		}
+
+		if (nread == -FI_EAVAIL) {
+			/* A completion failed, and its entry is on the CQ's error queue.
+			 * fi_cq_readerr returns that entry, whose op_context is the request
+			 * id the device stamped, so the failure is attributed to the peer
+			 * and sequence it belongs to. */
+			struct fi_cq_err_entry err_entry = {};
+			const ssize_t nerr = fi_cq_readerr(cq.cq(), &err_entry, 0);
+			if (nerr < 0) {
+				NCCL_OFI_WARN("GDAKI CQ progress: ctx%d fi_cq_readerr: %s",
+					      ctx_id, fi_strerror((int)-nerr));
+				break;
+			}
+
+			const uint64_t req_id = (uint64_t)(uintptr_t)err_entry.op_context;
+			const uint32_t peer = (uint32_t)(req_id >> NCCL_OFI_GDAKI_PSEQ_BITS);
+			const uint32_t pseq = (uint32_t)(req_id & NCCL_OFI_GDAKI_PSEQ_MASK);
+
+			/* err_data is only valid until the next read of this CQ, so the
+			 * provider's text is captured here rather than in query_error. */
+			const std::string prov_text = fi_cq_strerror(cq.cq(), err_entry.prov_errno,
+								    err_entry.err_data, nullptr, 0);
+			NCCL_OFI_WARN("GDAKI CQ error on ctx%d: err=%d prov_errno=%d peer=%u pseq=%u (%s)",
+				      ctx_id, err_entry.err, err_entry.prov_errno, peer, pseq,
+				      prov_text.c_str());
+
+			if (!has_error[ctx_id]) {
+				has_error[ctx_id] = 1;
+				err_prov_errno[ctx_id] = err_entry.prov_errno;
+				err_text[ctx_id] = prov_text;
+				err_peer[ctx_id] = peer;
+				err_pseq[ctx_id] = pseq;
+				int none = 0;
+				error_ctx_plus_one.compare_exchange_strong(none, ctx_id + 1,
+						std::memory_order_release, std::memory_order_relaxed);
+			}
+			/* Every CQE on this CQ is a local TX completion for one of its posters.
+			 * A failed one still leaves the shared CQ, so it counts against the
+			 * per-context drain the device's CQ-overflow gate reads. */
+			ctx_counts[ctx_id] += 1;
+			/* The prefix stops below a failed write, so a waiter covering it never
+			 * observes it as complete. queryLastError names the failure. */
+			++consumed;
+			continue;
+		}
+
+		if (nread < 0) {
+			NCCL_OFI_WARN("GDAKI CQ progress: ctx%d fi_cq_readfrom: %s",
+				      ctx_id, fi_strerror((int)-nread));
+			break;
+		}
+
+		for (ssize_t i = 0; i < nread; ++i) {
+			const uint64_t req_id = (uint64_t)(uintptr_t)entries[i].op_context;
+
+			/* Every CQE on this CQ is a local TX completion for one of its posters.
+			 * This bumps the per-context drain count in the host mirror (published
+			 * once at the end of the pass). Per-QP completion lives in the
+			 * endpoint's NIC counter. */
+			ctx_counts[ctx_id] += 1;
+			++consumed;
+
+			/* req_id encodes attribution: peer in the high bits, pseq in the low
+			 * NCCL_OFI_GDAKI_PSEQ_BITS. */
+			const uint32_t peer = (uint32_t)(req_id >> NCCL_OFI_GDAKI_PSEQ_BITS);
+			const uint32_t pseq = (uint32_t)(req_id & NCCL_OFI_GDAKI_PSEQ_MASK);
+
+			if (OFI_UNLIKELY(peer >= (uint32_t)nranks)) {
+				NCCL_OFI_WARN("GDAKI CQ progress: ctx%d req_id=0x%llx peer=%u >= nranks=%d",
+					      ctx_id, (unsigned long long)req_id, peer, nranks);
+				continue;
+			}
+
+			const size_t slot = peer_slot(ctx_id, peer);
+
+			/* pseq spans PSEQ_BITS while the bitmap covers PEER_WINDOW entries, so it
+			 * indexes the bitmap modulo that width. */
+			const uint32_t pslot = pseq & (NCCL_OFI_GDAKI_PEER_WINDOW - 1u);
+			peer_bits[slot][pslot >> 6] |= (1ull << (pslot & 63));
+
+			/* Advance the peer's ordered count inline: extend the contiguous run from its
+			 * current value, clearing the bits it consumes. An out-of-order arrival only
+			 * sets its bit above; a gap-filling completion extends the run. countr_one
+			 * takes the whole run of set bits at the current position in one step, so the
+			 * scan costs one iteration per 64-bit word instead of one per completed write.
+			 * Then write this peer's ordered count into the mirror. */
+			auto &bits = peer_bits[slot];
+			uint32_t &upto = ordered_completed_count_per_peer[slot];
+			for (;;) {
+				const uint32_t pos = upto & (NCCL_OFI_GDAKI_PEER_WINDOW - 1u);
+				const uint32_t off = pos & 63u;
+				/* Shifting the word down to the current position discards the bits
+				 * already consumed and feeds in zeros above, so the run this counts
+				 * cannot reach past the word. */
+				const uint32_t run =
+					(uint32_t)std::countr_one(bits[pos >> 6] >> off);
+				if (run == 0) {
+					break;
+				}
+				/* Clear the run just consumed. A whole word of set bits needs the
+				 * all-ones mask, which (1ull << 64) cannot express. */
+				bits[pos >> 6] &=
+					~((run == 64u) ? ~0ull : (((1ull << run) - 1ull) << off));
+				upto += run;
+				/* A run that stopped before the word boundary ended on a bit that is
+				 * not set, so the contiguous prefix ends there. */
+				if (off + run < 64u) {
+					break;
+				}
+			}
+			peer_counts[peer] = upto;
+		}
+
+		if ((size_t)nread < want) {
+			break;
+		}
+	}
+
+	return consumed;
+}
+
+int gdaki_completion_state::publish()
+{
+	return get_device_copy().copy_to_device(completions_table_host.data(), *completions_table_reg, 0,
+						completions_table_bytes);
 }
