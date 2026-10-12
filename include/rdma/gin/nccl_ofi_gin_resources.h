@@ -29,22 +29,18 @@ static inline void freelist_deleter(nccl_ofi_freelist *fl)
 /**
  * A rail of the GIN endpoint
  */
-struct nccl_ofi_gin_ep_rail_t {
+class nccl_ofi_gin_ep_rail_t : public endpoint_rail_t {
+public:
 	nccl_ofi_gin_ep_rail_t(uint16_t rail_id_, nccl_net_ofi_domain_t &domain);
 
 	~nccl_ofi_gin_ep_rail_t() = default;
 	nccl_ofi_gin_ep_rail_t(nccl_ofi_gin_ep_rail_t &&other) = default;
 
-	const uint16_t rail_id;
+	/* rail_id, av, ofi_ep inherited from endpoint_rail_t */
 
-	/* Pointer to completion queue */
+	/* Pointer to completion queue (gin fuses its cq into the rail) */
 	ofi_cq_ptr rail_cq;
 
-	/* Pointer to address vector */
-	ofi_av_ptr av;
-
-	/* Pointer to endpoint */
-	ofi_ep_ptr ofi_ep;
 };
 
 /**

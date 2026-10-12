@@ -529,6 +529,36 @@ private:
 
 
 /**
+ * Endpoint rail base - transport-neutral per-rail libfabric objects
+ *
+ * A rail is one NIC's worth of an endpoint. The members common to every
+ * transport are the rail index, its address vector, and its libfabric
+ * endpoint. The completion queue is intentionally NOT here: rdma keeps the
+ * cq in a separate cq_rail so a child (per-rComm) endpoint can share the
+ * parent lComm cq, while gin fuses its own cq into its rail. Each transport
+ * owns its cq placement; only {rail_id, av, ofi_ep} are shared.
+ */
+class endpoint_rail_t {
+public:
+	endpoint_rail_t() = default;
+
+	endpoint_rail_t(endpoint_rail_t &&) = default;
+	endpoint_rail_t &operator=(endpoint_rail_t &&) = default;
+
+	endpoint_rail_t(const endpoint_rail_t &) = delete;
+	endpoint_rail_t &operator=(const endpoint_rail_t &) = delete;
+
+	uint16_t rail_id = 0;
+
+	/* Address vector handle */
+	ofi_av_ptr av;
+
+	/* Local libfabric endpoint handle */
+	ofi_ep_ptr ofi_ep;
+};
+
+
+/**
  * Endpoint base - transport-neutral endpoint abstraction
  *
  * Holds the parts of an endpoint common to every transport: the domain

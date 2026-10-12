@@ -376,8 +376,8 @@ static inline struct fi_info *get_gin_info(struct fi_info *info)
 }
 
 nccl_ofi_gin_ep_rail_t::nccl_ofi_gin_ep_rail_t(uint16_t rail_id_, nccl_net_ofi_domain_t &domain)
-    : rail_id(rail_id_)
 {
+	this->rail_id = rail_id_;
 	ofi_domain_ptr &ofi_domain = domain.get_ofi_domain(rail_id);
 
 	/* Create cq */
