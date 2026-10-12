@@ -45,7 +45,7 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_
 {
 	auto &ep = get_resources().get_ep();
 
-	std::lock_guard scoped_ep_lock(ep.ep_lock);
+	std::lock_guard scoped_ep_lock(ep.get_ep_lock());
 
 	nccl_ofi_freelist *metadata_fl_ptr = nullptr;
 	metadata_fl_ptr = new nccl_ofi_freelist(
@@ -195,8 +195,8 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 		}
 	}
 
-	/* Look up (or create on first use) the GIN resources for this endpoint.
-	   GIN owns this association; the net endpoint does not know about GIN. */
+	/* Create the GIN endpoint for this net endpoint. GIN owns this
+	   association; the net endpoint does not know about GIN. */
 	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
@@ -207,7 +207,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 
 	auto &gin_ep = gin_comm->get_resources().get_ep();
 
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 	const int num_rails = static_cast<int>(gin_ep.get_num_rails());
 
 	my_gin_handle.comm_id = gin_comm->local_comm_id;
@@ -311,7 +311,7 @@ int nccl_ofi_rdma_gin_put_comm::send_ack(nccl_ofi_rdma_gin_put_comm &gin_comm, u
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
 				      int type, uint64_t mrFlags, nccl_ofi_gin_symm_mr_handle_t **mr_handle_out)
 {
-	std::lock_guard<std::mutex> scoped_ep_lock(get_ep_lock());
+	std::lock_guard<nccl_ofi_spinlock> scoped_ep_lock(get_ep_lock());
 
 	/* Shared core: dedup/refcount, local EFA registration, MR-map insert,
 	   per-rank key all-gather. */
@@ -443,7 +443,7 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSym(nccl_ofi_gin_symm_mr_handle_t *mr_han
 	auto *mr_handle = static_cast<nccl_ofi_rdma_gin_symm_mr_handle *>(mr_handle_base);
 	NCCL_OFI_TRACE(NCCL_NET, "deregMrSym handle %p", mr_handle);
 
-	std::lock_guard<std::mutex> scoped_ep_lock(get_ep_lock());
+	std::lock_guard<nccl_ofi_spinlock> scoped_ep_lock(get_ep_lock());
 
 	return deregMrSymLocked(mr_handle);
 }
@@ -491,7 +491,7 @@ int nccl_ofi_rdma_gin_put_comm::deregMrSymLocked(nccl_ofi_rdma_gin_symm_mr_handl
 int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 {
 	int ret = 0;
-	auto &ep_lock = get_resources().get_ep().ep_lock;
+	auto &ep_lock = get_resources().get_ep().get_ep_lock();
 
 	NCCL_OFI_TRACE(NCCL_NET, "GIN communicator: awaiting pending acks");
 
@@ -509,7 +509,7 @@ int nccl_ofi_rdma_gin_put_comm::await_pending_requests()
 	while (true) {
 		bool any_pending = false;
 		{
-			std::lock_guard<std::mutex> lock(ep_lock);
+			std::lock_guard<nccl_ofi_spinlock> lock(ep_lock);
 			for (auto &rank_comm : rank_comms) {
 				if (rank_comm.has_pending_ack_request) {
 					any_pending = true;
@@ -538,7 +538,7 @@ int nccl_ofi_rdma_gin_put_comm::await_tx_window(nccl_ofi_gin_peer_rank_info &ran
 	uint32_t outstanding = gin_cursor_delta(rank_comm.tx_head, rank_comm.tx_tail);
 	while (OFI_UNLIKELY(outstanding >= (uint32_t)(GIN_IMM_SEQ_MASK + 1))) {
 		{
-			std::lock_guard<std::mutex> lock(get_ep_lock());
+			std::lock_guard<nccl_ofi_spinlock> lock(get_ep_lock());
 			int ret = get_resources().progress();
 			if (OFI_UNLIKELY(ret != 0)) {
 				return ret;
@@ -637,7 +637,7 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 		}
 	}
 
-	std::lock_guard<std::mutex> scoped_ep_lock(get_ep_lock());
+	std::lock_guard<nccl_ofi_spinlock> scoped_ep_lock(get_ep_lock());
 
 	if (is_ack_requested) {
 		rank_comm.last_ack_requested_seq = rank_comm.tx_head;
@@ -910,7 +910,7 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 	auto *local_handle = local_mr_handle->local_handle;
 	auto *scheduler = gin_ep.get_scheduler();
 
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 
 	auto *iget_req = get_resources().get_req_from_pool<nccl_ofi_gin_iget_req>(get_resources());
 	std::array<nccl_net_ofi_gin_read_req_t *, MAX_NUM_RAILS> read_reqs {};
@@ -969,7 +969,7 @@ int nccl_ofi_rdma_gin_put_comm::iflush(nccl_ofi_gin_symm_mr_handle_t * /*mhandle
 	auto &self_rank_comm = rank_comms[rank];
 	const uint16_t num_rails = gin_ep.get_num_rails();
 
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 
 	/* Clear host buffer slots so we can detect when the sentinel arrives */
 	for (uint16_t rail_id = 0; rail_id < num_rails; rail_id++) {

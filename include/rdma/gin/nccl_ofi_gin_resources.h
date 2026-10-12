@@ -50,14 +50,14 @@ struct nccl_ofi_gin_ep_rail_t {
 /**
  * The GIN endpoint type
  */
-class nccl_ofi_rdma_gin_ep_t : public nccl_ofi_gin_ep_t {
+class nccl_ofi_rdma_gin_ep_t : public endpoint_t {
 public:
 	/**
 	 * Create a GIN EP using the provided domain object
 	 *
 	 * @param domain_arg: Domain object from net transport
 	 */
-	nccl_ofi_rdma_gin_ep_t(nccl_net_ofi_domain_t &domain_arg);
+	nccl_ofi_rdma_gin_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg);
 
 	nccl_ofi_rdma_gin_ep_t(const nccl_ofi_rdma_gin_ep_t &) = delete;
 	nccl_ofi_rdma_gin_ep_t &operator=(const nccl_ofi_rdma_gin_ep_t &) = delete;
@@ -82,11 +82,6 @@ public:
 	 * via extGin->regMrSym produces keys (lkey/rkey) that are valid on
 	 * the GDAKI endpoint opened in createContext.
 	 */
-	nccl_net_ofi_domain_t &get_domain()
-	{
-		return domain;
-	}
-
 	nccl_net_ofi_scheduler *get_scheduler()
 	{
 		return scheduler;
@@ -119,10 +114,7 @@ public:
 	 */
 	void close_ofi_eps();
 
-	std::mutex ep_lock;
 private:
-	nccl_net_ofi_domain_t &domain;
-
 	uint16_t num_rails;
 
 	std::vector<nccl_ofi_gin_ep_rail_t> rails;
@@ -196,20 +188,12 @@ private:
  * the resources live only as long as some GIN comm holds the shared_ptr
  * returned by get(), and the slot is dropped by release() when the last comm
  * lets go.
- *
- * TODO: This registry only exists because the net transport, not the common
- * layer, owns endpoint creation and caching (device::get_ep / domain::
- * create_endpoint / ep_table). Once that machinery is lifted to the common
- * layer, GIN endpoints can be cached there the same way net endpoints are and
- * this GIN-private registry (and its global state) goes away.
  */
 class nccl_ofi_gin_resources_registry {
 public:
-	/* Return the resources for `ep`, creating them on first use. */
 	std::shared_ptr<nccl_ofi_gin_resources>
 	get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep);
 
-	/* Drop the slot for `ep`; called by the resources destructor. */
 	void release(nccl_net_ofi_ep_t *ep);
 
 private:
@@ -218,7 +202,6 @@ private:
 		by_ep;
 };
 
-/* Process-wide registry instance. */
 nccl_ofi_gin_resources_registry &gin_resources_registry();
 
 /**

@@ -20,44 +20,16 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 
-std::shared_ptr<nccl_ofi_gin_resources>
-nccl_ofi_gin_resources_registry::get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep)
+nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
+    : endpoint_t(domain_arg)
 {
-	std::lock_guard<std::mutex> guard(lock);
-
-	auto it = by_ep.find(ep.get());
-	if (it != by_ep.end()) {
-		if (auto existing = it->second.lock()) {
-			return existing;
-		}
-	}
-
-	auto resources = std::make_shared<nccl_ofi_gin_resources>(ep);
-	by_ep[ep.get()] = resources;
-	return resources;
-}
-
-void nccl_ofi_gin_resources_registry::release(nccl_net_ofi_ep_t *ep)
-{
-	std::lock_guard<std::mutex> guard(lock);
-	by_ep.erase(ep);
-}
-
-nccl_ofi_gin_resources_registry &gin_resources_registry()
-{
-	static nccl_ofi_gin_resources_registry registry;
-	return registry;
-}
-
-nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(nccl_net_ofi_domain_t &domain_arg) : domain(domain_arg)
-{
-	this->num_rails = domain.get_ofi_num_rails();
+	this->num_rails = get_domain().get_ofi_num_rails();
 	this->cq_process_max_iter = ofi_nccl_gin_cq_process_max_iter();
 	rails.reserve(this->num_rails);
 
 	// Create rails
 	for (uint16_t r = 0; r < this->num_rails; r++) {
-		rails.emplace_back(r, domain);
+		rails.emplace_back(r, get_domain());
 	}
 	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
 }
@@ -253,7 +225,7 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 
 	*mhandle = NULL;
 
-	nccl_ofi_idpool_t *key_pool = this->domain.get_mr_rkey_pool();
+	nccl_ofi_idpool_t *key_pool = get_domain().get_mr_rkey_pool();
 	uint64_t mr_key = 0;
 
 	if (key_pool->get_size() != 0) {
@@ -267,18 +239,18 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 	struct fi_mr_attr mr_attr = {};
 	uint64_t regattr_flags = 0;
 	auto ret_handle =
-		std::make_unique<nccl_ofi_gin_mr_handle_t>(this->domain, num_rails, mr_key);
+		std::make_unique<nccl_ofi_gin_mr_handle_t>(get_domain(), num_rails, mr_key);
 
 	ret = set_mr_req_attr(ret_handle->mr_key, ckey, &regattr_flags, type, &mr_attr);
 	if (OFI_UNLIKELY(ret != 0)) {
 		NCCL_OFI_WARN("Could not set registration request attributes, dev: %d",
-			      domain.get_device()->dev_id);
+			      get_domain().get_device()->dev_id);
 		return ret;
 	}
 
 	/* Register memory on each rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
-		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain.get_ofi_domain(rail_id),
+		auto mr_result = nccl_ofi_ofiutils_mr_regattr(get_domain().get_ofi_domain(rail_id),
 							      &mr_attr, regattr_flags);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
 			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu", rail_id,
@@ -476,9 +448,38 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 	}
 }
 
+std::shared_ptr<nccl_ofi_gin_resources>
+nccl_ofi_gin_resources_registry::get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep)
+{
+	std::lock_guard<std::mutex> guard(lock);
+
+	auto it = by_ep.find(ep.get());
+	if (it != by_ep.end()) {
+		if (auto existing = it->second.lock()) {
+			return existing;
+		}
+	}
+
+	auto resources = std::make_shared<nccl_ofi_gin_resources>(ep);
+	by_ep[ep.get()] = resources;
+	return resources;
+}
+
+void nccl_ofi_gin_resources_registry::release(nccl_net_ofi_ep_t *ep)
+{
+	std::lock_guard<std::mutex> guard(lock);
+	by_ep.erase(ep);
+}
+
+nccl_ofi_gin_resources_registry &gin_resources_registry()
+{
+	static nccl_ofi_gin_resources_registry registry;
+	return registry;
+}
+
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
     : ep_holder(ep_arg),
-      gin_ep(ep_arg->get_domain()),
+      gin_ep(ep_arg->get_domain().shared_from_this()),
       dev(ep_arg->get_domain().get_device()->dev_id),
       req_fl(nullptr, &freelist_deleter),
       rx_buff_fl(nullptr, &freelist_deleter),
@@ -573,9 +574,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
 {
-	/* Drop our slot in the registry. The entry is a weak_ptr so a stale one
-	   would be harmless, but releasing keeps the table from accumulating dead
-	   keys as endpoints come and go. */
+	/* Drop our slot in the registry. */
 	gin_resources_registry().release(ep_holder.get());
 
 	/* Deregister and free flush buffer before closing endpoints */

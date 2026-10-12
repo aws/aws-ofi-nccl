@@ -213,7 +213,7 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 		/* All sub-requests done; mark done and release the umbrella. */
 		auto &gin_ep = gin_comm.get_resources().get_ep();
 		*done = 1;
-		std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+		std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
 			       this->msg_seq_num);
 		NCCL_OFI_TRACE_GIN_IPUT_SIGNAL_END(gin_comm.get_dev(), &gin_comm, peer_rank,
@@ -360,7 +360,7 @@ int nccl_ofi_gin_iget_req::test(int *done)
 	if (OFI_UNLIKELY(any_reqs_pending == 0)) {
 		*done = 1;
 		auto &gin_ep = resources.get_ep();
-		std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+		std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 		resources.return_req_to_pool(this);
 	}
 	/* If subrequests are still pending, NCCL's progress thread continually
@@ -388,7 +388,7 @@ int nccl_ofi_gin_iflush_req::test(int *done)
 
 	*done = 1;
 	auto &gin_ep = resources.get_ep();
-	std::lock_guard scoped_ep_lock(gin_ep.ep_lock);
+	std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 	resources.return_req_to_pool(this);
 	return 0;
 }

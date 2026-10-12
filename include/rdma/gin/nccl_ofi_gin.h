@@ -442,9 +442,9 @@ public:
 		return *resources_sp;
 	}
 
-	std::mutex &get_ep_lock() RETURN_CAPABILITY(get_resources().get_ep().ep_lock)
+	nccl_ofi_spinlock &get_ep_lock() RETURN_CAPABILITY(get_resources().get_ep().get_ep_lock())
 	{
-		return get_resources().get_ep().ep_lock;
+		return get_resources().get_ep().get_ep_lock();
 	}
 
 	uint32_t get_local_comm_id() const
@@ -636,9 +636,8 @@ private:
 	/* Member layout is ordered by access frequency (higher to lower). */
 	/* --- TIER 1: every iputSignal + every CQ completion --- */
 	/* Shared ownership of the endpoint's GIN resources. The resources are
-	   destroyed once the last comm on the endpoint drops this reference;
-	   the GIN resources registry (see gin_resources_registry) then drops its slot
-	   for that endpoint. Declared first so it is destroyed last, after the
+	   destroyed once the last comm on the endpoint drops this reference.
+	   Declared first so it is destroyed last, after the
 	   members below whose destructors need the resources/endpoint alive.
 	   Access via get_resources(); the shared_ptr deref is free under
 	   optimization, so there is no separate reference member to keep in sync. */
