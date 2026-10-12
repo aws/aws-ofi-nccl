@@ -432,19 +432,19 @@ private:
  */
 class nccl_ofi_rdma_gin_put_comm : public nccl_ofi_gin_put_comm_t {
 public:
-	nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
+	nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_rdma_gin_ep_t> resources_arg, int rank_, int nranks_,
 			  nccl_net_ofi_send_comm *s_comm_, nccl_net_ofi_recv_comm *r_comm_);
 
 	~nccl_ofi_rdma_gin_put_comm();
 
-	nccl_ofi_gin_resources &get_resources()
+	nccl_ofi_rdma_gin_ep_t &get_ep()
 	{
-		return *resources_sp;
+		return *ep_sp;
 	}
 
-	nccl_ofi_spinlock &get_ep_lock() RETURN_CAPABILITY(get_resources().get_ep().get_ep_lock())
+	nccl_ofi_spinlock &get_ep_lock() RETURN_CAPABILITY(get_ep().get_ep_lock())
 	{
-		return get_resources().get_ep().get_ep_lock();
+		return get_ep().get_ep_lock();
 	}
 
 	uint32_t get_local_comm_id() const
@@ -635,13 +635,13 @@ public:
 private:
 	/* Member layout is ordered by access frequency (higher to lower). */
 	/* --- TIER 1: every iputSignal + every CQ completion --- */
-	/* Shared ownership of the endpoint's GIN resources. The resources are
-	   destroyed once the last comm on the endpoint drops this reference.
+	/* Shared ownership of the GIN endpoint. The endpoint is
+	   destroyed once the last comm on it drops this reference.
 	   Declared first so it is destroyed last, after the
-	   members below whose destructors need the resources/endpoint alive.
-	   Access via get_resources(); the shared_ptr deref is free under
+	   members below whose destructors need the endpoint alive.
+	   Access via get_ep(); the shared_ptr deref is free under
 	   optimization, so there is no separate reference member to keep in sync. */
-	std::shared_ptr<nccl_ofi_gin_resources> resources_sp;
+	std::shared_ptr<nccl_ofi_rdma_gin_ep_t> ep_sp;
 
 	/* Remote comm info book */
 	std::vector<nccl_ofi_gin_peer_rank_info> rank_comms;

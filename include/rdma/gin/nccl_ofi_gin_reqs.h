@@ -146,7 +146,7 @@ protected:
  */
 class nccl_net_ofi_gin_recv_req_t : public nccl_net_ofi_gin_op_req_t {
 public:
-	nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources &resources_arg,
+	nccl_net_ofi_gin_recv_req_t(nccl_ofi_rdma_gin_ep_t &gin_ep_arg,
 				    nccl_ofi_gin_ep_rail_t &rail_arg);
 
 	~nccl_net_ofi_gin_recv_req_t();
@@ -163,7 +163,7 @@ public:
 	int post_or_add_pending();
 
 private:
-	nccl_ofi_gin_resources &resources;
+	nccl_ofi_rdma_gin_ep_t &gin_ep;
 	nccl_ofi_gin_ep_rail_t &rail;
 
 	nccl_ofi_freelist::fl_entry *rx_buff_elem;
@@ -173,7 +173,7 @@ private:
  * A request for sending the writedata ack after signal delivery. Automatically
  * returns itself to the request pool upon completion.
  *
- * Note: This request must be allocated from gin_comm->resources request pool.
+ * Note: This request must be allocated from the GIN endpoint request pool.
  * It remains allocated until the callback (handle_cq_entry) is invoked, at
  * which point it
  * 1) updates gin_comm->outstanding_ack_counter
@@ -250,8 +250,8 @@ private:
  */
 class nccl_ofi_gin_iget_req : public nccl_net_ofi_gin_base_req {
 public:
-	nccl_ofi_gin_iget_req(nccl_ofi_gin_resources &resources_arg)
-	    : any_reqs_pending(0), resources(resources_arg)
+	nccl_ofi_gin_iget_req(nccl_ofi_rdma_gin_ep_t &gin_ep_arg)
+	    : any_reqs_pending(0), gin_ep(gin_ep_arg)
 	{
 	}
 
@@ -268,7 +268,7 @@ public:
 		      "any_reqs_pending must cover all reqs_pending bytes");
 
 private:
-	nccl_ofi_gin_resources &resources;
+	nccl_ofi_rdma_gin_ep_t &gin_ep;
 };
 
 #define NCCL_OFI_GIN_FLUSH_SENTINEL_VAL (0xdeadbeefdeadbeefULL)
@@ -281,14 +281,14 @@ private:
  * into the host buffer; once visible, all prior operations are fenced.
  * Sub-requests still self-return to pool via their CQ completion handler.
  *
- * Only one iflush may be outstanding per resources instance at a time (the
+ * Only one iflush may be outstanding per endpoint at a time (the
  * host flush buffer is shared). NCCL guarantees this by polling to completion.
  */
 class nccl_ofi_gin_iflush_req : public nccl_net_ofi_gin_base_req {
 public:
-	nccl_ofi_gin_iflush_req(nccl_ofi_gin_resources &resources_arg,
+	nccl_ofi_gin_iflush_req(nccl_ofi_rdma_gin_ep_t &gin_ep_arg,
 				void *host_buff_arg, uint16_t num_rails_arg)
-	    : resources(resources_arg), host_buff(host_buff_arg),
+	    : gin_ep(gin_ep_arg), host_buff(host_buff_arg),
 	      num_rails(num_rails_arg)
 	{
 	}
@@ -296,7 +296,7 @@ public:
 	int test(int *done) override;
 
 private:
-	nccl_ofi_gin_resources &resources;
+	nccl_ofi_rdma_gin_ep_t &gin_ep;
 	void *host_buff;
 	uint16_t num_rails;
 };
@@ -417,12 +417,12 @@ public:
  */
 class nccl_net_ofi_gin_read_req_t : public nccl_net_ofi_gin_op_req_t {
 public:
-	nccl_net_ofi_gin_read_req_t(nccl_ofi_gin_resources &resources_arg,
+	nccl_net_ofi_gin_read_req_t(nccl_ofi_rdma_gin_ep_t &gin_ep_arg,
 				    struct fid_ep *ep_arg, void *local_buf_arg,
 				    size_t size_arg, void *desc_arg,
 				    fi_addr_t remote_addr_arg, uint64_t remote_offset_arg,
 				    uint64_t remote_key_arg)
-	    : resources(resources_arg), ep(ep_arg), local_buf(local_buf_arg),
+	    : gin_ep(gin_ep_arg), ep(ep_arg), local_buf(local_buf_arg),
 	      size(size_arg), desc(desc_arg), remote_addr(remote_addr_arg),
 	      remote_offset(remote_offset_arg), remote_key(remote_key_arg)
 	{
@@ -436,7 +436,7 @@ public:
 	bool *pending_flag = nullptr;
 
 private:
-	nccl_ofi_gin_resources &resources;
+	nccl_ofi_rdma_gin_ep_t &gin_ep;
 	struct fid_ep *ep;
 	void *local_buf;
 	size_t size;

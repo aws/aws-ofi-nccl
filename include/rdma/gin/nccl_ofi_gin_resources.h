@@ -40,7 +40,6 @@ public:
 
 	/* Pointer to completion queue (gin fuses its cq into the rail) */
 	ofi_cq_ptr rail_cq;
-
 };
 
 /**
@@ -110,85 +109,9 @@ public:
 	 */
 	void close_ofi_eps();
 
-private:
-	uint16_t num_rails;
-
-	std::vector<nccl_ofi_gin_ep_rail_t> rails;
-
-	nccl_net_ofi_scheduler *scheduler;
-
-	/* Cached from param at construction; avoids mutex in CQ loop */
-	size_t cq_process_max_iter;
-	/**
-	 * Handler for list of CQ entries
-	 */
-	int gin_process_completions(struct fi_cq_data_entry *cq_entry, fi_addr_t *src_addrs,
-				    uint64_t num_cqes, uint16_t rail_id);
-
-	/**
-	 * CQ error entry handler
-	 */
-	int gin_process_error_entry(struct fi_cq_err_entry *err_entry, struct fid_cq *cq,
-				    uint16_t rail_id);
-
-	/**
-	 * Process all completions for the given rail
-	 */
-	int gin_process_cq_rail(uint16_t rail_id);
-};
-
-/**
- * Represents a GIN local memory registration
- */
-class nccl_ofi_gin_mr_handle_t : public nccl_net_ofi_mr_handle_t {
-public:
-	nccl_ofi_gin_mr_handle_t(nccl_net_ofi_domain_t &domain_arg, uint16_t num_rails,
-				 uint64_t mr_key_arg);
-
-	~nccl_ofi_gin_mr_handle_t();
-
-	/**
-	 * @brief	Get first MR key for GIN MR handle
-	 * 		This interface isn't necessary for GIN.
-	 */
-	int get_mr_key(uint64_t *mr_key_ptr) override
-	{
-		return -ENOTSUP;
-	}
-
-	void set_mr(uint16_t rail_id, ofi_mr_ptr &mr_ptr)
-	{
-		assert(rail_id < mr.size());
-		this->mr[rail_id] = std::move(mr_ptr);
-	}
-
-	struct fid_mr *get_mr(uint16_t rail_id) const
-	{
-		assert(rail_id < mr.size());
-		return mr[rail_id].get();
-	}
-
-private:
-	/* Array of size `num_rails' */
-	std::vector<ofi_mr_ptr> mr;
-
-	/* Back-pointer to net domain */
-	nccl_net_ofi_domain_t &domain;
-};
-
-/**
- * Resources associated with a plugin per-thread endpoint
- */
-class nccl_ofi_gin_resources {
-public:
-	nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg);
-
-	~nccl_ofi_gin_resources();
-
-	/* Delete copy constructor */
-	nccl_ofi_gin_resources(const nccl_ofi_gin_resources &) = delete;
-
-	/** Methods **/
+	/* The GIN endpoint owns the per-endpoint pooled resources: the comm
+	 * table, the request and buffer freelists, and the flush buffers. The
+	 * methods below manage those resources. */
 
 	nccl_ofi_freelist *get_rx_buff_fl()
 	{
@@ -235,9 +158,13 @@ public:
 		gin_comms[comm_id] = nullptr;
 	}
 
+	/**
+	 * Return this endpoint. The GIN endpoint holds its own pooled
+	 * resources, so a comm reaches them through get_ep() on the endpoint.
+	 */
 	nccl_ofi_rdma_gin_ep_t &get_ep()
 	{
-		return gin_ep;
+		return *this;
 	}
 
 	int get_dev() const
@@ -330,7 +257,7 @@ public:
 	uint16_t get_next_rail()
 	{
 		uint16_t rail_id = next_rail_id;
-		next_rail_id = (next_rail_id + 1) % gin_ep.get_num_rails();
+		next_rail_id = (next_rail_id + 1) % get_num_rails();
 		return rail_id;
 	}
 
@@ -341,13 +268,36 @@ public:
 	int progress();
 
 private:
-	void init_flush_buffers(uint16_t num_rails);
+	uint16_t num_rails;
 
-	/* === Tier 1 — accessed every CQ completion and/or iputSignal === */
-	/* Keeps the underlying net endpoint alive for the resources' lifetime. */
-	std::shared_ptr<nccl_net_ofi_ep_t> ep_holder;
+	std::vector<nccl_ofi_gin_ep_rail_t> rails;
 
-	nccl_ofi_rdma_gin_ep_t gin_ep;
+	nccl_net_ofi_scheduler *scheduler;
+
+	/* Cached from param at construction; avoids mutex in CQ loop */
+	size_t cq_process_max_iter;
+	/**
+	 * Handler for list of CQ entries
+	 */
+	int gin_process_completions(struct fi_cq_data_entry *cq_entry, fi_addr_t *src_addrs,
+				    uint64_t num_cqes, uint16_t rail_id);
+
+	/**
+	 * CQ error entry handler
+	 */
+	int gin_process_error_entry(struct fi_cq_err_entry *err_entry, struct fid_cq *cq,
+				    uint16_t rail_id);
+
+	/**
+	 * Process all completions for the given rail
+	 */
+	int gin_process_cq_rail(uint16_t rail_id);
+
+	/* Per-endpoint pooled resources owned by the GIN endpoint. The base
+	 * class keeps the domain shared_ptr alive for this endpoint's
+	 * lifetime. */
+
+	void init_flush_buffers(uint16_t num_rails_arg);
 
 	/* Device id; cached for cheap access in tracepoint emission. */
 	int dev;
@@ -362,7 +312,6 @@ private:
 	/* Reqs for RX buffers */
 	std::vector<nccl_net_ofi_gin_recv_req_t> recv_reqs;
 
-	/* === Tier 2 — accessed on iputSignal / ACK / retry paths === */
 	/* For rail scheduling. Currently we do round-robin among rails. */
 	uint16_t next_rail_id = 0;
 
@@ -385,11 +334,9 @@ private:
 	void *flush_buff_gpu = nullptr;
 	nccl_ofi_gin_mr_handle_t *flush_buff_gpu_mr_handle = nullptr;
 
-	/* === Tier 3 — accessed only at connect/disconnect time === */
 	nccl_ofi_idpool_t comm_id_pool;
 
-	/* === Self-contained lookup — 8KB array at end to avoid pushing
-	   other hot members apart === */
+	/* Self-contained lookup — 8KB array at end. */
 	std::array<nccl_ofi_rdma_gin_put_comm *, NCCL_GIN_MAX_COMMS> gin_comms{};
 
 	/**
@@ -400,6 +347,45 @@ private:
 
 	/* Post all recv buffers for a given rail */
 	void post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers);
+};
+
+/**
+ * Represents a GIN local memory registration
+ */
+class nccl_ofi_gin_mr_handle_t : public nccl_net_ofi_mr_handle_t {
+public:
+	nccl_ofi_gin_mr_handle_t(nccl_net_ofi_domain_t &domain_arg, uint16_t num_rails,
+				 uint64_t mr_key_arg);
+
+	~nccl_ofi_gin_mr_handle_t();
+
+	/**
+	 * @brief	Get first MR key for GIN MR handle
+	 * 		This interface isn't necessary for GIN.
+	 */
+	int get_mr_key(uint64_t *mr_key_ptr) override
+	{
+		return -ENOTSUP;
+	}
+
+	void set_mr(uint16_t rail_id, ofi_mr_ptr &mr_ptr)
+	{
+		assert(rail_id < mr.size());
+		this->mr[rail_id] = std::move(mr_ptr);
+	}
+
+	struct fid_mr *get_mr(uint16_t rail_id) const
+	{
+		assert(rail_id < mr.size());
+		return mr[rail_id].get();
+	}
+
+private:
+	/* Array of size `num_rails' */
+	std::vector<ofi_mr_ptr> mr;
+
+	/* Back-pointer to net domain */
+	nccl_net_ofi_domain_t &domain;
 };
 
 #endif

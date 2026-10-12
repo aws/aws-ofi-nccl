@@ -13,7 +13,7 @@
  */
 class nccl_ofi_gin_mr_handle_t;
 class nccl_ofi_rdma_gin_put_comm;
-class nccl_ofi_gin_resources;
+class nccl_ofi_rdma_gin_ep_t;
 class nccl_ofi_gin_ep_rail_t;
 
 /**

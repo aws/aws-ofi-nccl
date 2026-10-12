@@ -21,7 +21,11 @@
 #include "nccl_ofi_log.h"
 
 nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
-    : endpoint_t(domain_arg)
+    : endpoint_t(domain_arg),
+      req_fl(nullptr, &freelist_deleter),
+      rx_buff_fl(nullptr, &freelist_deleter),
+      ack_send_fl(nullptr, &freelist_deleter),
+      comm_id_pool(NCCL_GIN_MAX_COMMS)
 {
 	this->num_rails = get_domain().get_ofi_num_rails();
 	this->cq_process_max_iter = ofi_nccl_gin_cq_process_max_iter();
@@ -32,10 +36,70 @@ nccl_ofi_rdma_gin_ep_t::nccl_ofi_rdma_gin_ep_t(std::shared_ptr<nccl_net_ofi_doma
 		rails.emplace_back(r, get_domain());
 	}
 	this->scheduler = new nccl_net_ofi_threshold_scheduler(this->num_rails);
+
+	this->dev = get_domain().get_device()->dev_id;
+
+	/* Create freelist for RX buffers */
+	constexpr size_t num_buffers = 2048; /* TODO param*/
+	assert_always(this->num_rails > 0 && num_buffers % this->num_rails == 0);
+	const size_t num_buffers_per_rail = num_buffers / this->num_rails;
+
+	nccl_ofi_freelist *rx_buff_fl_tmp = nullptr;
+	rx_buff_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
+					       num_buffers, 0, num_buffers, nullptr, nullptr,
+					       freelist_regmr_fn, freelist_deregmr_fn,
+					       this, 1, "GIN Rx Buffers", true);
+	this->rx_buff_fl.reset(rx_buff_fl_tmp);
+
+	/* Create freelist for ACK send buffers */
+	this->ack_send_fl.reset(new nccl_ofi_freelist(sizeof(gin_ack_msg_t), 64, 64, 0, nullptr,
+						      nullptr, freelist_regmr_fn,
+						      freelist_deregmr_fn, this, 1,
+						      "GIN ACK Send", true));
+
+	/* Create the receive pool for all rails */
+	recv_reqs.reserve(num_buffers);
+	for (uint16_t r = 0; r < this->num_rails; ++r) {
+		post_rx_buffs_on_rail(get_rail(r), num_buffers_per_rail);
+	}
+
+	/* Freelist for requests */
+	nccl_ofi_freelist *req_fl_tmp = nullptr;
+	req_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0,
+					   nullptr, nullptr, "GIN Requests", true);
+	this->req_fl.reset(req_fl_tmp);
+
+	init_flush_buffers(this->num_rails);
 }
 
 nccl_ofi_rdma_gin_ep_t::~nccl_ofi_rdma_gin_ep_t()
 {
+	/* Deregister and free the flush buffers before closing the endpoints. */
+	if (flush_buff_gpu_mr_handle) {
+		dereg_mr(flush_buff_gpu_mr_handle);
+		flush_buff_gpu_mr_handle = nullptr;
+	}
+	if (flush_buff_gpu) {
+		nccl_net_ofi_gpu_mem_free(flush_buff_gpu);
+		flush_buff_gpu = nullptr;
+	}
+	if (flush_buff_mr_handle) {
+		dereg_mr(flush_buff_mr_handle);
+		flush_buff_mr_handle = nullptr;
+	}
+	if (flush_buff) {
+		std::free(flush_buff);
+		flush_buff = nullptr;
+	}
+
+	/* For non-endpoint-MR providers, we first close the OFI endpoint, then
+	   let resources clean up in reverse-order. */
+	close_ofi_eps();
+
+	/* For endpoint-MR providers (which GIN plugin does not yet support),
+	   first we need to cancel the receives, then deregister memory, and
+	   then close the endpoints. */
+
 	if (scheduler) {
 		delete scheduler;
 		scheduler = nullptr;
@@ -437,7 +501,7 @@ nccl_ofi_gin_mr_handle_t::~nccl_ofi_gin_mr_handle_t()
 	}
 }
 
-void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers)
+void nccl_ofi_rdma_gin_ep_t::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail, size_t num_buffers)
 {
 	for (size_t i = 0; i < num_buffers; i++) {
 		recv_reqs.emplace_back(*this, rail);
@@ -448,58 +512,14 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 	}
 }
 
-nccl_ofi_gin_resources::nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
-    : ep_holder(ep_arg),
-      gin_ep(ep_arg->get_domain().shared_from_this()),
-      dev(ep_arg->get_domain().get_device()->dev_id),
-      req_fl(nullptr, &freelist_deleter),
-      rx_buff_fl(nullptr, &freelist_deleter),
-      ack_send_fl(nullptr, &freelist_deleter),
-      comm_id_pool(NCCL_GIN_MAX_COMMS)
+void nccl_ofi_rdma_gin_ep_t::init_flush_buffers(uint16_t num_rails_arg)
 {
-	auto num_rails = gin_ep.get_num_rails();
-
-	/* Create freelist for RX buffers */
-	constexpr size_t num_buffers = 2048; /* TODO param*/
-	assert_always(num_rails > 0 && num_buffers % num_rails == 0);
-	const size_t num_buffers_per_rail = num_buffers / num_rails;
-
-	nccl_ofi_freelist *rx_buff_fl_tmp = nullptr;
-	rx_buff_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_signal_metadata_msg_t),
-					       num_buffers, 0, num_buffers, nullptr, nullptr,
-					       gin_ep.freelist_regmr_fn, gin_ep.freelist_deregmr_fn,
-					       &gin_ep, 1, "GIN Rx Buffers", true);
-	this->rx_buff_fl.reset(rx_buff_fl_tmp);
-
-	/* Create freelist for ACK send buffers */
-	this->ack_send_fl.reset(new nccl_ofi_freelist(sizeof(gin_ack_msg_t), 64, 64, 0, nullptr,
-						      nullptr, gin_ep.freelist_regmr_fn,
-						      gin_ep.freelist_deregmr_fn, &gin_ep, 1,
-						      "GIN ACK Send", true));
-
-	/* Create the receive pool for all rails */
-	recv_reqs.reserve(num_buffers);
-	for (uint16_t r = 0; r < num_rails; ++r) {
-		post_rx_buffs_on_rail(gin_ep.get_rail(r), num_buffers_per_rail);
-	}
-
-	/* Freelist for requests */
-	nccl_ofi_freelist *req_fl_tmp = nullptr;
-	req_fl_tmp = new nccl_ofi_freelist(sizeof(nccl_net_ofi_gin_union_req), 1024, 1024, 0,
-					   nullptr, nullptr, "GIN Requests", true);
-	this->req_fl.reset(req_fl_tmp);
-
-	init_flush_buffers(num_rails);
-}
-
-void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
-{
-	size_t flush_buff_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * num_rails;
+	size_t flush_buff_size = NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * num_rails_arg;
 
 	auto cleanup = [&]() {
-		if (flush_buff_gpu_mr_handle) { gin_ep.dereg_mr(flush_buff_gpu_mr_handle); flush_buff_gpu_mr_handle = nullptr; }
+		if (flush_buff_gpu_mr_handle) { dereg_mr(flush_buff_gpu_mr_handle); flush_buff_gpu_mr_handle = nullptr; }
 		if (flush_buff_gpu) { nccl_net_ofi_gpu_mem_free(flush_buff_gpu); flush_buff_gpu = nullptr; }
-		if (flush_buff_mr_handle) { gin_ep.dereg_mr(flush_buff_mr_handle); flush_buff_mr_handle = nullptr; }
+		if (flush_buff_mr_handle) { dereg_mr(flush_buff_mr_handle); flush_buff_mr_handle = nullptr; }
 		if (flush_buff) { std::free(flush_buff); flush_buff = nullptr; }
 	};
 
@@ -510,7 +530,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 	try {
 		auto ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle) != 0) {
+		if (reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle) != 0) {
 			throw std::runtime_error("Failed to register flush buffer");
 		}
 
@@ -519,7 +539,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 		}
 
 		auto gpu_ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff_gpu, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle) != 0) {
+		if (reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle) != 0) {
 			throw std::runtime_error("Failed to register GPU flush buffer");
 		}
 
@@ -529,7 +549,7 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 		for (auto &v : sentinel_line) {
 			v = NCCL_OFI_GIN_FLUSH_SENTINEL_VAL;
 		}
-		for (uint16_t i = 0; i < num_rails; i++) {
+		for (uint16_t i = 0; i < num_rails_arg; i++) {
 			if (nccl_net_ofi_gpu_mem_copy_host_to_device(
 				    static_cast<uint8_t *>(flush_buff_gpu) +
 					    (NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE * i),
@@ -543,38 +563,9 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 	}
 }
 
-nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
+int nccl_ofi_rdma_gin_ep_t::progress()
 {
-	/* Deregister and free flush buffer before closing endpoints */
-	if (flush_buff_gpu_mr_handle) {
-		gin_ep.dereg_mr(flush_buff_gpu_mr_handle);
-		flush_buff_gpu_mr_handle = nullptr;
-	}
-	if (flush_buff_gpu) {
-		nccl_net_ofi_gpu_mem_free(flush_buff_gpu);
-		flush_buff_gpu = nullptr;
-	}
-	if (flush_buff_mr_handle) {
-		gin_ep.dereg_mr(flush_buff_mr_handle);
-		flush_buff_mr_handle = nullptr;
-	}
-	if (flush_buff) {
-		std::free(flush_buff);
-		flush_buff = nullptr;
-	}
-
-	/* For non-endpoint-MR providers, we first close the OFI endpoint, then
-	   let resources clean up in reverse-order. */
-	gin_ep.close_ofi_eps();
-
-	/* For endpoint-MR providers (which GIN plugin does not yet support),
-	   first we need to cancel the receives, then deregister memory, and
-	   then close the endpoints. */
-}
-
-int nccl_ofi_gin_resources::progress()
-{
-	int ret = gin_ep.process_cq();
+	int ret = process_cq();
 	if (OFI_UNLIKELY(ret != 0)) {
 		return ret;
 	}
@@ -582,7 +573,7 @@ int nccl_ofi_gin_resources::progress()
 	return retry_pending_reqs();
 }
 
-int nccl_ofi_gin_resources::retry_pending_reqs()
+int nccl_ofi_rdma_gin_ep_t::retry_pending_reqs()
 {
 	for (auto it = pending_requests.begin(); it != pending_requests.end();) {
 		auto req = *it;

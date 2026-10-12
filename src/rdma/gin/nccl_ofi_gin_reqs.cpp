@@ -54,11 +54,11 @@ int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_error_entry(struct fid_cq *cq,
 }
 
 /* Receive requests */
-nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources &resources_arg,
+nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_rdma_gin_ep_t &gin_ep_arg,
 							 nccl_ofi_gin_ep_rail_t &rail_arg)
-    : nccl_net_ofi_gin_op_req_t(), resources(resources_arg), rail(rail_arg)
+    : nccl_net_ofi_gin_op_req_t(), gin_ep(gin_ep_arg), rail(rail_arg)
 {
-	rx_buff_elem = resources.get_rx_buff_fl()->entry_alloc();
+	rx_buff_elem = gin_ep.get_rx_buff_fl()->entry_alloc();
 	if (!rx_buff_elem) {
 		NCCL_OFI_WARN("Failed to allocate rx buffer freelist entry");
 		throw std::runtime_error("Failed to allocate rx buffer freelist entry");
@@ -67,7 +67,7 @@ nccl_net_ofi_gin_recv_req_t::nccl_net_ofi_gin_recv_req_t(nccl_ofi_gin_resources 
 
 nccl_net_ofi_gin_recv_req_t::~nccl_net_ofi_gin_recv_req_t()
 {
-	resources.get_rx_buff_fl()->entry_free(rx_buff_elem);
+	gin_ep.get_rx_buff_fl()->entry_free(rx_buff_elem);
 }
 
 int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_base,
@@ -77,10 +77,10 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 	   1. Virtual dispatch: the base class handle_cq_entry() has no
 	      REQUIRES annotation (would need a mutex ref in the base context).
 	   2. Lock alias: this function accesses ep_lock as
-	      resources.get_ep().ep_lock, while callees (e.g.
+	      the endpoint's get_ep_lock(), while callees (e.g.
 	      handle_signal_write_completion) require it as
-	      gin_comm.resources.get_ep().ep_lock. These are the same mutex
-	      at runtime (all comms on an endpoint share one resources object),
+	      gin_comm's endpoint get_ep_lock(). These are the same mutex
+	      at runtime (all comms on an endpoint share one endpoint object),
 	      but TSA does syntactic expression matching and cannot prove the
 	      alias through the dynamic get_comm() lookup. */
 	NO_THREAD_SAFETY_ANALYSIS
@@ -94,7 +94,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 	if (cq_entry->flags & FI_REMOTE_WRITE) {
 		/* RDMA write-immediate completion */
 		uint16_t comm_id = GIN_IMM_GET_COMM_ID(cq_entry->data);
-		auto &gin_comm = resources.get_comm(comm_id);
+		auto &gin_comm = gin_ep.get_comm(comm_id);
 
 		ret = gin_comm.handle_signal_write_completion(cq_entry, src_addr, rail_id_arg);
 		if (ret != 0) {
@@ -106,7 +106,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 		auto *ack_msg = static_cast<gin_ack_msg_t *>(rx_buff_elem->ptr);
 		auto msg_type = static_cast<gin_msg_type_t>(ack_msg->msg_type);
 		if (msg_type == GIN_MSG_TYPE_ACK) {
-			auto &gin_comm = resources.get_comm(ack_msg->ack_comm_id);
+			auto &gin_comm = gin_ep.get_comm(ack_msg->ack_comm_id);
 
 			ret = gin_comm.handle_ack_completion(ack_msg, src_addr, rail_id_arg);
 			if (OFI_UNLIKELY(ret != 0)) {
@@ -117,7 +117,7 @@ int nccl_net_ofi_gin_recv_req_t::handle_cq_entry(struct fi_cq_entry *cq_entry_ba
 			auto *msg = static_cast<nccl_net_ofi_gin_signal_metadata_msg_t *>(
 				rx_buff_elem->ptr);
 
-			auto &gin_comm = resources.get_comm(msg->header.remote_comm_id);
+			auto &gin_comm = gin_ep.get_comm(msg->header.remote_comm_id);
 
 			ret = gin_comm.handle_signal_metadata_completion(msg, src_addr,
 									 rail_id_arg);
@@ -155,7 +155,7 @@ int nccl_net_ofi_gin_recv_req_t::post_or_add_pending()
 {
 	int ret = post();
 	if (ret == -FI_EAGAIN) {
-		resources.add_pending_req(this);
+		gin_ep.add_pending_req(this);
 		ret = 0;
 	}
 
@@ -168,7 +168,7 @@ int nccl_net_ofi_gin_sendack_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_en
 {
 	gin_comm.decrement_outstanding_ack_counter();
 
-	gin_comm.get_resources().return_req_to_pool(this);
+	gin_comm.get_ep().return_req_to_pool(this);
 
 	return 0;
 }
@@ -211,7 +211,7 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 
 	if (OFI_UNLIKELY(any_reqs_pending == 0)) {
 		/* All sub-requests done; mark done and release the umbrella. */
-		auto &gin_ep = gin_comm.get_resources().get_ep();
+		auto &gin_ep = gin_comm.get_ep();
 		*done = 1;
 		std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
 		NCCL_OFI_TRACE(NCCL_NET, "Completed iputSignal seq num %hu on initiator",
@@ -220,7 +220,7 @@ int nccl_ofi_rdma_gin_iputsignal_req::test(int *done)
 						   msg_seq_num, this);
 		NCCL_OFI_TRACE_GIN_TEST_FUNC_END(gin_comm.get_dev(), &gin_comm,
 						 peer_rank, msg_seq_num, this, 1, 1);
-		gin_comm.get_resources().return_req_to_pool(this);
+		gin_comm.get_ep().return_req_to_pool(this);
 		return 0;
 	} else {
 		/* NCCL GIN Proxy only calls test() when state->done == 0,
@@ -277,7 +277,7 @@ int nccl_net_ofi_gin_write_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entr
 	}
 
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(comm);
-	gin_comm->get_resources().return_req_to_pool(this);
+	gin_comm->get_ep().return_req_to_pool(this);
 
 	return 0;
 }
@@ -320,7 +320,7 @@ int nccl_net_ofi_gin_metadata_send_req_t::handle_cq_entry(struct fi_cq_entry * /
 	}
 
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(comm);
-	gin_comm->get_resources().return_req_to_pool(this);
+	gin_comm->get_ep().return_req_to_pool(this);
 
 	return 0;
 }
@@ -349,7 +349,7 @@ int nccl_net_ofi_gin_read_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_entry
 		*pending_flag = false;
 	}
 
-	resources.return_req_to_pool(this);
+	gin_ep.return_req_to_pool(this);
 
 	return 0;
 }
@@ -359,9 +359,8 @@ int nccl_ofi_gin_iget_req::test(int *done)
 	*done = 0;
 	if (OFI_UNLIKELY(any_reqs_pending == 0)) {
 		*done = 1;
-		auto &gin_ep = resources.get_ep();
 		std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
-		resources.return_req_to_pool(this);
+		gin_ep.return_req_to_pool(this);
 	}
 	/* If subrequests are still pending, NCCL's progress thread continually
 	   calls ginProgress, which drives CQ processing and clears pending
@@ -387,8 +386,7 @@ int nccl_ofi_gin_iflush_req::test(int *done)
 	}
 
 	*done = 1;
-	auto &gin_ep = resources.get_ep();
 	std::lock_guard scoped_ep_lock(gin_ep.get_ep_lock());
-	resources.return_req_to_pool(this);
+	gin_ep.return_req_to_pool(this);
 	return 0;
 }
