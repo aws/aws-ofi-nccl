@@ -14,6 +14,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
@@ -7081,12 +7082,6 @@ static void get_hints(struct fi_info *hints)
 
 	hints->ep_attr->type = FI_EP_RDM;
 
-	/* Request enough inject space for one control message entry so that the
-	 * provider can copy a single-receive control message into the endpoint
-	 * during the post.  Leave tx_attr->size unset so the provider reports a
-	 * transmit queue depth compatible with the larger inline area. */
-	hints->tx_attr->inject_size = sizeof(nccl_net_ofi_ctrl_msg_entry_t);
-
 	hints->domain_attr->mr_mode = FI_MR_LOCAL | FI_MR_HMEM | FI_MR_VIRT_ADDR |
 		FI_MR_ALLOCATED | FI_MR_PROV_KEY | FI_MR_ENDPOINT;
 	hints->domain_attr->mr_key_size = (size_t) ofi_nccl_mr_key_size();
@@ -7102,6 +7097,86 @@ static void get_hints(struct fi_info *hints)
 	/* The RDMA transport requires fi_writedata support with 32 bits (4
 	   bytes) of immediate data */
 	hints->domain_attr->cq_data_size = 4;
+}
+
+
+/*
+ * @brief	Re-query the selected fabric with enough inject space for one
+ *		    control message entry
+ *
+ * The query is pinned to the provider and fabric already selected in
+ * *provider_list, so the inject size can never change the fabric. The
+ * result replaces *provider_list only if it matches that fabric and NIC
+ * count. Otherwise *provider_list is kept and control messages are posted
+ * without FI_INJECT. Nothing is re-queried if the default inject size
+ * already fits a control message entry.
+ */
+static void requery_selected_fabric_for_inject(const char *provider_filter,
+					        uint32_t api_version,
+					        const struct fi_info *hints,
+					        struct fi_info **provider_list,
+					        unsigned int num_providers)
+{
+	const struct fi_fabric_attr *selected = (*provider_list)->fabric_attr;
+	struct fi_info *inject_list = nullptr;
+	unsigned int num_inject = 0;
+	int ret;
+
+	if ((*provider_list)->tx_attr->inject_size >= sizeof(nccl_net_ofi_ctrl_msg_entry_t)) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Default inject size %zu fits a control message entry. "
+			       "Not re-querying fabric %s",
+			       (*provider_list)->tx_attr->inject_size, selected->name);
+		return;
+	}
+
+	ofi_info_ptr inject_hints(fi_dupinfo(hints));
+	if (!inject_hints) {
+		NCCL_OFI_WARN("Could not duplicate provider hints. "
+			      "Not requesting control message injection");
+		return;
+	}
+
+	free(inject_hints->fabric_attr->prov_name);
+	free(inject_hints->fabric_attr->name);
+	inject_hints->fabric_attr->prov_name = strdup(selected->prov_name);
+	inject_hints->fabric_attr->name = strdup(selected->name);
+	if (inject_hints->fabric_attr->prov_name == nullptr ||
+	    inject_hints->fabric_attr->name == nullptr) {
+		NCCL_OFI_WARN("Could not allocate fabric hints. "
+			      "Not requesting control message injection");
+		return;
+	}
+
+	/* Request enough inject space for one control message entry so that the
+	 * provider can copy a single-receive control message into the endpoint
+	 * during the post. Leave tx_attr->size unset so the provider reports a
+	 * transmit queue depth compatible with the larger inline area. */
+	inject_hints->tx_attr->inject_size = sizeof(nccl_net_ofi_ctrl_msg_entry_t);
+	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version,
+					      inject_hints.get(), &inject_list, &num_inject);
+	if (ret != 0) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Fabric %s cannot inject a control message entry (%d); "
+			       "using the standard inject size",
+			       selected->name, ret);
+		return;
+	}
+
+	if (num_inject != num_providers ||
+	    strcmp(inject_list->fabric_attr->prov_name, selected->prov_name) != 0 ||
+	    strcmp(inject_list->fabric_attr->name, selected->name) != 0) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Inject query returned fabric %s with %u NICs instead of "
+			      "fabric %s with %u NICs. Using the standard inject size",
+			      inject_list->fabric_attr->name, num_inject,
+			      selected->name, num_providers);
+		fi_freeinfo(inject_list);
+		return;
+	}
+
+	fi_freeinfo(*provider_list);
+	*provider_list = inject_list;
 }
 
 
@@ -7263,15 +7338,9 @@ int nccl_net_ofi_rdma_init(const char *provider_filter,
 	}
 	ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
 					      &provider_list, &num_providers);
-	if (ret == -FI_ENODATA && hints->tx_attr->inject_size != 0) {
-		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
-			       "No provider can inject a control message entry; retrying "
-			       "with the standard inject size");
-		hints->tx_attr->inject_size = 0;
-		ret = nccl_ofi_ofiutils_get_providers(provider_filter, api_version, hints,
-						      &provider_list, &num_providers);
-	}
 	if (ret == 0) {
+		requery_selected_fabric_for_inject(provider_filter, api_version, hints,
+						   &provider_list, num_providers);
 		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET, "Using Libfabric %u.%u API, with %s support",
 			       FI_MAJOR(api_version),
 			       FI_MINOR(api_version),
