@@ -448,35 +448,6 @@ void nccl_ofi_gin_resources::post_rx_buffs_on_rail(nccl_ofi_gin_ep_rail_t &rail,
 	}
 }
 
-std::shared_ptr<nccl_ofi_gin_resources>
-nccl_ofi_gin_resources_registry::get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep)
-{
-	std::lock_guard<std::mutex> guard(lock);
-
-	auto it = by_ep.find(ep.get());
-	if (it != by_ep.end()) {
-		if (auto existing = it->second.lock()) {
-			return existing;
-		}
-	}
-
-	auto resources = std::make_shared<nccl_ofi_gin_resources>(ep);
-	by_ep[ep.get()] = resources;
-	return resources;
-}
-
-void nccl_ofi_gin_resources_registry::release(nccl_net_ofi_ep_t *ep)
-{
-	std::lock_guard<std::mutex> guard(lock);
-	by_ep.erase(ep);
-}
-
-nccl_ofi_gin_resources_registry &gin_resources_registry()
-{
-	static nccl_ofi_gin_resources_registry registry;
-	return registry;
-}
-
 nccl_ofi_gin_resources::nccl_ofi_gin_resources(const std::shared_ptr<nccl_net_ofi_ep_t> &ep_arg)
     : ep_holder(ep_arg),
       gin_ep(ep_arg->get_domain().shared_from_this()),
@@ -574,9 +545,6 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 nccl_ofi_gin_resources::~nccl_ofi_gin_resources()
 {
-	/* Drop our slot in the registry. */
-	gin_resources_registry().release(ep_holder.get());
-
 	/* Deregister and free flush buffer before closing endpoints */
 	if (flush_buff_gpu_mr_handle) {
 		gin_ep.dereg_mr(flush_buff_gpu_mr_handle);

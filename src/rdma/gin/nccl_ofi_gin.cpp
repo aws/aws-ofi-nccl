@@ -197,7 +197,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 
 	/* Create the GIN endpoint for this net endpoint. GIN owns this
 	   association; the net endpoint does not know about GIN. */
-	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
+	std::shared_ptr<nccl_ofi_gin_resources> resources = std::make_shared<nccl_ofi_gin_resources>(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
 		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm);

@@ -181,30 +181,6 @@ private:
 };
 
 /**
- * Registry mapping a net endpoint to the GIN resources built on top of it.
- *
- * GIN owns this endpoint->resources association itself so that the net
- * transport does not need to know GIN exists. Entries are weak references:
- * the resources live only as long as some GIN comm holds the shared_ptr
- * returned by get(), and the slot is dropped by release() when the last comm
- * lets go.
- */
-class nccl_ofi_gin_resources_registry {
-public:
-	std::shared_ptr<nccl_ofi_gin_resources>
-	get(const std::shared_ptr<nccl_net_ofi_ep_t> &ep);
-
-	void release(nccl_net_ofi_ep_t *ep);
-
-private:
-	std::mutex lock;
-	std::unordered_map<nccl_net_ofi_ep_t *, std::weak_ptr<nccl_ofi_gin_resources>>
-		by_ep;
-};
-
-nccl_ofi_gin_resources_registry &gin_resources_registry();
-
-/**
  * Resources associated with a plugin per-thread endpoint
  */
 class nccl_ofi_gin_resources {
