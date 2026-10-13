@@ -672,12 +672,12 @@ int nccl_net_ofi_rdma_ep_t::repost_rx_buff(nccl_net_ofi_rdma_req *rx_buff_req)
 
 int nccl_net_ofi_rdma_ep_t::decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
+	{
+		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
 
-	assert(rail->num_rx_buff_posted > 0);
-	rail->num_rx_buff_posted--;
-
-	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
+		assert(rail->num_rx_buff_posted > 0);
+		rail->num_rx_buff_posted--;
+	}
 
 	return this->check_post_rx_buffers_rail(rail);
 }
@@ -1401,13 +1401,14 @@ void nccl_net_ofi_rdma_req::enqueue_pending(bool push_front)
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)this->comm->ep.get();
 
-	nccl_net_ofi_mutex_lock(&ep->pending_reqs_lock);
-	if (push_front) {
-		ep->pending_reqs_queue.push_front(this);
-	} else {
-		ep->pending_reqs_queue.push_back(this);
+	{
+		std::lock_guard pending_lock(ep->pending_reqs_lock);
+		if (push_front) {
+			ep->pending_reqs_queue.push_front(this);
+		} else {
+			ep->pending_reqs_queue.push_back(this);
+		}
 	}
-	nccl_net_ofi_mutex_unlock(&ep->pending_reqs_lock);
 
 	/* Only trace fresh enqueues (push_back), not retry re-enqueues
 	 * (push_front) so the trace volume matches the pre-refactor
@@ -1424,12 +1425,13 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 
 	while (true) {
 		nccl_net_ofi_rdma_req *req = NULL;
-		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-		if (!this->pending_reqs_queue.empty()) {
-			req = this->pending_reqs_queue.front();
-			this->pending_reqs_queue.pop_front();
+		{
+			std::lock_guard pending_lock(this->pending_reqs_lock);
+			if (!this->pending_reqs_queue.empty()) {
+				req = this->pending_reqs_queue.front();
+				this->pending_reqs_queue.pop_front();
+			}
 		}
-		nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
 		if (req == NULL) { break; }
 
 		/* Every postable subclass overrides post(); unpostable types
@@ -1857,17 +1859,18 @@ int nccl_net_ofi_rdma_ep_t::handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
 					     size_t num_buffs_failed)
 {
 	/* Add to pending reqs queue */
-	nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-	this->pending_reqs_queue.push_back(req);
-	nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+	{
+		std::lock_guard pending_lock(this->pending_reqs_lock);
+		this->pending_reqs_queue.push_back(req);
+	}
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
-	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
+	{
+		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
 
-	assert(rail->num_rx_buff_posted >= num_buffs_failed);
-	rail->num_rx_buff_posted -= num_buffs_failed;
-
-	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
+		assert(rail->num_rx_buff_posted >= num_buffs_failed);
+		rail->num_rx_buff_posted -= num_buffs_failed;
+	}
 
 	return 0;
 }
@@ -1877,13 +1880,13 @@ int nccl_net_ofi_rdma_ep_t::post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *r
 {
 	int ret = 0;
 
-	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
+	size_t buffers_needed;
+	{
+		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
 
-	size_t buffers_needed = rail->max_rx_buff_posted -
-				rail->num_rx_buff_posted;
-	rail->num_rx_buff_posted = rail->max_rx_buff_posted;
-
-	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
+		buffers_needed = rail->max_rx_buff_posted - rail->num_rx_buff_posted;
+		rail->num_rx_buff_posted = rail->max_rx_buff_posted;
+	}
 
 	/* Post all the rx buffers we need */
 	for (size_t i = 0; i < buffers_needed; ++i) {
@@ -3542,17 +3545,20 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm 
 int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 {
 	/* Process the CQ if there are any pending requests */
-	nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-	bool is_deque_empty = this->pending_reqs_queue.empty();
-	nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+	bool is_deque_empty;
+	{
+		std::lock_guard pending_lock(this->pending_reqs_lock);
+		is_deque_empty = this->pending_reqs_queue.empty();
+	}
 	if (!is_deque_empty) {
 		int ret = this->ofi_process_cq();
 		if (ret < 0) {
 			return ret;
 		}
-		nccl_net_ofi_mutex_lock(&this->pending_reqs_lock);
-		is_deque_empty = this->pending_reqs_queue.empty();
-		nccl_net_ofi_mutex_unlock(&this->pending_reqs_lock);
+		{
+			std::lock_guard pending_lock(this->pending_reqs_lock);
+			is_deque_empty = this->pending_reqs_queue.empty();
+		}
 		if (!is_deque_empty) {
 			/* Network is still busy. */
 			return -EAGAIN;
@@ -4526,9 +4532,10 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 		}
 	} else {
 		/* Add to pending reqs queue */
-		nccl_net_ofi_mutex_lock(&endpoint->pending_reqs_lock);
-		endpoint->pending_reqs_queue.push_back(req);
-		nccl_net_ofi_mutex_unlock(&endpoint->pending_reqs_lock);
+		{
+			std::lock_guard pending_lock(endpoint->pending_reqs_lock);
+			endpoint->pending_reqs_queue.push_back(req);
+		}
 		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	}
@@ -5551,15 +5558,15 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req *rx_buff_req)
 
 	nccl_net_ofi_rdma_ep_rail_t *rail = rx_buff_data->rail;
 
-	nccl_net_ofi_mutex_lock(&rail->rx_buff_mutex);
-
 	bool need_post = false;
-	if (rail->num_rx_buff_posted < rail->max_rx_buff_posted) {
-		++(rail->num_rx_buff_posted);
-		need_post = true;
-	}
+	{
+		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
 
-	nccl_net_ofi_mutex_unlock(&rail->rx_buff_mutex);
+		if (rail->num_rx_buff_posted < rail->max_rx_buff_posted) {
+			++(rail->num_rx_buff_posted);
+			need_post = true;
+		}
+	}
 
 	if (need_post) {
 		/* Attempt to re-post rx buffer */
@@ -6106,7 +6113,6 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 			ofi_nccl_rdma_max_posted_control_buffers(), this->num_control_rails
 		);
 		rail->num_rx_buff_posted = 0;
-		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = ctrl_rx_buff_req_alloc;
 		rail->is_ctrl = true;
 	}
@@ -6125,7 +6131,6 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 			rail->max_rx_buff_posted = 0;
 		}
 		rail->num_rx_buff_posted = 0;
-		nccl_net_ofi_mutex_init(&rail->rx_buff_mutex, NULL);
 		rail->rx_buff_req_alloc = eager_rx_buff_req_alloc;
 		rail->is_ctrl = false;
 	}
@@ -6149,7 +6154,6 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 {
 	int ret = 0;
-	nccl_net_ofi_rdma_ep_rail_t *rail;
 
 	delete this->ctrl_rx_buff_fl;
 
@@ -6184,16 +6188,6 @@ int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 		this->flush_buff.buffer = MAP_FAILED;
 	}
 #endif /* HAVE_NEURON */
-
-	for (uint16_t rail_id = 0; rail_id < this->num_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_rail(rail_id);
-		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
-	}
-
-	for (uint16_t rail_id = 0; rail_id < this->num_control_rails; ++rail_id) {
-		rail = this->rdma_endpoint_get_control_rail(rail_id);
-		nccl_net_ofi_mutex_destroy(&rail->rx_buff_mutex);
-	}
 
 	return ret;
 }
@@ -6761,11 +6755,6 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
 		}
 	}
-
-	err_code = nccl_net_ofi_mutex_destroy(&this->pending_reqs_lock);
-	if (err_code != 0) {
-		NCCL_OFI_WARN("rdma endpoint destructor: destroying pending_reqs_lock mutex failed, rc %d", err_code);
-	}
 }
 
 static inline int init_max_write_inline_size_if_not_initialized(nccl_net_ofi_rdma_device_t *device,
@@ -6844,12 +6833,6 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 
 	/* Zero-initialize the rails and control_rails array elements
 	 * via the = {} initializers on the member declarations. */
-
-	ret = nccl_net_ofi_mutex_init(&this->pending_reqs_lock, NULL);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Mutex initialization failed: %s", strerror(ret));
-		throw std::runtime_error("rdma endpoint constructor: mutex initialization failed");
-	}
 
 	this->ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
 				      sizeof(nccl_net_ofi_rdma_close_msg_t)});
