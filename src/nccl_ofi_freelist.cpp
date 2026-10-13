@@ -76,10 +76,12 @@ void nccl_ofi_freelist::init_internal(size_t entry_size_arg,
 	this->name = name_arg;
 	this->enable_leak_detection = enable_leak_detection_arg;
 
-	ret = add(initial_entry_count_arg);
-	if (ret != 0) {
-		NCCL_OFI_WARN("Allocating initial freelist entries failed: %d", ret);
-		throw std::runtime_error("freelist initial allocation failed");
+	if (initial_entry_count_arg > 0) {
+		ret = add(initial_entry_count_arg);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Allocating initial freelist entries failed: %d", ret);
+			throw std::runtime_error("freelist initial allocation failed");
+		}
 	}
 }
 
