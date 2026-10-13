@@ -77,6 +77,12 @@
  *    across the NICs, depending on the collective type as well as other
  *    factors. (Currently AllToAll 0x7 is affected in NCCL v2.28.3.) Thus,
  *    the best policy setting may vary per platform.
+ *
+ *  * P6-B200 and P6-B300 expose the GPU baseboard's ConnectX-7 bridge, which
+ *    Fabric Manager and NVLSM use to manage the NVLink switches, as active
+ *    InfiniBand devices. They are not connected to other nodes. To prevent
+ *    NCCL's internal IB transports from using these NICs, which can fail or
+ *    hang during setup, set NCCL_IB_HCA to a name that matches no device.
  */
 const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 	{
@@ -147,15 +153,15 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		},
 	},
 	{
-		.name = "p5en/p6-b200",
-		.regex = "^(p5en|p6-b200).*",
+		.name = "p5en",
+		.regex = "^p5en.*",
 		.topology = NULL,
 		.default_dup_conns = 0,
 		.latency = 35.0,
 		.gdr_required = true,
 		.default_protocol = PROTOCOL::RDMA,
 		/* EFA hardware completion counter (GDAKI) is supported on
-		 * P5en and P6-B200. */
+		 * P5en. */
 		.efa_hw_comp_cntr = true,
 		/*
 		 * Note: Based on empirical testing, setting the
@@ -170,6 +176,25 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
 			{ "NCCL_NETDEVS_POLICY", "max:1" },
+		},
+	},
+	{
+		.name = "p6-b200",
+		.regex = "^p6-b200.*",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = true,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_NETDEVS_POLICY", "max:1" },
+			{ "NCCL_IB_HCA", "invalid" },
 		},
 	},
 	{
@@ -189,6 +214,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
 			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
 			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_IB_HCA", "invalid" },
 		},
 	},
 	{
