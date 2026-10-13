@@ -88,6 +88,59 @@ static int check_gdaki_flags(void)
 	return ret;
 }
 
+/* check whether a platform entry sets an environment variable to the
+ * expected value (expected == NULL means the variable must not be set). */
+static int check_env(const TestablePlatformAWS::ec2_platform_data *platform_data_list,
+		     const size_t len, const char *platform_type, const char *name,
+		     const char *expected)
+{
+	const TestablePlatformAWS::ec2_platform_data *entry =
+		TestablePlatformAWS::get_platform_entry(platform_type, platform_data_list, len);
+
+	if (NULL == entry) {
+		printf("check_env: no entry for %s\n", platform_type);
+		return 1;
+	}
+	auto iter = entry->env.find(name);
+	if (expected == NULL) {
+		if (iter != entry->env.end()) {
+			printf("%s for %s: got %s, expected unset\n", name, platform_type,
+			       iter->second.c_str());
+			return 1;
+		}
+		return 0;
+	}
+	if (iter == entry->env.end()) {
+		printf("%s for %s: unset, expected %s\n", name, platform_type, expected);
+		return 1;
+	}
+	if (iter->second != expected) {
+		printf("%s for %s: got %s, expected %s\n", name, platform_type,
+		       iter->second.c_str(), expected);
+		return 1;
+	}
+	return 0;
+}
+
+/* P6-B200 and P6-B300 hide the NVLink management HCAs from NCCL's internal IB */
+static int check_ib_hca(void)
+{
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
+	size_t len;
+	int ret = 0;
+	TestablePlatformAWS platform;
+
+	platform_data_list = platform.get_platform_map(&len);
+
+	ret += check_env(platform_data_list, len, "p6-b200.48xlarge", "NCCL_IB_HCA", "invalid");
+	ret += check_env(platform_data_list, len, "p6-b300.48xlarge", "NCCL_IB_HCA", "invalid");
+	ret += check_env(platform_data_list, len, "p5en.48xlarge", "NCCL_IB_HCA", NULL);
+	ret += check_env(platform_data_list, len, "p5.48xlarge", "NCCL_IB_HCA", NULL);
+	ret += check_env(platform_data_list, len, "p6e-gb200.36xlarge", "NCCL_IB_HCA", NULL);
+
+	return ret;
+}
+
 static int check_known_platforms(void)
 {
 	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
@@ -113,8 +166,8 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p5.4xlarge", "p5.4xlarge");
 	ret += check_value(platform_data_list, len, "p5.48xlarge", "p5/p5e");
 	ret += check_value(platform_data_list, len, "p5e.48xlarge", "p5/p5e");
-	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p5en/p6-b200");
-	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p5en/p6-b200");
+	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p5en");
+	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p6-b200");
 	ret += check_value(platform_data_list, len, "p6-b300.48xlarge", "p6-b300");
 	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p-series");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
@@ -176,6 +229,9 @@ int main(int argc, char *argv[]) {
 
 	/* verify the per-platform GDAKI hw-counter opt-in flags */
 	ret += check_gdaki_flags();
+
+	/* verify the per-platform NCCL_IB_HCA override */
+	ret += check_ib_hca();
 
 	/* rows that are not opted in carry efa_hw_comp_cntr = false */
 	if (test_map_1[0].efa_hw_comp_cntr != false || test_map_1[1].efa_hw_comp_cntr != false) {
