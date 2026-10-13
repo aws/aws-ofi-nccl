@@ -1738,7 +1738,7 @@ public:
 	nccl_ofi_connection_manager *cm = nullptr;
 
 	/* Message scheduler */
-	nccl_net_ofi_scheduler *scheduler = nullptr;
+	nccl_net_ofi_threshold_scheduler scheduler;
 
 protected:
 	/* Maximum RMA inject size supported by the control endpoint. */
