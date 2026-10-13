@@ -1402,13 +1402,12 @@ public:
 	/* Default constructor */
 	nccl_net_ofi_rdma_ep_rail_t() = default;
 
-	/* Move constructor and assignment */
-	nccl_net_ofi_rdma_ep_rail_t(nccl_net_ofi_rdma_ep_rail_t&&) = default;
-	nccl_net_ofi_rdma_ep_rail_t& operator=(nccl_net_ofi_rdma_ep_rail_t&&) = default;
-
-	/* Delete copy operations since smart pointers are non-copyable */
+	/* Endpoint rails should never be copied or moved as they live in
+	 * place inside their endpoint. */
 	nccl_net_ofi_rdma_ep_rail_t(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
 	nccl_net_ofi_rdma_ep_rail_t& operator=(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
+	nccl_net_ofi_rdma_ep_rail_t(nccl_net_ofi_rdma_ep_rail_t&&) = delete;
+	nccl_net_ofi_rdma_ep_rail_t& operator=(nccl_net_ofi_rdma_ep_rail_t&&) = delete;
 
 	uint16_t rail_id;
 
@@ -1435,7 +1434,7 @@ public:
 	/* Maximum posted rx buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
 	size_t max_rx_buff_posted;
 	/* Mutex for rx buffer operations */
-	pthread_mutex_t rx_buff_mutex;
+	std::mutex rx_buff_mutex;
 
 	/* True if this rail posts control (ctrl) rx buffers; false for data (eager) */
 	bool is_ctrl = false;
@@ -1699,7 +1698,7 @@ public:
 	/* Pending requests queue */
 	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
 	/* Lock for `pending_reqs_queue` */
-	pthread_mutex_t pending_reqs_lock;
+	std::mutex pending_reqs_lock;
 
 	/* Free list of ctrl rx buffers */
 	nccl_ofi_freelist *ctrl_rx_buff_fl = nullptr;
