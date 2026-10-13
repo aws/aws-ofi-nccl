@@ -131,9 +131,6 @@ static_assert(NCCL_OFI_RDMA_MSG_MAX <= (0x10),
  * size to be fixed.
  */
 typedef uint16_t nccl_ofi_rdma_msg_type_t;
-/* Forward declaration for freelist MR registration callback class */
-class freelist_regmr_ep_ctx_t;
-
 /*
  * @brief	Rdma memory registration handle
  *
@@ -338,6 +335,48 @@ typedef struct nccl_net_ofi_flush_data {
 class nccl_net_ofi_rdma_device_t;
 class nccl_net_ofi_rdma_domain_t;
 class nccl_net_ofi_rdma_ep_t;
+
+/**
+ * C++ class encapsulating the MR registration and deregistration callbacks
+ * for freelists.  An instance is owned by each communicator or endpoint
+ * and passed as the opaque context pointer to the freelist.  The static
+ * shims regmr_fn / deregmr_fn cast back to this type, eliminating bare
+ * void * opaque usage at call sites.
+ */
+class freelist_regmr_ep_ctx_t {
+public:
+	freelist_regmr_ep_ctx_t(nccl_net_ofi_rdma_domain_t *domain_arg,
+				nccl_net_ofi_rdma_ep_t *ep_arg)
+		: domain(domain_arg), ep(ep_arg) {}
+
+	/**
+	 * Register host memory via the domain MR path.
+	 *
+	 * @param data    Pointer to page-aligned memory region.
+	 * @param size    Size of memory region (page-multiple).
+	 * @param handle  Receives a heap-allocated freelist_regmr_fn_handle_t *.
+	 */
+	int regmr(void *data, size_t size, void **handle);
+
+	/** Deregister memory that was registered via regmr(). */
+	static int deregmr(void *handle);
+
+	/** C-style shim matching nccl_ofi_freelist_regmr_fn; pass to freelist constructors. */
+	static int regmr_fn(void *opaque, void *data, size_t size, void **handle)
+	{
+		return static_cast<freelist_regmr_ep_ctx_t *>(opaque)->regmr(data, size, handle);
+	}
+
+	/** C-style shim matching nccl_ofi_freelist_deregmr_fn; pass to freelist constructors. */
+	static int deregmr_fn(void *handle)
+	{
+		return deregmr(handle);
+	}
+
+private:
+	nccl_net_ofi_rdma_domain_t *domain;
+	nccl_net_ofi_rdma_ep_t    *ep;      /* nullptr when no ep binding needed */
+};
 
 class nccl_net_ofi_rdma_device_rail_t;
 class nccl_net_ofi_rdma_domain_rail_t;
@@ -1687,15 +1726,17 @@ public:
 	/* Lock for `pending_reqs_queue` */
 	std::mutex pending_reqs_lock;
 
-	/* Free list of ctrl rx buffers */
-	nccl_ofi_freelist *ctrl_rx_buff_fl = nullptr;
-	/* Free list of eager rx buffers */
-	nccl_ofi_freelist *eager_rx_buff_fl = nullptr;
-	/* Free list of rx buffer requests */
-	nccl_ofi_freelist *rx_buff_reqs_fl = nullptr;
 	/* Context passed to the freelist MR registration callback for rx buffer freelists.
-	 * Heap-allocated freelist_regmr_ep_ctx_t; freed in fini_rx_buffers(). */
-	freelist_regmr_ep_ctx_t *rx_buff_regmr_ctx = nullptr;
+	 * In FI_MR_ENDPOINT mode its ep is this endpoint, so newly registered MRs
+	 * are bound and enabled against it; otherwise ep is nullptr.
+	 * Declared before the freelists, which keep a pointer to it. */
+	freelist_regmr_ep_ctx_t rx_buff_regmr_ctx;
+	/* Free list of ctrl rx buffers. Created empty; filled in init_rx_buffers(). */
+	nccl_ofi_freelist ctrl_rx_buff_fl;
+	/* Free list of eager rx buffers. Created empty; filled in init_rx_buffers(). */
+	nccl_ofi_freelist eager_rx_buff_fl;
+	/* Free list of rx buffer requests */
+	nccl_ofi_freelist rx_buff_reqs_fl;
 	/* MR handle for the flush buffer used by this endpoint.
 	 * In FI_MR_ENDPOINT mode this is a per-endpoint registration bound to
 	 * the endpoint's own flush_buff allocation; otherwise it aliases the
