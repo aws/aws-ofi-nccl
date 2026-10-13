@@ -1686,14 +1686,16 @@ public:
 	/* Number of control rails */
 	uint16_t num_control_rails;
 
+	/* Array of `num_rails` cq rails. Declared before the endpoint rails
+	 * so that, when the members are destroyed, the endpoints are closed
+	 * before the CQs they are bound to. */
+	std::array<nccl_net_ofi_rdma_cq_rail_t, MAX_NUM_RAILS> cq_rails = {};
+
 	/* Array of `num_rails` endpoint rails */
 	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> rails = {};
 
 	/* Array of `num_control_rails` endpoint rails */
 	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> control_rails = {};
-
-	/* Array of `num_rails` cq rails */
-	std::array<nccl_net_ofi_rdma_cq_rail_t, MAX_NUM_RAILS> cq_rails = {};
 
 	/* Pending requests queue */
 	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
