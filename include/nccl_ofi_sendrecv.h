@@ -116,10 +116,25 @@ public:
 
 /* Metadata about dummy flush buffer */
 typedef struct nccl_net_ofi_sendrecv_flush_buffer {
+	/* Host buffer that the flush fi_read lands into (the read destination) */
 	void *host_buffer;
 	size_t size;
-	/* Memory registration handle of the local buffer */
+	/* Memory registration handle of the local (host) destination buffer */
 	nccl_net_ofi_sendrecv_mr_handle_t *mr_handle;
+#if HAVE_GPU
+	/*
+	 * Dedicated GPU buffer used as the flush fi_read *origin* (the buffer we
+	 * read *from*), instead of the user recv buffer.  A loopback fi_read whose
+	 * source is any buffer on the target GPU flushes all prior writes to that
+	 * GPU, so reading this dedicated buffer is a valid flush barrier without
+	 * depending on the user recv buffer's registration.
+	 * gpu_buffer_base is the raw (unaligned) allocation kept for freeing;
+	 * gpu_buffer is the page-aligned pointer that is registered and read.
+	 */
+	void *gpu_buffer_base;
+	void *gpu_buffer;
+	nccl_net_ofi_sendrecv_mr_handle_t *gpu_mr_handle;
+#endif
 } nccl_net_ofi_sendrecv_flush_buffer_t;
 
 class nccl_net_ofi_sendrecv_recv_comm : public nccl_net_ofi_recv_comm {
