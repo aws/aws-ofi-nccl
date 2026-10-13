@@ -253,6 +253,53 @@ int main(int argc, char *argv[])
 		exit(1);
 	}
 
+	/* empty at construction, registered on reserve() */
+	simple_base = NULL;
+	entry_init_fn_count = 0;
+	entry_fini_fn_count = 0;
+	freelist = new nccl_ofi_freelist(1024,
+					 0,
+					 0,
+					 32,
+					 entry_init_fn_simple,
+					 entry_fini_fn_simple,
+					 regmr_simple,
+					 deregmr_simple,
+					 (void *)0xdeadbeaf,
+					 1,
+					 "Test empty MR",
+					 true);
+	if (simple_base || entry_init_fn_count != 0) {
+		NCCL_OFI_WARN("empty freelist allocated or registered entries");
+		exit(1);
+	}
+	if (freelist->reserve(32) != 0) {
+		NCCL_OFI_WARN("reserve unexpectedly failed");
+		exit(1);
+	}
+	if (!simple_base) {
+		NCCL_OFI_WARN("looks like registration not called by reserve");
+		exit(1);
+	}
+	if (entry_init_fn_count != 32) {
+		NCCL_OFI_WARN("Wrong number of entry_init_fn calls: %zu", entry_init_fn_count);
+		exit(1);
+	}
+	/* already satisfied, so these must not allocate anything */
+	if (freelist->reserve(32) != 0 || freelist->reserve(16) != 0) {
+		NCCL_OFI_WARN("reserve of an already satisfied count failed");
+		exit(1);
+	}
+	if (entry_init_fn_count != 32) {
+		NCCL_OFI_WARN("reserve allocated entries it did not need: %zu", entry_init_fn_count);
+		exit(1);
+	}
+	delete freelist;
+	if (simple_base || entry_fini_fn_count != 32) {
+		NCCL_OFI_WARN("empty freelist not torn down correctly");
+		exit(1);
+	}
+
 	printf("Test completed successfully\n");
 
 	return 0;
