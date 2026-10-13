@@ -1779,25 +1779,21 @@ int rdma_rx_buff_req::free(bool dec_inflight_reqs)
 	/* Pick the buffer freelist based on whether this is a ctrl or eager
 	 * rx buffer request.  The request freelist (rx_buff_reqs_fl) is the
 	 * same for both kinds. */
-	nccl_ofi_freelist *buff_fl;
-	if (this->rx_kind == kind::EAGER) {
-		assert(req_ep->eager_rx_buff_size > 0);
-		buff_fl = req_ep->eager_rx_buff_fl;
-	} else {
-		buff_fl = req_ep->ctrl_rx_buff_fl;
-	}
+	assert(this->rx_kind != kind::EAGER || req_ep->eager_rx_buff_size > 0);
+	nccl_ofi_freelist &buff_fl = (this->rx_kind == kind::EAGER) ?
+		req_ep->eager_rx_buff_fl : req_ep->ctrl_rx_buff_fl;
 
 	/* Free buffer */
 	if (this->rx_buff_fl_elem) {
-		buff_fl->entry_free(this->rx_buff_fl_elem);
+		buff_fl.entry_free(this->rx_buff_fl_elem);
 	}
-	return free_base_req(NULL, req_ep->rx_buff_reqs_fl, this, false);
+	return free_base_req(NULL, &req_ep->rx_buff_reqs_fl, this, false);
 }
 
 static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							       nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
+	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl.entry_alloc();
 	if (!elem) return NULL;
 	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req(rdma_rx_buff_req::kind::EAGER);
 	req->elem = elem;
@@ -1810,7 +1806,7 @@ static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_e
 	rdma_rx_buff_req *rx_buff_data = static_cast<rdma_rx_buff_req *>(req);
 
 	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem =
-		ep->eager_rx_buff_fl->entry_alloc();
+		ep->eager_rx_buff_fl.entry_alloc();
 	if (!rx_buff_fl_elem) {
 		NCCL_OFI_WARN("Failed to allocate rx_buff_fl_elem");
 		req->free(false);
@@ -1828,7 +1824,7 @@ static inline nccl_net_ofi_rdma_req *eager_rx_buff_req_alloc(nccl_net_ofi_rdma_e
 static inline nccl_net_ofi_rdma_req *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep_t *ep,
 							      nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl->entry_alloc();
+	nccl_ofi_freelist::fl_entry *elem = ep->rx_buff_reqs_fl.entry_alloc();
 	if (!elem) return NULL;
 	nccl_net_ofi_rdma_req *req = new (elem->ptr) rdma_rx_buff_req(rdma_rx_buff_req::kind::CTRL);
 	req->elem = elem;
@@ -1839,7 +1835,7 @@ static inline nccl_net_ofi_rdma_req *ctrl_rx_buff_req_alloc(nccl_net_ofi_rdma_ep
 	rdma_rx_buff_req *rx_buff_data = static_cast<rdma_rx_buff_req *>(req);
 
 	nccl_ofi_freelist::fl_entry *rx_buff_fl_elem =
-		ep->ctrl_rx_buff_fl->entry_alloc();
+		ep->ctrl_rx_buff_fl.entry_alloc();
 	if (!rx_buff_fl_elem) {
 		NCCL_OFI_WARN("Failed to allocate rx_buff_fl_elem");
 		req->free(false);
@@ -3292,81 +3288,44 @@ int nccl_net_ofi_rdma_recv_comm::regMr(nccl_ofi_mr_ckey_ref ckey,
 			      (nccl_net_ofi_rdma_mr_handle_t **)mhandle);
 }
 
-/**
- * C++ class encapsulating the MR registration and deregistration callbacks
- * for freelists.  An instance is heap-allocated per communicator or endpoint
- * and passed as the opaque context pointer to the freelist.  The static
- * shims regmr_fn / deregmr_fn cast back to this type, eliminating bare
- * void * opaque usage at call sites.
- */
-class freelist_regmr_ep_ctx_t {
-public:
-	freelist_regmr_ep_ctx_t(nccl_net_ofi_rdma_domain_t *domain_arg,
-				nccl_net_ofi_rdma_ep_t *ep_arg)
-		: domain(domain_arg), ep(ep_arg) {}
+int freelist_regmr_ep_ctx_t::regmr(void *data, size_t size, void **handle)
+{
+	nccl_net_ofi_rdma_mr_handle_t *mr_handle;
 
-	/**
-	 * Register host memory via the domain MR path.
-	 *
-	 * @param data    Pointer to page-aligned memory region.
-	 * @param size    Size of memory region (page-multiple).
-	 * @param handle  Receives a heap-allocated freelist_regmr_fn_handle_t *.
-	 */
-	int regmr(void *data, size_t size, void **handle)
-	{
-		nccl_net_ofi_rdma_mr_handle_t *mr_handle;
-
-		freelist_regmr_fn_handle_t *freelist_handle =
-			(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
-		if (!freelist_handle) {
-			NCCL_OFI_WARN("Failed to allocate memory for freelist handle");
-			return -ENOMEM;
-		}
-
-		int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
-			free(freelist_handle);
-			return -EIO;
-		}
-
-		freelist_handle->mr_handle = mr_handle;
-		freelist_handle->domain = domain;
-		*handle = static_cast<void *>(freelist_handle);
-		return 0;
+	freelist_regmr_fn_handle_t *freelist_handle =
+		(freelist_regmr_fn_handle_t *)malloc(sizeof(freelist_regmr_fn_handle_t));
+	if (!freelist_handle) {
+		NCCL_OFI_WARN("Failed to allocate memory for freelist handle");
+		return -ENOMEM;
 	}
 
-	/** Deregister memory that was registered via regmr(). */
-	static int deregmr(void *handle)
-	{
-		freelist_regmr_fn_handle_t *freelist_handle =
-			static_cast<freelist_regmr_fn_handle_t *>(handle);
-		assert(freelist_handle);
-		int ret = freelist_handle->domain->dereg_mr(freelist_handle->mr_handle);
-		if (OFI_UNLIKELY(ret != 0)) {
-			NCCL_OFI_WARN("Failed call to dereg_mr");
-			return -EIO;
-		}
+	int ret = domain->reg_internal_mr(data, size, NCCL_PTR_HOST, ep, &mr_handle);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Failed call to reg_mr: %d", ret);
 		free(freelist_handle);
-		return 0;
+		return -EIO;
 	}
 
-	/** C-style shim matching nccl_ofi_freelist_regmr_fn; pass to freelist constructors. */
-	static int regmr_fn(void *opaque, void *data, size_t size, void **handle)
-	{
-		return static_cast<freelist_regmr_ep_ctx_t *>(opaque)->regmr(data, size, handle);
-	}
+	freelist_handle->mr_handle = mr_handle;
+	freelist_handle->domain = domain;
+	*handle = static_cast<void *>(freelist_handle);
+	return 0;
+}
 
-	/** C-style shim matching nccl_ofi_freelist_deregmr_fn; pass to freelist constructors. */
-	static int deregmr_fn(void *handle)
-	{
-		return deregmr(handle);
-	}
 
-private:
-	nccl_net_ofi_rdma_domain_t *domain;
-	nccl_net_ofi_rdma_ep_t    *ep;      /* nullptr when no ep binding needed */
-};
+int freelist_regmr_ep_ctx_t::deregmr(void *handle)
+{
+	freelist_regmr_fn_handle_t *freelist_handle =
+		static_cast<freelist_regmr_fn_handle_t *>(handle);
+	assert(freelist_handle);
+	int ret = freelist_handle->domain->dereg_mr(freelist_handle->mr_handle);
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Failed call to dereg_mr");
+		return -EIO;
+	}
+	free(freelist_handle);
+	return 0;
+}
 
 int nccl_net_ofi_rdma_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 {
@@ -5501,9 +5460,9 @@ static int post_rx_buffer(nccl_net_ofi_rdma_req *req,
 	 * gets re-posted */
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
 
-	nccl_ofi_freelist *fl = (static_cast<rdma_rx_buff_req *>(req)->rx_kind == rdma_rx_buff_req::kind::EAGER ?
+	nccl_ofi_freelist &fl = (static_cast<rdma_rx_buff_req *>(req)->rx_kind == rdma_rx_buff_req::kind::EAGER ?
 		ep->eager_rx_buff_fl : ep->ctrl_rx_buff_fl);
-	fl->entry_set_undefined(rx_buff_fl_elem->ptr);
+	fl.entry_set_undefined(rx_buff_fl_elem->ptr);
 
 	iov.iov_base = rx_buff_fl_elem->ptr;
 	iov.iov_len = rx_buff_data->buff_len;
@@ -6055,47 +6014,19 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 	nccl_net_ofi_rdma_ep_rail_t *rail;
 	nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
 
-	/* TODO: the RX buffer code doesn't yet track and free posted RX
-	   buffers/requests before finalizing the freelists. For now, disable
-	   leak detection for the RX freelists. In the future, we will resolve
-	   this properly by tracking and freeing posted RX buffers. */
-	const bool enable_freelist_leak_detection = false;
+	/* The ctrl and eager rx buffer freelists are created empty, because
+	 * registering their buffers needs the endpoint rails. Now that the rails
+	 * exist, allocate their initial buffers. */
+	ret = this->ctrl_rx_buff_fl.reserve(ofi_nccl_rdma_min_posted_control_buffers());
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Allocating ctrl rx buffers failed: %d", ret);
+		return ret;
+	}
 
-	/* We maintain this for only connection close messages */
-	this->rx_buff_reqs_fl = new nccl_ofi_freelist(rdma_req_max_subclass_size,
-						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
-						      rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
-						      "Rx Buffer Requests",
-						      enable_freelist_leak_detection);
-
-	/* Allocate a context for freelist MR registration callbacks.
-	 * In FI_MR_ENDPOINT mode ep is set so newly registered MRs are
-	 * bound and enabled against this endpoint; otherwise ep is nullptr.
-	 * Must outlive the freelists; freed in fini_rx_buffers(). */
-	freelist_regmr_ep_ctx_t *rx_ctx = new freelist_regmr_ep_ctx_t{domain_ptr, endpoint_mr ? this : nullptr};
-	this->rx_buff_regmr_ctx = rx_ctx;
-
-	/* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the unified
-	 * MR handle binds to both data and ctrl ep rails so rx_ctx works for both. */
-	this->ctrl_rx_buff_fl = new nccl_ofi_freelist(this->ctrl_rx_buff_size,
-						      ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
-						      NULL, NULL,
-						      freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
-						      rx_ctx, 1,
-						      "Ctrl Rx Buffer",
-						      enable_freelist_leak_detection);
-
-	if (this->eager_rx_buff_size > 0) {
-		/* Eager rx buffers are posted on data ep rails; use rx_ctx. */
-		this->eager_rx_buff_fl = new nccl_ofi_freelist(this->eager_rx_buff_size,
-							       ofi_nccl_rdma_min_posted_eager_buffers(), 16, 0,
-							       NULL, NULL,
-							       freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
-							       rx_ctx, EAGER_RX_BUFFER_ALIGNMENT,
-							       "Eager Rx Buffer",
-							       enable_freelist_leak_detection);
-	} else {
-		this->eager_rx_buff_fl = NULL;
+	ret = this->eager_rx_buff_fl.reserve(ofi_nccl_rdma_min_posted_eager_buffers());
+	if (OFI_UNLIKELY(ret != 0)) {
+		NCCL_OFI_WARN("Allocating eager rx buffers failed: %d", ret);
+		return ret;
 	}
 
 	/*
@@ -6154,16 +6085,6 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
 {
 	int ret = 0;
-
-	delete this->ctrl_rx_buff_fl;
-
-	if (this->eager_rx_buff_fl != NULL) {
-		delete this->eager_rx_buff_fl;
-	}
-
-	delete this->rx_buff_reqs_fl;
-
-	delete this->rx_buff_regmr_ctx;
 
 	/* Deregister the flush buffer MR (always owned by this endpoint). */
 	if (this->flush_buff_mr_handle != nullptr) {
@@ -6730,9 +6651,10 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 	 *
 	 * In FI_MR_ENDPOINT mode the libfabric spec requires that MRs bound to
 	 * an endpoint are closed before the endpoint itself.  fini_rx_buffers()
-	 * deregisters per-endpoint MRs, so it must run before
-	 * release_rdma_ep_resources() in that mode.  For non-endpoint-MR
-	 * providers the original order is preserved.
+	 * deregisters the flush buffer MR, and the rx buffer freelists and
+	 * their MRs are destroyed with the members, before the endpoint rails
+	 * (declared earlier) are destroyed and close the endpoints. For
+	 * non-endpoint-MR providers the original order is preserved.
 	 */
 	int err_code;
 	if (endpoint_mr) {
@@ -6740,8 +6662,6 @@ nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 		if (err_code != 0) {
 			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
 		}
-
-		this->release_rdma_ep_resources(device->dev_id);
 	} else {
 		this->release_rdma_ep_resources(device->dev_id);
 
@@ -6804,8 +6724,54 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 }
 
 
+/* Size of ctrl rx buffers */
+static constexpr size_t rdma_ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
+							   sizeof(nccl_net_ofi_rdma_close_msg_t)});
+
+/* Max size of eager messages on an endpoint of the given device */
+static inline ssize_t rdma_eager_send_size(nccl_net_ofi_rdma_device_t *device)
+{
+	return device->eager_support ? ofi_nccl_eager_max_size() : 0;
+}
+
+/* Size of eager rx buffers on an endpoint of the given device */
+static inline ssize_t rdma_eager_rx_buff_size(nccl_net_ofi_rdma_device_t *device)
+{
+	ssize_t eager_send_size = rdma_eager_send_size(device);
+
+	/* Work around EFA provider bug around posting 0 byte rx buffers by not
+	   posting 0 byte rx buffers */
+	return (eager_send_size <= 0) ?
+		EAGER_RX_BUFFER_ALIGNMENT : eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
+}
+
+/* TODO: the RX buffer code doesn't yet track and free posted RX
+   buffers/requests before finalizing the freelists. For now, disable
+   leak detection for the RX freelists. In the future, we will resolve
+   this properly by tracking and freeing posted RX buffers. */
+static constexpr bool rx_freelist_leak_detection = false;
+
+
 nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma_domain_t> domain_arg)
 	: nccl_net_ofi_ep_t(domain_arg),
+	  rx_buff_regmr_ctx(domain_arg.get(), endpoint_mr ? this : nullptr),
+	  /* Ctrl rx buffers are posted via fi_recvmsg on the ctrl ep rail; the
+	   * unified MR handle binds to both data and ctrl ep rails so
+	   * rx_buff_regmr_ctx works for both. */
+	  ctrl_rx_buff_fl(rdma_ctrl_rx_buff_size, 0, 16, 0, nullptr, nullptr,
+			  freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+			  &rx_buff_regmr_ctx, 1, "Ctrl Rx Buffer", rx_freelist_leak_detection),
+	  /* Eager rx buffers are posted on data ep rails */
+	  eager_rx_buff_fl(rdma_eager_rx_buff_size(domain_arg->rdma_domain_get_device()),
+			   0, 16, 0, nullptr, nullptr,
+			   freelist_regmr_ep_ctx_t::regmr_fn, freelist_regmr_ep_ctx_t::deregmr_fn,
+			   &rx_buff_regmr_ctx, EAGER_RX_BUFFER_ALIGNMENT, "Eager Rx Buffer",
+			   rx_freelist_leak_detection),
+	  /* We maintain this for only connection close messages */
+	  rx_buff_reqs_fl(rdma_req_max_subclass_size,
+			  ofi_nccl_rdma_min_posted_control_buffers(), 16, 0,
+			  rdma_fl_req_entry_init, rdma_fl_req_entry_fini,
+			  "Rx Buffer Requests", rx_freelist_leak_detection),
 	  scheduler(domain_arg->num_rails)
 {
 	int ret = 0;
@@ -6830,13 +6796,9 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 	/* Zero-initialize the rails and control_rails array elements
 	 * via the = {} initializers on the member declarations. */
 
-	this->ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
-				      sizeof(nccl_net_ofi_rdma_close_msg_t)});
-	this->eager_send_size = device->eager_support ? ofi_nccl_eager_max_size() : 0;
-	/* Work around EFA provider bug around posting 0 byte rx buffers by not
-	   posting 0 byte rx buffers */
-	this->eager_rx_buff_size = (this->eager_send_size <= 0) ?
-		EAGER_RX_BUFFER_ALIGNMENT : this->eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
+	this->ctrl_rx_buff_size = rdma_ctrl_rx_buff_size;
+	this->eager_send_size = rdma_eager_send_size(device);
+	this->eager_rx_buff_size = rdma_eager_rx_buff_size(device);
 
 	ret = this->init_rail_ofi_resources(device, domain_arg.get());
 	if (ret != 0) {
