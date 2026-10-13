@@ -85,7 +85,9 @@ public:
 	 *
 	 * The freelist will allocate initial_entry_count entries in the
 	 * freelist during initialization.  Any further growth in the freelist
-	 * will be on-demand in units of increase_entry_count items.
+	 * will be on-demand in units of increase_entry_count items. If
+	 * initial_entry_count is 0, nothing is allocated (or registered) until
+	 * the first entry_alloc() or reserve() call.
 	 *
 	 * The freelist will grow until there are at most max_entry_count
 	 * entries allocated as part of the freelist.  If max_entry_count is
@@ -133,6 +135,28 @@ public:
 
 	nccl_ofi_freelist(const nccl_ofi_freelist&) = delete;
 	nccl_ofi_freelist& operator= (const nccl_ofi_freelist&) = delete;
+
+	/**
+	 * @brief	Ensure at least num_entries entries are allocated
+	 *
+	 * If fewer than num_entries entries are allocated, allocate the
+	 * difference, rounded up to fill whole pages the same way as the
+	 * constructor's initial allocation does. Otherwise, do nothing.
+	 * This lets a freelist be created empty and populated later, once
+	 * the resources its MR registration callback depends on exist.
+	 *
+	 * @return	0, on success, including when nothing had to be allocated
+	 *		negative errno, on failure
+	 */
+	int reserve(size_t num_entries)
+	{
+		if (this->num_allocated_entries >= num_entries) {
+			return 0;
+		}
+
+		return add(freelist_page_padded_entry_count(num_entries -
+							    this->num_allocated_entries));
+	}
 
 	/*
 	 * Finalize (free) a freelist
