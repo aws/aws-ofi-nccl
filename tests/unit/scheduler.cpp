@@ -118,7 +118,7 @@ static inline int test_multiplexer(nccl_net_ofi_scheduler *scheduler,
 		free(ref_schedule);
 		return ret;
 	}
-	nccl_net_ofi_release_schedule(scheduler, schedule);
+	scheduler->release_schedule(schedule);
 	free(ref_schedule);
 	return ret;
 }
