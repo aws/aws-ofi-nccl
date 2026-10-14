@@ -1484,6 +1484,25 @@ public:
 };
 
 /**
+ * @brief	Flush buffer owned by an RDMA endpoint
+ *
+ * Owns the endpoint's flush buffer allocation (GPU memory, or host memory
+ * for Neuron) and its memory registration, and releases both when it is
+ * destroyed. Populated by nccl_net_ofi_rdma_ep_t::alloc_and_reg_flush_buff().
+ */
+class nccl_net_ofi_rdma_ep_flush_buffer_t : public nccl_net_ofi_rdma_flush_buffer_t {
+public:
+	nccl_net_ofi_rdma_ep_flush_buffer_t() : nccl_net_ofi_rdma_flush_buffer_t() {}
+	~nccl_net_ofi_rdma_ep_flush_buffer_t();
+
+	nccl_net_ofi_rdma_ep_flush_buffer_t(const nccl_net_ofi_rdma_ep_flush_buffer_t &) = delete;
+	nccl_net_ofi_rdma_ep_flush_buffer_t &operator=(const nccl_net_ofi_rdma_ep_flush_buffer_t &) = delete;
+
+	/* Domain that mr_handle is registered with */
+	nccl_net_ofi_rdma_domain_t *domain = nullptr;
+};
+
+/**
  * @brief	RDMA Endpoint
  *
  * RDMA endpoint implements the nccl_net_ofi_ep_t interface
@@ -1505,9 +1524,9 @@ public:
 	/**
 	 * @brief	Destructor.
 	 * 
-	 * Overrides base endpoint class virtual destructor, asserts that "cleanup_resources"
-	 * Cleans up RDMA endpoint resources (OFI resources, rx buffers,
-	 * freelists, mutexes).
+	 * Overrides base endpoint class virtual destructor. Deletes the
+	 * connection manager and the rest of the endpoint's resources are
+	 * released by its members' destructors.
 	 */
 	~nccl_net_ofi_rdma_ep_t() override;
 
@@ -1725,9 +1744,18 @@ public:
 	/* Number of control rails */
 	uint16_t num_control_rails;
 
-	/* Array of `num_rails` cq rails. Declared before the endpoint rails
-	 * so that, when the members are destroyed, the endpoints are closed
-	 * before the CQs they are bound to. */
+	/*
+	 * The members below own the endpoint's resources and release them in
+	 * their destructors, which run in reverse declaration order, also when
+	 * the constructor throws. The declaration order therefore matters:
+	 * the scheduler goes first, then the flush buffer and rx buffer
+	 * freelists (and their MRs), then the endpoint rails, and the CQs that
+	 * the endpoints are bound to go last. Closing MRs before the endpoints
+	 * is what FI_MR_ENDPOINT providers require. The connection manager is
+	 * the exception: it is held by pointer and deleted by the destructor.
+	 */
+
+	/* Array of `num_rails` cq rails */
 	std::array<nccl_net_ofi_rdma_cq_rail_t, MAX_NUM_RAILS> cq_rails = {};
 
 	/* Array of `num_rails` endpoint rails */
@@ -1752,20 +1780,8 @@ public:
 	nccl_ofi_freelist eager_rx_buff_fl;
 	/* Free list of rx buffer requests */
 	nccl_ofi_freelist rx_buff_reqs_fl;
-	/* MR handle for the flush buffer used by this endpoint.
-	 * In FI_MR_ENDPOINT mode this is a per-endpoint registration bound to
-	 * the endpoint's own flush_buff allocation; otherwise it aliases the
-	 * domain's shared flush buffer MR.
-	 * Set in init_rx_buffers(); the per-endpoint registration (if any)
-	 * is deregistered in fini_rx_buffers(). */
-	nccl_net_ofi_rdma_mr_handle_t *flush_buff_mr_handle = nullptr;
-	/* Flush buffer for this endpoint.
-	 * Set in init_rx_buffers().
-	 * In FI_MR_ENDPOINT mode: owns a per-endpoint GPU allocation
-	 * (buffer_base / buffer); freed in fini_rx_buffers().
-	 * In non-endpoint-MR mode: buffer aliases the domain's
-	 * flush_buff.buffer; buffer_base is nullptr (not owned). */
-	nccl_net_ofi_rdma_flush_buffer_t flush_buff = {};
+	/* Flush buffer for this endpoint and its MR. Set in init_rx_buffers(). */
+	nccl_net_ofi_rdma_ep_flush_buffer_t flush_buff;
 	/* Size of ctrl rx buffers */
 	size_t ctrl_rx_buff_size;
 	/* Size of eager rx buffers.  Will be -1 if eager is entirely
@@ -1835,14 +1851,6 @@ protected:
 	 */
 	int init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *device,
 				    nccl_net_ofi_rdma_domain_t *domain);
-
-	/**
-	 * @brief	Finalize rx buffer data of endpoint
-	 *
-	 * @return	0, on success
-	 *		non-zero, on error
-	 */
-	int fini_rx_buffers();
 
 	/**
 	 * @brief	Release libfabric resources of rdma endpoint

@@ -2645,7 +2645,7 @@ int rdma_flush_req::post()
 	for (uint16_t rail_id = 0; rail_id < ep->num_rails; rail_id++) {
 		comm_rail = r_comm->get_data_rail(rail_id);
 		struct fid_mr *rail_mr = NULL;
-		void *desc = fi_mr_desc(ep->flush_buff_mr_handle->mr_data[rail_id].get());
+		void *desc = fi_mr_desc(ep->flush_buff.mr_handle->mr_data[rail_id].get());
 		rail_mr = this->mr_handle->mr_data[rail_id].get();
 
 		uint64_t cuda_key = 0ULL;
@@ -2699,7 +2699,7 @@ int rdma_flush_req::post()
 		freelist_regmr_fn_handle_t *fl_handle =
 			(freelist_regmr_fn_handle_t *)this->flush_fl_elem->mr_handle;
 		void *desc = fi_mr_desc(fl_handle->mr_handle->mr_data[rail_id].get());
-		fid_mr_handle = ep->flush_buff_mr_handle->mr_data[rail_id].get();
+		fid_mr_handle = ep->flush_buff.mr_handle->mr_data[rail_id].get();
 		uint64_t cuda_key = 0ULL;
 
 		if (fid_mr_handle != NULL) {
@@ -2713,7 +2713,7 @@ int rdma_flush_req::post()
 		}
 
 		uint64_t *host_buff_addr = get_flush_buffer_for_rail(this->flush_fl_elem->ptr, rail_id);
-		uintptr_t buff_offset = (uintptr_t)ep->flush_buff.buffer - ep->flush_buff_mr_handle->base_addr;
+		uintptr_t buff_offset = (uintptr_t)ep->flush_buff.buffer - ep->flush_buff.mr_handle->base_addr;
 		rc = fi_read(comm_rail->local_ep,
 			     (void *)host_buff_addr,
 			     NCCL_OFI_DEFAULT_CPU_CACHE_LINE_SIZE, desc, comm_rail->local_addr,
@@ -3636,7 +3636,7 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
 	for (i = 0 ; i < n ; i++) {
 		if (sizes[i] == 0) {
 			buffers[i] = endpoint->flush_buff.buffer;
-			mr_handles[i] = endpoint->flush_buff_mr_handle;
+			mr_handles[i] = endpoint->flush_buff.mr_handle;
 		}
 	}
 
@@ -3728,6 +3728,26 @@ int nccl_net_ofi_rdma_recv_comm::recv(int n, void **buffers,
  exit:
 	return ret;
 }
+
+nccl_net_ofi_rdma_ep_flush_buffer_t::~nccl_net_ofi_rdma_ep_flush_buffer_t()
+{
+	if (this->mr_handle != nullptr) {
+		this->domain->dereg_mr(this->mr_handle);
+	}
+
+#if HAVE_GPU
+	if (this->buffer_base != nullptr) {
+		nccl_net_ofi_gpu_mem_free(this->buffer_base);
+	}
+#endif /* HAVE_GPU */
+
+#if HAVE_NEURON
+	if (this->buffer != MAP_FAILED && this->buffer != nullptr) {
+		nccl_net_ofi_dealloc_mr_buffer(this->buffer, system_page_size);
+	}
+#endif /* HAVE_NEURON */
+}
+
 
 /*
  * @brief	Allocate and register a buffer used to flush RDMA operations.
@@ -5711,7 +5731,7 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	 */
 	if (size == 0) {
 		data = endpoint->flush_buff.buffer;
-		mr_handle = endpoint->flush_buff_mr_handle;
+		mr_handle = endpoint->flush_buff.mr_handle;
 	}
 
 	/* Drain eager queue against any available ctrl msgs */
@@ -6069,46 +6089,15 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 #if HAVE_GPU || HAVE_NEURON
 	{
 		nccl_net_ofi_rdma_device_t *dev = domain_ptr->rdma_domain_get_device();
+		this->flush_buff.domain = domain_ptr;
 		ret = this->alloc_and_reg_flush_buff(dev->dev_id,
 						     this->flush_buff,
-						     this->flush_buff_mr_handle);
+						     this->flush_buff.mr_handle);
 		if (OFI_UNLIKELY(ret != 0)) {
 			return ret;
 		}
 	}
 #endif /* HAVE_GPU / HAVE_NEURON */
-
-	return ret;
-}
-
-
-int nccl_net_ofi_rdma_ep_t::fini_rx_buffers()
-{
-	int ret = 0;
-
-	/* Deregister the flush buffer MR (always owned by this endpoint). */
-	if (this->flush_buff_mr_handle != nullptr) {
-		nccl_net_ofi_rdma_domain_t *domain_ptr = this->rdma_endpoint_get_domain();
-		domain_ptr->dereg_mr(this->flush_buff_mr_handle);
-		this->flush_buff_mr_handle = nullptr;
-	}
-
-#if HAVE_GPU
-	/* Free the per-endpoint flush buffer GPU allocation. */
-	if (this->flush_buff.buffer_base != nullptr) {
-		nccl_net_ofi_gpu_mem_free(this->flush_buff.buffer_base);
-		this->flush_buff.buffer_base = nullptr;
-		this->flush_buff.buffer      = MAP_FAILED;
-	}
-#endif /* HAVE_GPU */
-
-#if HAVE_NEURON
-	/* Free the per-endpoint host flush buffer. */
-	if (this->flush_buff.buffer != MAP_FAILED && this->flush_buff.buffer != nullptr) {
-		nccl_net_ofi_dealloc_mr_buffer(this->flush_buff.buffer, system_page_size);
-		this->flush_buff.buffer = MAP_FAILED;
-	}
-#endif /* HAVE_NEURON */
 
 	return ret;
 }
@@ -6639,36 +6628,32 @@ int nccl_net_ofi_rdma_ep_t::init_rail_ofi_resources(nccl_net_ofi_rdma_device_t *
 
 nccl_net_ofi_rdma_ep_t::~nccl_net_ofi_rdma_ep_t()
 {
-	nccl_net_ofi_rdma_device_t *device = this->rdma_endpoint_get_device();
-
+	/* The connection manager is created last in the constructor, so a
+	 * constructor that throws never leaves it allocated. Clean it up
+	 * here. */
 	if (this->cm) {
 		delete this->cm;
 		this->cm = nullptr;
 	}
 
-	/* Ideally we would "un-post" the rx buffers, but this
-	 * should be accomplished by closing the endpoint.
+	/*
+	 * The rest of the endpoint's resources are released by its members'
+	 * destructors, which run after this body in reverse declaration order:
+	 * the scheduler, then the flush buffer and rx buffer freelists
+	 * (deregistering their MRs), then the endpoint rails (closing the
+	 * endpoints and AVs), and finally the CQs.
 	 *
-	 * In FI_MR_ENDPOINT mode the libfabric spec requires that MRs bound to
-	 * an endpoint are closed before the endpoint itself.  fini_rx_buffers()
-	 * deregisters the flush buffer MR, and the rx buffer freelists and
-	 * their MRs are destroyed with the members, before the endpoint rails
-	 * (declared earlier) are destroyed and close the endpoints. For
-	 * non-endpoint-MR providers the original order is preserved.
+	 * In FI_MR_ENDPOINT mode, MRs bound to an endpoint must be closed
+	 * before the endpoint. That is the order above, so there is nothing
+	 * to do here.
+	 *
+	 * Otherwise, close the endpoints now, before the members deregister
+	 * the MRs that the posted rx buffers still reference. This is the
+	 * order these providers have always used. The rails' destructors
+	 * then find the endpoints already closed and do nothing.
 	 */
-	int err_code;
-	if (endpoint_mr) {
-		err_code = this->fini_rx_buffers();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
-		}
-	} else {
-		this->release_rdma_ep_resources(device->dev_id);
-
-		err_code = this->fini_rx_buffers();
-		if (err_code != 0) {
-			NCCL_OFI_WARN("rdma endpoint destructor: tearing down freelists failed, rc %d", err_code);
-		}
+	if (!endpoint_mr) {
+		this->release_rdma_ep_resources(this->rdma_endpoint_get_device()->dev_id);
 	}
 }
 
