@@ -19,14 +19,6 @@ class nccl_ofi_gin_symm_mr_handle_t;
 class nccl_ofi_gin_req_t;
 
 /**
- * Abstract GIN endpoint base class.
- */
-class nccl_ofi_gin_ep_t {
-public:
-	virtual ~nccl_ofi_gin_ep_t() = default;
-};
-
-/**
  * Abstract GIN symmetric MR handle.
  */
 class nccl_ofi_gin_symm_mr_handle_t {

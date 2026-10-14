@@ -44,7 +44,7 @@
  * Caller is assumed to hold the ep lock
  */
 #define CHECK_ENDPOINT_ACTIVE(endpoint, fn_name) \
-	if (OFI_UNLIKELY(!endpoint->ep_active)) { \
+	if (OFI_UNLIKELY(!endpoint->is_active())) { \
 		NCCL_OFI_WARN("Called " fn_name " on request with inactive endpoint"); \
 		return -EINVAL; \
 	} \
@@ -453,7 +453,7 @@ int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(ep->ep_lock);
+	std::lock_guard eplock(ep->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
 
@@ -790,7 +790,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 		}
 		/* Cache miss */
 
-		key_pool = domain->mr_rkey_pool;
+		key_pool = domain->get_mr_rkey_pool();
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
 						dev_id, ckey, type, &ret_handle);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
@@ -808,7 +808,7 @@ static int sendrecv_comm_mr_base_reg(nccl_net_ofi_comm *base_comm,
 			return ret;
 		}
 	} else {
-		key_pool = domain->mr_rkey_pool;
+		key_pool = domain->get_mr_rkey_pool();
 		ret = sendrecv_mr_base_register(domain, ep->ofi_ep.get(), key_pool,
 						dev_id, ckey, type, &ret_handle);
 		if (OFI_UNLIKELY(ret_handle == NULL || ret != 0)) {
@@ -852,7 +852,7 @@ int nccl_net_ofi_sendrecv_recv_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->get_mr_rkey_pool(), domain);
 	return 0;
 }
 
@@ -905,7 +905,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "recv");
 
@@ -993,7 +993,7 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 
 void nccl_net_ofi_sendrecv_ep_t::sendrecv_endpoint_abort()
 {
-	std::lock_guard lock(this->ep_lock);
+	std::lock_guard lock(this->get_ep_lock());
 
 	int device_id = this->domain->get_device()->dev_id;
 
@@ -1070,7 +1070,7 @@ int nccl_net_ofi_sendrecv_recv_comm::flush(int n, void **buffers,
 
 	auto *endpoint = reinterpret_cast<nccl_net_ofi_sendrecv_ep_t *>(this->ep.get());
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "flush");
 
@@ -1303,7 +1303,7 @@ nccl_net_ofi_sendrecv_recv_comm *nccl_net_ofi_sendrecv_recv_comm::create(nccl_ne
 	fi_addr_t remote_ep;
 	nccl_net_ofi_sendrecv_recv_comm *r_comm = NULL;
 	size_t req_size = sizeof(nccl_net_ofi_sendrecv_req);
-	nccl_ofi_idpool_t *key_pool = domain->mr_rkey_pool;
+	nccl_ofi_idpool_t *key_pool = domain->get_mr_rkey_pool();
 	int dev_id = device->dev_id;
 
 	/* Insert remote EP address to AV */
@@ -1413,7 +1413,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 	nccl_net_ofi_sendrecv_domain_t *domain = endpoint->sendrecv_endpoint_get_domain();
 	assert(domain != NULL);
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "accept");
 
@@ -1607,7 +1607,7 @@ int nccl_net_ofi_sendrecv_ep_t::listen(nccl_net_ofi_conn_handle_t *handle,
 
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 
-	std::lock_guard eplock(this->ep_lock);
+	std::lock_guard eplock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "listen");
 
@@ -1681,7 +1681,7 @@ int nccl_net_ofi_sendrecv_send_comm::deregMr(nccl_net_ofi_mr_handle_t *mhandle)
 	assert(domain != NULL);
 
 	auto *mr_handle = reinterpret_cast<nccl_net_ofi_sendrecv_mr_handle_t *>(mhandle);
-	sendrecv_comm_mr_base_dereg(mr_handle, domain->mr_rkey_pool, domain);
+	sendrecv_comm_mr_base_dereg(mr_handle, domain->get_mr_rkey_pool(), domain);
 	return 0;
 }
 
@@ -1702,7 +1702,7 @@ int nccl_net_ofi_sendrecv_send_comm::send(void *data, size_t size, int tag_param
 		return -EINVAL;
 	}
 
-	std::lock_guard eplock(endpoint->ep_lock);
+	std::lock_guard eplock(endpoint->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(endpoint, "send");
 
@@ -1925,7 +1925,7 @@ int nccl_net_ofi_sendrecv_ep_t::connect(nccl_net_ofi_conn_handle_t *handle,
 	nccl_net_ofi_sendrecv_domain_t *domain_ptr = this->sendrecv_endpoint_get_domain();
 	assert(domain_ptr != nullptr);
 
-	std::lock_guard eplock(this->ep_lock);
+	std::lock_guard eplock(this->get_ep_lock());
 
 	CHECK_ENDPOINT_ACTIVE(this, "connect");
 

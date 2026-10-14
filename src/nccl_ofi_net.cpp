@@ -921,8 +921,8 @@ nccl_net_ofi_domain_t::~nccl_net_ofi_domain_t()
 
 void nccl_net_ofi_ep_t::invalidate()
 {
-	if (this->ep_active == true) {
-		this->ep_active = false;
+	if (this->is_active()) {
+		this->set_active(false);
 
 		std::lock_guard lock(this->domain->domain_lock);
 
@@ -933,11 +933,15 @@ void nccl_net_ofi_ep_t::invalidate()
 }
 
 
-nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
-	: ep_active(true),
-	  domain(std::move(domain_arg))
+endpoint_t::endpoint_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
+	: domain(std::move(domain_arg))
 {
 	assert(domain != nullptr);
+}
+
+nccl_net_ofi_ep_t::nccl_net_ofi_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain_arg)
+	: endpoint_t(std::move(domain_arg))
+{
 }
 
 

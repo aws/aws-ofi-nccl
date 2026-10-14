@@ -256,7 +256,7 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 	}
 	ctx->scratch_local_addr = (uint64_t)ctx->scratch_buf;
 
-	auto &domain = put_comm->get_resources().get_ep().get_domain();
+	auto &domain = put_comm->get_ep().get_domain();
 
 	/* Register the shared scratch buffer on each used rail's domain,
 	 * allgather per-rail, and populate GPU buffers. */
@@ -391,7 +391,7 @@ static void setup_putvalue_pool(nccl_ofi_gin_gdaki_context *ctx,
 	 * pool's GPU VA (and hence every endpoint's slice base) is the same
 	 * across rails; only the lkey differs per rail. A logical context
 	 * bound to rail r reads its putvalue lkey from rail_shared[r]. */
-	auto &domain = put_comm->get_resources().get_ep().get_domain();
+	auto &domain = put_comm->get_ep().get_domain();
 	for (uint16_t r = 0; r < ctx->effective_rails; r++) {
 		struct fid_domain *dom_r = domain.get_ofi_domain(r).get();
 		if (dom_r == nullptr) {
@@ -602,7 +602,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		 * domain. effective_rails = min(nContexts, num_rails) is how
 		 * many rails get used (and get the shared scratch/putvalue MRs).
 		 */
-		auto &gin_ep = put_comm->get_resources().get_ep();
+		auto &gin_ep = put_comm->get_ep();
 		auto &domain = gin_ep.get_domain();
 		uint16_t num_rails = gin_ep.get_num_rails();
 		if (num_rails == 0) {
@@ -1047,7 +1047,7 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 
 	auto *put_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
 	int nranks = put_comm->get_nranks();
-	auto &gin_ep = put_comm->get_resources().get_ep();
+	auto &gin_ep = put_comm->get_ep();
 	auto &domain = gin_ep.get_domain();
 	uint16_t num_rails = gin_ep.get_num_rails();
 	if (num_rails > NCCL_OFI_GDAKI_MAX_RAILS) {

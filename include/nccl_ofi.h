@@ -475,8 +475,13 @@ public:
 	/* Lock protecting mr_cache operations */
 	std::mutex mr_cache_lock;
 
-	/* Memory registration key pool */
-	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
+	/**
+	 * @brief	Returns the domain's memory registration key pool.
+	 */
+	inline nccl_ofi_idpool_t *get_mr_rkey_pool()
+	{
+		return mr_rkey_pool;
+	}
 
 	std::mutex domain_lock;
 
@@ -515,6 +520,111 @@ protected:
 	 * get_ep() miss.
 	 */
 	std::unordered_map<long, std::weak_ptr<nccl_net_ofi_ep_t>> ep_table;
+
+private:
+
+	/* Memory registration key pool */
+	nccl_ofi_idpool_t *mr_rkey_pool = nullptr;
+};
+
+
+/**
+ * Endpoint rail base - transport-neutral per-rail libfabric objects
+ *
+ * A rail is one NIC's worth of an endpoint. The members common to every
+ * transport are the rail index, its address vector, and its libfabric
+ * endpoint. The completion queue is intentionally NOT here: rdma keeps the
+ * cq in a separate cq_rail so a child (per-rComm) endpoint can share the
+ * parent lComm cq, while gin fuses its own cq into its rail. Each transport
+ * owns its cq placement; only {rail_id, av, ofi_ep} are shared.
+ */
+class endpoint_rail_t {
+public:
+	endpoint_rail_t() = default;
+
+	endpoint_rail_t(endpoint_rail_t &&) = default;
+	endpoint_rail_t &operator=(endpoint_rail_t &&) = default;
+
+	endpoint_rail_t(const endpoint_rail_t &) = delete;
+	endpoint_rail_t &operator=(const endpoint_rail_t &) = delete;
+
+	uint16_t rail_id = 0;
+
+	/* Address vector handle */
+	ofi_av_ptr av;
+
+	/* Local libfabric endpoint handle */
+	ofi_ep_ptr ofi_ep;
+};
+
+
+/**
+ * Endpoint base - transport-neutral endpoint abstraction
+ *
+ * Holds the parts of an endpoint common to every transport: the domain
+ * back-pointer, the endpoint lock, and the active flag. It carries NO net
+ * connection contract (no listen/connect/CM cq); those live on the net
+ * endpoint subclass. Both the net endpoint and the GIN endpoint are intended
+ * to subclass this neutral base as peers.
+ */
+class endpoint_t {
+public:
+	endpoint_t(std::shared_ptr<nccl_net_ofi_domain_t> domain);
+
+	virtual ~endpoint_t() = default;
+
+	/**
+	 * Get the endpoint lock. Guards ep_active and the transport's
+	 * per-endpoint OFI resources. Callers take it with a scoped lock; the
+	 * RETURN_CAPABILITY annotation lets thread-safety analysis track it
+	 * across the accessor.
+	 */
+	nccl_ofi_spinlock &get_ep_lock() RETURN_CAPABILITY(ep_lock)
+	{
+		return ep_lock;
+	}
+
+	/**
+	 * Whether the endpoint is still valid and usable. When a communicator
+	 * is closed with inflight requests the endpoint is marked inactive, so
+	 * future communicators do not use it. Caller is assumed to hold the
+	 * endpoint lock.
+	 */
+	bool is_active() const
+	{
+		return ep_active;
+	}
+
+	/**
+	 * Set the endpoint's active flag. Caller is assumed to hold the
+	 * endpoint lock.
+	 */
+	void set_active(bool active)
+	{
+		ep_active = active;
+	}
+
+	/**
+	 * Get reference to the back-pointed domain object associated with
+	 * this endpoint.
+	 */
+	inline nccl_net_ofi_domain_t &get_domain()
+	{
+		return *domain;
+	}
+
+protected:
+	/* Backpointer to the domain associated with this ep.
+	 * Holds a shared_ptr to keep the domain alive as long as
+	 * this endpoint exists. */
+	std::shared_ptr<nccl_net_ofi_domain_t> domain;
+
+	/* The endpoint lock. Guards ep_active and the transport's per-endpoint
+	 * OFI resources (CQs, endpoints, AVs). */
+	nccl_ofi_spinlock ep_lock;
+
+	/* Whether the endpoint is still valid and usable. Protected by ep_lock. */
+	bool ep_active = true;
 };
 
 
@@ -533,14 +643,13 @@ protected:
  * call to get_ep() or during initialization is left to the
  * implementation.
  */
-class nccl_net_ofi_ep_t : public std::enable_shared_from_this<nccl_net_ofi_ep_t> {
+class nccl_net_ofi_ep_t : public endpoint_t,
+			  public std::enable_shared_from_this<nccl_net_ofi_ep_t> {
 public:
 	/**
 	 * @brief	Default constructor.
-	 * 
-	 * Initialize resources associated with the endpoint base class.
-	 * Expectation is that this will be called by a transport's endpoint
-	 * constructor 
+	 *
+	 * Initialize the net endpoint; forwards to the neutral base.
 	 */
 	nccl_net_ofi_ep_t(std::shared_ptr<nccl_net_ofi_domain_t> domain);
 
@@ -584,20 +693,6 @@ public:
 	 */
 	virtual ofi_cq_ptr &get_ofi_cq_for_cm() = 0;
 
-	nccl_ofi_spinlock ep_lock;
-
-	/*
-	 * Boolean flag indicating whether the endpoint is still valid and usable
-	 *
-	 * When a communicator is closed with inflight requests, the endpoint is
-	 * marked inactive, preventing further use of communicators on the
-	 * endpoint. Transports should check the ep_active flag before using
-	 * OFI resources associated with the endpoint (CQs, endpoints, AVs)
-	 *
-	 * This flag is protected by ep_lock
-	 */
-	bool ep_active;
-
 	/**
 	 * Invalidate endpoint. Marks the endpoint as inactive and removes it from the
 	 * thread->ep map, so future communicators do not use this endpoint.
@@ -607,24 +702,9 @@ public:
 	virtual void invalidate();
 
 	/**
-	 * Get reference to the back-pointed net domain object associated with
-	 * this endpoint
-	 */
-	inline nccl_net_ofi_domain_t &get_domain()
-	{
-		return *domain;
-	}
-
-	/**
 	 * @brief	Virtual destructor.
 	 */
 	virtual ~nccl_net_ofi_ep_t() = default;
-
-protected:
-	/* Backpointer to the domain associated with this ep.
-	 * Holds a shared_ptr to keep the domain alive as long as
-	 * this endpoint exists. */
-	std::shared_ptr<nccl_net_ofi_domain_t> domain;
 };
 
 enum nccl_net_ofi_comm_type_t {

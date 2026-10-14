@@ -282,8 +282,8 @@ ncclResult_t nccl_ofi_gin_deregMrSym(void *collComm, void *mhandle)
 ncclResult_t nccl_ofi_gin_ginProgress(void *collComm)
 {
 	auto *gin_comm = static_cast<nccl_ofi_rdma_gin_put_comm *>(collComm);
-	std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
-	int ret = gin_comm->get_resources().progress();
+	std::lock_guard<nccl_ofi_spinlock> lock(gin_comm->get_ep_lock());
+	int ret = gin_comm->get_ep().progress();
 	if (OFI_UNLIKELY(ret != 0)) {
 		return nccl_net_ofi_retval_translate(ret);
 	}
@@ -316,7 +316,7 @@ ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 	   guarantees that last done push is visible to it. */
 	gin_comm->begin_closing();
 	while (true) {
-		std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
+		std::lock_guard<nccl_ofi_spinlock> lock(gin_comm->get_ep_lock());
 		/* Drain first so we both pump the worker toward zero and reap the
 		   final done entry in the iteration that observes the count at zero. */
 		ret = gin_comm->drain_gdrcopy_done_queue();
@@ -337,20 +337,20 @@ ncclResult_t nccl_ofi_gin_closeColl(void *collComm)
 	   reference this comm again. */
 	while (true) {
 		{
-			std::lock_guard<std::mutex> lock(gin_comm->get_ep_lock());
+			std::lock_guard<nccl_ofi_spinlock> lock(gin_comm->get_ep_lock());
 			if (gin_comm->has_outstanding_ack_sends()) {
-				ret = gin_comm->get_resources().progress();
+				ret = gin_comm->get_ep().progress();
 				if (OFI_UNLIKELY(ret != 0)) {
 					return nccl_net_ofi_retval_translate(ret);
 				}
 				continue;
 			}
-			gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
+			gin_comm->get_ep().remove_comm(gin_comm->get_local_comm_id());
 		}
 		/* Delete outside ep_lock: the comm may hold the last shared_ptr to the
-		   resources, so ~gin_comm can destroy gin_ep and with it the very
+		   endpoint, so ~gin_comm can destroy gin_ep and with it the very
 		   ep_lock we would otherwise still be holding. remove_comm above already
-		   unlinked the comm from the resources under the lock, so no CQ path can
+		   unlinked the comm from the endpoint under the lock, so no CQ path can
 		   reach it once the lock is dropped. */
 		delete gin_comm;
 		break;

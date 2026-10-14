@@ -1396,7 +1396,7 @@ public:
  * Endpoint rail encapsulates data of an endpoint for a
  * specific rail.
  */
-class nccl_net_ofi_rdma_ep_rail_t {
+class nccl_net_ofi_rdma_ep_rail_t : public endpoint_rail_t {
 public:
 	/* Default constructor */
 	nccl_net_ofi_rdma_ep_rail_t() = default;
@@ -1409,13 +1409,7 @@ public:
 	nccl_net_ofi_rdma_ep_rail_t(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
 	nccl_net_ofi_rdma_ep_rail_t& operator=(const nccl_net_ofi_rdma_ep_rail_t&) = delete;
 
-	uint16_t rail_id;
-
-	/* Address vector handle */
-	ofi_av_ptr av;
-
-	/* Local libfabric endpoint handle */
-	ofi_ep_ptr ofi_ep;
+	/* rail_id, av, ofi_ep inherited from endpoint_rail_t */
 
 	/* Name of local libfabric endpoint */
 	char local_ep_name[MAX_EP_ADDR];
