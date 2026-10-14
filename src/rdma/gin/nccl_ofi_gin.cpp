@@ -794,13 +794,13 @@ int nccl_ofi_rdma_gin_put_comm::iputSignal(uint64_t srcOff, nccl_ofi_gin_symm_mr
 				   does not write through a pooled pointer. */
 				write_reqs[rail_it] = nullptr;
 				get_resources().return_req_to_pool(write_req);
-				nccl_net_ofi_release_schedule(scheduler, schedule);
+				scheduler->release_schedule(schedule);
 				clear_write_reqs_pending_back_pointers(write_reqs);
 				get_resources().return_req_to_pool(req);
 				return ret;
 			}
 		}
-		nccl_net_ofi_release_schedule(scheduler, schedule);
+		scheduler->release_schedule(schedule);
 	} else {
 		/* Signal-only: no data write, inherently single rail (pin-eligible). */
 		rail_id = (pinned_rail_id >= 0)
@@ -943,14 +943,14 @@ int nccl_ofi_rdma_gin_put_comm::iget(uint64_t remoteOff,
 		} else if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("fi_read iget failed on rail %u: %d",
 				      xfer_info->rail_id, ret);
-			nccl_net_ofi_release_schedule(scheduler, schedule);
+			scheduler->release_schedule(schedule);
 			clear_read_reqs_pending_back_pointers(read_reqs);
 			get_resources().return_req_to_pool(iget_req);
 			return ret;
 		}
 	}
 
-	nccl_net_ofi_release_schedule(scheduler, schedule);
+	scheduler->release_schedule(schedule);
 
 	*request = iget_req;
 	return 0;
