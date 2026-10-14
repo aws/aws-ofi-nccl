@@ -132,13 +132,11 @@ static inline int set_schedule_by_threshold(nccl_net_ofi_threshold_scheduler *sc
 	return ret;
 }
 
-void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler_p,
-				   nccl_net_ofi_schedule_t *schedule)
+void nccl_net_ofi_scheduler::release_schedule(nccl_net_ofi_schedule_t *schedule)
 {
-	assert(scheduler_p != NULL);
-	assert(scheduler_p->schedule_fl != NULL);
+	assert(this->schedule_fl != NULL);
 
-	scheduler_p->schedule_fl->entry_free(schedule->elem);
+	this->schedule_fl->entry_free(schedule->elem);
 }
 
 /*
@@ -182,7 +180,7 @@ nccl_net_ofi_schedule_t *nccl_net_ofi_threshold_scheduler::get_schedule(size_t s
 	ret = set_schedule_by_threshold(this, size, num_rails, align,
 					schedule);
 	if (OFI_UNLIKELY(ret)) {
-		nccl_net_ofi_release_schedule(this, schedule);
+		this->release_schedule(schedule);
 		schedule = NULL;
 	}
 
