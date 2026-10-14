@@ -656,6 +656,10 @@ private:
 	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
 	int dev;
 
+	/* Whether signal updates should use PCIe BAR1 instead of the platform's
+	 * default GPU mapping. */
+	bool gdrcopy_pcie_mapping = false;
+
 	/* CUDA context of the thread that created this comm. Signal-segment
 	   discovery makes it current when it runs on a thread that has none
 	   (NCCL's GIN progress threads are bare std::threads). */
