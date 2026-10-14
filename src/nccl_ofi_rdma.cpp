@@ -1666,7 +1666,7 @@ int rdma_send_req::free(bool dec_inflight_reqs)
 	if (this->schedule) {
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)s_comm->ep.get();
 		assert(ep != NULL);
-		nccl_net_ofi_release_schedule(ep->scheduler, this->schedule);
+		ep->scheduler->release_schedule(this->schedule);
 		this->schedule = NULL;
 	}
 
@@ -1739,7 +1739,7 @@ int rdma_send_close_req::free(bool dec_inflight_reqs)
 	if (this->ctrl_schedule) {
 		nccl_net_ofi_rdma_ep_t *ep = (nccl_net_ofi_rdma_ep_t *)r_comm->ep.get();
 		assert(ep != NULL);
-		nccl_net_ofi_release_schedule(ep->scheduler, this->ctrl_schedule);
+		ep->scheduler->release_schedule(this->ctrl_schedule);
 		this->ctrl_schedule = NULL;
 	}
 
@@ -2588,7 +2588,7 @@ int rdma_recv_req::post()
 			NCCL_OFI_WARN(
 				"Invalid schedule for outgoing control message. Expected one rail, but got "
 				"%zu", schedule->num_xfer_infos);
-			nccl_net_ofi_release_schedule(scheduler, schedule);
+			scheduler->release_schedule(schedule);
 			return -EINVAL;
 		}
 		rail_id = schedule->rail_xfer_infos[0].rail_id;
@@ -2630,7 +2630,7 @@ int rdma_recv_req::post()
 	}
 
 	if (schedule) {
-		nccl_net_ofi_release_schedule(scheduler, schedule);
+		scheduler->release_schedule(schedule);
 	}
 	return rc;
 }

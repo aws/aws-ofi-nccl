@@ -74,6 +74,11 @@ public:
 	 */
 	virtual nccl_net_ofi_schedule_t *get_schedule(size_t size, int num_rails) = 0;
 
+	/*
+	 * @brief	Release schedule by returning it back to the scheduler
+	 */
+	void release_schedule(nccl_net_ofi_schedule_t *schedule);
+
 	/* Freelist of schedules */
 	nccl_ofi_freelist *schedule_fl;
 };
@@ -133,11 +138,5 @@ public:
 	 */
 	inline int get_num_stripes(size_t size, int num_rails);
 };
-
-/*
- * @brief	Release schedule by returning it back to the scheduler
- */
-void nccl_net_ofi_release_schedule(nccl_net_ofi_scheduler *scheduler,
-				   nccl_net_ofi_schedule_t *schedule);
 
 #endif // End NCCL_OFI_SCHEDULER_H_
