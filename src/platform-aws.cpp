@@ -218,12 +218,30 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		},
 	},
 	{
+		.name = PLATFORM_NAME_P6E_GB200,
+		.regex = "^p6e-gb200.*",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.efa_hw_comp_cntr = false,
+		.is_coherent_platform = true,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+		},
+	},
+	{
 		.name = "p-series",
 		/*
-		 * While the regex will match against P5 and later
-		 * instance families, we expect this to apply to
-		 * P6e-GB200 and later, due to previous entries to
-		 * match P5, P5e, P5en, and P6-B200.
+		 * While the regex will match P5 and later instance families,
+		 * earlier entries handle known platforms that need explicit
+		 * configuration. This catch-all applies to the remaining
+		 * p-series platforms.
 		 *
 		 * Note: Need to revisit NCCL_NETDEVS_POLICY when
 		 * platforms have different topology or major
@@ -401,6 +419,12 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 
 	cached_platform_data_ = get_platform_entry(platform_type, platform_data_list, platform_data_len);
 	return cached_platform_data_;
+}
+
+bool PlatformAWS::is_coherent_platform()
+{
+	const ec2_platform_data *platform_data = get_platform_data();
+	return platform_data != NULL && platform_data->is_coherent_platform;
 }
 
 

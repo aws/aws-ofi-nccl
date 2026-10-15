@@ -6,6 +6,7 @@
 
 #include <stdio.h>
 #include <string.h>
+#include <utility>
 
 #include "unit_test.h"
 #include "nccl_ofi.h"
@@ -84,6 +85,35 @@ static int check_gdaki_flags(void)
 	ret += check_gdaki_flag(platform_data_list, len, "p4d.24xlarge", false);
 	ret += check_gdaki_flag(platform_data_list, len, "trn2.48xlarge", false);
 	ret += check_gdaki_flag(platform_data_list, len, "p6e-gb200.36xlarge", false);
+
+	return ret;
+}
+
+static int check_coherent_platform_flags(void)
+{
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
+	size_t len;
+	int ret = 0;
+	TestablePlatformAWS platform;
+
+	platform_data_list = platform.get_platform_map(&len);
+
+	for (const auto &test : {
+		     std::pair<const char *, bool>{"p6e-gb200.36xlarge", true},
+		     std::pair<const char *, bool>{"p5en.48xlarge", false},
+		     std::pair<const char *, bool>{"p6-b300.48xlarge", false},
+		     std::pair<const char *, bool>{"p100.2048xlarge", false},
+	     }) {
+		const auto *entry = TestablePlatformAWS::get_platform_entry(
+			test.first, platform_data_list, len);
+		if (entry == NULL || entry->is_coherent_platform != test.second) {
+			printf("is_coherent_platform for %s: got %d, expected %d\n",
+			       test.first,
+			       entry == NULL ? -1 : (int)entry->is_coherent_platform,
+			       (int)test.second);
+			ret++;
+		}
+	}
 
 	return ret;
 }
@@ -169,7 +199,7 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p5en");
 	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p6-b200");
 	ret += check_value(platform_data_list, len, "p6-b300.48xlarge", "p6-b300");
-	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p6e-gb200");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
 	ret += check_value(platform_data_list, len, "g7e.8xlarge", "g7e.8xlarge");
@@ -229,6 +259,9 @@ int main(int argc, char *argv[]) {
 
 	/* verify the per-platform GDAKI hw-counter opt-in flags */
 	ret += check_gdaki_flags();
+
+	/* verify the CPU/GPU coherence declarations */
+	ret += check_coherent_platform_flags();
 
 	/* verify the per-platform NCCL_IB_HCA override */
 	ret += check_ib_hca();

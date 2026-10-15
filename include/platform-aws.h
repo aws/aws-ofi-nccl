@@ -36,6 +36,7 @@ public:
 	int config_endpoint(struct fi_info *info, struct fid_ep *ep) override;
 	void sort_rails(struct fi_info **info_list, size_t num_rails, size_t num_groups) override;
 	uint64_t device_get_guid(struct fi_info *info, int dev_id) override;
+	bool is_coherent_platform() override;
 	void log_cq_error(void *req_p, struct fid_cq *cq, struct fi_cq_err_entry *err_entry,
 			  const char *req_type) override;
 	int config_gdaki_domain(struct fid_domain *domain, struct fi_info *info) override;
@@ -54,6 +55,8 @@ protected:
 		 * Consulted by PlatformAWS::config_gdaki_domain(). Set per platform
 		 * row; false where the feature is not supported. */
 		bool efa_hw_comp_cntr;
+		/* True when the CPU and GPU share a coherent memory path. */
+		bool is_coherent_platform = false;
 		std::map<std::string, std::string> env;
 	};
 

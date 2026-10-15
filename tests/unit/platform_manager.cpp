@@ -45,6 +45,11 @@ static int test_default_platform_creation()
 		ret++;
 	}
 
+	if (platform->is_coherent_platform()) {
+		NCCL_OFI_WARN("Default platform must not assume CPU/GPU coherence");
+		ret++;
+	}
+
 	const char *provider_filter = nullptr;
 	if (platform->init(&provider_filter) != 0) {
 		NCCL_OFI_WARN("Default platform init failed");

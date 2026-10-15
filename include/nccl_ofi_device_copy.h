@@ -24,9 +24,16 @@ public:
 	virtual ~nccl_ofi_device_copy() = default;
 
 	/**
-	 * Register a region of device memory for copies to/from host memory
+	 * Register a region of device memory for copies to/from host memory.
+	 *
+	 * @param device_ptr: device memory pointer
+	 * @param size: size of the device memory region
+	 * @param pcie_mapping: request a PCIe BAR1 mapping rather than the
+	 *                      platform's default mapping
+	 * @param out_handle: returned registration handle
 	 */
-	virtual int register_region(void *device_ptr, size_t size, RegHandle* &out_handle) = 0;
+	virtual int register_region(void *device_ptr, size_t size, bool pcie_mapping,
+				    RegHandle* &out_handle) = 0;
 
 	/**
 	 * Copy memory from host to device memory. Device memory must have been
@@ -55,12 +62,11 @@ public:
 				     size_t size) = 0;
 
 	/**
-	 * On systems with multiple data paths between CPU and GPU (e.g., C2C
-	 * link on NVIDIA Grace Hopper), this property indicates that the device
-	 * copy implementation will force the use of the PCIe path when copying
-	 * device memory.
+	 * On systems with multiple data paths between CPU and GPU (for example,
+	 * an NVIDIA Grace system with C2C), report whether the implementation
+	 * can explicitly request the PCIe path.
 	 */
-	virtual bool forced_pcie_copy() = 0;
+	virtual bool supports_forced_pcie_copy() = 0;
 
 	/**
 	 * Deregister a previously registered region
