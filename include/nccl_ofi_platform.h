@@ -151,6 +151,14 @@ public:
 	{
 		return -FI_ENOSYS;
 	}
+
+	/**
+	 * @brief	Report whether the CPU and GPU share a coherent memory path
+	 *
+	 * Unknown platforms default to false so callers do not assume that an
+	 * alternate coherent path exists.
+	 */
+	virtual bool is_coherent_platform() { return false; }
 };
 
 using PlatformPtr = std::unique_ptr<Platform>;
