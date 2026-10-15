@@ -26,7 +26,7 @@ public:
 	PlatformAWS(nccl_ofi_topo_t* topo) {
 		if (topo == nullptr) {
 			NCCL_OFI_WARN("AWS platform priority: -1 (topo not set)");
-		} else if (nccl_ofi_topo_has_efa_ena_devices(topo)) {
+		} else if (topo->has_efa_ena_devices()) {
 			platform_priority = 100;
 		}
 	}
