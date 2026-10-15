@@ -20,6 +20,14 @@ connection-less reliable interface. This allows NCCL applications to take
 benefit of libfabric's transport layer services like reliable message support
 and operating system bypass.
 
+## Documentation
+
+Developer and architecture documentation lives in the [`doc/`](doc/) directory.
+Start with the [documentation index](doc/README.md), which links the
+architecture docs (overall operation, initialization, libfabric, the RDMA and
+send/recv protocols, the connection manager, completion/progress, topology, GIN,
+and the tuner) as well as the feature and operations guides.
+
 ## Getting Started
 
 The best way to build the plugin is to start with the latest [release
