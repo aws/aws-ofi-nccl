@@ -37,11 +37,12 @@ struct gin_connect_handle {
 
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
-				     nccl_net_ofi_recv_comm *r_comm_)
+				     nccl_net_ofi_recv_comm *r_comm_,
+				     volatile uint32_t *abort_flag_)
     : resources_sp(std::move(resources_arg)),
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       rank(rank_), nranks(nranks_),
-      ag_comm(s_comm_, r_comm_, rank_, nranks_)
+      ag_comm(s_comm_, r_comm_, rank_, nranks_, abort_flag_)
 {
 	auto &ep = get_resources().get_ep();
 
@@ -157,8 +158,41 @@ static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_
 	return 0;
 }
 
+/**
+ * Close whichever halves of the bootstrap ring were established before setup
+ * failed. Until the put_comm exists nothing owns these comms — its ag_comm
+ * member is what normally closes them — so bailing out of the establishment
+ * loop has to close them here or they leak.
+ */
+static void close_partial_bootstrap_ring(nccl_net_ofi_send_comm *s_comm,
+					 nccl_net_ofi_recv_comm *r_comm)
+{
+	if (s_comm != nullptr && s_comm->close() != 0) {
+		NCCL_OFI_WARN("Failed to close partially established bootstrap send comm");
+	}
+	if (r_comm != nullptr && r_comm->close() != 0) {
+		NCCL_OFI_WARN("Failed to close partially established bootstrap recv comm");
+	}
+}
+
+/**
+ * Tear down a put_comm whose setup failed after construction.
+ *
+ * The constructor registers the comm in the endpoint's comm table
+ * (set_comm()), and the destructor deliberately does not unlink it, because
+ * closeColl() does that under ep_lock before deleting. A setup failure has to
+ * do the same, or the table keeps a pointer to freed memory that the CQ path
+ * can still reach through get_comm(). Caller must hold ep_lock.
+ */
+static void destroy_partial_put_comm(nccl_ofi_rdma_gin_put_comm *gin_comm)
+{
+	gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
+	delete gin_comm;
+}
+
 int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-				      nccl_ofi_gin_put_comm_t **gin_comm_out)
+				      nccl_ofi_gin_put_comm_t **gin_comm_out,
+				      volatile uint32_t *abort_flag)
 {
 	int ret = 0;
 
@@ -177,12 +211,24 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	 *
 	 * The bootstrap ring will be used to exchange connection establishment
 	 * and memory registration metadata
+	 *
+	 * Both halves complete only once our ring neighbours arrive, so poll the
+	 * abort flag: a peer that never shows up would otherwise spin here
+	 * forever. This is the one place that cannot read the flag back off the
+	 * put_comm, which does not exist yet.
 	 */
 	while (s_comm == nullptr || r_comm == nullptr) {
+		if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+			NCCL_OFI_WARN("gin: connect() aborted establishing the bootstrap ring");
+			close_partial_bootstrap_ring(s_comm, r_comm);
+			return -ECANCELED;
+		}
+
 		if (s_comm == nullptr) {
 			ret = ep->connect(connect_handle, &s_comm, -1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error in bootstrap ring connect: %d", ret);
+				close_partial_bootstrap_ring(s_comm, r_comm);
 				return ret;
 			}
 		}
@@ -190,6 +236,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 			ret = l_comm->accept(&r_comm);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error in bootstrap ring accept: %d", ret);
+				close_partial_bootstrap_ring(s_comm, r_comm);
 				return ret;
 			}
 		}
@@ -200,7 +247,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
-		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm);
+		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm, abort_flag);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];
@@ -230,7 +277,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	ret = gin_comm->ag_comm.all_gather(all_handles.data(), sizeof(gin_connect_handle));
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to exchange connect metadata: %d", ret);
-		delete gin_comm;
+		destroy_partial_put_comm(gin_comm);
 		return ret;
 	}
 
@@ -248,7 +295,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 					       static_cast<uint32_t>(i),
 					       remote_rank_comm.address[r], gin_comm->rank_map[r]);
 			if (ret != 0) {
-				delete gin_comm;
+				destroy_partial_put_comm(gin_comm);
 				return ret;
 			}
 		}

@@ -42,24 +42,36 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 					reinterpret_cast<void **>(&rmhandle));
 	if (OFI_UNLIKELY(nret != ncclSuccess)) {
 		NCCL_OFI_WARN("bootstrap allgather recv reg failed");
-		return -EIO;
+		ret = -EIO;
+		goto dereg;
 	}
 
 	/**
 	 * The allgather is performed using a ring, using the net plugin's
 	 * send/recv functions
+	 *
+	 * Both wait loops below poll the communicator's abort flag. A peer that
+	 * dies or is aborted never completes its leg of the ring, so without the
+	 * check these loops spin forever; see nccl_ofi_gin_abort_requested().
 	 */
 	srank = rank;
 	for (size_t i = 0; i < nranks - 1; i++) {
 		rrank = (srank - 1 + nranks) % nranks;
 		tag = 0; /* ignored by plugin */
 		while (!rreq || !sreq) {
+			if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while posting (step %zu/%zu)",
+					      i, nranks - 1);
+				ret = -ECANCELED;
+				goto dereg;
+			}
+
 			if (!rreq) {
 				buf = ((char *)data) + (rrank * size);
 				ret = r_comm->recv(1, &buf, &size, &tag, &rmhandle, &rreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather irecv failed");
-					return ret;
+					goto dereg;
 				}
 			}
 
@@ -68,19 +80,26 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = s_comm->send(buf, size, tag, smhandle, &sreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather isend failed");
-					return ret;
+					goto dereg;
 				}
 			}
 		}
 
 		while (rreq || sreq) {
+			if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while waiting (step %zu/%zu)",
+					      i, nranks - 1);
+				ret = -ECANCELED;
+				goto dereg;
+			}
+
 			done = 0;
 			req_size = 0;
 			if (rreq) {
 				ret = rreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
-					return ret;
+					goto dereg;
 				}
 				if (done) {
 					done = 0;
@@ -91,7 +110,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = sreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
-					return ret;
+					goto dereg;
 				}
 				if (done) {
 					done = 0;
@@ -102,16 +121,28 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 		srank = rrank;
 	}
 
-	ret = nccl_net_ofi_deregMr(s_comm, smhandle);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("bootstrap allgather send dereg failed");
-		return -EIO;
+	/* Single exit for both the success and failure paths: every error return
+	 * above used to skip these deregistrations and leak both MRs, and the
+	 * abort checks add two more early exits. */
+dereg:
+	if (rmhandle != nullptr) {
+		ncclResult_t dret = nccl_net_ofi_deregMr(r_comm, rmhandle);
+		if (OFI_UNLIKELY(dret != ncclSuccess)) {
+			NCCL_OFI_WARN("bootstrap allgather recv dereg failed");
+			if (ret == 0) {
+				ret = -EIO;
+			}
+		}
 	}
 
-	ret = nccl_net_ofi_deregMr(r_comm, rmhandle);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("bootstrap allgather recv dereg failed");
-		return -EIO;
+	if (smhandle != nullptr) {
+		ncclResult_t dret = nccl_net_ofi_deregMr(s_comm, smhandle);
+		if (OFI_UNLIKELY(dret != ncclSuccess)) {
+			NCCL_OFI_WARN("bootstrap allgather send dereg failed");
+			if (ret == 0) {
+				ret = -EIO;
+			}
+		}
 	}
 
 	return ret;
