@@ -16,11 +16,6 @@
 #include <sys/mman.h>
 #include <ctype.h>
 
-#ifdef HAVE_RDMA_FI_EXT_EFA_H
-#ifdef HAVE_RDMA_FI_EXT_EFA_H
-#include <rdma/fi_ext_efa.h>
-#endif
-#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_assert.h"
 #include "nccl_ofi_environ.h"
