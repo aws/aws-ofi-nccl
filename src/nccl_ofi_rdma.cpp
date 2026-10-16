@@ -19,6 +19,9 @@
 #include <rdma/fi_ext_efa.h>
 #endif
 
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #if HAVE_CUDA
@@ -6716,21 +6719,13 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 static constexpr size_t rdma_ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
 							   sizeof(nccl_net_ofi_rdma_close_msg_t)});
 
-/* Max size of eager messages on an endpoint of the given device */
-static inline ssize_t rdma_eager_send_size(nccl_net_ofi_rdma_device_t *device)
-{
-	return device->eager_support ? ofi_nccl_eager_max_size() : 0;
-}
-
 /* Size of eager rx buffers on an endpoint of the given device */
 static inline ssize_t rdma_eager_rx_buff_size(nccl_net_ofi_rdma_device_t *device)
 {
-	ssize_t eager_send_size = rdma_eager_send_size(device);
-
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
 	   posting 0 byte rx buffers */
-	return (eager_send_size <= 0) ?
-		EAGER_RX_BUFFER_ALIGNMENT : eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
+	return (ofi_nccl_eager_max_size() <= 0) ?
+		EAGER_RX_BUFFER_ALIGNMENT : ofi_nccl_eager_max_size() + NCCL_OFI_EAGER_HEADER_SIZE;
 }
 
 /* TODO: the RX buffer code doesn't yet track and free posted RX
@@ -6785,7 +6780,7 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 	 * via the = {} initializers on the member declarations. */
 
 	this->ctrl_rx_buff_size = rdma_ctrl_rx_buff_size;
-	this->eager_send_size = rdma_eager_send_size(device);
+	this->eager_send_size = ofi_nccl_eager_max_size();
 	this->eager_rx_buff_size = rdma_eager_rx_buff_size(device);
 
 	ret = this->init_rail_ofi_resources(device, domain_arg.get());
@@ -6874,6 +6869,25 @@ int nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(nccl_net_ofi_rdma
 			      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
 		return fabric_result.error_code;
 	}
+
+#if HAVE_DECL_FI_EFA_FEATURE_OPS
+	int ret;
+
+	if (strcmp(rail_dev->info->fabric_attr->prov_name, "efa") == 0) {
+		struct fi_efa_feature_ops *feat_ops = NULL;
+		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
+				  (void **)&feat_ops, NULL);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			return ret;
+		} else if (!feat_ops->query("mixed_hmem_iov") && ofi_nccl_eager_max_size() > 0) {
+			NCCL_OFI_WARN("Eager messages requested and mixed_hmem_iov not supported.  Can not continue.");
+			return -ENOTSUP;
+		}
+	}
+#endif
+
 	rail_dev->fabric = std::move(fabric_result.resource);
 
 	return 0;
@@ -7053,29 +7067,6 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	}
 
 	/* The fabrics are created lazily on first use; see create_domain(). */
-
-	/* Verify support for eager messages */
-#if HAVE_DECL_FI_EFA_FEATURE_OPS
-	{ /* Scope block: C++ forbids goto past auto variable initialization */
-		auto fabric_result = nccl_ofi_ofiutils_fabric_create(this->device_rails[0].info);
-		if (OFI_UNLIKELY(fabric_result.is_failure())) {
-			NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
-				      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
-			ret = fabric_result.error_code;
-			throw std::runtime_error("Opening fabric provider for eager check failed");
-		}
-
-		struct fi_efa_feature_ops *feat_ops = NULL;
-		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
-				  (void **)&feat_ops, NULL);
-		if (ret != 0) {
-			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-		} else if (feat_ops->query("mixed_hmem_iov")) {
-			this->eager_support = true;
-		}
-	}
-#endif
 
 	/* NVTX domain */
 #if HAVE_NVTX_TRACING
