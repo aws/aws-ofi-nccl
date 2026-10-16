@@ -75,7 +75,7 @@ protected:
 
 	// Endpoint configuration functions
 	int validate_rdma_write(struct fid_ep *ep);
-	int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name, bool *have_ordering);
+	int configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name);
 	int configure_ep_max_msg_size(struct fid_ep *ep);
 	int configure_nvls_option();
 	int configure_tuner();
@@ -96,10 +96,6 @@ private:
 	// Platform data state
 	bool platform_data_init_ = false;
 	const ec2_platform_data *cached_platform_data_ = nullptr;
-
-	// Endpoint config state
-	bool nccl_proto_configured_ = false;
-	bool need_ordering_ = false;
 
 	// Priority for platform selection
 	int platform_priority = -1;
