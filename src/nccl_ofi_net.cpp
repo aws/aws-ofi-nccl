@@ -363,11 +363,18 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	device = plugin->get_device(getpid() % plugin->get_num_devices());
 
-	/* get the endpoint from the default domain, domain_key = 0 */
-	ep = device->get_ep(0, nccl_net_ofi_gettid());
-	if (ep == nullptr) {
-		goto exit;
+	// only need to create a dummy endpoint if we don't know GDR status
+	// (which should only happen with Libfabric 1.18 and earlier).  Early
+	// versions of Libfabric could report HMEM emulated with CUDA calls,
+	// which is no good for NCCL.
+	if (support_gdr == GDR_UNKNOWN) {
+		/* get the endpoint from the default domain, domain_key = 0 */
+		ep = device->get_ep(0, nccl_net_ofi_gettid());
+		if (ep == nullptr) {
+			goto exit;
+		}
 	}
+
 	ret = device->get_properties(&properties);
 	if (ret != 0) {
 		goto exit;
