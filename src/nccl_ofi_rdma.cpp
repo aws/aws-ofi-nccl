@@ -6849,6 +6849,13 @@ nccl_net_ofi_rdma_domain_t::nccl_net_ofi_rdma_domain_t(nccl_net_ofi_rdma_device_
 
 nccl_net_ofi_domain_t *nccl_net_ofi_rdma_device_t::create_domain(unsigned int domain_key)
 {
+	/* Create the device's fabrics lazily on first use (under the device lock). */
+	int ret = this->device_prepare_for_connection();
+	if (ret != 0) {
+		NCCL_OFI_WARN("Deferred fabric init failed for device %s: %s",
+			      this->name.c_str(), strerror(-ret));
+		return nullptr;
+	}
 
 	auto *domain = new nccl_net_ofi_rdma_domain_t(this, domain_key);
 
@@ -6876,6 +6883,9 @@ int nccl_net_ofi_rdma_device_t::device_prepare_for_connection()
 	int ret = 0;
 
 	for (auto& rail : this->device_rails) {
+		if (rail.fabric) {
+			continue;  /* already created */
+		}
 		ret = this->init_device_rail_ofi_resources(&rail);
 		if (ret != 0) {
 			return ret;
@@ -7040,13 +7050,7 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 		throw std::runtime_error("RDMA device constructor: device rail array creation failed");
 	}
 
-	/* Initialize libfabric resources of rdma device */
-	ret = this->device_prepare_for_connection();
-	if (ret != 0) {
-		NCCL_OFI_WARN("preparing for connection failed: %s",
-			      strerror(-ret));
-		throw std::runtime_error("RDMA device constructor: connection prep failed");
-	}
+	/* The fabrics are created lazily on first use; see create_domain(). */
 
 	/* NVTX domain */
 #if HAVE_NVTX_TRACING
