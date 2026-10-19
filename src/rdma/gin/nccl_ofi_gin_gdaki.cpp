@@ -1277,3 +1277,86 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
 	.finalize = nccl_ofi_gin_finalize
 };
+
+/* v15 GIN op-table. Three things changed from v14, and only the first one
+ * carries any behaviour for this backend:
+ *   - ncclGinProperties gains barrierOptions, the barrier algorithm the backend
+ *     wants NCCL to run;
+ *   - ncclGinConfig replaces rankStride with peerArray/peerArrayCount;
+ *   - connect() takes an abortFlag.
+ * NCCL probes the tables in the order v15, v14, v13 and uses the first it
+ * finds, so this one supersedes ncclGinPlugin_v14 above on NCCL 2.32.4+.
+ */
+
+static ncclResult_t nccl_ofi_gin_gdaki_getGinProperties_v15(ncclGinProperties_v15_t *ginProps)
+{
+	ginProps->supportsStrongSignals = false;
+	ginProps->supportsVASignals = false;
+	/* EFA completion counters are a fixed per-NIC resource (fi_info reports
+	 * cntr_cnt), and the default barrier spends one signal per peer per
+	 * barrier, so the per-context request grows with both the team size and
+	 * the barrier count until fi_enable() returns ENOMEM. Ask instead for the
+	 * barrier that spends two signals whatever the team size. This has to
+	 * agree with ncclGinApi_BarrierOptions<NCCL_NET_DEVICE_GIN_EFA_GDA> in
+	 * NCCL's device code, which already returns SIGNAL_EFFICIENT: NCCL sizes
+	 * the signals from what is reported here, while the kernel strides them by
+	 * what its device specialization returns. */
+	ginProps->barrierOptions = NCCL_GIN_BARRIER_SIGNAL_EFFICIENT;
+	return ncclSuccess;
+}
+
+static ncclResult_t nccl_ofi_gin_gdaki_connect_v15(void *ctx, void *handles[], int nranks, int rank,
+						   void *listenComm, void **collComm,
+						   volatile uint32_t *abortFlag)
+{
+	/* The endpoint-address allgather under nccl_ofi_gin_connect() has no
+	 * cancellation point to poll the flag from, so it is dropped here rather
+	 * than stored and ignored deeper in the stack. */
+	(void)abortFlag;
+	return nccl_ofi_gin_connect(ctx, handles, nranks, rank, listenComm, collComm);
+}
+
+static ncclResult_t nccl_ofi_gin_gdaki_createContext_v15(void *collComm, ncclGinConfig_v15_t *config,
+							 void **ginCtx,
+							 ncclNetDeviceHandle_v11_t **devHandle)
+{
+	if (config == nullptr) {
+		NCCL_OFI_WARN("gin GDAKI: createContext_v15 received NULL config");
+		return ncclInvalidArgument;
+	}
+
+	/* Every field this backend acts on is shared with v14, so hand it the v14
+	 * config and let it do the backendVersion check in one place. peerArray /
+	 * peerArrayCount name the peers NCCL wants connected; GDAKI connects the
+	 * whole communicator and so does not act on them, exactly as it did not
+	 * act on the rankStride they replace. */
+	ncclGinConfig_v14_t config_v14;
+	memset(&config_v14, 0, sizeof(config_v14));
+	config_v14.nSignals = config->nSignals;
+	config_v14.nCounters = config->nCounters;
+	config_v14.nContexts = config->nContexts;
+	config_v14.queueDepth = config->queueDepth;
+	config_v14.trafficClass = config->trafficClass;
+	config_v14.backendVersion = config->backendVersion;
+	return nccl_ofi_gin_gdaki_createContext_v14(collComm, &config_v14, ginCtx, devHandle);
+}
+
+NCCL_OFI_EXPORT_SYMBOL ncclGin_v15_t ncclGinPlugin_v15 = {
+	.name = "Libfabric_GDAKI",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getGinProperties = nccl_ofi_gin_gdaki_getGinProperties_v15,
+	.getProperties = nccl_ofi_gin_gdaki_get_properties,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_gdaki_connect_v15,
+	.createContext = nccl_ofi_gin_gdaki_createContext_v15,
+	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
+	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
+	.deregMrSym = nccl_ofi_gin_gdaki_deregMrSym,
+	.destroyContext = nccl_ofi_gin_gdaki_destroyContext,
+	.closeColl = nccl_ofi_gin_gdaki_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.ginProgress = nccl_ofi_gin_ginProgress,
+	.queryLastError = nccl_ofi_gin_gdaki_queryLastError,
+	.finalize = nccl_ofi_gin_finalize
+};
