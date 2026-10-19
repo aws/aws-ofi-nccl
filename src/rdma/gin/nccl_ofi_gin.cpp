@@ -37,11 +37,12 @@ struct gin_connect_handle {
 
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
 				     nccl_net_ofi_send_comm *s_comm_,
-				     nccl_net_ofi_recv_comm *r_comm_)
+				     nccl_net_ofi_recv_comm *r_comm_,
+				     volatile uint32_t *abort_flag_)
     : resources_sp(std::move(resources_arg)),
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       rank(rank_), nranks(nranks_),
-      ag_comm(s_comm_, r_comm_, rank_, nranks_)
+      ag_comm(s_comm_, r_comm_, rank_, nranks_, abort_flag_)
 {
 	auto &ep = get_resources().get_ep();
 
@@ -190,7 +191,8 @@ static void destroy_partial_put_comm(nccl_ofi_rdma_gin_put_comm *gin_comm)
 }
 
 int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-				      nccl_ofi_gin_put_comm_t **gin_comm_out)
+				      nccl_ofi_gin_put_comm_t **gin_comm_out,
+				      volatile uint32_t *abort_flag)
 {
 	int ret = 0;
 
@@ -209,8 +211,19 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	 *
 	 * The bootstrap ring will be used to exchange connection establishment
 	 * and memory registration metadata
+	 *
+	 * Both halves complete only once our ring neighbours arrive, so poll the
+	 * abort flag: a peer that never shows up would otherwise spin here
+	 * forever. This is the one place that cannot read the flag back off the
+	 * put_comm, which does not exist yet.
 	 */
 	while (s_comm == nullptr || r_comm == nullptr) {
+		if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+			NCCL_OFI_WARN("gin: connect() aborted establishing the bootstrap ring");
+			close_partial_bootstrap_ring(s_comm, r_comm);
+			return -ECANCELED;
+		}
+
 		if (s_comm == nullptr) {
 			ret = ep->connect(connect_handle, &s_comm, -1);
 			if (ret != 0) {
@@ -234,7 +247,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
-		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm);
+		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm, abort_flag);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];

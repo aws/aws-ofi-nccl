@@ -49,12 +49,23 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 	/**
 	 * The allgather is performed using a ring, using the net plugin's
 	 * send/recv functions
+	 *
+	 * Both wait loops below poll the communicator's abort flag. A peer that
+	 * dies or is aborted never completes its leg of the ring, so without the
+	 * check these loops spin forever; see nccl_ofi_gin_abort_requested().
 	 */
 	srank = rank;
 	for (size_t i = 0; i < nranks - 1; i++) {
 		rrank = (srank - 1 + nranks) % nranks;
 		tag = 0; /* ignored by plugin */
 		while (!rreq || !sreq) {
+			if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while posting (step %zu/%zu)",
+					      i, nranks - 1);
+				ret = -ECANCELED;
+				goto dereg;
+			}
+
 			if (!rreq) {
 				buf = ((char *)data) + (rrank * size);
 				ret = r_comm->recv(1, &buf, &size, &tag, &rmhandle, &rreq);
@@ -75,6 +86,13 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 		}
 
 		while (rreq || sreq) {
+			if (OFI_UNLIKELY(nccl_ofi_gin_abort_requested(abort_flag))) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while waiting (step %zu/%zu)",
+					      i, nranks - 1);
+				ret = -ECANCELED;
+				goto dereg;
+			}
+
 			done = 0;
 			req_size = 0;
 			if (rreq) {
@@ -104,7 +122,8 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 	}
 
 	/* Single exit for both the success and failure paths: every error return
-	 * above used to skip these deregistrations and leak both MRs. */
+	 * above used to skip these deregistrations and leak both MRs, and the
+	 * abort checks add two more early exits. */
 dereg:
 	if (rmhandle != nullptr) {
 		ncclResult_t dret = nccl_net_ofi_deregMr(r_comm, rmhandle);

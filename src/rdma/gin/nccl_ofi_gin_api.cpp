@@ -202,7 +202,8 @@ ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listen
 }
 
 ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
-					 void *listenComm, void **collComm)
+					 void *listenComm, void **collComm,
+					 volatile uint32_t *abortFlag)
 {
 	auto *gin_handles = reinterpret_cast<nccl_net_ofi_conn_handle_t **>(handles);
 	auto *gin_l_comm = static_cast<nccl_ofi_rdma_gin_listen_comm *>(listenComm);
@@ -211,13 +212,23 @@ ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int ra
 
 	try {
 		ret = gin_l_comm->connect(gin_handles, nranks, rank,
-					  reinterpret_cast<nccl_ofi_gin_put_comm_t **>(collComm));
+					  reinterpret_cast<nccl_ofi_gin_put_comm_t **>(collComm),
+					  abortFlag);
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in GIN connect: %s", e.what());
 		ret = -EINVAL;
 	}
 
 	return nccl_net_ofi_retval_translate(ret);
+}
+
+ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
+					 void *listenComm, void **collComm)
+{
+	/* Pre-v15 op tables have no abort flag. This is a separate overload
+	 * rather than a default argument because the tables bind it by function
+	 * pointer, and a default argument does not change a function's type. */
+	return nccl_ofi_gin_connect(ctx, handles, nranks, rank, listenComm, collComm, nullptr);
 }
 
 ncclResult_t nccl_ofi_gin_make_ckey(void *data, size_t size, uint64_t offset, int fd,
