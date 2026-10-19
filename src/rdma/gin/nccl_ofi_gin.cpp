@@ -13,6 +13,7 @@
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 #include "nccl_ofi_param.h"
+#include "nccl_ofi_topo.h"
 #include "nccl_ofi_tracepoint.h"
 
 #include <system_error>
@@ -44,6 +45,20 @@ nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_
       ag_comm(s_comm_, r_comm_, rank_, nranks_)
 {
 	auto &ep = get_resources().get_ep();
+
+	/* GDRCopy signal writes must use the path selected for this logical GIN
+	 * device. The GIN API does not expose NCCL's CUDA DMA-BUF mapping, so
+	 * NCCL must export symmetric buffers with a mapping compatible with this
+	 * path. Rail 0 is the representative NIC for the logical device's
+	 * topology. */
+	auto *device = ep.get_domain().get_device();
+	const nccl_ofi_topo_t *topo = device->plugin->get_topo();
+	int ret = nccl_ofi_topo_nic_gpu_share_pcie_switch(
+		topo, device->get_ofi_info(0), &selected_nic_uses_pcie);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to determine GDRCopy mapping: %d", ret);
+		throw std::runtime_error("Unable to determine GDRCopy mapping");
+	}
 
 	std::lock_guard scoped_ep_lock(ep.ep_lock);
 
@@ -1124,7 +1139,8 @@ int nccl_ofi_rdma_gin_put_comm::ensure_signal_seg(
 	nccl_ofi_device_copy::RegHandle *gdr = nullptr;
 	if (!is_host) {
 		ret = get_device_copy().register_region(
-			reinterpret_cast<void *>(pin_base), pin_len, gdr);
+			reinterpret_cast<void *>(pin_base), pin_len,
+			selected_nic_uses_pcie, gdr);
 		if (ret != 0) {
 			NCCL_OFI_WARN("GDRCopy segment pin failed for %p (len %zu): %d",
 				      reinterpret_cast<void *>(pin_base), pin_len, ret);

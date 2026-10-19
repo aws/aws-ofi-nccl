@@ -35,7 +35,8 @@ public:
 	/**
 	 * Device copy API implementation
 	 */
-	int register_region(void *device_ptr, size_t size, RegHandle* &out_handle) override;
+	int register_region(void *device_ptr, size_t size, bool pcie_mapping,
+			    RegHandle* &out_handle) override;
 
 	int copy_to_device(const void *host_ptr, const RegHandle &handle, size_t offset,
 			   size_t size) override;
@@ -43,7 +44,7 @@ public:
 	int copy_from_device(const RegHandle &handle, size_t offset, void *host_ptr,
 			     size_t size) override;
 
-	bool forced_pcie_copy() override;
+	bool supports_forced_pcie_copy() override;
 
 	int deregister_region(RegHandle *handle) override;
 
