@@ -145,9 +145,13 @@ int main(int argc, char *argv[])
 	OFINCCLCHECK(extGin->connect(ginCtx, handles_ptrs.data(), nranks, rank,
 				     listenComm, &collComm));
 
-	/* Request 1 signal endpoint. */
+	/* Request 1 signal endpoint, and 1 counter so that slot 0 fills both
+	 * roles: the validation below checks the sender's FI_WRITE counter as
+	 * well as the receiver's FI_REMOTE_WRITE counter, and a signal-only
+	 * slot has no FI_WRITE counter to report. */
 	test_nccl_gin_config_t ginConfig = {};
 	ginConfig.nSignals = 1;
+	ginConfig.nCounters = 1;
 	ginConfig.nContexts = 1;
 	ginConfig.queueDepth = 64;
 	ginConfig.trafficClass = -1;
