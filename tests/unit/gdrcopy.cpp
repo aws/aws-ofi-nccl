@@ -12,7 +12,7 @@
 #include "nccl_ofi_cuda.h"
 #include "nccl_ofi_gdrcopy.h"
 
-static int test_large_buffer(nccl_ofi_gdrcopy_ctx &gdr)
+static int test_large_buffer(nccl_ofi_gdrcopy_ctx &gdr, bool pcie_mapping)
 {
 	/* "Large" buffer */
 	constexpr size_t buff_size = 2*1024*1024UL; /* 2M */
@@ -27,7 +27,7 @@ static int test_large_buffer(nccl_ofi_gdrcopy_ctx &gdr)
 
 	/* Registration */
 	nccl_ofi_device_copy::RegHandle *handle;
-	ret = gdr.register_region(ptr, buff_size, handle);
+	ret = gdr.register_region(ptr, buff_size, pcie_mapping, handle);
 	if (ret != 0) {
 		fprintf(stderr, "register_region() failed: %d\n", ret);
 		return 1;
@@ -72,7 +72,7 @@ static int test_large_buffer(nccl_ofi_gdrcopy_ctx &gdr)
 	return ret;
 }
 
-static int test_small_buffer(nccl_ofi_gdrcopy_ctx &gdr)
+static int test_small_buffer(nccl_ofi_gdrcopy_ctx &gdr, bool pcie_mapping)
 {
 	/* "Small" buffer */
 	constexpr size_t buff_size = 10;
@@ -87,7 +87,7 @@ static int test_small_buffer(nccl_ofi_gdrcopy_ctx &gdr)
 
 	/* Registration */
 	nccl_ofi_device_copy::RegHandle *handle;
-	ret = gdr.register_region(ptr, buff_size, handle);
+	ret = gdr.register_region(ptr, buff_size, pcie_mapping, handle);
 	if (ret != 0) {
 		fprintf(stderr, "register_region() failed: %d\n", ret);
 		return 1;
@@ -175,16 +175,17 @@ int main(int argc, char *argv[])
 		return SKIP_TEST;
 	}
 
-	printf("Supports forced PCIe copy: %d\n", gdr->forced_pcie_copy());
+	bool supports_forced_pcie = gdr->supports_forced_pcie_copy();
+	printf("Supports forced PCIe copy: %d\n", supports_forced_pcie);
 
-	printf("Testing large buffer\n");
-	ret = test_large_buffer(*gdr);
+	printf("Testing large buffer with the default mapping\n");
+	ret = test_large_buffer(*gdr, false);
 	if (ret != 0) {
 		return ret;
 	}
 
-	printf("Testing small buffer\n");
-	ret = test_small_buffer(*gdr);
+	printf("Testing small buffer with a PCIe-requested mapping\n");
+	ret = test_small_buffer(*gdr, true);
 	if (ret != 0) {
 		return ret;
 	}

@@ -61,7 +61,7 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 	 * GIN requires GDRCopy 2.5+ for forced PCIe copy support. */
 	try {
 		nccl_ofi_device_copy &gdr = get_device_copy();
-		if (!gdr.forced_pcie_copy()) {
+		if (!gdr.supports_forced_pcie_copy()) {
 			NCCL_OFI_WARN("GIN requires GDRCopy 2.5+ for forced PCIe copy support");
 			return ncclInternalError;
 		}
