@@ -656,6 +656,10 @@ private:
 	std::unique_ptr<nccl_ofi_freelist, decltype(&freelist_deleter)> metadata_fl;
 	int dev;
 
+	/* Whether the selected logical GIN device reaches its associated GPU
+	 * through PCIe. */
+	bool selected_nic_uses_pcie = false;
+
 	/* CUDA context of the thread that created this comm. Signal-segment
 	   discovery makes it current when it runs on a thread that has none
 	   (NCCL's GIN progress threads are bare std::threads). */

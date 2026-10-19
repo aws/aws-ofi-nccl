@@ -12,6 +12,10 @@
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_math.h"
 
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
+
 #if HAVE_GDRCOPY
 
 #include <gdrapi.h>
@@ -105,12 +109,40 @@ nccl_ofi_gdrcopy_ctx::~nccl_ofi_gdrcopy_ctx()
 	delete pimpl;
 }
 
-int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, RegHandle* &out_handle)
+int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pcie_mapping,
+					  RegHandle* &out_handle)
 {
-	auto handle = new gdrcopy_RegHandle { };
-
-	gdr_mh_t mh;
 	int ret = 0;
+	bool coherent = false;
+
+#if HAVE_CUDA
+	/* A C2C-selected NIC always uses the default mapping. When the selected
+	 * NIC path is PCIe, query the GPU that owns this pointer to determine
+	 * whether its default mapping must be overridden. */
+	if (pcie_mapping) {
+		ret = nccl_net_ofi_gpu_is_coherent_for_addr(device_ptr, coherent);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unable to determine GDRCopy mapping for %p: %d",
+				      device_ptr, ret);
+			return ret;
+		}
+	}
+#else
+	if (pcie_mapping) {
+		NCCL_OFI_WARN("A PCIe GDRCopy mapping requires CUDA support");
+		return -ENOTSUP;
+	}
+#endif
+
+	const bool force_pcie = pcie_mapping && coherent;
+
+	if (force_pcie && !supports_forced_pcie_copy()) {
+		NCCL_OFI_WARN("GDRCopy cannot request the required PCIe mapping");
+		return -ENOTSUP;
+	}
+
+	auto handle = new gdrcopy_RegHandle { };
+	gdr_mh_t mh;
 
 	uintptr_t data_uint = reinterpret_cast<uintptr_t>(device_ptr);
 	uintptr_t regbgn = NCCL_OFI_ROUND_DOWN(data_uint, GPU_PAGE_SIZE);
@@ -119,21 +151,16 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, RegHand
 
 #if HAVE_DECL_GDR_PIN_BUFFER_V2
 	if (pimpl->gdr_pin_buffer_v2_fn != nullptr) {
-		/* First try to force PCIE mapping. If that fails (e.g., on
-		   systems without a C2C), fall back to default mapping. */
-		uint32_t flags = GDR_PIN_FLAG_FORCE_PCIE;
+		const uint32_t flags = force_pcie ? GDR_PIN_FLAG_FORCE_PCIE : GDR_PIN_FLAG_DEFAULT;
 		ret = pimpl->gdr_pin_buffer_v2_fn(pimpl->gdr, regbgn, handle->gdr_reglen,
 						  flags, &mh);
-		if (ret != 0) {
-			flags = 0;
-			ret = pimpl->gdr_pin_buffer_v2_fn(pimpl->gdr, regbgn,
-							  handle->gdr_reglen, flags, &mh);
-		}
 	} else {
-		ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn, handle->gdr_reglen, 0, 0, &mh);
+		ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn, handle->gdr_reglen,
+						 0, 0, &mh);
 	}
 #else
-	ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn, handle->gdr_reglen, 0, 0, &mh);
+	ret = pimpl->gdr_pin_buffer_fn(pimpl->gdr, regbgn, handle->gdr_reglen,
+					 0, 0, &mh);
 #endif
 	if (ret != 0) {
 		NCCL_OFI_WARN("gdr_pin_buffer failed: %d", ret);
@@ -205,13 +232,13 @@ int nccl_ofi_gdrcopy_ctx::get_version(uint32_t *major, uint32_t *minor)
 	return 0;
 }
 
-bool nccl_ofi_gdrcopy_ctx::forced_pcie_copy()
+bool nccl_ofi_gdrcopy_ctx::supports_forced_pcie_copy()
 {
-	uint32_t major, minor;
-	/**
-	 * GDRCopy supports forced PCIe copy since 2.5
-	 */
-	return (get_version(&major, &minor) == 0 && (major > 2 || (major == 2 && minor >= 5)));
+#if HAVE_DECL_GDR_PIN_BUFFER_V2
+	return pimpl->gdr_pin_buffer_v2_fn != nullptr;
+#else
+	return false;
+#endif
 }
 
 int nccl_ofi_gdrcopy_ctx::deregister_region(RegHandle *handle)
@@ -255,7 +282,8 @@ nccl_ofi_gdrcopy_ctx::~nccl_ofi_gdrcopy_ctx()
 {
 }
 
-int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, RegHandle* &out_handle)
+int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pcie_mapping,
+					  RegHandle* &out_handle)
 {
 	return -ENOTSUP;
 }
@@ -272,7 +300,7 @@ int nccl_ofi_gdrcopy_ctx::copy_from_device(const RegHandle &handle, size_t offse
 	return -ENOTSUP;
 }
 
-bool nccl_ofi_gdrcopy_ctx::forced_pcie_copy()
+bool nccl_ofi_gdrcopy_ctx::supports_forced_pcie_copy()
 {
 	return false;
 }
