@@ -42,7 +42,8 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 					reinterpret_cast<void **>(&rmhandle));
 	if (OFI_UNLIKELY(nret != ncclSuccess)) {
 		NCCL_OFI_WARN("bootstrap allgather recv reg failed");
-		return -EIO;
+		ret = -EIO;
+		goto dereg;
 	}
 
 	/**
@@ -59,7 +60,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = r_comm->recv(1, &buf, &size, &tag, &rmhandle, &rreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather irecv failed");
-					return ret;
+					goto dereg;
 				}
 			}
 
@@ -68,7 +69,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = s_comm->send(buf, size, tag, smhandle, &sreq);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather isend failed");
-					return ret;
+					goto dereg;
 				}
 			}
 		}
@@ -80,7 +81,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = rreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
-					return ret;
+					goto dereg;
 				}
 				if (done) {
 					done = 0;
@@ -91,7 +92,7 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 				ret = sreq->test(&done, &req_size);
 				if (OFI_UNLIKELY(ret != 0)) {
 					NCCL_OFI_WARN("bootstrap allgather test failed");
-					return ret;
+					goto dereg;
 				}
 				if (done) {
 					done = 0;
@@ -102,16 +103,27 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 		srank = rrank;
 	}
 
-	ret = nccl_net_ofi_deregMr(s_comm, smhandle);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("bootstrap allgather send dereg failed");
-		return -EIO;
+	/* Single exit for both the success and failure paths: every error return
+	 * above used to skip these deregistrations and leak both MRs. */
+dereg:
+	if (rmhandle != nullptr) {
+		ncclResult_t dret = nccl_net_ofi_deregMr(r_comm, rmhandle);
+		if (OFI_UNLIKELY(dret != ncclSuccess)) {
+			NCCL_OFI_WARN("bootstrap allgather recv dereg failed");
+			if (ret == 0) {
+				ret = -EIO;
+			}
+		}
 	}
 
-	ret = nccl_net_ofi_deregMr(r_comm, rmhandle);
-	if (ret != ncclSuccess) {
-		NCCL_OFI_WARN("bootstrap allgather recv dereg failed");
-		return -EIO;
+	if (smhandle != nullptr) {
+		ncclResult_t dret = nccl_net_ofi_deregMr(s_comm, smhandle);
+		if (OFI_UNLIKELY(dret != ncclSuccess)) {
+			NCCL_OFI_WARN("bootstrap allgather send dereg failed");
+			if (ret == 0) {
+				ret = -EIO;
+			}
+		}
 	}
 
 	return ret;
