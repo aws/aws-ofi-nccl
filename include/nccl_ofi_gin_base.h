@@ -58,7 +58,8 @@ public:
 
 	virtual int connect(nccl_net_ofi_conn_handle_t *handles[],
 			    int nranks, int rank,
-			    nccl_ofi_gin_put_comm_t **put_comm_out) = 0;
+			    nccl_ofi_gin_put_comm_t **put_comm_out,
+			    volatile uint32_t *abort_flag) = 0;
 };
 
 /**
