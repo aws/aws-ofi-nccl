@@ -4,6 +4,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <climits>
 #include <deque>
 #include <stdexcept>
 
@@ -380,6 +381,12 @@ static int set_mr_req_attr(uint64_t mr_key,
 }
 
 
+/* Bit 14 distinguishes a combined NCCL plane ID from physical plane IDs. */
+static constexpr int NCCL_OFI_RDMA_PLANE_MAX_INDEX = 14;
+static constexpr int NCCL_OFI_RDMA_PLANE_VIRTUAL_BIT =
+	1 << NCCL_OFI_RDMA_PLANE_MAX_INDEX;
+
+
 /*
  * @brief	Calculate length of libfabric NIC info list
  */
@@ -402,22 +409,48 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 	const nccl_net_ofi_rdma_plugin_t *plugin_ptr = this->rdma_device_get_plugin();
 	assert(plugin_ptr != nullptr);
 
+	if (this->device_ids.empty() ||
+	    this->device_ids.size() > NCCL_OFI_MAX_DEVS_PER_NIC) {
+		NCCL_OFI_WARN("Invalid device ID list for device %d", this->dev_id);
+		return -EINVAL;
+	}
+
 	/* Retrieve NIC properties of first rail */
 	struct fi_info *info = this->device_rails[0].info;
-	size_t num_devices = plugin_ptr->get_num_devices();
+	size_t num_devices = plugin_ptr->get_physical_device_count();
 
-	ret = plugin_ptr->nccl_net_ofi_info_properties(info, this->dev_id, num_devices, props);
+	ret = plugin_ptr->nccl_net_ofi_info_properties(
+		info, this->dev_id, static_cast<int>(num_devices), props);
 
-	/* Scale speed by the total number of rails. Assume that all
-	 * reails have the same speed. */
+	/* Scale speed by this device's physical members. */
 	if (ret == 0) {
-		props->port_speed *= plugin_ptr->get_topo()->max_group_size;
+		props->port_speed *= this->num_rails;
+		props->rail_id = this->nccl_rail_id;
+		props->plane_id = this->nccl_plane_id;
+		props->num_devices = static_cast<int>(this->device_ids.size());
+		for (size_t i = 0; i < this->device_ids.size(); ++i) {
+			props->device_ids[i] = this->device_ids[i];
+		}
+		/* Match NCCL's virtual-NIC model by inheriting the first
+		 * physical member's stable identity. */
+		auto *first_device = plugin_ptr->get_device(this->device_ids[0]);
+		if (first_device == nullptr) {
+			return -EINVAL;
+		}
+		props->guid = first_device->guid;
+		if (!this->combined_device_name.empty()) {
+			free(props->name);
+			props->name = strdup(this->combined_device_name.c_str());
+			if (props->name == nullptr) {
+				return -ENOMEM;
+			}
+		}
 		static_assert(NCCL_OFI_RDMA_COMM_ID_BITS < 31,
-					  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
+				  "NCCL_OFI_RDMA_COMM_ID_BITS must be less than 31 so max_communicators fits in an integer");
 		static_assert(NCCL_OFI_RDMA_SEQ_BITS + NCCL_OFI_RDMA_COMM_ID_BITS + NCCL_OFI_RDMA_RECV_IDX_BITS + NUM_NUM_SEG_BITS == 32,
-					  "Immediate data fields must sum to 32 bits");
+				  "Immediate data fields must sum to 32 bits");
 		static_assert(NCCL_OFI_MAX_RECVS <= (1 << NCCL_OFI_RDMA_RECV_IDX_BITS),
-					  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
+				  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
 		this->eager_support = props->eager_support;
 	} else {
@@ -6970,8 +7003,17 @@ nccl_net_ofi_rdma_device_t::~nccl_net_ofi_rdma_device_t()
 nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin_arg,
 							int device_id,
 							struct fi_info *info_list,
-							const nccl_ofi_topo_t *topo)
+							const nccl_ofi_topo_t *topo,
+							bool apply_force_num_rails,
+							int rail_id_arg,
+							int plane_id_arg,
+							std::vector<int> device_ids_arg,
+							std::string combined_device_name_arg)
 	: nccl_net_ofi_device_t(plugin_arg, device_id, info_list),
+	  nccl_rail_id(rail_id_arg),
+	  nccl_plane_id(plane_id_arg),
+	  device_ids(std::move(device_ids_arg)),
+	  combined_device_name(std::move(combined_device_name_arg)),
 	  num_comm_ids(static_cast<uint32_t>(NCCL_OFI_RDMA_MAX_COMMS)),
 	  comm_idpool(num_comm_ids),
 	  comms(NCCL_OFI_RDMA_MAX_COMMS, nullptr)
@@ -6979,6 +7021,10 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 {
 	int ret = 0;
 	size_t length = 0, target_length;
+
+	if (this->device_ids.empty()) {
+		this->device_ids.push_back(device_id);
+	}
 
 	/* at this point, we can safely call the destructor to clean
 	 * up */
@@ -6996,7 +7042,7 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	 * messages on the same NIC before moving to the next NIC.
 	 */
 	length = ofi_info_list_length(info_list);
-	target_length = ofi_nccl_force_num_rails();
+	target_length = apply_force_num_rails ? ofi_nccl_force_num_rails() : 0;
 	if (target_length != 0) {
 		size_t original_length = length;
 		if (length > target_length) {
@@ -7205,7 +7251,7 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 	nccl_ofi_topo_data_iterator_t data_iter;
 	int ret;
 
-	if (this->topo->max_group_size > 1) {
+	if (!nccl_net_ofi_use_rail_aware_fusion() && this->topo->max_group_size > 1) {
 		ret = write_topo_file(this->topo);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Failed to write NCCL topology file");
@@ -7213,47 +7259,97 @@ int nccl_net_ofi_rdma_plugin_t::complete_init()
 		}
 	}
 
-	/* Initialize user data iterator */
 	ret = nccl_ofi_topo_set_to_begin(this->topo, &data_iter);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to set iterator to begin of user data vector");
 		return ret;
 	}
 
-	/* Allocate and initialize nccl_net devices */
-	for (size_t dev_id = 0; dev_id != this->get_num_devices(); ++dev_id) {
-		struct fi_info *info_list;
+	/* Legacy mode keeps each topology group as one NCCL device. */
+	if (!nccl_net_ofi_use_rail_aware_fusion()) {
+		for (size_t dev_id = 0; dev_id != this->get_num_devices(); ++dev_id) {
+			struct fi_info *info_list = nccl_ofi_topo_next_info_list(&data_iter);
+			if (!info_list) {
+				NCCL_OFI_WARN("Unable to retrieve next NIC info list from topology");
+				return -EINVAL;
+			}
 
-		/* Retrieve NIC info list from topology */
-		info_list = nccl_ofi_topo_next_info_list(&data_iter);
-		/* Verify NIC info list from topology */
-		if (!info_list) {
-			NCCL_OFI_WARN("Unable to retrieve next NIC info list from topology");
-			return -EINVAL;
+			auto *device = new nccl_net_ofi_rdma_device_t(
+				this, static_cast<int>(dev_id), info_list, this->topo);
+			ret = this->assign_device(dev_id, device);
+			if (ret != 0) {
+				NCCL_OFI_WARN("Assigning device %zu failed", dev_id);
+				return ret;
+			}
 		}
-
-		/* Allocate device */
-		auto *device = new nccl_net_ofi_rdma_device_t(this,
-							      static_cast<int>(dev_id),
-							      info_list,
-							      this->topo);
-
-		ret = this->assign_device(dev_id, device);
-		if (ret != 0) {
-			NCCL_OFI_WARN("Assigning device %ld failed", dev_id);
-			return ret;
-		}
+		return 0;
 	}
 
+	/*
+	 * Expose each NIC as a separate NCCL device. The existing topology
+	 * group index becomes its NCCL rail ID, and its position in that group
+	 * becomes its NCCL plane ID. NCCL can then recreate the group through
+	 * makeVDevice().
+	 */
+	size_t dev_id = 0;
+	int rail_id = 0;
+	struct fi_info *info_list;
+	while ((info_list = nccl_ofi_topo_next_info_list(&data_iter)) != nullptr) {
+		if (rail_id > INT16_MAX) {
+			NCCL_OFI_WARN("Rail model supports at most %d rail IDs", INT16_MAX + 1);
+			return -E2BIG;
+		}
+
+		int plane_id = 0;
+		for (struct fi_info *info = info_list; info != nullptr;
+		     info = info->next, ++plane_id, ++dev_id) {
+			if (plane_id >= NCCL_OFI_RDMA_PLANE_MAX_INDEX) {
+				NCCL_OFI_WARN("Rail %d has too many planes", rail_id);
+				return -E2BIG;
+			}
+
+			ofi_info_ptr single_info(fi_dupinfo(info));
+			if (!single_info) {
+				return -ENOMEM;
+			}
+			single_info->next = nullptr;
+
+			std::unique_ptr<nccl_net_ofi_device_t> device(
+				new nccl_net_ofi_rdma_device_t(
+					this, static_cast<int>(dev_id), single_info.get(),
+					this->topo, /*apply_force_num_rails=*/false,
+					rail_id, plane_id,
+					std::vector<int>{static_cast<int>(dev_id)}));
+
+			ret = this->assign_device(dev_id, device.get());
+			if (ret != 0) {
+				NCCL_OFI_WARN("Assigning physical device %zu failed", dev_id);
+				return ret;
+			}
+			device.release();
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "Rail model physical device %zu: rail=%d plane=%d",
+				      dev_id, rail_id, plane_id);
+		}
+		++rail_id;
+	}
+
+	if (dev_id != this->physical_device_count) {
+		NCCL_OFI_WARN("Expected %zu physical devices but initialized %zu",
+			      this->physical_device_count, dev_id);
+		return -EINVAL;
+	}
 	return 0;
 }
 
 
-nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo)
+nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(
+	struct fi_info *provider_list, nccl_ofi_topo_t *global_topo)
 	: nccl_net_ofi_plugin_t(global_topo)
 {
 	int ret = 0;
 	int num_devices = 0;
+	size_t device_count;
 
 	/* Use topology parameter directly; the caller sets plugin->topo
 	 * to a non-owning pointer after construction. */
@@ -7286,13 +7382,181 @@ nccl_net_ofi_rdma_plugin_t::nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_
 		throw std::runtime_error("rdma plugin constructor: invalid number of devices");
 	}
 
-	/* Properly resize the empty p_devs vector with the derived number of Libfabric providers */
-	this->p_devs.resize(num_devices);
+	/* Legacy mode allocates one entry per topology group. Rail-aware
+	 * fusion allocates one entry per NIC before NCCL combines them. */
+	device_count = static_cast<size_t>(num_devices);
+	if (nccl_net_ofi_use_rail_aware_fusion()) {
+		nccl_ofi_topo_data_iterator_t data_iter;
+		ret = nccl_ofi_topo_set_to_begin(global_topo, &data_iter);
+		if (ret != 0) {
+			throw std::runtime_error("rdma plugin constructor: failed to iterate topology");
+		}
+		device_count = 0;
+		struct fi_info *info_list;
+		while ((info_list = nccl_ofi_topo_next_info_list(&data_iter)) != nullptr) {
+			device_count += ofi_info_list_length(info_list);
+		}
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Rail-aware fusion enabled: exposing %zu physical devices",
+			      device_count);
+	}
+
+	this->physical_device_count = device_count;
+	this->p_devs.resize(device_count);
 
 	/* TODO: we should probably have an rdma_plugin object and put globals
 	   such as these there. */
 	s_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_send_comm*>;
 	r_comm_cleanup_list = new std::deque<nccl_net_ofi_rdma_recv_comm*>;
+}
+
+
+int nccl_net_ofi_rdma_plugin_t::make_vdevice(int *device_index,
+					      int num_devices,
+					      const int *device_ids_arg)
+{
+	if (!nccl_net_ofi_use_rail_aware_fusion()) {
+		return -ENOTSUP;
+	}
+	if (device_index == nullptr || device_ids_arg == nullptr ||
+	    num_devices < 2 || num_devices > MAX_NUM_RAILS ||
+	    num_devices > NCCL_OFI_MAX_DEVS_PER_NIC) {
+		NCCL_OFI_WARN("Invalid virtual device member count %d", num_devices);
+		return -EINVAL;
+	}
+
+	std::lock_guard<std::mutex> lock(this->vdevice_mutex);
+	try {
+		/* Put members in plane order so equivalent requests share one
+		 * cache key and the RDMA scheduler sees a stable NIC order. */
+		std::vector<std::pair<int, int>> ordered_members;
+		ordered_members.reserve(num_devices);
+		for (int i = 0; i < num_devices; ++i) {
+			int member = device_ids_arg[i];
+			if (member < 0 ||
+			    static_cast<size_t>(member) >= this->physical_device_count) {
+				NCCL_OFI_WARN("Virtual device references non-physical device %d",
+					      member);
+				return -EINVAL;
+			}
+			auto *physical = static_cast<nccl_net_ofi_rdma_device_t *>(
+				this->get_device(member));
+			if (physical == nullptr) {
+				NCCL_OFI_WARN("Virtual device references unavailable device %d",
+					      member);
+				return -EINVAL;
+			}
+			ordered_members.emplace_back(physical->get_plane_id(), member);
+		}
+		std::sort(ordered_members.begin(), ordered_members.end());
+
+		std::vector<int> members;
+		members.reserve(num_devices);
+		for (const auto &entry : ordered_members) {
+			members.push_back(entry.second);
+		}
+		if (std::adjacent_find(members.begin(), members.end()) != members.end()) {
+			NCCL_OFI_WARN("Virtual device contains a duplicate physical device");
+			return -EINVAL;
+		}
+
+		/* Repeated requests for the same combination return the existing
+		 * device index instead of creating duplicate plugin state. */
+		for (const auto &entry : this->vdevice_cache) {
+			if (entry.first == members) {
+				*device_index = entry.second;
+				return 0;
+			}
+		}
+
+		/* Verify that all members share one NCCL rail while building the
+		 * provider list, combined name, and NCCL plane ID. */
+		int rail_id = -1;
+		int virtual_plane = NCCL_OFI_RDMA_PLANE_VIRTUAL_BIT;
+		ofi_info_ptr info_list;
+		struct fi_info *info_tail = nullptr;
+		std::string name;
+		for (int member : members) {
+			auto *physical = static_cast<nccl_net_ofi_rdma_device_t *>(
+				this->get_device(member));
+			if (physical == nullptr) {
+				return -EINVAL;
+			}
+			if (rail_id == -1) {
+				rail_id = physical->get_rail_id();
+			}
+			if (physical->get_rail_id() != rail_id ||
+			    physical->get_plane_id() < 0 ||
+			    physical->get_plane_id() >= NCCL_OFI_RDMA_PLANE_MAX_INDEX) {
+				NCCL_OFI_WARN("Virtual device members do not share one valid rail");
+				return -EINVAL;
+			}
+			virtual_plane |= 1 << physical->get_plane_id();
+
+			struct fi_info *info = physical->get_ofi_info(0);
+			struct fi_info *copy = fi_dupinfo(info);
+			if (copy == nullptr) {
+				return -ENOMEM;
+			}
+			copy->next = nullptr;
+			if (!info_list) {
+				info_list.reset(copy);
+			} else {
+				info_tail->next = copy;
+			}
+			info_tail = copy;
+
+			const char *member_name = nullptr;
+			if (info->nic != nullptr && info->nic->device_attr != nullptr) {
+				member_name = info->nic->device_attr->name;
+			}
+			if (member_name == nullptr && info->domain_attr != nullptr) {
+				member_name = info->domain_attr->name;
+			}
+			if (member_name == nullptr) {
+				member_name = "ofi";
+			}
+			if (!name.empty()) {
+				name += "+";
+			}
+			name += member_name;
+		}
+
+		/* Reuse the normal RDMA device implementation so fusion changes
+		 * device construction without introducing another data path. */
+		int candidate_index = static_cast<int>(this->get_num_devices());
+		std::unique_ptr<nccl_net_ofi_device_t> device(
+			new nccl_net_ofi_rdma_device_t(
+				this, candidate_index, info_list.get(), this->topo,
+				/*apply_force_num_rails=*/false, rail_id, virtual_plane,
+				members, name));
+
+		/* Allocate the cache entry before appending the device so no
+		 * throwing operation remains after the device is published. */
+		this->vdevice_cache.emplace_back(members, -1);
+		int new_index;
+		try {
+			this->append_device(new_index, device.get());
+		} catch (...) {
+			this->vdevice_cache.pop_back();
+			throw;
+		}
+		assert(new_index == candidate_index);
+		this->vdevice_cache.back().second = new_index;
+		device.release();
+		*device_index = new_index;
+
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Created NCCL virtual device %d (%s): rail=%d plane=0x%x ndevs=%d",
+			      new_index, name.c_str(), rail_id, virtual_plane, num_devices);
+		return 0;
+	} catch (const std::bad_alloc &) {
+		NCCL_OFI_WARN("Allocating an NCCL virtual device failed");
+		return -ENOMEM;
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("Creating an NCCL virtual device failed: %s", e.what());
+		return -EINVAL;
+	}
 }
 
 

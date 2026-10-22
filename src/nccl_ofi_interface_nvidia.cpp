@@ -10,6 +10,10 @@
 #include "nccl_ofi.h"
 #include "nccl_ofi_api.h"
 
+static ncclResult_t makeVDevice_v12(int *device_index,
+				    ncclNetVDeviceProps_v12_t *props);
+extern "C" ncclNet_v12_t ncclNetPlugin_v12;
+
 // With ncclNet_v11_t the NCCL core may initialize network plugin multiple times per
 // new NCCL API communicator. However, our current plugin implementation assumes the plugin
 // is initialized only once. The reference counter makes sure the plugin internally initializes
@@ -604,7 +608,12 @@ static ncclResult_t init_v12(void **ctx, uint64_t commId, ncclNetCommConfig_v12_
 	*ctx = net_config;
 
 	if (netRefCount++ > 0) return ncclSuccess;
-	return nccl_net_ofi_init(logFunction);
+	ncclNetPlugin_v12.makeVDevice = nullptr;
+	ncclResult_t ret = nccl_net_ofi_init(logFunction, true);
+	if (ret == ncclSuccess && nccl_net_ofi_can_make_vdevice()) {
+		ncclNetPlugin_v12.makeVDevice = makeVDevice_v12;
+	}
+	return ret;
 }
 
 
@@ -652,6 +661,15 @@ static ncclResult_t getProperties_v12(int dev_id, ncclNetProperties_v12_t *props
 	props->planeId = ofi_properties.plane_id;
 
 	return ncclSuccess;
+}
+
+
+static ncclResult_t makeVDevice_v12(int *device_index, ncclNetVDeviceProps_v12_t *props)
+{
+	if (device_index == nullptr || props == nullptr) {
+		return ncclInvalidArgument;
+	}
+	return nccl_net_ofi_make_vdevice(device_index, props->ndevs, props->devs);
 }
 
 
