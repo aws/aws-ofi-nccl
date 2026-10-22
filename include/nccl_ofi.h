@@ -54,6 +54,16 @@
 #define NCCL_OFI_MAX_RECVS	8
 
 /*
+ * NET v12 supports virtual devices containing multiple device IDs.
+ * Earlier NET versions do not, so they need only one device ID.
+ */
+#ifdef NCCL_NET_MAX_DEVS_PER_NIC_V12
+#define NCCL_OFI_MAX_DEVS_PER_NIC NCCL_NET_MAX_DEVS_PER_NIC_V12
+#else
+#define NCCL_OFI_MAX_DEVS_PER_NIC 1
+#endif
+
+/*
  * This defines a higher value than maximum inflight requests supported by NCCL
  * while not putting a lot of memory pressure. This higher number ensures that
  * we are able to support more number of outstanding requests with dynamic buffer
@@ -268,6 +278,16 @@ typedef struct nccl_ofi_properties {
 	size_t max_coll_bytes;
 	/** Support eager **/
 	bool eager_support;
+	/** NCCL rail ID shared by devices NCCL may combine. **/
+	int rail_id;
+	/** NCCL plane ID describing the plugin rail or rails in this device. **/
+	int plane_id;
+	/**
+	 * IDs of the devices combined to make this device.
+	 * If it is not a combined device, the list contains only its own ID.
+	 */
+	int num_devices;
+	int device_ids[NCCL_OFI_MAX_DEVS_PER_NIC];
 } nccl_ofi_properties_t;
 
 /**

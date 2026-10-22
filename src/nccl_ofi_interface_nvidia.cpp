@@ -636,13 +636,20 @@ static ncclResult_t getProperties_v12(int dev_id, ncclNetProperties_v12_t *props
 	props->maxRecvs = ofi_properties.max_group_receives;
 	props->netDeviceType = NCCL_NET_DEVICE_HOST;
 	props->netDeviceVersion = NCCL_NET_DEVICE_INVALID_VERSION;
-	props->vProps.ndevs = 1;
-	props->vProps.devs[0] = dev_id;
+	if (ofi_properties.num_devices < 1 ||
+	    ofi_properties.num_devices > NCCL_NET_MAX_DEVS_PER_NIC_V12) {
+		NCCL_OFI_WARN("Invalid device member count %d", ofi_properties.num_devices);
+		return ncclInternalError;
+	}
+	props->vProps.ndevs = ofi_properties.num_devices;
+	for (int i = 0; i < ofi_properties.num_devices; ++i) {
+		props->vProps.devs[i] = ofi_properties.device_ids[i];
+	}
 	props->maxP2pBytes = ofi_properties.max_p2p_bytes;
 	props->maxCollBytes = ofi_properties.max_coll_bytes;
 	props->maxMultiRequestSize = 1;
-	props->railId = -1;
-	props->planeId = -1;
+	props->railId = ofi_properties.rail_id;
+	props->planeId = ofi_properties.plane_id;
 
 	return ncclSuccess;
 }
