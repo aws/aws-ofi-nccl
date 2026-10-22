@@ -756,3 +756,41 @@ NCCL_OFI_EXPORT_SYMBOL ncclRma_v15_t ncclRmaPlugin_v15 = {
 	.queryLastError = nullptr,
 	.finalize = nccl_ofi_gin_finalize
 };
+
+/* Our signals are per-peer: a signal only means that sender's own data has
+ * landed, not that other peers' writes are done. So flushesAllPutsOnAnySignal
+ * is false. */
+static ncclResult_t nccl_ofi_rma_getRmaProperties_v16(void *collComm,
+						      ncclRmaProperties_v16_t *rmaProps)
+{
+	(void)collComm;
+	rmaProps->flushesAllPutsOnAnySignal = false;
+	return ncclSuccess;
+}
+
+/* RMA v16 op-table. v16 only adds getRmaProperties over v15, so every other
+ * entry reuses the v15/v14 wrappers unchanged. */
+NCCL_OFI_EXPORT_SYMBOL ncclRma_v16_t ncclRmaPlugin_v16 = {
+	.name = "Libfabric",
+	.init = nccl_ofi_gin_init,
+	.devices = nccl_ofi_gin_devices,
+	.getRmaProperties = nccl_ofi_rma_getRmaProperties_v16,
+	.getProperties = nccl_ofi_gin_getProperties_v13,
+	.listen = nccl_ofi_gin_listen,
+	.connect = nccl_ofi_gin_connect,
+	.createContext = nccl_ofi_rma_createContext_v14,
+	.regMrSym = nccl_ofi_rma_regMrSym_v14,
+	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
+	.deregMrSym = nccl_ofi_gin_deregMrSym,
+	.destroyContext = nccl_ofi_gin_destroyContext_v13,
+	.closeColl = nccl_ofi_gin_closeColl,
+	.closeListen = nccl_ofi_gin_closeListen,
+	.iput = nccl_ofi_rma_iput_v15,
+	.iputSignal = nccl_ofi_rma_iputSignal_v15,
+	.iget = nccl_ofi_rma_iget_v15,
+	.iflush = nccl_ofi_gin_iflush_v13,
+	.test = nccl_ofi_gin_test,
+	.rmaProgress = nccl_ofi_gin_ginProgress,
+	.queryLastError = nullptr,
+	.finalize = nccl_ofi_gin_finalize
+};
