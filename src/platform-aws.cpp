@@ -684,6 +684,11 @@ int PlatformAWS::init(const char **provider_filter)
 
 	platform_data = get_platform_data();
 
+	if (ofi_nccl_net_rail_model.get_source() == ParamSource::DEFAULT &&
+	    platform_data != nullptr) {
+		ofi_nccl_net_rail_model.set(platform_data->enable_rail_aware_fusion);
+	}
+
 	/* if we're here, we think we're on an EC2 instance, so force
 	 * EFA provider (for platforms without EFA, this will cause a
 	 * fallback to NCCL's internal TCP.  In the case of Neuron, a

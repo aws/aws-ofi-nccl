@@ -306,10 +306,12 @@ OFI_NCCL_PARAM(bool, use_low_lat_tc, "USE_LOW_LATENCY_TC", true);
 OFI_NCCL_PARAM(size_t, force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
- * Enable NCCL-owned rail-aware fusion for compatible NET APIs. When enabled,
+ * Control NCCL-owned rail-aware fusion for compatible NET APIs. When enabled,
  * expose each NIC separately: its topology-group number becomes the NCCL rail
- * ID, and its position in that group becomes the NCCL plane ID. NCCL can then
- * combine the NICs through makeVDevice(). Disabled by default.
+ * ID, and its position in that group becomes the NCCL plane ID. If the user
+ * does not set this option, the selected platform decides whether to enable
+ * it. Setting this to 0 disables the model; setting it to 1 enables the model
+ * for platform testing.
  */
 OFI_NCCL_PARAM(bool, net_rail_model, "NET_RAIL_MODEL", false);
 

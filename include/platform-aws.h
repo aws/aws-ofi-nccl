@@ -49,6 +49,8 @@ protected:
 		float latency;
 		bool gdr_required;
 		PROTOCOL default_protocol;
+		/* Whether this platform enables rail-aware fusion by default. */
+		bool enable_rail_aware_fusion = false;
 		/* True if the EFA hardware completion counter (used by the
 		 * GDAKI GIN data path) is supported on this platform.
 		 * Consulted by PlatformAWS::config_gdaki_domain(). Set per platform

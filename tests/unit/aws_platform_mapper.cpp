@@ -88,6 +88,48 @@ static int check_gdaki_flags(void)
 	return ret;
 }
 
+static int check_fusion_flag(const TestablePlatformAWS::ec2_platform_data *platform_data_list,
+				 const size_t len, const char *platform_type, bool expected)
+{
+	const TestablePlatformAWS::ec2_platform_data *entry =
+		TestablePlatformAWS::get_platform_entry(platform_type, platform_data_list, len);
+
+	if (entry == nullptr) {
+		printf("check_fusion_flag: no entry for %s\n", platform_type);
+		return 1;
+	}
+	if (entry->enable_rail_aware_fusion != expected) {
+		printf("enable_rail_aware_fusion for %s: got %d, expected %d\n",
+		       platform_type, static_cast<int>(entry->enable_rail_aware_fusion),
+		       static_cast<int>(expected));
+		return 1;
+	}
+	return 0;
+}
+
+static int check_fusion_flags(void)
+{
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
+	size_t len;
+	int ret = 0;
+	TestablePlatformAWS platform;
+
+	platform_data_list = platform.get_platform_map(&len);
+
+	ret += check_fusion_flag(platform_data_list, len,
+				     "p6e-gb200.36xlarge", false);
+	ret += check_fusion_flag(platform_data_list, len,
+				     "p6-b200.48xlarge", false);
+	ret += check_fusion_flag(platform_data_list, len,
+				     "p6-b300.48xlarge", false);
+	ret += check_fusion_flag(platform_data_list, len,
+				     "p5en.48xlarge", false);
+	ret += check_fusion_flag(platform_data_list, len,
+				     "p100.2048xlarge", false);
+
+	return ret;
+}
+
 /* check whether a platform entry sets an environment variable to the
  * expected value (expected == NULL means the variable must not be set). */
 static int check_env(const TestablePlatformAWS::ec2_platform_data *platform_data_list,
@@ -230,12 +272,20 @@ int main(int argc, char *argv[]) {
 	/* verify the per-platform GDAKI hw-counter opt-in flags */
 	ret += check_gdaki_flags();
 
+	/* verify the per-platform rail-aware fusion defaults */
+	ret += check_fusion_flags();
+
 	/* verify the per-platform NCCL_IB_HCA override */
 	ret += check_ib_hca();
 
-	/* rows that are not opted in carry efa_hw_comp_cntr = false */
-	if (test_map_1[0].efa_hw_comp_cntr != false || test_map_1[1].efa_hw_comp_cntr != false) {
+	/* rows that are not opted in keep their feature flags disabled */
+	if (test_map_1[0].efa_hw_comp_cntr || test_map_1[1].efa_hw_comp_cntr) {
 		printf("test_map_1 efa_hw_comp_cntr should be false\n");
+		ret += 1;
+	}
+	if (test_map_1[0].enable_rail_aware_fusion ||
+	    test_map_1[1].enable_rail_aware_fusion) {
+		printf("test_map_1 enable_rail_aware_fusion should be false\n");
 		ret += 1;
 	}
 
