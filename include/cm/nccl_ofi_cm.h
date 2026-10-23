@@ -108,10 +108,9 @@ public:
 	 *
 	 * See documentation above on nccl_ofi_cm_receiver
 	 * 
-	 * Note: the caller takes ownership of the memory associated with this
-	 * object and should release it by deleting the pointer.
+	 * Note: the caller takes ownership of the returned receiver.
 	 */
-	nccl_ofi_cm_receiver *accept();
+	std::unique_ptr<nccl_ofi_cm_receiver> accept();
 
 	/* Destructor, frees associated resources */
 	~nccl_ofi_cm_listener();
@@ -131,7 +130,7 @@ private:
 	nccl_ofi_cm::cm_resources &resources;
 	uint64_t listener_id;
 	nccl_net_ofi_conn_handle handle;
-	std::deque<nccl_ofi_cm_receiver *> ready_receiver_queue;
+	std::deque<std::unique_ptr<nccl_ofi_cm_receiver>> ready_receiver_queue;
 
 	/* For constructor */
 	friend class nccl_ofi_connection_manager;
