@@ -92,6 +92,7 @@ static std::unique_ptr<void, DlcloseDeleter> cudaruntime_lib;
 DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuGetErrorString, 6000);
 DECLARE_CUDA_FUNCTION(cuGetErrorName, 6000);
+DECLARE_CUDA_FUNCTION(cuDeviceGet, 2000);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 DECLARE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
 DECLARE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
@@ -225,6 +226,7 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 	RESOLVE_CUDA_FUNCTION(cuGetErrorString, 6000);
 	RESOLVE_CUDA_FUNCTION(cuGetErrorName, 6000);
+	RESOLVE_CUDA_FUNCTION(cuDeviceGet, 2000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 	RESOLVE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
@@ -621,6 +623,40 @@ int nccl_net_ofi_get_gpu_device_for_addr(void *ptr, int *dev_id)
 		return -EINVAL;
 	}
 
+	return 0;
+}
+
+int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent)
+{
+	is_coherent = false;
+
+	int device_ordinal;
+	int ret = nccl_net_ofi_get_gpu_device_for_addr(device_ptr, &device_ordinal);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to resolve the GPU for device pointer %p", device_ptr);
+		return ret;
+	}
+
+	CUdevice device;
+	CUresult result = pfn_cuDeviceGet(&device, device_ordinal);
+	if (result != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("cuDeviceGet failed for GPU %d: %s", device_ordinal,
+			      nccl_net_ofi_cuda_error_string(result));
+		return -EINVAL;
+	}
+
+	int coherent = 0;
+	result = pfn_cuDeviceGetAttribute(
+		&coherent,
+		CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
+		device);
+	if (result != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Unable to query coherence for GPU %d: %s", device_ordinal,
+			      nccl_net_ofi_cuda_error_string(result));
+		return -EINVAL;
+	}
+
+	is_coherent = coherent != 0;
 	return 0;
 }
 

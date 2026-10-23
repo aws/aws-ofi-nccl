@@ -24,6 +24,21 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
+ * @brief Query whether the GPU associated with a device pointer uses the
+ *        host page tables for pageable memory access.
+ *
+ * This is the CUDA coherence criterion used by GDRCopy. The device is
+ * resolved from the pointer instead of the calling thread's current context.
+ *
+ * @param device_ptr	Pointer to GPU memory.
+ * @param is_coherent	Set to true when the owning GPU is coherent.
+ *
+ * @return 0 on success
+ *         -EINVAL on error
+ */
+int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent);
+
+/*
  * Bind / read the calling thread's current CUDA context. No ownership taken;
  * the app (or NCCL) owns the context lifetime.
  */
