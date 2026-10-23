@@ -106,12 +106,9 @@ void nccl_ofi_cm_receiver::set_conn_resp_msg_data(const void *data, size_t size)
 {
 	std::lock_guard lock(resources.cm_mutex);
 	/* Create the conn response message */
-	conn_resp_req = new nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req(resources, dest_addr,
-		[&] {
-		conn_resp_msg_delivered = true;
-		/* conn_resp_req will delete itself, so unset the pointer */
-		conn_resp_req = nullptr;
-	});
+	conn_resp_req = std::make_unique<nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req>(
+		resources, dest_addr,
+		[&] { conn_resp_msg_delivered = true; });
 
 	nccl_ofi_cm_conn_msg &conn_resp_msg = conn_resp_req->get_conn_resp_msg();
 

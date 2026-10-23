@@ -1044,6 +1044,17 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 	delete this->nccl_ofi_reqs_fl;
 
 	if (this->receiver) {
+		/* Wait for the connect-response send before freeing the receiver.
+		 * Stop if a comm aborted the shared endpoint: its CQ is released. */
+		{
+			std::lock_guard eplock(endpoint->ep_lock);
+			while (endpoint->ep_active &&
+			       !this->receiver->conn_resp_send_done()) {
+				if (sendrecv_cq_process(endpoint->cq.get()) != 0) {
+					break;
+				}
+			}
+		}
 		delete this->receiver;
 		this->receiver = nullptr;
 	}

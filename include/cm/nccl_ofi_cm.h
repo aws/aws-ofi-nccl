@@ -58,6 +58,12 @@ public:
 	 */
 	int test_ready();
 
+	/* True when the connect-response send is complete, or when no send was posted. */
+	bool conn_resp_send_done() const
+	{
+		return (conn_resp_req == nullptr) || conn_resp_req->is_complete();
+	}
+
 	~nccl_ofi_cm_receiver() = default;
 
 private:
@@ -74,7 +80,7 @@ private:
 
 	std::vector<uint8_t> user_conn_msg_data;
 
-	nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req* conn_resp_req;
+	std::unique_ptr<nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req> conn_resp_req;
 
 	bool conn_resp_msg_sent;
 	bool conn_resp_msg_delivered;

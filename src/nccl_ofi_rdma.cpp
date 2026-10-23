@@ -4046,6 +4046,12 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 		return ret;
 	}
 
+	/* Do not free the connect-response request while its send is in
+	 * flight. The ep_active check above ends this wait after an abort. */
+	if (r_comm->receiver && !r_comm->receiver->conn_resp_send_done()) {
+		return 0;
+	}
+
 	/**
 	 * Do not destroy the recv comm until all flush requests that were marked as
 	 * completed before getting completion events finish their completions.

@@ -186,8 +186,8 @@ int nccl_ofi_cm_send_conn_resp_req::handle_completion()
 		assert(done_callback);
 		done_callback();
 	}
-	/* Free this request resources */
-	delete this;
+	/* The receiver owns this request and frees it. */
+	completed = true;
 	return 0;
 }
 
