@@ -1044,6 +1044,17 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 	delete this->nccl_ofi_reqs_fl;
 
 	if (this->receiver) {
+		/* Wait for the connect-response send before freeing the receiver.
+		 * Stop if a comm aborted the shared endpoint: its CQ is released. */
+		{
+			std::lock_guard eplock(endpoint->ep_lock);
+			while (endpoint->ep_active &&
+			       !this->receiver->conn_resp_send_done()) {
+				if (sendrecv_cq_process(endpoint->cq.get()) != 0) {
+					break;
+				}
+			}
+		}
 		delete this->receiver;
 		this->receiver = nullptr;
 	}
@@ -1454,7 +1465,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 		}
 
 		/* Check for pending receivers */
-		receiver = this->listener->accept();
+		receiver = this->listener->accept().release();
 
 		if (receiver == nullptr) {
 			/* No pending connections */
@@ -1517,12 +1528,8 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 			return 0;
 		}
 
-		/* If we make it here, receiver is ready. */
+		/* If we make it here, receiver is ready. close() frees it. */
 		ret = 0;
-
-		/* Free the receiver object */
-		delete r_comm->receiver;
-		r_comm->receiver = nullptr;
 
 		comm_state->stage = COMM_CONNECTED;
 		break;

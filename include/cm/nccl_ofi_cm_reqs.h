@@ -5,6 +5,7 @@
 #ifndef NCCL_OFI_CM_REQS_H_
 #define NCCL_OFI_CM_REQS_H_
 
+#include <atomic>
 #include <functional>
 
 #include "cm/nccl_ofi_cm_types.h"
@@ -162,6 +163,12 @@ public:
 	 */
 	virtual int handle_completion();
 
+	/* True when the send completion is processed. */
+	bool is_complete() const
+	{
+		return completed;
+	}
+
 	/**
 	 * Post the send operation
 	 */
@@ -177,6 +184,10 @@ private:
 	nccl_ofi_freelist::fl_entry &send_elem;
 	fi_addr_t dest_addr;
 	std::function<void()> done_callback;
+
+	/* Atomic: another thread can process the send completion while this
+	 * thread reads the flag. */
+	std::atomic<bool> completed{false};
 };
 
 }

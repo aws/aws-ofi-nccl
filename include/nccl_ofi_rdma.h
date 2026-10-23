@@ -810,7 +810,7 @@ public:
 	int eager_copy_to_sub_recv(nccl_net_ofi_rdma_req *recv_req, nccl_net_ofi_rdma_req *rx_buff_req, int sub_idx);
 
 	/* CM receiver for connection establishment */
-	nccl_ofi_cm_receiver *receiver;
+	std::unique_ptr<nccl_ofi_cm_receiver> receiver;
 
 	uint64_t num_inflight_reqs;
 

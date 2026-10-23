@@ -3933,11 +3933,6 @@ static int recv_comm_destroy(nccl_net_ofi_rdma_recv_comm *r_comm)
 	device = ep->rdma_endpoint_get_device();
 	assert(device != NULL);
 
-	if (r_comm->receiver != nullptr) {
-		delete r_comm->receiver;
-		r_comm->receiver = nullptr;
-	}
-
 	if (r_comm->send_close_req != NULL) {
 		ret = r_comm->send_close_req->free(false);
 		if (ret != 0) {
@@ -4049,6 +4044,12 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	int ret = ep->ofi_process_cq();
 	if (ret < 0) {
 		return ret;
+	}
+
+	/* Do not free the connect-response request while its send is in
+	 * flight. The ep_active check above ends this wait after an abort. */
+	if (r_comm->receiver && !r_comm->receiver->conn_resp_send_done()) {
+		return 0;
 	}
 
 	/**
@@ -5085,7 +5086,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	ret = 0;
 
 	/* Check if a connect message is received */
-	nccl_ofi_cm_receiver *receiver = l_comm->listener->accept();
+	std::unique_ptr<nccl_ofi_cm_receiver> receiver = l_comm->listener->accept();
 
 	/* Wait until connect message is received */
 	if (receiver == nullptr) {
@@ -5122,8 +5123,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 		goto exit;
 	}
 
-	r_comm->receiver = receiver;
-	receiver = nullptr;
+	r_comm->receiver = std::move(receiver);
 	l_comm->r_comm = r_comm;
 
 	ep = reinterpret_cast<nccl_net_ofi_rdma_ep_t *>(r_comm->ep.get());
@@ -5151,9 +5151,6 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	return ret;
 
 exit:
-	if (receiver) {
-		delete receiver;
-	}
 	*r_comm_ptr = nullptr;
 	return ret;
 }
@@ -5241,12 +5238,8 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 			return 0;
 		}
 
-		/* If we make it here, receiver is ready. */
+		/* If we make it here, receiver is ready. The recv comm owns it until destroy. */
 		ret = 0;
-
-		/* Free the receiver object */
-		delete this->r_comm->receiver;
-		this->r_comm->receiver = nullptr;
 
 		*recv_comm = this->r_comm;
 
