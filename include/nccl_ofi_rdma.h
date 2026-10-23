@@ -1812,6 +1812,25 @@ protected:
 	int init_rx_buffers();
 
 	/**
+	 * @brief	Maximum number of rx buffers that will ever be posted
+	 *		on a single rail of the given kind.
+	 *
+	 * The RDMA_MAX_POSTED_{CONTROL,EAGER}_BUFFERS parameters bound the
+	 * number of rx buffers posted per endpoint across all rails of a
+	 * kind, so the per-rail bound is that value divided (rounded up)
+	 * across the rails of that kind. This is the deepest the libfabric
+	 * rx queue of a rail ever needs to be, and is used both to size the
+	 * rx queue (rx_attr->size) at endpoint creation and to bound the
+	 * progress engine's buffer posting.
+	 *
+	 * @param	is_control	true for a control rail, false for a
+	 *				data (eager) rail
+	 *
+	 * @return	the per-rail maximum posted rx buffer count
+	 */
+	size_t max_rx_buffers_per_rail(bool is_control) const;
+
+	/**
 	 * @brief	Allocate and register a buffer used to flush RDMA operations.
 	 *
 	 * Allocates a GPU (or host, for Neuron) flush buffer into @p fb and
@@ -2006,10 +2025,6 @@ public:
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;
-
-	/* Whether the provider supports mixed host/device iovecs,
-	 * eager support requires this */
-	bool eager_support = false;
 
 	/* ID pool */
 	nccl_ofi_idpool_t comm_idpool;

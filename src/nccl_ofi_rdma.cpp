@@ -16,6 +16,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef HAVE_RDMA_FI_EXT_EFA_H
+#include <rdma/fi_ext_efa.h>
+#endif
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
 #if HAVE_CUDA
@@ -419,7 +422,6 @@ int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props)
 		static_assert(NCCL_OFI_MAX_RECVS <= (1 << NCCL_OFI_RDMA_RECV_IDX_BITS),
 					  "NCCL_OFI_MAX_RECVS must fit in RECV_IDX_BITS");
 		props->max_communicators = NCCL_OFI_RDMA_MAX_COMMS;
-		this->eager_support = props->eager_support;
 	} else {
 		return ret;
 	}
@@ -6029,6 +6031,18 @@ nccl_net_ofi_rdma_send_comm::nccl_net_ofi_rdma_send_comm()
 }
 
 
+size_t nccl_net_ofi_rdma_ep_t::max_rx_buffers_per_rail(bool is_control) const
+{
+	/* Data rails only post rx buffers when eager receive is enabled. When
+	 * eager is disabled, no rx buffers are posted. */
+	if (!is_control && this->eager_rx_buff_size < 0) {
+		return 0;
+	}
+
+	return NCCL_OFI_DIV_CEIL(ofi_nccl_rdma_max_posted_eager_buffers(), this->num_rails);
+}
+
+
 int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 {
 	int ret = 0;
@@ -6061,9 +6075,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 		rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
 			ofi_nccl_rdma_min_posted_control_buffers(), this->num_control_rails
 		);
-		rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-			ofi_nccl_rdma_max_posted_control_buffers(), this->num_control_rails
-		);
+		rail->max_rx_buff_posted = this->max_rx_buffers_per_rail(true);
 		rail->num_rx_buff_posted = 0;
 		rail->rx_buff_req_alloc = ctrl_rx_buff_req_alloc;
 		rail->is_ctrl = true;
@@ -6075,9 +6087,7 @@ int nccl_net_ofi_rdma_ep_t::init_rx_buffers()
 			rail->min_rx_buff_posted = NCCL_OFI_DIV_CEIL(
 				ofi_nccl_rdma_min_posted_eager_buffers(), this->num_rails
 				);
-			rail->max_rx_buff_posted = NCCL_OFI_DIV_CEIL(
-				ofi_nccl_rdma_max_posted_eager_buffers(), this->num_rails
-				);
+			rail->max_rx_buff_posted = this->max_rx_buffers_per_rail(false);
 		} else {
 			rail->min_rx_buff_posted = 0;
 			rail->max_rx_buff_posted = 0;
@@ -6508,6 +6518,7 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 					 bool is_control)
 {
 	int ret = 0;
+	size_t requested_rx_size = 0;
 	ofi_info_ptr rail_info(fi_dupinfo(dev_rail->info));
 	if (!rail_info) {
 		NCCL_OFI_WARN("Could not duplicate endpoint provider information");
@@ -6517,6 +6528,28 @@ int nccl_net_ofi_rdma_ep_t::ep_rail_init(int dev_id, uint16_t rail_id,
 	if (is_control) {
 		rail_info->tx_attr->tclass = ofi_nccl_use_low_lat_tc() ?
 			FI_TC_LOW_LATENCY : FI_TC_UNSPEC;
+	}
+
+	/*
+	 * Size the receive queue to the number of rx buffers this rail will
+	 * ever have posted. Providers (e.g. EFA) default rx_attr->size to a
+	 * much larger value (4K entries), which allocates a receive queue far
+	 * deeper than the plugin ever uses. We only ever shrink the queue:
+	 * requesting a larger size than the provider's default could be
+	 * rejected.
+	 *
+	 * Requesting a zero-sized rx queue is a corner case in the spec with no
+	 * real benefit in testing.  We set a minimum size of 32 entries, which
+	 * should be a single page even in the most over-sized RX work descriptor.
+	 */
+	requested_rx_size = std::max(this->max_rx_buffers_per_rail(is_control),
+				     static_cast<std::size_t>(32));
+	if (requested_rx_size < rail_info->rx_attr->size) {
+		NCCL_OFI_TRACE(NCCL_INIT | NCCL_NET,
+			       "Shrinking %s rail %u rx queue size from %zu to %zu",
+			       is_control ? "control" : "data", rail_id,
+			       rail_info->rx_attr->size, requested_rx_size);
+		rail_info->rx_attr->size = requested_rx_size;
 	}
 
 	auto av_result = nccl_ofi_ofiutils_av_create(domain_rail->domain);
@@ -6714,21 +6747,13 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_rdma_domain_t::create_endpoint()
 static constexpr size_t rdma_ctrl_rx_buff_size = std::max({sizeof(nccl_ofi_rdma_connection_info_t),
 							   sizeof(nccl_net_ofi_rdma_close_msg_t)});
 
-/* Max size of eager messages on an endpoint of the given device */
-static inline ssize_t rdma_eager_send_size(nccl_net_ofi_rdma_device_t *device)
-{
-	return device->eager_support ? ofi_nccl_eager_max_size() : 0;
-}
-
 /* Size of eager rx buffers on an endpoint of the given device */
 static inline ssize_t rdma_eager_rx_buff_size(nccl_net_ofi_rdma_device_t *device)
 {
-	ssize_t eager_send_size = rdma_eager_send_size(device);
-
 	/* Work around EFA provider bug around posting 0 byte rx buffers by not
 	   posting 0 byte rx buffers */
-	return (eager_send_size <= 0) ?
-		EAGER_RX_BUFFER_ALIGNMENT : eager_send_size + NCCL_OFI_EAGER_HEADER_SIZE;
+	return (ofi_nccl_eager_max_size() <= 0) ?
+		EAGER_RX_BUFFER_ALIGNMENT : ofi_nccl_eager_max_size() + NCCL_OFI_EAGER_HEADER_SIZE;
 }
 
 /* TODO: the RX buffer code doesn't yet track and free posted RX
@@ -6783,7 +6808,7 @@ nccl_net_ofi_rdma_ep_t::nccl_net_ofi_rdma_ep_t(std::shared_ptr<nccl_net_ofi_rdma
 	 * via the = {} initializers on the member declarations. */
 
 	this->ctrl_rx_buff_size = rdma_ctrl_rx_buff_size;
-	this->eager_send_size = rdma_eager_send_size(device);
+	this->eager_send_size = ofi_nccl_eager_max_size();
 	this->eager_rx_buff_size = rdma_eager_rx_buff_size(device);
 
 	ret = this->init_rail_ofi_resources(device, domain_arg.get());
@@ -6872,6 +6897,25 @@ int nccl_net_ofi_rdma_device_t::init_device_rail_ofi_resources(nccl_net_ofi_rdma
 			      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
 		return fabric_result.error_code;
 	}
+
+#if HAVE_DECL_FI_EFA_FEATURE_OPS
+	int ret;
+
+	if (strcmp(rail_dev->info->fabric_attr->prov_name, "efa") == 0) {
+		struct fi_efa_feature_ops *feat_ops = NULL;
+		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
+				  (void **)&feat_ops, NULL);
+		if (ret != 0) {
+			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+			return ret;
+		} else if (!feat_ops->query("mixed_hmem_iov") && ofi_nccl_eager_max_size() > 0) {
+			NCCL_OFI_WARN("Eager messages requested and mixed_hmem_iov not supported.  Can not continue.");
+			return -ENOTSUP;
+		}
+	}
+#endif
+
 	rail_dev->fabric = std::move(fabric_result.resource);
 
 	return 0;

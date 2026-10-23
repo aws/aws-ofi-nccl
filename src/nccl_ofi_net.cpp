@@ -363,11 +363,18 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	 */
 	device = plugin->get_device(getpid() % plugin->get_num_devices());
 
-	/* get the endpoint from the default domain, domain_key = 0 */
-	ep = device->get_ep(0, nccl_net_ofi_gettid());
-	if (ep == nullptr) {
-		goto exit;
+	// only need to create a dummy endpoint if we don't know GDR status
+	// (which should only happen with Libfabric 1.18 and earlier).  Early
+	// versions of Libfabric could report HMEM emulated with CUDA calls,
+	// which is no good for NCCL.
+	if (support_gdr == GDR_UNKNOWN) {
+		/* get the endpoint from the default domain, domain_key = 0 */
+		ep = device->get_ep(0, nccl_net_ofi_gettid());
+		if (ep == nullptr) {
+			goto exit;
+		}
 	}
+
 	ret = device->get_properties(&properties);
 	if (ret != 0) {
 		goto exit;
@@ -482,9 +489,6 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 
 	props->max_group_receives = NCCL_OFI_MAX_RECVS;
 
-	/* Disable eager by default.  Will be overwritten depending on libfabric feature*/
-	props->eager_support = false;
-
 	if (support_gdr == GDR_SUPPORTED) {
 		props->hmem_support = true;
 	} else {
@@ -565,29 +569,6 @@ int nccl_net_ofi_plugin_t::nccl_net_ofi_info_properties(struct fi_info *nic_prov
 		ret = 0;
 		goto exit;
 	}
-
-#if HAVE_DECL_FI_EFA_FEATURE_OPS
-	{ /* Scope block: C++ forbids goto past auto variable initialization */
-		auto fabric_result = nccl_ofi_ofiutils_fabric_create(nic_prov);
-		if (OFI_UNLIKELY(fabric_result.is_failure())) {
-			NCCL_OFI_WARN("Couldn't open a fabric provider. RC: %d, ERROR: %s",
-				      fabric_result.error_code, fi_strerror(-fabric_result.error_code));
-			ret = fabric_result.error_code;
-			goto error;
-		}
-
-		struct fi_efa_feature_ops *feat_ops = NULL;
-		ret = fi_open_ops(&fabric_result.resource->fid, FI_EFA_FEATURE_OPS, 0,
-				  (void **)&feat_ops, NULL);
-		if (ret != 0) {
-			NCCL_OFI_WARN("fi_open_ops for EFA features failed. RC: %d, ERROR: %s",
-				      ret, fi_strerror(-ret));
-			ret = 0;
-		} else if (feat_ops->query("mixed_hmem_iov")) {
-			props->eager_support = true;
-		}
-	}
-#endif
 
 	/* name is NULL if device is a part of multirail config */
 	/* overriding default name only if value is available from provider */
