@@ -218,12 +218,30 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		},
 	},
 	{
+		.name = "p6e-gb200",
+		.regex = "^p6e-gb200.*",
+		.topology = NULL,
+		.default_dup_conns = 0,
+		.latency = 35.0,
+		.gdr_required = true,
+		.default_protocol = PROTOCOL::RDMA,
+		.enable_rail_aware_fusion = true,
+		.efa_hw_comp_cntr = false,
+		.env = {
+			{ "NCCL_BUFFSIZE", "8388608" },
+			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLSTREE_MAX_CHUNKSIZE", "524288" },
+			{ "NCCL_NVLS_CHUNKSIZE", "524288" },
+			{ "NCCL_NET_FORCE_FLUSH", "0" },
+			{ "NCCL_NETDEVS_POLICY", "max:1" },
+		},
+	},
+	{
 		.name = "p-series",
 		/*
 		 * While the regex will match against P5 and later
-		 * instance families, we expect this to apply to
-		 * P6e-GB200 and later, due to previous entries to
-		 * match P5, P5e, P5en, and P6-B200.
+		 * instance families, previous entries match P5, P5e,
+		 * P5en, P6-B200, P6-B300, and P6e-GB200.
 		 *
 		 * Note: Need to revisit NCCL_NETDEVS_POLICY when
 		 * platforms have different topology or major

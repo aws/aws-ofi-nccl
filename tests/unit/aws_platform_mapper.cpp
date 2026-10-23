@@ -117,7 +117,7 @@ static int check_fusion_flags(void)
 	platform_data_list = platform.get_platform_map(&len);
 
 	ret += check_fusion_flag(platform_data_list, len,
-				     "p6e-gb200.36xlarge", false);
+				     "p6e-gb200.36xlarge", true);
 	ret += check_fusion_flag(platform_data_list, len,
 				     "p6-b200.48xlarge", false);
 	ret += check_fusion_flag(platform_data_list, len,
@@ -183,6 +183,36 @@ static int check_ib_hca(void)
 	return ret;
 }
 
+static int check_netdevs_policies(void)
+{
+	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
+	size_t len;
+	int ret = 0;
+	TestablePlatformAWS platform;
+
+	platform_data_list = platform.get_platform_map(&len);
+	for (size_t i = 0; i < len; ++i) {
+		const auto &entry = platform_data_list[i];
+		bool expects_max_one = strcmp(entry.name, "p5en") == 0 ||
+				       strcmp(entry.name, "p6-b200") == 0 ||
+				       strcmp(entry.name, "p6e-gb200") == 0;
+		auto policy = entry.env.find("NCCL_NETDEVS_POLICY");
+		if (expects_max_one) {
+			if (policy == entry.env.end() || policy->second != "max:1") {
+				printf("NCCL_NETDEVS_POLICY for %s: expected max:1\n",
+				       entry.name);
+				ret++;
+			}
+		} else if (policy != entry.env.end()) {
+			printf("NCCL_NETDEVS_POLICY for %s: got %s, expected unset\n",
+			       entry.name, policy->second.c_str());
+			ret++;
+		}
+	}
+
+	return ret;
+}
+
 static int check_known_platforms(void)
 {
 	const TestablePlatformAWS::ec2_platform_data *platform_data_list;
@@ -211,7 +241,7 @@ static int check_known_platforms(void)
 	ret += check_value(platform_data_list, len, "p5en.48xlarge", "p5en");
 	ret += check_value(platform_data_list, len, "p6-b200.48xlarge", "p6-b200");
 	ret += check_value(platform_data_list, len, "p6-b300.48xlarge", "p6-b300");
-	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p-series");
+	ret += check_value(platform_data_list, len, "p6e-gb200.36xlarge", "p6e-gb200");
 	ret += check_value(platform_data_list, len, "g5.48xlarge", "g5.48xlarge");
 	ret += check_value(platform_data_list, len, "g6.16xlarge", NULL);
 	ret += check_value(platform_data_list, len, "g7e.8xlarge", "g7e.8xlarge");
@@ -274,6 +304,9 @@ int main(int argc, char *argv[]) {
 
 	/* verify the per-platform rail-aware fusion defaults */
 	ret += check_fusion_flags();
+
+	/* verify NET-device assignment defaults for all platforms */
+	ret += check_netdevs_policies();
 
 	/* verify the per-platform NCCL_IB_HCA override */
 	ret += check_ib_hca();
