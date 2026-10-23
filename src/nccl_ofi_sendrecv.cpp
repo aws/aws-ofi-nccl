@@ -1454,7 +1454,7 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 		}
 
 		/* Check for pending receivers */
-		receiver = this->listener->accept();
+		receiver = this->listener->accept().release();
 
 		if (receiver == nullptr) {
 			/* No pending connections */

@@ -34,7 +34,10 @@ nccl_ofi_cm_listener::nccl_ofi_cm_listener(nccl_ofi_cm::cm_resources &_resources
 {
 	auto result = resources.callback_map.emplace
 		      (listener_id, [&](nccl_ofi_cm_conn_msg &conn_msg) {
-		ready_receiver_queue.push_back(new nccl_ofi_cm_receiver(resources, conn_msg));
+		/* make_unique cannot call the private constructor. */
+		ready_receiver_queue.push_back(
+			std::unique_ptr<nccl_ofi_cm_receiver>(
+				new nccl_ofi_cm_receiver(resources, conn_msg)));
 	});
 	if (result.second == false) {
 		NCCL_OFI_WARN("Attempt to insert duplicate id");
@@ -63,7 +66,7 @@ nccl_ofi_cm_listener::~nccl_ofi_cm_listener()
 }
 
 
-nccl_ofi_cm_receiver *nccl_ofi_cm_listener::accept()
+std::unique_ptr<nccl_ofi_cm_receiver> nccl_ofi_cm_listener::accept()
 {
 	std::lock_guard lock(resources.cm_mutex);
 	int ret = resources.pending_reqs_queue.process_pending_reqs();
@@ -75,7 +78,8 @@ nccl_ofi_cm_receiver *nccl_ofi_cm_listener::accept()
 		return nullptr;
 	}
 
-	nccl_ofi_cm_receiver *receiver = ready_receiver_queue.front();
+	std::unique_ptr<nccl_ofi_cm_receiver> receiver =
+		std::move(ready_receiver_queue.front());
 	ready_receiver_queue.pop_front();
 
 	return receiver;
