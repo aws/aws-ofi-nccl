@@ -5232,11 +5232,8 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 			return 0;
 		}
 
-		/* If we make it here, receiver is ready. */
+		/* If we make it here, receiver is ready. The recv comm owns it until destroy. */
 		ret = 0;
-
-		/* Free the receiver object */
-		this->r_comm->receiver.reset();
 
 		*recv_comm = this->r_comm;
 
