@@ -58,6 +58,24 @@ public:
 	 */
 	int test_ready();
 
+	/* True when the connect-response send is complete, or when no send was posted. */
+	bool conn_resp_send_done() const
+	{
+		return (conn_resp_req == nullptr) || conn_resp_req->is_complete();
+	}
+
+	/* The teardown paths drive the CQ until the connect-response send is
+	 * done, then free the receiver. They stop early when the endpoint is
+	 * aborted (CQ released) or when CQ processing fails. This reports
+	 * whether the send is still in flight at that point: if so, the
+	 * request it owns is still referenced by libfabric and the receiver
+	 * must be leaked, not freed. An aborted endpoint means the completion
+	 * will never arrive, so the receiver is safe to free. */
+	bool conn_resp_send_in_flight(bool ep_active) const
+	{
+		return ep_active && !conn_resp_send_done();
+	}
+
 	~nccl_ofi_cm_receiver() = default;
 
 private:
@@ -74,7 +92,7 @@ private:
 
 	std::vector<uint8_t> user_conn_msg_data;
 
-	nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req* conn_resp_req;
+	std::unique_ptr<nccl_ofi_cm::nccl_ofi_cm_send_conn_resp_req> conn_resp_req;
 
 	bool conn_resp_msg_sent;
 	bool conn_resp_msg_delivered;

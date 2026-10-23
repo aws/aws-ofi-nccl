@@ -1044,7 +1044,29 @@ int nccl_net_ofi_sendrecv_recv_comm::close()
 	delete this->nccl_ofi_reqs_fl;
 
 	if (this->receiver) {
-		delete this->receiver;
+		bool send_in_flight = false;
+
+		/* Wait for the connect-response send before freeing the receiver.
+		 * Stop if a comm aborted the shared endpoint: its CQ is released. */
+		{
+			std::lock_guard eplock(endpoint->ep_lock);
+			while (endpoint->ep_active &&
+			       !this->receiver->conn_resp_send_done()) {
+				ret = sendrecv_cq_process(endpoint->cq.get());
+				if (ret != 0) {
+					break;
+				}
+			}
+			send_in_flight = this->receiver->conn_resp_send_in_flight(
+				endpoint->ep_active);
+		}
+
+		if (send_in_flight) {
+			NCCL_OFI_WARN("Leaking CM receiver %p: CQ error before its connect-response send completed",
+				      this->receiver);
+		} else {
+			delete this->receiver;
+		}
 		this->receiver = nullptr;
 	}
 
