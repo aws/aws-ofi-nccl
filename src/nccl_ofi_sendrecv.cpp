@@ -1517,12 +1517,8 @@ int nccl_net_ofi_sendrecv_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm
 			return 0;
 		}
 
-		/* If we make it here, receiver is ready. */
+		/* If we make it here, receiver is ready. close() frees it. */
 		ret = 0;
-
-		/* Free the receiver object */
-		delete r_comm->receiver;
-		r_comm->receiver = nullptr;
 
 		comm_state->stage = COMM_CONNECTED;
 		break;
