@@ -236,6 +236,15 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	if (ret != 0)
 		goto exit;
 
+	if (ofi_nccl_net_rail_model.get_source() == ParamSource::ENVIRONMENT) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Rail-aware fusion explicitly %s",
+			      ofi_nccl_net_rail_model() ? "enabled" : "disabled");
+	} else if (nccl_net_ofi_use_rail_aware_fusion()) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Platform enabled rail-aware fusion");
+	}
+
 	if (ofi_nccl_progress_model.get_source() != ParamSource::DEFAULT) {
 		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "Requesting progress model %s",
 			      ofi_nccl_progress_model.get_string());
@@ -495,6 +504,10 @@ static int set_nic_props_default(int dev_id, struct fi_info *nic_prov,
 
 	props->max_p2p_bytes = nic_prov->ep_attr->max_msg_size;
 	props->max_coll_bytes = nic_prov->ep_attr->max_msg_size;
+	props->rail_id = -1;
+	props->plane_id = -1;
+	props->num_devices = 1;
+	props->device_ids[0] = dev_id;
 
 	/* Should be successful for ptrSupport invocation */
 	return 0;

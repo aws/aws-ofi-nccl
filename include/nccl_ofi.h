@@ -7,6 +7,7 @@
 
 #include <unordered_map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
@@ -16,6 +17,7 @@
 #include <rdma/fi_tagged.h>
 #include <rdma/fi_rma.h>
 #include <string>
+#include <vector>
 #include <nccl/net.h>
 
 #include "nccl_ofi_log.h"
@@ -52,6 +54,16 @@
 
 /* Maximum number of grouped receives */
 #define NCCL_OFI_MAX_RECVS	8
+
+/*
+ * NET v12 supports virtual devices containing multiple device IDs.
+ * Earlier NET versions do not, so they need only one device ID.
+ */
+#ifdef NCCL_NET_MAX_DEVS_PER_NIC_V12
+#define NCCL_OFI_MAX_DEVS_PER_NIC NCCL_NET_MAX_DEVS_PER_NIC_V12
+#else
+#define NCCL_OFI_MAX_DEVS_PER_NIC 1
+#endif
 
 /*
  * This defines a higher value than maximum inflight requests supported by NCCL
@@ -268,6 +280,16 @@ typedef struct nccl_ofi_properties {
 	size_t max_coll_bytes;
 	/** Support eager **/
 	bool eager_support;
+	/** NCCL rail ID shared by devices NCCL may combine. **/
+	int rail_id;
+	/** NCCL plane ID describing the plugin rail or rails in this device. **/
+	int plane_id;
+	/**
+	 * IDs of the devices combined to make this device.
+	 * If it is not a combined device, the list contains only its own ID.
+	 */
+	int num_devices;
+	int device_ids[NCCL_OFI_MAX_DEVS_PER_NIC];
 } nccl_ofi_properties_t;
 
 /**
@@ -782,6 +804,23 @@ public:
 	 */
 	virtual int complete_init() = 0;
 
+	/**
+	 * Create a virtual network device from physical device indices.
+	 * Transports that do not support NCCL-owned fusion return -ENOTSUP.
+	 */
+	virtual int make_vdevice(int *device_index, int num_devices, const int *device_ids)
+	{
+		(void)device_index;
+		(void)num_devices;
+		(void)device_ids;
+		return -ENOTSUP;
+	}
+
+	virtual bool can_make_vdevice() const
+	{
+		return false;
+	}
+
 	inline int assign_device(size_t device_index, nccl_net_ofi_device_t *device)
 	{
 		if (device_index >= get_num_devices()) {
@@ -789,6 +828,12 @@ public:
 		}
 		p_devs[device_index] = device;
 		return 0;
+	}
+
+	inline void append_device(int &device_index, nccl_net_ofi_device_t *device)
+	{
+		device_index = static_cast<int>(p_devs.size());
+		p_devs.push_back(device);
 	}
 
 	inline nccl_net_ofi_device_t *get_device(size_t device_index) const
@@ -846,6 +891,9 @@ protected:
  * the correct transport and call its create function to actually
  * create the plugin (which is a little hacky, but it works).
  */
+/* Return whether rail-aware fusion is enabled for this process. */
+bool nccl_net_ofi_use_rail_aware_fusion();
+
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p);
 
 /*

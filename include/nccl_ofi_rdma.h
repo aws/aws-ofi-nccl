@@ -1881,7 +1881,25 @@ public:
 	/**
 	 * @brief	Default RDMA plugin constructor
 	 */
-	nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list, nccl_ofi_topo_t *global_topo);
+	nccl_net_ofi_rdma_plugin_t(struct fi_info *provider_list,
+				   nccl_ofi_topo_t *global_topo);
+
+	/**
+	 * Create an NCCL-requested virtual device from physical devices.
+	 */
+	int make_vdevice(int *device_index, int num_devices,
+			 const int *device_ids) override;
+
+	bool can_make_vdevice() const override
+	{
+		return nccl_net_ofi_use_rail_aware_fusion();
+	}
+
+	/** Number of immutable physical devices exposed before virtual fusion. */
+	size_t get_physical_device_count() const
+	{
+		return physical_device_count;
+	}
 
 	/**
 	 * @brief	Default RDMA plugin destructor
@@ -1889,6 +1907,11 @@ public:
 	~nccl_net_ofi_rdma_plugin_t() override;
 
 	int complete_init() override;
+
+private:
+	size_t physical_device_count = 0;
+	std::mutex vdevice_mutex;
+	std::vector<std::pair<std::vector<int>, int>> vdevice_cache;
 };
 
 /*
@@ -1915,9 +1938,24 @@ public:
 	nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *plugin,
 				   int dev_id,
 				   struct fi_info *info_list,
-				   const nccl_ofi_topo_t *topo);
+				   const nccl_ofi_topo_t *topo,
+				   bool apply_force_num_rails = true,
+				   int rail_id = -1,
+				   int plane_id = -1,
+				   std::vector<int> device_ids = {},
+				   std::string combined_device_name = {});
 
 	int get_properties(nccl_ofi_properties_t *props) override;
+
+	int get_rail_id() const
+	{
+		return nccl_rail_id;
+	}
+
+	int get_plane_id() const
+	{
+		return nccl_plane_id;
+	}
 
 	inline struct fi_info *get_ofi_info_for_cm() const override
 	{
@@ -2003,6 +2041,12 @@ public:
 
 	/* Number of rails */
 	uint16_t num_rails;
+
+	/* NCCL topology metadata for physical and virtual devices. */
+	int nccl_rail_id;
+	int nccl_plane_id;
+	std::vector<int> device_ids;
+	std::string combined_device_name;
 
 	/* Maximum number of supported communicator IDs */
 	uint32_t num_comm_ids;

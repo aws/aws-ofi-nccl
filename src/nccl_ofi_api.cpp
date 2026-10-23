@@ -25,6 +25,7 @@ static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS,
 bool abort_on_error = false;
 nccl_net_ofi_plugin_t *plugin = NULL;
 nccl_ofi_logger_t ofi_log_function = NULL;
+static bool net_api_supports_rail_aware_fusion = false;
 
 
 /* Check return will be more helpful if the function printed from
@@ -56,7 +57,8 @@ nccl_ofi_logger_t ofi_log_function = NULL;
 	})
 
 
-ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
+ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction,
+			       bool api_supports_rail_aware_fusion)
 {
 	int ret = 0;
 
@@ -73,6 +75,12 @@ ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction)
 	}
 
 	abort_on_error = (ofi_nccl_abort_on_error() != 0);
+	net_api_supports_rail_aware_fusion = api_supports_rail_aware_fusion;
+	if (ofi_nccl_net_rail_model.get_source() != ParamSource::DEFAULT &&
+	    ofi_nccl_net_rail_model() && !api_supports_rail_aware_fusion) {
+		NCCL_OFI_WARN("OFI_NCCL_NET_RAIL_MODEL requires rail-aware fusion "
+			      "support in the NCCL Net API; using legacy device grouping");
+	}
 	try {
 		ret = nccl_net_ofi_create_plugin(&plugin);
 		if (OFI_UNLIKELY(ret != 0)) {
@@ -125,6 +133,31 @@ ncclResult_t nccl_net_ofi_devices(int *num_devices)
 
 	*num_devices = plugin->get_num_devices();
 	return ncclSuccess;
+}
+
+
+ncclResult_t nccl_net_ofi_make_vdevice(int *device_index, int num_devices,
+				       const int *device_ids)
+{
+	if (OFI_UNLIKELY(plugin == nullptr)) {
+		NCCL_OFI_WARN("Error accessing plugin. Plugin has not been initialized yet.");
+		return check_return(ncclInvalidArgument);
+	}
+
+	int ret = plugin->make_vdevice(device_index, num_devices, device_ids);
+	return nccl_net_ofi_retval_translate_impl(ret);
+}
+
+
+bool nccl_net_ofi_use_rail_aware_fusion()
+{
+	return net_api_supports_rail_aware_fusion && ofi_nccl_net_rail_model();
+}
+
+
+bool nccl_net_ofi_can_make_vdevice()
+{
+	return plugin != nullptr && plugin->can_make_vdevice();
 }
 
 
