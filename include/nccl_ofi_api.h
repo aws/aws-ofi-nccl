@@ -75,9 +75,13 @@ static inline ncclResult_t nccl_net_ofi_retval_translate(int retval)
 }
 
 
-ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction);
+ncclResult_t nccl_net_ofi_init(ncclDebugLogger_t logFunction,
+			       bool api_supports_rail_aware_fusion = false);
 ncclResult_t nccl_net_ofi_fini();
 ncclResult_t nccl_net_ofi_devices(int *ndev);
+ncclResult_t nccl_net_ofi_make_vdevice(int *device_index, int num_devices,
+				       const int *device_ids);
+bool nccl_net_ofi_can_make_vdevice();
 ncclResult_t nccl_net_ofi_get_properties(int dev, struct nccl_ofi_properties *ofi_properties);
 ncclResult_t nccl_net_ofi_listen(int dev, void* handle, void **listenComm,
 				 unsigned int domain_key, unsigned int resource_key);
