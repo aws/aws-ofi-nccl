@@ -5048,20 +5048,45 @@ void nccl_net_ofi_rdma_ep_t::prepare_conn_resp(nccl_net_ofi_rdma_recv_comm *r_co
 
 /*
  * @brief	Close receive communicator if listen request is not pending
- *		Assumed to hold domain lock
+ *		Call with ep_lock held
  */
 static int close_listen_recv_comm(nccl_net_ofi_rdma_listen_comm *l_comm)
 {
-	if (!l_comm) {
+	int ret = 0;
+
+	if (!l_comm || !l_comm->r_comm) {
 		return 0;
 	}
 
-	if (l_comm->r_comm && recv_comm_destroy(l_comm->r_comm)) {
+	nccl_net_ofi_rdma_recv_comm *r_comm = l_comm->r_comm;
+	nccl_net_ofi_rdma_ep_t *ep = r_comm->get_ep();
+
+	/* The connect-response send can be in flight: accept() can fail after
+	 * it posts the send, or the listen comm can close before accept()
+	 * completes. Wait for the send before freeing the receiver. Stop if
+	 * the endpoint is aborted: its CQ is released. */
+	while (r_comm->receiver && ep->ep_active &&
+	       !r_comm->receiver->conn_resp_send_done()) {
+		ret = ep->ofi_process_cq();
+		if (ret < 0) {
+			break;
+		}
+		ret = 0;
+	}
+
+	if (r_comm->receiver &&
+	    r_comm->receiver->conn_resp_send_in_flight(ep->ep_active)) {
+		NCCL_OFI_WARN("Leaking CM receiver %p: CQ error before its connect-response send completed",
+			      r_comm->receiver.get());
+		(void)r_comm->receiver.release();
+	}
+
+	if (recv_comm_destroy(r_comm)) {
 		return -EINVAL;
 	}
 	l_comm->r_comm = NULL;
 
-	return 0;
+	return ret;
 }
 
 
@@ -5267,10 +5292,7 @@ int nccl_net_ofi_rdma_listen_comm::accept(nccl_net_ofi_recv_comm **recv_comm)
 	this->stage = { };
 
  exit:;
-	/* Close receive communicator in case listen operation failed
-	 * close_listen_recv_comm will take the ep lock in case of an error,
-	 * so unlock it here .
-	 */
+	/* Close receive communicator in case listen operation failed */
 	int close_ret = close_listen_recv_comm(this);
 	if (close_ret) {
 		NCCL_OFI_WARN("Failed to close listen communicator");
@@ -5286,8 +5308,9 @@ int nccl_net_ofi_rdma_listen_comm::close()
 	assert(this->ep != NULL);
 
 	if (this->r_comm) {
-		ret = recv_comm_destroy(this->r_comm);
-		if (ret != 0) {
+		std::lock_guard eplock(this->r_comm->get_ep()->ep_lock);
+		ret = close_listen_recv_comm(this);
+		if (this->r_comm != NULL) {
 			NCCL_OFI_WARN("Unable to close receive communicator stored in listen communicator. Leaking memory.");
 			return ret;
 		}
