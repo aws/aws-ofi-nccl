@@ -19,7 +19,10 @@ ncclResult_t nccl_ofi_gin_init(void **ctx, uint64_t commId, ncclDebugLogger_t lo
 ncclResult_t nccl_ofi_gin_devices(int *ndev);
 ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listenComm);
 ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
-				  void *listenComm, void **collComm);
+				  void *listenComm, void **collComm,
+				  volatile uint32_t *abortFlag);
+ncclResult_t nccl_ofi_gin_connect_v14(void *ctx, void *handles[], int nranks, int rank,
+				      void *listenComm, void **collComm);
 ncclResult_t nccl_ofi_gin_regMrSym(void *collComm, void *data, size_t size, int type,
 				   uint64_t mrFlags, void **mhandle, void **ginHandle);
 ncclResult_t nccl_ofi_gin_regMrSymDmaBuf(void *collComm, void *data, size_t size, int type,

@@ -38,11 +38,12 @@ struct gin_connect_handle {
 
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
 				     nccl_ofi_gin_ring_send_comm s_comm_,
-				     nccl_ofi_gin_ring_recv_comm r_comm_)
+				     nccl_ofi_gin_ring_recv_comm r_comm_,
+				     nccl_ofi_gin_abort_token abort_)
     : resources_sp(std::move(resources_arg)),
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       rank(rank_), nranks(nranks_),
-      ag_comm(std::move(s_comm_), std::move(r_comm_), rank_, nranks_)
+      ag_comm(std::move(s_comm_), std::move(r_comm_), rank_, nranks_, abort_)
 {
 	auto &ep = get_resources().get_ep();
 
@@ -173,7 +174,8 @@ static inline int rail_addr_insert(nccl_ofi_gin_ep_rail_t &rail, const nccl_ofi_
 }
 
 int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-				      nccl_ofi_gin_put_comm_t **gin_comm_out)
+				      nccl_ofi_gin_put_comm_t **gin_comm_out,
+				      nccl_ofi_gin_abort_token abort)
 {
 	int ret = 0;
 
@@ -194,8 +196,17 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	 *
 	 * The bootstrap ring will be used to exchange connection establishment
 	 * and memory registration metadata
+	 *
+	 * Both halves complete only once our ring neighbours arrive, so poll the
+	 * abort token: a peer that never shows up would otherwise spin here
+	 * forever.
 	 */
 	while (s_comm == nullptr || r_comm == nullptr) {
+		if (OFI_UNLIKELY(abort.requested())) {
+			NCCL_OFI_WARN("gin: connect() aborted establishing the bootstrap ring");
+			return -ECANCELED;
+		}
+
 		if (s_comm == nullptr) {
 			nccl_net_ofi_send_comm *comm = nullptr;
 			ret = ep->connect(connect_handle, &comm, -1);
@@ -222,7 +233,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
 		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, std::move(s_comm),
-					       std::move(r_comm));
+					       std::move(r_comm), abort);
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];

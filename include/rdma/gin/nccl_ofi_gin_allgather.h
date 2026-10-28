@@ -8,6 +8,7 @@
 #include <memory>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_gin_base.h"
 
 /**
  * Closes a bootstrap ring comm. The two halves of the ring are owned through
@@ -44,13 +45,14 @@ private:
 	nccl_ofi_gin_ring_recv_comm r_comm;
 	size_t rank;
 	size_t nranks;
+	nccl_ofi_gin_abort_token abort;
 
 public:
 	nccl_ofi_gin_allgather_comm(nccl_ofi_gin_ring_send_comm s_comm_arg,
 				    nccl_ofi_gin_ring_recv_comm r_comm_arg, size_t rank_arg,
-				    size_t nranks_arg)
+				    size_t nranks_arg, nccl_ofi_gin_abort_token abort_arg = {})
 	    : s_comm(std::move(s_comm_arg)), r_comm(std::move(r_comm_arg)), rank(rank_arg),
-	      nranks(nranks_arg)
+	      nranks(nranks_arg), abort(abort_arg)
 	{
 	}
 
@@ -60,9 +62,15 @@ public:
 	 * @param data: a buffer of size (size * nranks) bytes
 	 * @param size: the size of each data element in bytes
 	 *
-	 * @return: 0 on success, -errno on failure
+	 * @return: 0 on success, -ECANCELED if the communicator aborted while
+	 *          waiting, -errno on failure
 	 */
 	int all_gather(void *data, size_t size);
+
+	nccl_ofi_gin_abort_token get_abort_token() const
+	{
+		return abort;
+	}
 };
 
 #endif /* NCCL_OFI_RDMA_GIN_ALLGATHER_H */

@@ -19,6 +19,29 @@ class nccl_ofi_gin_symm_mr_handle_t;
 class nccl_ofi_gin_req_t;
 
 /**
+ * NCCL's comm->abortFlag, as the v15 op table passes it to connect(). Built
+ * once at the API boundary and passed by value. A default-constructed token,
+ * which is what the pre-v15 tables get, never aborts. NCCL sets the flag with
+ * a release store, so it is read with acquire ordering.
+ */
+class nccl_ofi_gin_abort_token {
+private:
+	volatile uint32_t *flag = nullptr;
+
+public:
+	nccl_ofi_gin_abort_token() = default;
+
+	explicit nccl_ofi_gin_abort_token(volatile uint32_t *flag_arg) : flag(flag_arg)
+	{
+	}
+
+	bool requested() const
+	{
+		return flag != nullptr && __atomic_load_n(flag, __ATOMIC_ACQUIRE) != 0;
+	}
+};
+
+/**
  * Abstract GIN endpoint base class.
  */
 class nccl_ofi_gin_ep_t {
@@ -58,7 +81,8 @@ public:
 
 	virtual int connect(nccl_net_ofi_conn_handle_t *handles[],
 			    int nranks, int rank,
-			    nccl_ofi_gin_put_comm_t **put_comm_out) = 0;
+			    nccl_ofi_gin_put_comm_t **put_comm_out,
+			    nccl_ofi_gin_abort_token abort) = 0;
 };
 
 /**

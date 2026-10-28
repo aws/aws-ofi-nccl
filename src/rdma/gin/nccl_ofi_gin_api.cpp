@@ -202,7 +202,8 @@ ncclResult_t nccl_ofi_gin_listen(void *ctx, int dev, void *handle, void **listen
 }
 
 ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int rank,
-					 void *listenComm, void **collComm)
+				  void *listenComm, void **collComm,
+				  volatile uint32_t *abortFlag)
 {
 	auto *gin_handles = reinterpret_cast<nccl_net_ofi_conn_handle_t **>(handles);
 	auto *gin_l_comm = static_cast<nccl_ofi_rdma_gin_listen_comm *>(listenComm);
@@ -211,13 +212,21 @@ ncclResult_t nccl_ofi_gin_connect(void *ctx, void *handles[], int nranks, int ra
 
 	try {
 		ret = gin_l_comm->connect(gin_handles, nranks, rank,
-					  reinterpret_cast<nccl_ofi_gin_put_comm_t **>(collComm));
+					  reinterpret_cast<nccl_ofi_gin_put_comm_t **>(collComm),
+					  nccl_ofi_gin_abort_token(abortFlag));
 	} catch (const std::exception &e) {
 		NCCL_OFI_WARN("Caught exception in GIN connect: %s", e.what());
 		ret = -EINVAL;
 	}
 
 	return nccl_net_ofi_retval_translate(ret);
+}
+
+ncclResult_t nccl_ofi_gin_connect_v14(void *ctx, void *handles[], int nranks, int rank,
+				      void *listenComm, void **collComm)
+{
+	/* The pre-v15 op tables have no abort flag, so this never aborts. */
+	return nccl_ofi_gin_connect(ctx, handles, nranks, rank, listenComm, collComm, nullptr);
 }
 
 ncclResult_t nccl_ofi_gin_make_ckey(void *data, size_t size, uint64_t offset, int fd,
@@ -576,7 +585,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v11_t ncclGinPlugin_v11 = {
 	.devices = nccl_ofi_gin_devices,
 	.getProperties = nccl_ofi_gin_getProperties,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	/* createContext is only relevant for GDAKI, not proxy mode */
 	.createContext = nullptr,
 	.regMrSym = nccl_ofi_gin_regMrSym,
@@ -602,7 +611,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v13_t ncclGinPlugin_v13 = {
 	.devices = nccl_ofi_gin_devices,
 	.getProperties = nccl_ofi_gin_getProperties_v13,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	.createContext = nccl_ofi_gin_createContext_v13,
 	.regMrSym = nccl_ofi_gin_regMrSym,
 	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
@@ -673,7 +682,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclRma_v14_t ncclRmaPlugin_v14 = {
 	.devices = nccl_ofi_gin_devices,
 	.getProperties = nccl_ofi_gin_getProperties_v13,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	.createContext = nccl_ofi_rma_createContext_v14,
 	.regMrSym = nccl_ofi_rma_regMrSym_v14,
 	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
@@ -739,7 +748,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclRma_v15_t ncclRmaPlugin_v15 = {
 	.devices = nccl_ofi_gin_devices,
 	.getProperties = nccl_ofi_gin_getProperties_v13,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	.createContext = nccl_ofi_rma_createContext_v14,
 	.regMrSym = nccl_ofi_rma_regMrSym_v14,
 	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
@@ -777,7 +786,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclRma_v16_t ncclRmaPlugin_v16 = {
 	.getRmaProperties = nccl_ofi_rma_getRmaProperties_v16,
 	.getProperties = nccl_ofi_gin_getProperties_v13,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	.createContext = nccl_ofi_rma_createContext_v14,
 	.regMrSym = nccl_ofi_rma_regMrSym_v14,
 	.regMrSymDmaBuf = nccl_ofi_rma_regMrSymDmaBuf_v14,
