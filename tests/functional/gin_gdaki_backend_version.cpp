@@ -3,7 +3,7 @@
  *
  * GDAKI backendVersion validation probe.
  *
- * createContext_v14 receives ncclGinConfig_v14_t::backendVersion, the
+ * createContext_v15 receives ncclGinConfig_v15_t::backendVersion, the
  * efa-dp-direct QP/CQ device-struct layout version NCCL was built to drive.
  * The plugin must build exactly that layout or refuse; building a layout NCCL
  * did not request would hand its kernel a struct with the wrong field offsets
@@ -56,9 +56,9 @@ int main(int argc, char *argv[])
 	return 0;
 #else
 	test_nccl_gin_t *gin = (test_nccl_gin_t *)dlsym(net_plugin_handle,
-						    "ncclGinPlugin_v14");
+						    "ncclGinPlugin_v15");
 	if (!gin || !gin->createContext) {
-		fprintf(stderr, "backend_version: FAIL (no ncclGinPlugin_v14)\n");
+		fprintf(stderr, "backend_version: FAIL (no ncclGinPlugin_v15)\n");
 		return 1;
 	}
 
