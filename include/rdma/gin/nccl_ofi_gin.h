@@ -433,7 +433,7 @@ private:
 class nccl_ofi_rdma_gin_put_comm : public nccl_ofi_gin_put_comm_t {
 public:
 	nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
-			  nccl_net_ofi_send_comm *s_comm_, nccl_net_ofi_recv_comm *r_comm_);
+			  nccl_ofi_gin_ring_send_comm s_comm_, nccl_ofi_gin_ring_recv_comm r_comm_);
 
 	~nccl_ofi_rdma_gin_put_comm();
 

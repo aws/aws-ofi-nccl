@@ -37,12 +37,12 @@ struct gin_connect_handle {
 };
 
 nccl_ofi_rdma_gin_put_comm::nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
-				     nccl_net_ofi_send_comm *s_comm_,
-				     nccl_net_ofi_recv_comm *r_comm_)
+				     nccl_ofi_gin_ring_send_comm s_comm_,
+				     nccl_ofi_gin_ring_recv_comm r_comm_)
     : resources_sp(std::move(resources_arg)),
       metadata_fl(nullptr, &freelist_deleter), dev(s_comm_->dev_id),
       rank(rank_), nranks(nranks_),
-      ag_comm(s_comm_, r_comm_, rank_, nranks_)
+      ag_comm(std::move(s_comm_), std::move(r_comm_), rank_, nranks_)
 {
 	auto &ep = get_resources().get_ep();
 
@@ -181,8 +181,10 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 
 	assert(nranks > 0);
 
-	nccl_net_ofi_send_comm *s_comm = nullptr;
-	nccl_net_ofi_recv_comm *r_comm = nullptr;
+	/* Owned from the moment each half is established, so every early return
+	 * below closes whatever was built; ownership then moves to the put_comm. */
+	nccl_ofi_gin_ring_send_comm s_comm;
+	nccl_ofi_gin_ring_recv_comm r_comm;
 
 	const int next_rank = (rank + 1) % nranks;
 	auto *connect_handle = static_cast<nccl_net_ofi_conn_handle_t *>(handles[next_rank]);
@@ -195,18 +197,22 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	 */
 	while (s_comm == nullptr || r_comm == nullptr) {
 		if (s_comm == nullptr) {
-			ret = ep->connect(connect_handle, &s_comm, -1);
+			nccl_net_ofi_send_comm *comm = nullptr;
+			ret = ep->connect(connect_handle, &comm, -1);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error in bootstrap ring connect: %d", ret);
 				return ret;
 			}
+			s_comm.reset(comm);
 		}
 		if (r_comm == nullptr) {
-			ret = l_comm->accept(&r_comm);
+			nccl_net_ofi_recv_comm *comm = nullptr;
+			ret = l_comm->accept(&comm);
 			if (ret != 0) {
 				NCCL_OFI_WARN("Error in bootstrap ring accept: %d", ret);
 				return ret;
 			}
+			r_comm.reset(comm);
 		}
 	}
 
@@ -215,7 +221,8 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	std::shared_ptr<nccl_ofi_gin_resources> resources = gin_resources_registry().get(ep);
 
 	nccl_ofi_rdma_gin_put_comm *gin_comm =
-		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, s_comm, r_comm);
+		new nccl_ofi_rdma_gin_put_comm(resources, rank, nranks, std::move(s_comm),
+					       std::move(r_comm));
 
 	std::vector<gin_connect_handle> all_handles(nranks, gin_connect_handle {});
 	gin_connect_handle &my_gin_handle = all_handles[rank];
@@ -245,6 +252,9 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 	ret = gin_comm->ag_comm.all_gather(all_handles.data(), sizeof(gin_connect_handle));
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed to exchange connect metadata: %d", ret);
+		/* Unlink before deleting, as closeColl() does: the destructor
+		 * leaves the comm table entry in place. */
+		gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
 		delete gin_comm;
 		return ret;
 	}
@@ -263,6 +273,7 @@ int nccl_ofi_rdma_gin_listen_comm::connect(nccl_net_ofi_conn_handle_t *handles[]
 					       static_cast<uint32_t>(i),
 					       remote_rank_comm.address[r], gin_comm->rank_map[r]);
 			if (ret != 0) {
+				gin_comm->get_resources().remove_comm(gin_comm->get_local_comm_id());
 				delete gin_comm;
 				return ret;
 			}
