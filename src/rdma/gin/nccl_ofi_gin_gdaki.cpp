@@ -171,6 +171,27 @@ static ncclResult_t nccl_ofi_gin_gdaki_get_properties(int dev, ncclNetProperties
  *
  * Throws std::runtime_error on fi_getname / allgather failure.
  */
+/**
+ * Run one of createContext's setup allgathers.
+ *
+ * createContext performs 1 + 2*effective_rails + nContexts of these in series,
+ * every one of which waits on all peers, so each is a place the job can hang if
+ * a peer dies. all_gather() polls the communicator's abort token and returns
+ * -ECANCELED when it fires; say so in the message, since the application is the
+ * one that aborted and only the log needs to tell the two apart.
+ */
+static void gdaki_setup_allgather(nccl_ofi_rdma_gin_put_comm *put_comm, void *data, size_t size,
+				  const std::string &what)
+{
+	int ret = put_comm->get_ag_comm().all_gather(data, size);
+	if (OFI_UNLIKELY(ret == -ECANCELED)) {
+		throw std::runtime_error("communicator aborted during " + what);
+	}
+	if (OFI_UNLIKELY(ret != 0)) {
+		throw std::runtime_error(what + " failed: " + std::to_string(ret));
+	}
+}
+
 static std::vector<uint8_t> allgather_ep_addrs_batched(
 	const std::vector<struct fid_ep *> &eps,
 	nccl_ofi_rdma_gin_put_comm *put_comm,
@@ -193,9 +214,7 @@ static std::vector<uint8_t> allgather_ep_addrs_batched(
 		}
 	}
 
-	if (put_comm->get_ag_comm().all_gather(all.data(), rec_len) != 0) {
-		throw std::runtime_error("batched allgather of ep addresses failed");
-	}
+	gdaki_setup_allgather(put_comm, all.data(), rec_len, "batched allgather of ep addresses");
 	return all;
 }
 
@@ -219,9 +238,8 @@ static void exchange_signal_counter_counts(nccl_ofi_gin_gdaki_context *ctx,
 	std::vector<int32_t> counts(nranks * 2, 0);
 	counts[rank * 2 + 0] = ctx->nSignals;
 	counts[rank * 2 + 1] = ctx->nCounters;
-	if (put_comm->get_ag_comm().all_gather(counts.data(), 2 * sizeof(int32_t)) != 0) {
-		throw std::runtime_error("allgather of signal/counter counts failed");
-	}
+	gdaki_setup_allgather(put_comm, counts.data(), 2 * sizeof(int32_t),
+			      "allgather of signal/counter counts");
 
 	ctx->global_n_sc = 0;
 	for (int p = 0; p < nranks; p++) {
@@ -289,16 +307,10 @@ static void setup_scratch_buffer(nccl_ofi_gin_gdaki_context *ctx,
 		scratch_all_addrs[rank] = ctx->scratch_local_addr;
 		scratch_all_rkeys[rank] = rs.scratch_lkey;
 
-		if (put_comm->get_ag_comm().all_gather(
-			    scratch_all_addrs.data(), sizeof(uint64_t)) != 0) {
-			throw std::runtime_error("scratch allgather addrs (rail " +
-						 std::to_string(r) + ") failed");
-		}
-		if (put_comm->get_ag_comm().all_gather(
-			    scratch_all_rkeys.data(), sizeof(uint32_t)) != 0) {
-			throw std::runtime_error("scratch allgather rkeys (rail " +
-						 std::to_string(r) + ") failed");
-		}
+		gdaki_setup_allgather(put_comm, scratch_all_addrs.data(), sizeof(uint64_t),
+				      "scratch allgather addrs (rail " + std::to_string(r) + ")");
+		gdaki_setup_allgather(put_comm, scratch_all_rkeys.data(), sizeof(uint32_t),
+				      "scratch allgather rkeys (rail " + std::to_string(r) + ")");
 
 		rs.scratch_remote_addrs_buf.allocate(nranks);
 		rs.scratch_remote_rkeys_buf.allocate(nranks);
@@ -747,6 +759,15 @@ static ncclResult_t nccl_ofi_gin_gdaki_createContext(void *collComm, ncclGinConf
 		 * of each poster's target addressing table. */
 		const size_t total_slots = 1 + (size_t)global_n_sc;
 		for (int ctx_id = 0; ctx_id < nContexts; ctx_id++) {
+			/* One allgather per context runs below, so check between
+			 * contexts as well: an abort raised while an earlier
+			 * context was being built should not open the rest. */
+			if (OFI_UNLIKELY(put_comm->get_abort_token().requested())) {
+				throw std::runtime_error("communicator aborted during context " +
+							 std::to_string(ctx_id) +
+							 " endpoint setup");
+			}
+
 			/* This context's endpoints open on rail
 			 * (ctx_id % num_rails)'s domain. Distinct contextIds
 			 * therefore spread across the GPU's NICs. */
@@ -1265,7 +1286,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.getGinProperties = nccl_ofi_gin_gdaki_getGinProperties_v14,
 	.getProperties = nccl_ofi_gin_gdaki_get_properties,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_connect,
+	.connect = nccl_ofi_gin_connect_v14,
 	.createContext = nccl_ofi_gin_gdaki_createContext_v14,
 	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
 	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,
@@ -1278,12 +1299,13 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v14_t ncclGinPlugin_v14 = {
 	.finalize = nccl_ofi_gin_finalize
 };
 
-/* v15 GIN op-table. Three things changed from v14, and only the first one
- * carries any behaviour for this backend:
+/* v15 GIN op-table. Three things changed from v14:
  *   - ncclGinProperties gains barrierOptions, the barrier algorithm the backend
  *     wants NCCL to run;
- *   - ncclGinConfig replaces rankStride with peerArray/peerArrayCount;
- *   - connect() takes an abortFlag.
+ *   - connect() takes an abortFlag, which this backend stores on the put_comm
+ *     so every setup collective it owns can be interrupted;
+ *   - ncclGinConfig replaces rankStride with peerArray/peerArrayCount, which
+ *     this backend does not act on yet (it addresses every peer).
  * NCCL probes the tables in the order v15, v14, v13 and uses the first it
  * finds, so this one supersedes ncclGinPlugin_v14 above on NCCL 2.32.4+.
  */
@@ -1303,15 +1325,6 @@ static ncclResult_t nccl_ofi_gin_gdaki_getGinProperties_v15(ncclGinProperties_v1
 	 * what its device specialization returns. */
 	ginProps->barrierOptions = NCCL_GIN_BARRIER_SIGNAL_EFFICIENT;
 	return ncclSuccess;
-}
-
-static ncclResult_t nccl_ofi_gin_gdaki_connect_v15(void *ctx, void *handles[], int nranks, int rank,
-						   void *listenComm, void **collComm,
-						   volatile uint32_t *abortFlag)
-{
-	/* This backend does not act on the abort flag. */
-	(void)abortFlag;
-	return nccl_ofi_gin_connect(ctx, handles, nranks, rank, listenComm, collComm);
 }
 
 static ncclResult_t nccl_ofi_gin_gdaki_createContext_v15(void *collComm, ncclGinConfig_v15_t *config,
@@ -1346,7 +1359,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclGin_v15_t ncclGinPlugin_v15 = {
 	.getGinProperties = nccl_ofi_gin_gdaki_getGinProperties_v15,
 	.getProperties = nccl_ofi_gin_gdaki_get_properties,
 	.listen = nccl_ofi_gin_listen,
-	.connect = nccl_ofi_gin_gdaki_connect_v15,
+	.connect = nccl_ofi_gin_connect,
 	.createContext = nccl_ofi_gin_gdaki_createContext_v15,
 	.regMrSym = nccl_ofi_gin_gdaki_regMrSym,
 	.regMrSymDmaBuf = nccl_ofi_gin_regMrSymDmaBuf,

@@ -58,12 +58,22 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 	/**
 	 * The allgather is performed using a ring, using the net plugin's
 	 * send/recv functions
+	 *
+	 * Both wait loops below poll the communicator's abort token. A peer that
+	 * dies or is aborted never completes its leg of the ring, so without the
+	 * check these loops spin forever.
 	 */
 	srank = rank;
 	for (size_t i = 0; i < nranks - 1; i++) {
 		rrank = (srank - 1 + nranks) % nranks;
 		tag = 0; /* ignored by plugin */
 		while (!rreq || !sreq) {
+			if (OFI_UNLIKELY(abort.requested())) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while posting (step %zu/%zu)",
+					      i, nranks - 1);
+				return -ECANCELED;
+			}
+
 			if (!rreq) {
 				buf = ((char *)data) + (rrank * size);
 				ret = r_comm->recv(1, &buf, &size, &tag, &rmhandle, &rreq);
@@ -84,6 +94,12 @@ int nccl_ofi_gin_allgather_comm::all_gather(void *data, size_t size)
 		}
 
 		while (rreq || sreq) {
+			if (OFI_UNLIKELY(abort.requested())) {
+				NCCL_OFI_WARN("bootstrap allgather aborted while waiting (step %zu/%zu)",
+					      i, nranks - 1);
+				return -ECANCELED;
+			}
+
 			done = 0;
 			req_size = 0;
 			if (rreq) {

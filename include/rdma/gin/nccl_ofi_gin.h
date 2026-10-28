@@ -61,7 +61,8 @@ public:
 	}
 
 	int connect(nccl_net_ofi_conn_handle_t *handles[], int nranks, int rank,
-		    nccl_ofi_gin_put_comm_t **gin_comm_out) override;
+		    nccl_ofi_gin_put_comm_t **gin_comm_out,
+		    nccl_ofi_gin_abort_token abort) override;
 };
 
 /**
@@ -433,7 +434,8 @@ private:
 class nccl_ofi_rdma_gin_put_comm : public nccl_ofi_gin_put_comm_t {
 public:
 	nccl_ofi_rdma_gin_put_comm(std::shared_ptr<nccl_ofi_gin_resources> resources_arg, int rank_, int nranks_,
-			  nccl_ofi_gin_ring_send_comm s_comm_, nccl_ofi_gin_ring_recv_comm r_comm_);
+			  nccl_ofi_gin_ring_send_comm s_comm_, nccl_ofi_gin_ring_recv_comm r_comm_,
+			  nccl_ofi_gin_abort_token abort_ = {});
 
 	~nccl_ofi_rdma_gin_put_comm();
 
@@ -465,6 +467,11 @@ public:
 	nccl_ofi_gin_allgather_comm &get_ag_comm()
 	{
 		return ag_comm;
+	}
+
+	nccl_ofi_gin_abort_token get_abort_token() const
+	{
+		return ag_comm.get_abort_token();
 	}
 
 	int get_dev() const
