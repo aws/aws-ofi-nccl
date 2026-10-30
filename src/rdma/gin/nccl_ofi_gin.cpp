@@ -353,7 +353,11 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 	/* Shared core: dedup/refcount, local EFA registration, MR-map insert,
 	   per-rank key all-gather. */
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
-	int ret = regMrSymDmaBufCommon(ckey, data_ptr, size, type, &mr_handle);
+	/* Pass NCCL's mrFlags through; the registration path relaxes ordering on
+	 * GIN symmetric data buffers unless the caller forces strict ordering
+	 * (FORCE_SO) for ordering-sensitive (e.g. signal) MRs. */
+	int ret = regMrSymDmaBufCommon(ckey, data_ptr, size, type, &mr_handle,
+				       mrFlags);
 	if (ret != 0) {
 		return ret;
 	}
@@ -378,7 +382,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBuf(nccl_ofi_mr_ckey_ref ckey, void *
 }
 
 int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+				      uint64_t mr_flags)
 {
 	auto &gin_ep = get_resources().get_ep();
 
@@ -390,7 +395,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 	/**
 	 * Local registration with the endpoint
 	 */
-	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle);
+	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle, mr_flags);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
 		delete mr_handle;
@@ -429,7 +434,8 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 }
 
 int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, void *data_ptr, size_t size,
-				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out)
+				      int type, nccl_ofi_rdma_gin_symm_mr_handle **mr_handle_out,
+				      uint64_t mr_flags)
 {
 	nccl_ofi_rdma_gin_symm_mr_handle *mr_handle = nullptr;
 	int ret = 0;
@@ -448,7 +454,7 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymDmaBufCommon(nccl_ofi_mr_ckey_ref ckey, 
 		it->second.refcnt++;
 		mr_handle = it->second.handle;
 	} else {
-		ret = regMrSymLocal(ckey, data_ptr, size, type, &mr_handle);
+		ret = regMrSymLocal(ckey, data_ptr, size, type, &mr_handle, mr_flags);
 		if (ret != 0) {
 			return ret;
 		}

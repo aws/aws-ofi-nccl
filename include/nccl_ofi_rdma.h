@@ -1266,13 +1266,17 @@ public:
 	 *		MR cache key reference
 	 * @param	type
 	 *		Type of MR
+	 * @param	mr_flags
+	 *		MR flags for this registration (e.g. NCCL_OFI_MR_FLAG_*).
+	 *		Defaults to strong ordering; relaxed callers pass 0.
 	 *
 	 * @return	Memory registration handle
 	 */
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey,
 		   int type,
 		   nccl_net_ofi_rdma_ep_t *ep,
-		   nccl_net_ofi_rdma_mr_handle_t **mhandle);
+		   nccl_net_ofi_rdma_mr_handle_t **mhandle,
+		   uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 	/**
 	 * @brief	Register memory region on RDMA endpoint
@@ -1322,19 +1326,24 @@ public:
 	 *		Size of MR. Size must be a multiple of system memory page size.
 	 * @param	type
 	 *		Type of MR
+	 * @param	mr_flags
+	 *		MR flags for this registration (e.g. NCCL_OFI_MR_FLAG_*).
+	 *		Defaults to strong ordering; relaxed callers pass 0.
 	 *
 	 * @return	Memory registration handle
 	 */
 	int reg_internal_mr(void *data,
 			    size_t size, int type,
 			    nccl_net_ofi_rdma_ep_t *ep,
-			    nccl_net_ofi_rdma_mr_handle_t **mhandle);
+			    nccl_net_ofi_rdma_mr_handle_t **mhandle,
+			    uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 #if HAVE_DECL_FI_MR_DMABUF
 	int reg_internal_mr_dma_buf(void *data,
 				int fd, uint64_t offset, size_t size, int type,
 				nccl_net_ofi_rdma_ep_t *ep,
-				nccl_net_ofi_rdma_mr_handle_t **mhandle);
+				nccl_net_ofi_rdma_mr_handle_t **mhandle,
+				uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 #endif
 	/**
 	 * @brief	Deregister memory region
@@ -1365,7 +1374,8 @@ private:
 	int reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 			     int type,
 			     nccl_net_ofi_rdma_ep_t *ep,
-			     nccl_net_ofi_rdma_mr_handle_t **mhandle);
+			     nccl_net_ofi_rdma_mr_handle_t **mhandle,
+			     uint64_t mr_flags = NCCL_OFI_MR_FLAG_FORCE_SO);
 
 	/**
 	 * @brief	Bind and enable a memory region on an endpoint
