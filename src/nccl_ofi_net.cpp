@@ -157,11 +157,11 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
  * Module-level hardware topology.
  *
  * Lifecycle:
- *   - Created in nccl_net_ofi_create_plugin() via nccl_ofi_topo_create().
- *   - Used during plugin construction (RDMA calls topo_populate/topo_group)
+ *   - Created in nccl_net_ofi_create_plugin() via nccl_ofi_topo_t::create().
+ *   - Used during plugin construction (RDMA calls populate()/group())
  *     and after construction (complete_init, get_properties) via the
  *     non-owning plugin->topo pointer.
- *   - Freed automatically by the unique_ptr custom deleter, either on
+ *   - Freed automatically by the unique_ptr destructor, either on
  *     initialization failure (unique_ptr goes out of scope or is reset)
  *     or at process exit.
  *
@@ -171,10 +171,7 @@ int nccl_net_ofi_dealloc_mr_buffer(void *ptr, size_t size)
  *   plugin stores a non-owning copy in its base-class topo member for
  *   later use by complete_init() and get_properties().
  */
-struct topo_deleter {
-	void operator()(nccl_ofi_topo_t *t) { nccl_ofi_topo_free(t); }
-};
-static std::unique_ptr<nccl_ofi_topo_t, topo_deleter> topo;
+static std::unique_ptr<nccl_ofi_topo_t> topo;
 
 int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 {
@@ -220,7 +217,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* configuration parameters */
 	cq_read_count = ofi_nccl_cq_read_count();
 
-	topo.reset(nccl_ofi_topo_create());
+	topo = nccl_ofi_topo_t::create();
 	if (!topo) {
 		NCCL_OFI_WARN("Failed to create NCCL OFI topology");
 		ret = -ENODEV;
