@@ -5,6 +5,9 @@
 #include "config.h"
 
 #include <algorithm>
+#include <map>
+#include <set>
+#include <vector>
 #include <string.h>
 #include <hwloc.h>
 #include <rdma/fabric.h>
@@ -453,6 +456,51 @@ static bool has_accel_at_same_level(hwloc_obj_t node)
 	return false;
 }
 
+bool nccl_ofi_topo_get_package_bridge_depth(hwloc_obj_t node, hwloc_obj_t *package,
+					    unsigned int *bridge_depth)
+{
+	*package = NULL;
+	*bridge_depth = 0;
+	for (hwloc_obj_t parent = node->parent; parent != NULL; parent = parent->parent) {
+		if (parent->type == HWLOC_OBJ_PACKAGE) {
+			*package = parent;
+			return true;
+		}
+		if (parent->type == HWLOC_OBJ_BRIDGE) {
+			++(*bridge_depth);
+		}
+	}
+
+	return false;
+}
+
+bool nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+	const unsigned int *accel_depths, size_t num_accels,
+	const unsigned int *nic_depths, size_t num_nics,
+	unsigned int *matching_nic_depth)
+{
+	if (num_accels == 0 || num_nics == 0) {
+		return false;
+	}
+
+	std::set<unsigned int> unique_accel_depths(accel_depths, accel_depths + num_accels);
+	std::set<unsigned int> unique_nic_depths(nic_depths, nic_depths + num_nics);
+
+	/* Accelerators at different depths give no single depth to match. NICs
+	 * at one depth leave nothing to tell apart, so no NIC can be excluded. */
+	if (unique_accel_depths.size() != 1 || unique_nic_depths.size() < 2) {
+		return false;
+	}
+
+	unsigned int accel_depth = *unique_accel_depths.begin();
+	if (unique_nic_depths.count(accel_depth) == 0) {
+		return false;
+	}
+
+	*matching_nic_depth = accel_depth;
+	return true;
+}
+
 /*
  * @brief	Match a topology node to its libfabric NIC info struct by PCI address
  *
@@ -516,6 +564,22 @@ static int match_info_for_node(hwloc_obj_t node, struct fi_info *info_list, stru
 	return 0;
 }
 
+enum class nic_filter_mode {
+	NONE,
+	SAME_LEVEL,
+	PACKAGE_DEPTH,
+};
+
+struct package_depth_data {
+	std::vector<unsigned int> accel_depths;
+	std::vector<unsigned int> nic_depths;
+};
+
+struct nic_filter_state {
+	nic_filter_mode mode = nic_filter_mode::NONE;
+	std::map<hwloc_obj_t, unsigned int> selected_depths;
+};
+
 /*
  * @brief	Determine whether at least one NIC has an accelerator at the
  *		same PCI level.
@@ -564,45 +628,157 @@ static int any_nic_has_accel_at_same_level(hwloc_topology_t topo, struct fi_info
 }
 
 /*
+ * @brief	Build the conservative package-relative bridge-depth fallback
+ *
+ * The fallback is valid only when every visible NIC can be placed, every
+ * package containing a NIC has one accelerator depth and multiple NIC depths,
+ * and one NIC depth matches the accelerator depth. Any ambiguity disables the
+ * fallback for the entire topology so that filtering cannot silently remove a
+ * usable network path.
+ */
+static int get_package_depth_filter(hwloc_topology_t topo, struct fi_info *info_list,
+				    nic_filter_state *filter)
+{
+	std::map<hwloc_obj_t, package_depth_data> package_data;
+	hwloc_obj_t obj = NULL;
+	size_t matched_nics = 0;
+
+	while ((obj = hwloc_get_next_pcidev(topo, obj))) {
+		bool is_accel = false;
+		struct fi_info *info = NULL;
+		int ret = is_accelerator_dev(obj, &is_accel);
+		if (ret != 0) {
+			return ret;
+		}
+
+		ret = match_info_for_node(obj, info_list, &info);
+		if (ret != 0) {
+			return ret;
+		}
+
+		if (!is_accel && info == NULL) {
+			continue;
+		}
+
+		hwloc_obj_t package = NULL;
+		unsigned int bridge_depth = 0;
+		if (!nccl_ofi_topo_get_package_bridge_depth(obj, &package, &bridge_depth)) {
+			return 0;
+		}
+
+		if (is_accel) {
+			package_data[package].accel_depths.push_back(bridge_depth);
+		}
+		if (info != NULL) {
+			package_data[package].nic_depths.push_back(bridge_depth);
+			++matched_nics;
+		}
+	}
+
+	if (matched_nics != nccl_ofi_ofiutils_info_list_length(info_list)) {
+		return 0;
+	}
+
+	for (const auto& entry : package_data) {
+		const package_depth_data& data = entry.second;
+		if (data.nic_depths.empty()) {
+			continue;
+		}
+
+		unsigned int matching_nic_depth = 0;
+		if (!nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+			    data.accel_depths.data(), data.accel_depths.size(),
+			    data.nic_depths.data(), data.nic_depths.size(),
+			    &matching_nic_depth)) {
+			filter->selected_depths.clear();
+			return 0;
+		}
+		filter->selected_depths[entry.first] = matching_nic_depth;
+	}
+
+	if (!filter->selected_depths.empty()) {
+		filter->mode = nic_filter_mode::PACKAGE_DEPTH;
+	}
+	return 0;
+}
+
+static int configure_nic_filter(hwloc_topology_t topo, struct fi_info *info_list,
+				nic_filter_state *filter)
+{
+	bool has_same_level_nic = false;
+	int ret = any_nic_has_accel_at_same_level(topo, info_list, &has_same_level_nic);
+	if (ret != 0) {
+		return ret;
+	}
+
+	if (has_same_level_nic) {
+		filter->mode = nic_filter_mode::SAME_LEVEL;
+		return 0;
+	}
+
+	return get_package_depth_filter(topo, info_list, filter);
+}
+
+static int package_depth_matches(const nic_filter_state& filter, hwloc_obj_t node,
+				 bool *matches)
+{
+	hwloc_obj_t package = NULL;
+	unsigned int bridge_depth = 0;
+	*matches = false;
+
+	if (!nccl_ofi_topo_get_package_bridge_depth(node, &package, &bridge_depth)) {
+		return -EINVAL;
+	}
+
+	auto selected = filter.selected_depths.find(package);
+	if (selected == filter.selected_depths.end()) {
+		return -EINVAL;
+	}
+
+	*matches = bridge_depth == selected->second;
+	return 0;
+}
+
+/*
  * @brief	Return libfabric NIC info struct from info list that corresponds to input topology node
  *
- * Optionally applies the SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL filter,
- * which drops NICs that do not have an accelerator at the same PCI level.
- * The caller passes apply_skip_filter, which must only be true when there is
- * at least one NIC with an accelerator at the same PCI level to fall back on
- * (see any_nic_has_accel_at_same_level).
+ * Applies the selected accelerator-local NIC policy after matching the PCI
+ * device against the libfabric list. The policy is disabled when topology
+ * analysis cannot identify a complete, unambiguous eligible tier.
  *
  * @param	node
  *		The topology node
  * @param	info_list
  *		List of Libfabric NIC info structs
- * @param	apply_skip_filter
- *		Whether the skip-nics-without-accel filter should be applied
- *		(true only when the param is enabled and at least one NIC with an
- *		accelerator at the same PCI level exists to fall back on; see
- *		any_nic_has_accel_at_same_level)
+ * @param	filter
+ *		Filter mode and any selected package-relative depths
  * @param	ret_info
  *		Set to the matching info struct if found and not filtered, NULL otherwise
  * @return	0, on success
  *		non-zero, on error
  */
 static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list,
-			     bool apply_skip_filter, struct fi_info **ret_info)
+			     const nic_filter_state& filter, struct fi_info **ret_info)
 {
-	*ret_info = NULL;
-
-	/*
-	 * Skip NICs which do not have an accelerator at the same PCI level when
-	 * the caller has determined the filter should be applied (i.e. the param
-	 * is enabled and there is at least one NIC with an accelerator at the
-	 * same PCI level to use instead). Otherwise skipping would remove every
-	 * NIC in the system.
-	 */
-	if (apply_skip_filter && !has_accel_at_same_level(node)) {
-		return 0;
+	int ret = match_info_for_node(node, info_list, ret_info);
+	if (ret != 0 || *ret_info == NULL) {
+		return ret;
 	}
 
-	return match_info_for_node(node, info_list, ret_info);
+	bool keep = true;
+	if (filter.mode == nic_filter_mode::SAME_LEVEL) {
+		keep = has_accel_at_same_level(node);
+	} else if (filter.mode == nic_filter_mode::PACKAGE_DEPTH) {
+		ret = package_depth_matches(filter, node, &keep);
+		if (ret != 0) {
+			return ret;
+		}
+	}
+
+	if (!keep) {
+		*ret_info = NULL;
+	}
+	return 0;
 }
 
 /*
@@ -613,16 +789,16 @@ static int get_info_for_node(hwloc_obj_t node, struct fi_info *info_list,
  *		Hwloc topology. Userdata pointers of topology nodes are expected to be set to NULL
  * @param	info_list
  *		Libfabric NIC info list to identify the NICs
- * @param	apply_skip_filter
- *		Whether the skip-nics-without-accel filter should be applied (computed
- *		once by the caller and passed down so it matches the populate pass)
+ * @param	filter
+ *		Filter mode and selected package-relative depths, computed once
+ *		for both the count and populate passes
  * @return	Number of nodes
  * @return	0, on success
  *		non-zero, on error
  */
 static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 							   struct fi_info *info_list,
-							   bool apply_skip_filter,
+							   const nic_filter_state& filter,
 							   int *count)
 {
 	int ret = 0;
@@ -638,7 +814,7 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 			return ret;
 		}
 
-		ret = get_info_for_node(obj, info_list, apply_skip_filter, &info);
+		ret = get_info_for_node(obj, info_list, filter, &info);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ret;
@@ -665,7 +841,7 @@ static int count_nodes_with_accel_or_nic_in_subtree(hwloc_topology_t topo,
 	 * the topology nodes to avoid counting nodes
 	 * twice. Afterwards, invoke this function another time to
 	 * clear the user data pointers. */
-	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, apply_skip_filter, NULL);
+	if (count != NULL) return count_nodes_with_accel_or_nic_in_subtree(topo, info_list, filter, NULL);
 	else return 0;
 }
 
@@ -821,31 +997,32 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	hwloc_obj_t obj = NULL;
 	nccl_ofi_topo_data_iterator_t data_iter;
 
-	/* Determine whether the skip-nics-without-accel filter should be applied.
-	 * It is applied only when the param is enabled AND at least one NIC has
-	 * an accelerator at the same PCI level. Otherwise applying it would
-	 * remove every NIC in the system. Computed once here and passed down so
-	 * the counting pass and the populate pass below always use the same
-	 * value. The applicability scan is skipped entirely when the param is
-	 * disabled. */
+	/* Choose one filter mode before the count and populate passes so both
+	 * traverse the same topology. The package-depth fallback is conservative:
+	 * when any package is incomplete or ambiguous, it leaves filtering off. */
 	bool skip_enabled = ofi_nccl_skip_nics_without_accel.get();
-	bool apply_skip_filter = false;
+	nic_filter_state filter;
 	if (skip_enabled) {
-		ret = any_nic_has_accel_at_same_level(ofi_topo->topo, info_list, &apply_skip_filter);
+		ret = configure_nic_filter(ofi_topo->topo, info_list, &filter);
 		if (ret != 0) {
-			NCCL_OFI_WARN("Failed to determine whether any NIC has an accelerator at the same PCI level");
+			NCCL_OFI_WARN("Failed to configure accelerator-local NIC filtering");
 			return ret;
 		}
-		if (!apply_skip_filter) {
+
+		if (filter.mode == nic_filter_mode::PACKAGE_DEPTH) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
 				      "SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL is set but no NIC has an "
-				      "accelerator at the same PCI level; filter disabled so all NICs are used.");
+				      "accelerator at the same PCI level; using package-relative PCI bridge depth");
+		} else if (filter.mode == nic_filter_mode::NONE) {
+			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+				      "SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL is set but no eligible NIC "
+				      "tier was identified; all NICs are used");
 		}
 	}
 
 	/* Retrieve number of topology nodes that have a Nvidia GPU or a NIC in their subtree */
 	int num_nodes = 0;
-	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, apply_skip_filter, &num_nodes);
+	ret = count_nodes_with_accel_or_nic_in_subtree(ofi_topo->topo, info_list, filter, &num_nodes);
 	if (ret != 0) {
 		NCCL_OFI_WARN("Failed counting number of nodes that have a Nvidia GPU or NIC in their subtree.");
 		return ret;
@@ -873,7 +1050,7 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 			return ret;
 		}
 
-		ret = get_info_for_node(obj, info_list, apply_skip_filter, &info);
+		ret = get_info_for_node(obj, info_list, filter, &info);
 		if (ret != 0) {
 			NCCL_OFI_WARN("Error while retrieving libfabric NIC info struct corresponding to hwloc topology node");
 			return ret;

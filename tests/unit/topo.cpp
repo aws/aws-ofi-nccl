@@ -46,9 +46,10 @@ int main()
 	unit_test_init();
 
 	hwloc_obj root = make_obj(HWLOC_OBJ_MACHINE, 0, nullptr);
+	hwloc_obj package = make_obj(HWLOC_OBJ_PACKAGE, 1, &root);
 
 	union hwloc_obj_attr_u host_attr = {};
-	hwloc_obj host = make_bridge(HWLOC_OBJ_BRIDGE_HOST, &root, &host_attr);
+	hwloc_obj host = make_bridge(HWLOC_OBJ_BRIDGE_HOST, &package, &host_attr);
 
 	union hwloc_obj_attr_u switch_attr = {};
 	hwloc_obj pcie_switch = make_bridge(HWLOC_OBJ_BRIDGE_PCI, &host, &switch_attr);
@@ -86,7 +87,7 @@ int main()
 
 	/* Separate host bridges never share a PCIe switch. */
 	union hwloc_obj_attr_u other_host_attr = {};
-	hwloc_obj other_host = make_bridge(HWLOC_OBJ_BRIDGE_HOST, &root, &other_host_attr);
+	hwloc_obj other_host = make_bridge(HWLOC_OBJ_BRIDGE_HOST, &package, &other_host_attr);
 	hwloc_obj other_gpu = make_pcidev(&other_host);
 	if (!check("disjoint host bridges",
 		   nccl_ofi_topo_share_pcie_switch(&host_nic, &other_gpu), false)) {
@@ -99,6 +100,52 @@ int main()
 		return 1;
 	}
 
-	printf("Topology PCIe switch tests completed successfully!\n");
+	/* Count real bridge parents rather than hwloc's virtual object depth. */
+	hwloc_obj_t found_package = nullptr;
+	unsigned int bridge_depth = 0;
+	if (!nccl_ofi_topo_get_package_bridge_depth(&nic, &found_package, &bridge_depth) ||
+	    found_package != &package || bridge_depth != 2) {
+		fprintf(stderr, "expected NIC bridge depth 2\n");
+		return 1;
+	}
+	if (!nccl_ofi_topo_get_package_bridge_depth(
+		    &nested_gpu, &found_package, &bridge_depth) ||
+	    found_package != &package || bridge_depth != 3) {
+		fprintf(stderr, "expected nested GPU bridge depth 3\n");
+		return 1;
+	}
+	if (nccl_ofi_topo_get_package_bridge_depth(
+		    &root, &found_package, &bridge_depth)) {
+		fprintf(stderr, "machine object must not have a package-relative depth\n");
+		return 1;
+	}
+
+	/* Find the NIC tier matching the common accelerator bridge count. */
+	const unsigned int accel_depths[] = {3, 3, 3, 3};
+	const unsigned int mixed_nic_depths[] = {3, 3, 3, 3, 5, 5};
+	unsigned int matching_nic_depth = 0;
+	if (!nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+		    accel_depths, 4, mixed_nic_depths, 6, &matching_nic_depth) ||
+	    matching_nic_depth != 3) {
+		fprintf(stderr, "expected unambiguous matching NIC depth 3\n");
+		return 1;
+	}
+
+	const unsigned int uniform_nic_depths[] = {3, 3};
+	const unsigned int multiple_accel_depths[] = {3, 3, 3, 4};
+	const unsigned int nonmatching_nic_depths[] = {4, 5};
+	if (nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+		    accel_depths, 4, uniform_nic_depths, 2, &matching_nic_depth) ||
+	    nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+		    multiple_accel_depths, 4, mixed_nic_depths, 6,
+		    &matching_nic_depth) ||
+	    nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+		    accel_depths, 4, nonmatching_nic_depths, 2,
+		    &matching_nic_depth)) {
+		fprintf(stderr, "ambiguous package depth selection must fail open\n");
+		return 1;
+	}
+
+	printf("Topology tests completed successfully!\n");
 	return 0;
 }

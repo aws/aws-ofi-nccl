@@ -314,6 +314,58 @@ int nccl_ofi_topo_num_info_lists(const nccl_ofi_topo_t *topo, int *num_lists);
 struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter);
 
 /*
+ * @brief	Return a PCI device's CPU package and bridge depth
+ *
+ * The bridge depth is the number of PCI bridges between the device and its
+ * nearest CPU package. It is counted from the actual parent links, not from
+ * hwloc's virtual object depth, which is based on object type and does not
+ * describe a node's position in an asymmetric I/O tree.
+ *
+ * @param	node
+ *		PCI device
+ * @param	package
+ *		Set to the nearest CPU package, or NULL if there is none
+ * @param	bridge_depth
+ *		Set to the number of bridges between node and package
+ * @return	true, if node has a CPU package ancestor
+ *		false, otherwise
+ */
+bool nccl_ofi_topo_get_package_bridge_depth(hwloc_obj_t node, hwloc_obj_t *package,
+					    unsigned int *bridge_depth);
+
+/*
+ * @brief	Find the NIC tier whose package-relative bridge count matches
+ *		the common accelerator bridge count
+ *
+ * The caller supplies bridge counts for the accelerators and NICs within one
+ * CPU package. Return true and set matching_nic_depth when all accelerators
+ * have one common bridge count, NICs occupy multiple bridge counts, and one
+ * NIC tier has the accelerator bridge count. Return false for incomplete or
+ * ambiguous topology; the caller then retains every NIC.
+ *
+ * For example, accelerator counts {3, 3, 3, 3} and NIC counts
+ * {3, 3, 3, 3, 5, 5} give a matching depth of 3: the caller retains the four
+ * NICs at depth 3 and excludes the two at depth 5.
+ *
+ * @param	accel_depths
+ *		Bridge counts of the accelerators in one CPU package
+ * @param	num_accels
+ *		Number of entries in accel_depths
+ * @param	nic_depths
+ *		Bridge counts of the NICs in the same CPU package
+ * @param	num_nics
+ *		Number of entries in nic_depths
+ * @param	matching_nic_depth
+ *		Set to the matching NIC bridge count when true is returned
+ * @return	true, if exactly one NIC tier matches the accelerator count
+ *		false, otherwise
+ */
+bool nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
+	const unsigned int *accel_depths, size_t num_accels,
+	const unsigned int *nic_depths, size_t num_nics,
+	unsigned int *matching_nic_depth);
+
+/*
  * @brief	Test whether two topology nodes sit under a common PCIe switch
  *
  * The nearest common ancestor is found from parent links because hwloc gives
