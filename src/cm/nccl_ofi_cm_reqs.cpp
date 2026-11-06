@@ -27,6 +27,9 @@ int nccl_net_ofi_cm_context::handle_error_entry(struct fid_cq *cq,
 						uint16_t rail_id)
 {
 	int ret = 0;
+	nccl_ofi_cm_req *req = cpp_container_of(this, &nccl_ofi_cm_req::ctx);
+
+	req->handle_error();
 
 	if (err_entry->err == FI_ECANCELED) {
 		/* Closing an EP with posted receives will (erroneously) generate
@@ -39,7 +42,6 @@ int nccl_net_ofi_cm_context::handle_error_entry(struct fid_cq *cq,
 		return 0;
 	}
 
-	nccl_ofi_cm_req *req = cpp_container_of(this, &nccl_ofi_cm_req::ctx);
 	PlatformManager::get_global().get_platform().log_cq_error(req, cq, err_entry, "cm");
 
 	/*
@@ -186,9 +188,16 @@ int nccl_ofi_cm_send_conn_resp_req::handle_completion()
 		assert(done_callback);
 		done_callback();
 	}
-	/* Free this request resources */
-	delete this;
+	/* The receiver owns this request and frees it. */
+	completed = true;
 	return 0;
+}
+
+
+void nccl_ofi_cm_send_conn_resp_req::handle_error()
+{
+	/* The send failed, so it is no longer in flight. */
+	completed = true;
 }
 
 
