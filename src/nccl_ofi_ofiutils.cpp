@@ -466,17 +466,25 @@ ofi_cq_result nccl_ofi_ofiutils_cq_create(ofi_domain_ptr &domain, struct fi_cq_a
 /**
  * @brief	Register memory region with libfabric using fi_mr_regattr
  */
-ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain, 
-					   struct fi_mr_attr *mr_attr, 
-					   uint64_t flags)
+ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
+					   struct fi_mr_attr *mr_attr,
+					   uint64_t flags,
+					   bool log_error_as_info)
 {
 	int ret = 0;
 	struct fid_mr *raw_mr = nullptr;
 
 	ret = fi_mr_regattr(domain.get(), mr_attr, flags, &raw_mr);
 	if (OFI_UNLIKELY(ret != 0)) {
-		NCCL_OFI_WARN("Couldn't register memory region with regattr. RC: %d, ERROR: %s",
-			      ret, fi_strerror(-ret));
+		if (log_error_as_info) {
+			NCCL_OFI_INFO(NCCL_NET,
+				      "Couldn't register memory region with regattr. RC: %d, ERROR: %s",
+				      ret, fi_strerror(-ret));
+		} else {
+			NCCL_OFI_WARN(
+				"Couldn't register memory region with regattr. RC: %d, ERROR: %s",
+				ret, fi_strerror(-ret));
+		}
 		return ofi_mr_result(ret);
 	}
 

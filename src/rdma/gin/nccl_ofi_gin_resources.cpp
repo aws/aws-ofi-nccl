@@ -282,13 +282,29 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 		return ret;
 	}
 
+	/* A rejected explicit DMA-BUF is a probe result for symmetric GIN
+	 * registration: NCCL may retry with a different CUDA mapping. Match the
+	 * internal IB backend by keeping the error return while moving the root
+	 * failure to INFO and its propagation to TRACE. */
+	bool log_regattr_error_as_info = false;
+#if HAVE_DECL_FI_MR_DMABUF
+	log_regattr_error_as_info = (regattr_flags & FI_MR_DMABUF) != 0;
+#endif
+
 	/* Register memory on each rail */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain.get_ofi_domain(rail_id),
-							      &mr_attr, regattr_flags);
+							      &mr_attr, regattr_flags,
+							      log_regattr_error_as_info);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
-			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu", rail_id,
-				      regattr_flags);
+			if (log_regattr_error_as_info) {
+				NCCL_OFI_TRACE(NCCL_NET,
+					       "Could not register memory on rail %u with flag %lu",
+					       rail_id, regattr_flags);
+			} else {
+				NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu",
+					      rail_id, regattr_flags);
+			}
 			return mr_result.error_code;
 		}
 		ret_handle->set_mr(rail_id, mr_result.resource);
