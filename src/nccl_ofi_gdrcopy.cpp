@@ -5,6 +5,7 @@
 #include "config.h"
 
 #include <errno.h>
+#include <memory>
 #include <stdexcept>
 
 #include "nccl_ofi_gdrcopy.h"
@@ -141,7 +142,7 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pc
 		return -ENOTSUP;
 	}
 
-	auto handle = new gdrcopy_RegHandle { };
+	auto handle = std::make_unique<gdrcopy_RegHandle>();
 	gdr_mh_t mh;
 
 	uintptr_t data_uint = reinterpret_cast<uintptr_t>(device_ptr);
@@ -164,7 +165,7 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pc
 #endif
 	if (ret != 0) {
 		NCCL_OFI_WARN("gdr_pin_buffer failed: %d", ret);
-		this->deregister_region(handle);
+		this->deregister_region(handle.get());
 		return -ret;
 	}
 	handle->pin_handle = mh.h;
@@ -173,7 +174,7 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pc
 	ret = pimpl->gdr_map_fn(pimpl->gdr, mh_map, &handle->gdr_mapped_ptr, handle->gdr_reglen);
 	if (ret != 0) {
 		NCCL_OFI_WARN("gdr_map failed: %d", ret);
-		this->deregister_region(handle);
+		this->deregister_region(handle.get());
 		return -ret;
 	}
 
@@ -181,7 +182,7 @@ int nccl_ofi_gdrcopy_ctx::register_region(void *device_ptr, size_t size, bool pc
 	handle->mapped_ptr = reinterpret_cast<uint8_t *>(handle->gdr_mapped_ptr) +
 			     (data_uint - regbgn);
 
-	out_handle = handle;
+	out_handle = handle.release();
 
 	return ret;
 }
