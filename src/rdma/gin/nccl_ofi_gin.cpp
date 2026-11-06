@@ -404,10 +404,19 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 	/**
 	 * Local registration with the endpoint
 	 */
+	bool log_regattr_error_as_info = false;
+#if HAVE_DECL_FI_MR_DMABUF
+	log_regattr_error_as_info = ckey->type == NCCL_OFI_MR_CKEY_DMABUF;
+#endif
+
 	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle,
 				gin_mr_flags_to_fi(mrFlags));
 	if (ret != 0) {
-		NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
+		if (log_regattr_error_as_info) {
+			NCCL_OFI_TRACE(NCCL_NET, "Local endpoint memory registration failed: %d", ret);
+		} else {
+			NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
+		}
 		delete mr_handle;
 		return ret;
 	}

@@ -120,11 +120,13 @@ ofi_cq_result nccl_ofi_ofiutils_cq_create(ofi_domain_ptr &domain, struct fi_cq_a
  * @param domain:	Domain handle
  * @param mr_attr:	Memory region attributes structure
  * @param flags:	Registration flags
+ * @param log_error_as_info:	Log registration failure at INFO instead of WARN
  * @return		Result containing error code and memory region pointer
  */
-ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain, 
-					   struct fi_mr_attr *mr_attr, 
-					   uint64_t flags);
+ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
+					   struct fi_mr_attr *mr_attr,
+					   uint64_t flags,
+					   bool log_error_as_info = false);
 
 /*
  * @brief	Free libfabric NIC info list.
