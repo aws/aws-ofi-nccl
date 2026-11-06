@@ -97,6 +97,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_PROTO", "simple" },
 		},
 	},
 	{
@@ -111,6 +112,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_PROTO", "simple" },
 		},
 	},
 	{
@@ -267,6 +269,7 @@ const PlatformAWS::ec2_platform_data PlatformAWS::platform_data_map[] = {
 		.env = {
 			{ "NCCL_BUFFSIZE", "8388608" },
 			{ "NCCL_P2P_NET_CHUNKSIZE", "524288" },
+			{ "NCCL_PROTO", "simple" },
 		},
 	},
 	{
@@ -494,34 +497,28 @@ int PlatformAWS::validate_rdma_write(struct fid_ep *ep)
  * Returns 0 on success (ie, have_ordering is in a sane state) or
  * -error code on unexpected failure.
  */
-int PlatformAWS::configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name,
-				bool *have_ordering)
+int PlatformAWS::configure_ep_inorder(struct fid_ep *ep, int optname, const char* optname_name)
 {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
 	int ret = 0;
 	bool optval = true;
 
-	*have_ordering = false;
-
 	ret = fi_setopt(&ep->fid, FI_OPT_ENDPOINT,
 			optname, &optval, sizeof(optval));
 	if (ret == -FI_EOPNOTSUPP || ret == -FI_ENOPROTOOPT) {
-		NCCL_OFI_INFO(NCCL_INIT, "Setting %s not supported.", optname_name);
+		NCCL_OFI_WARN("Setting %s not supported.", optname_name);
+		return ret;
 	} else if (ret != 0) {
 		NCCL_OFI_WARN("Could not set %s. RC: %d, ERROR: %s",
 			      optname_name, ret, fi_strerror(-ret));
 		return ret;
 	} else {
 		NCCL_OFI_TRACE(NCCL_INIT, "Setting %s have_ordering is true.", optname_name);
-		*have_ordering = true;
+		return 0;
 	}
-
-	NCCL_OFI_TRACE(NCCL_INIT, "fi_setopt(%s) ordering result %s, error code %d",
-		       optname_name, have_ordering ? "yes" : "no", ret);
 #else
-	*have_ordering = false;
+	return -FI_EOPNOTSUPP;
 #endif
-	return 0;
 }
 
 /*
@@ -862,100 +859,40 @@ int PlatformAWS::config_endpoint(struct fi_info *info, struct fid_ep* endpoint)
 		}
 	}
 
-#if HAVE_CUDA
-	std::lock_guard lock(mutex_);
+#if HAVE_GPU
+	if (support_gdr == GDR_SUPPORTED) {
+		if (strcmp("0xefa0", info->nic->device_attr->device_id) == 0) {
+			/* First generation EFA doesn't support in-order, so
+			   don't try to enable */
+			return 0;
+		}
 
-	/* During initialization, try to set
-	 * FI_OPT_EFA_{SENDRECV,WRITE}_IN_ORDER_ALIGNED_128_BYTES to
-	 * true to see if the LL/LL128 protocol is supported. After
-	 * initialization, try to set the option to true again if it
-	 * was previously set and error if we can't set them the same
-	 * way later.
-	 */
-	if (ofi_nccl_protocol.get() == PROTOCOL::SENDRECV) {
+		/* All but the first generation of EFA should always support in
+		 * order completion for 128 byte chunks when GDR is supported.
+		 * Verify and abort, just in case
+		 */
+		std::lock_guard lock(mutex_);
+
+		if (ofi_nccl_protocol.get() == PROTOCOL::SENDRECV) {
 #if HAVE_DECL_FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES
-		optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
-		optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
+			optname = FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES;
+			optname_name = "FI_OPT_EFA_SENDRECV_IN_ORDER_ALIGNED_128_BYTES";
 #endif
-	} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
+		} else if (ofi_nccl_protocol.get() == PROTOCOL::RDMA) {
 #if HAVE_DECL_FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES
-		optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
-		optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
+			optname = FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES;
+			optname_name = "FI_OPT_EFA_WRITE_IN_ORDER_ALIGNED_128_BYTES";
 #endif
-	} else {
-		NCCL_OFI_WARN("unknown transport %s", ofi_nccl_protocol.get_string());
-		ret = -EINVAL;
-		return ret;
-	}
-
-	/* TODO: This is a temporary hack to disable setting
-	 * NCCL_PROTO=simple on P5en when using the RDMA protocol.  EFA
-	 * on P5en does not currently report
-	 * WRITE_IN_ORDER_ALIGNED_128_BYTES because it can deliver the
-	 * (correct) payload twice.  This violates the meaning of the
-	 * WRITE_IN_ORDER_ALIGNED_128_BYTES flag in rdma-core, but
-	 * does not violate any assumptions about buffer reuse in
-	 * NCCL. We have confirmed that the EFA provider in Libfabric
-	 * will not segment messages for fi_write(), so this is safe.
-	 * Note that the SENDRECV protocol does have segmentation
-	 * challenges that require us to obey the
-	 * SENDRECV_IN_ORDER_ALIGNED_128_BYTES flag, so we only skip
-	 * the check when using the RDMA protocol.
-	 */
-	if (!nccl_proto_configured_) {
-		if ((NULL == getenv("NCCL_PROTO")) &&
-		    (ofi_nccl_protocol.get() == PROTOCOL::RDMA) &&
-		    (0 == strcmp(nccl_net_ofi_get_product_name(), "p5en.48xlarge"))) {
-			NCCL_OFI_INFO(NCCL_INIT, "Skipping NCCL_PROTO checks on P5en + RDMA");
-			need_ordering_ = false;
-			nccl_proto_configured_ = true;
-		}
-	}
-
-	/* If we know we need byte delivery ordering (need_ordering ==
-	 * true) or this is the first time that we're configuring an
-	 * endpoint (nccl_proto_configured == false), then try to
-	 * configure ordering on the endpoint.  The only time we care
-	 * about ordering is if we don't set NCCL_PROTO=simple,
-	 * because previous endpoints were able to be configured with
-	 * ordering.  If we're not expecting ordering, we don't really
-	 * care if ordering is on or off for the endpoint.
-	 */
-	if (need_ordering_ || !nccl_proto_configured_) {
-		bool have_ordering = false;
-
-		if (optname != -1) {
-			ret = configure_ep_inorder(endpoint, optname, optname_name,
-						   &have_ordering);
-			if (ret != 0) {
-				NCCL_OFI_WARN("Unexpected failure setting inorder %d", ret);
-				return ret;
-			}
-		}
-
-		if (need_ordering_ && !have_ordering) {
-			NCCL_OFI_WARN("Setting %s option failed after succeeding during initialization",
-				      optname_name);
-			ret = -ENOTSUP;
+		} else {
+			NCCL_OFI_WARN("unknown transport %s", ofi_nccl_protocol.get_string());
+			ret = -EINVAL;
 			return ret;
 		}
 
-		if (!nccl_proto_configured_) {
-			need_ordering_ = have_ordering;
-			nccl_proto_configured_ = true;
-
-			if (!have_ordering) {
-				/* When byte delivery ordering is not guaranteed, force
-				 * the simple protocol as the LL/LL128 protocols can lead
-				 * to data corruption without data delivery ordering.
-				 */
-				ret = nccl_net_ofi_configure_nccl_proto_simple("byte delivery ordering");
-				if (ret != 0) {
-					NCCL_OFI_WARN("Failed to set NCCL_PROTO: %d", ret);
-					ret = -ENOTSUP;
-					return ret;
-				}
-			}
+		ret = configure_ep_inorder(endpoint, optname, optname_name);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unexpected failure setting inorder %d", ret);
+			return ret;
 		}
 	}
 
@@ -966,7 +903,7 @@ int PlatformAWS::config_endpoint(struct fi_info *info, struct fid_ep* endpoint)
 			return ret;
 		}
 	}
-#endif // HAVE_CUDA
+#endif // HAVE_GPU
 
 	return ret;
 }
