@@ -699,21 +699,25 @@ int PlatformAWS::init(const char **provider_filter)
 		select_efa = true;
 	}
 
-	/*
-	 * For p6e-gb200 platforms we want to skip nics which do not
-	 * have an accelerator at the same PCI level
-	 */
-	if ((strncmp(nccl_net_ofi_get_product_name(), PLATFORM_NAME_P6E_GB200,
-		strlen(PLATFORM_NAME_P6E_GB200)) == 0) &&
-		ofi_nccl_skip_nics_without_accel.get_source() == ParamSource::DEFAULT) {
-		ofi_nccl_skip_nics_without_accel.set(true);
-	}
-
 	if (platform_data != NULL) {
 		env_manager::getInstance().insert_envvars(platform_data->env);
 	}
 
 #if HAVE_CUDA
+	/*
+	 * Request automatic accelerator-local NIC filtering for this platform.
+	 * Topology population combines this request with the GPU coherence query
+	 * and enables filtering only when a CUDA-visible accelerator reports
+	 * coherence. Explicit environment values remain force and veto controls.
+	 */
+	if (ofi_nccl_skip_nics_without_accel.get_source() == ParamSource::DEFAULT) {
+		ret = ofi_nccl_skip_nics_without_accel.set(true);
+		if (ret != 0) {
+			NCCL_OFI_WARN("Unable to request accelerator-local NIC filtering");
+			return ret;
+		}
+	}
+
 	/*
 	 * FI_EFA_FORK_SAFE environment variable tells Libfabric to enable
 	 * fork-safe support in legacy versions of the rdma-core library.
