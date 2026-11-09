@@ -62,6 +62,14 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    struct fi_info **prov_info_list,
 				    unsigned int *num_prov_infos);
 
+/**
+ * @brief Return the number of entries in a libfabric info list.
+ *
+ * @param info_list: Head of a linear libfabric info list, or NULL.
+ * @return Number of entries in the list.
+ */
+size_t nccl_ofi_ofiutils_info_list_length(const struct fi_info *info_list);
+
 
 /**
  * @brief	Release libfabric endpoint and address vector
