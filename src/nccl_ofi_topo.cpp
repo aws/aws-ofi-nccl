@@ -5,6 +5,7 @@
 #include "config.h"
 
 #include <algorithm>
+#include <exception>
 #include <map>
 #include <set>
 #include <vector>
@@ -22,6 +23,9 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 
 #if HAVE_CUDA
 static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
@@ -500,6 +504,30 @@ bool nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
 	*matching_nic_depth = accel_depth;
 	return true;
 }
+
+#if HAVE_CUDA
+/*
+ * @brief Determine whether a CUDA-visible accelerator is coherent
+ *
+ * CUDA device enumeration honors process visibility and does not depend on
+ * whichever GPU happens to be current on this thread. Enable the automatic
+ * policy only when at least one GPU is visible and the first visible GPU
+ * reports coherence. GPUs on a platform are expected to have uniform
+ * coherence properties. Any unsupported or failed query leaves the policy
+ * disabled.
+ */
+static bool visible_accel_is_coherent()
+{
+	try {
+		return nccl_net_ofi_visible_gpu_is_coherent();
+	} catch (const std::exception &e) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Unable to determine GPU coherence; automatic accelerator-local "
+			      "NIC filtering stays off: %s", e.what());
+		return false;
+	}
+}
+#endif
 
 /*
  * @brief	Match a topology node to its libfabric NIC info struct by PCI address
@@ -998,9 +1026,19 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 	nccl_ofi_topo_data_iterator_t data_iter;
 
 	/* Choose one filter mode before the count and populate passes so both
-	 * traverse the same topology. The package-depth fallback is conservative:
-	 * when any package is incomplete or ambiguous, it leaves filtering off. */
+	 * traverse the same topology. An explicit parameter value remains a force
+	 * or veto. An API-set value is an automatic platform request, which is
+	 * enabled only when a CUDA-visible accelerator reports coherence. GPUs on
+	 * a platform are expected to have uniform coherence properties. The
+	 * package-depth fallback is conservative: when any package is incomplete
+	 * or ambiguous, it leaves filtering off. */
 	bool skip_enabled = ofi_nccl_skip_nics_without_accel.get();
+#if HAVE_CUDA
+	if (ofi_nccl_skip_nics_without_accel.get_source() == ParamSource::API) {
+		skip_enabled = visible_accel_is_coherent();
+	}
+#endif
+
 	nic_filter_state filter;
 	if (skip_enabled) {
 		ret = configure_nic_filter(ofi_topo->topo, info_list, &filter);
@@ -1011,12 +1049,12 @@ static int set_user_data(nccl_ofi_topo_t *ofi_topo,
 
 		if (filter.mode == nic_filter_mode::PACKAGE_DEPTH) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-				      "SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL is set but no NIC has an "
-				      "accelerator at the same PCI level; using package-relative PCI bridge depth");
+				      "Accelerator-local NIC filtering found no NIC with an accelerator at "
+				      "the same PCI level; using package-relative PCI bridge depth");
 		} else if (filter.mode == nic_filter_mode::NONE) {
 			NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
-				      "SKIP_NICS_WITHOUT_ACCEL_AT_SAME_PCI_LEVEL is set but no eligible NIC "
-				      "tier was identified; all NICs are used");
+				      "Accelerator-local NIC filtering found no eligible NIC tier; "
+				      "all NICs are used");
 		}
 	}
 

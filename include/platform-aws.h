@@ -19,8 +19,6 @@
 #include "nccl_ofi_platform.h"
 #include "nccl_ofi_topo.h"
 
-#define PLATFORM_NAME_P6E_GB200 "p6e-gb200"
-
 class PlatformAWS : public Platform {
 public:
 	PlatformAWS(nccl_ofi_topo_t* topo) {
