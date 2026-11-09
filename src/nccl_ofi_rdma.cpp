@@ -391,22 +391,6 @@ static int set_mr_req_attr(uint64_t mr_key,
 }
 
 
-/*
- * @brief	Calculate length of libfabric NIC info list
- */
-static inline size_t ofi_info_list_length(struct fi_info *info_list)
-{
-	size_t length = 0;
-
-	while (info_list) {
-		info_list = info_list->next;
-		++length;
-	}
-
-	return length;
-}
-
-
 int nccl_net_ofi_rdma_device_t::get_properties(nccl_ofi_properties_t *props) const
 {
 	int ret;
@@ -6956,7 +6940,7 @@ nccl_net_ofi_rdma_device_t::nccl_net_ofi_rdma_device_t(nccl_net_ofi_plugin_t *pl
 	 * between NICs, rather than sending target_length/length
 	 * messages on the same NIC before moving to the next NIC.
 	 */
-	length = ofi_info_list_length(info_list);
+	length = nccl_ofi_ofiutils_info_list_length(info_list);
 	target_length = ofi_nccl_force_num_rails();
 	if (target_length != 0) {
 		size_t original_length = length;

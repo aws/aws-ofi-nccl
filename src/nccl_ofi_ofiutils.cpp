@@ -158,6 +158,19 @@ static int filter_provider_list(struct fi_info **providers,
 }
 
 
+size_t nccl_ofi_ofiutils_info_list_length(const struct fi_info *info_list)
+{
+	size_t length = 0;
+
+	while (info_list != NULL) {
+		++length;
+		info_list = info_list->next;
+	}
+
+	return length;
+}
+
+
 int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    uint32_t required_version,
 				    struct fi_info *hints,
@@ -165,7 +178,7 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 				    unsigned int *num_prov_infos)
 {
 	int rc = 0;
-	struct fi_info *providers = NULL, *prov = NULL;
+	struct fi_info *providers = NULL;
 	assert(num_prov_infos != NULL);
 	*num_prov_infos = 0;
 
@@ -213,13 +226,7 @@ int nccl_ofi_ofiutils_get_providers(const char *prov_include,
 	}
 
 	*prov_info_list = providers;
-
-        *num_prov_infos = 0;
-	prov = providers;
-	while (prov != NULL) {
-		(*num_prov_infos)++;
-		prov = prov->next;
-	}
+	*num_prov_infos = nccl_ofi_ofiutils_info_list_length(providers);
 
         return 0;
 
