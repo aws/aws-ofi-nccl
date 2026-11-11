@@ -75,8 +75,6 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff::insert(uint16_t msg_index, void *ele
 						    nccl_ofi_msgbuff_elemtype_t type,
 						    nccl_ofi_msgbuff_status_t *msg_idx_status)
 {
-	std::lock_guard<std::mutex> guard(this->lock);
-
 	*msg_idx_status = this->get_idx_status(msg_index);
 
 	if (*msg_idx_status == NCCL_OFI_MSGBUFF_NOTSTARTED) {
@@ -101,8 +99,6 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff::replace(uint16_t msg_index, void *el
 						     nccl_ofi_msgbuff_elemtype_t type,
 						     nccl_ofi_msgbuff_status_t *msg_idx_status)
 {
-	std::lock_guard<std::mutex> guard(this->lock);
-
 	*msg_idx_status = this->get_idx_status(msg_index);
 
 	if (*msg_idx_status == NCCL_OFI_MSGBUFF_INPROGRESS) {
@@ -123,8 +119,6 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff::retrieve(uint16_t msg_index, void **
 		return NCCL_OFI_MSGBUFF_ERROR;
 	}
 
-	std::lock_guard<std::mutex> guard(this->lock);
-
 	*msg_idx_status = this->get_idx_status(msg_index);
 
 	if (*msg_idx_status == NCCL_OFI_MSGBUFF_INPROGRESS) {
@@ -143,8 +137,6 @@ nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff::retrieve(uint16_t msg_index, void **
 nccl_ofi_msgbuff_result_t nccl_ofi_msgbuff::complete(uint16_t msg_index,
 						     nccl_ofi_msgbuff_status_t *msg_idx_status)
 {
-	std::lock_guard<std::mutex> guard(this->lock);
-
 	*msg_idx_status = this->get_idx_status(msg_index);
 
 	if (*msg_idx_status == NCCL_OFI_MSGBUFF_INPROGRESS) {
