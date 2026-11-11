@@ -1617,19 +1617,19 @@ public:
 	/**
 	 * Post all rx buffers for a rail if we don't have enough
 	 */
-	int check_post_rx_buffers_rail(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int check_post_rx_buffers_rail(nccl_net_ofi_rdma_ep_rail_t *rail) REQUIRES(ep_lock);
 
 	/**
 	 * @brief	Re-post a rx buffer that has not yet been removed from active
 	 * 		count
 	 */
-	int repost_rx_buff(nccl_net_ofi_rdma_req *rx_buff_req);
+	int repost_rx_buff(nccl_net_ofi_rdma_req *rx_buff_req) REQUIRES(ep_lock);
 
 	/**
 	 * @brief	Decrement the number of rx buffers posted for the rail
 	 *		corresponding to rx_buff_req
 	 */
-	int decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *rail) REQUIRES(ep_lock);
 
 	/**
 	 * Attempt to post all requests in the pending requests queue.
@@ -1639,7 +1639,7 @@ public:
 	 *
 	 * @return zero on success, negative errno value on non-success.
 	 */
-	int process_pending_reqs();
+	int process_pending_reqs() REQUIRES(ep_lock);
 
 	/**
 	 * @brief	Process completion entries for the given completion queue.
@@ -1649,20 +1649,20 @@ public:
 	 *		error, on others
 	 */
 	template <typename func>
-	int ofi_process_cq(func done_check);
+	int ofi_process_cq(func done_check) REQUIRES(ep_lock);
 
-	int ofi_process_cq();
+	int ofi_process_cq() REQUIRES(ep_lock);
 
 	int handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
 			     nccl_net_ofi_rdma_req *req,
-			     size_t num_buffs_failed);
+			     size_t num_buffs_failed) REQUIRES(ep_lock);
 
-	int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *rail);
+	int post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *rail) REQUIRES(ep_lock);
 
 	/**
 	 * @brief	Post rx buffers for all rails until each is at max
 	 */
-	int post_rx_buffs();
+	int post_rx_buffs() REQUIRES(ep_lock);
 
 	/**
 	 * Checks the given ep's pending completions queue. If non-empty, calls ofi_process_cq
@@ -1671,7 +1671,7 @@ public:
 	 * 		-EIO, error from ofi_process_cq
 	 * 		-EAGAIN, the queue is still non-empty after this call
 	 */
-	int process_cq_if_pending();
+	int process_cq_if_pending() REQUIRES(ep_lock);
 
 	/**
 	 * @brief	Populate connect response message with endpoint names
@@ -1758,8 +1758,8 @@ public:
 	/* Array of `num_control_rails` endpoint rails */
 	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> control_rails = {};
 
-	/* Pending requests queue. Protected by ep_lock. */
-	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
+	/* Pending requests queue */
+	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue GUARDED_BY(ep_lock);
 
 	/* Context passed to the freelist MR registration callback for rx buffer freelists.
 	 * In FI_MR_ENDPOINT mode its ep is this endpoint, so newly registered MRs

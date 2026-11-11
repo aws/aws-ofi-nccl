@@ -891,6 +891,7 @@ int nccl_net_ofi_rdma_recv_comm::handle_eager_recv(
 {
 	int ret;
 	nccl_net_ofi_rdma_ep_t *local_ep = (nccl_net_ofi_rdma_ep_t *)this->ep.get();
+	local_ep->ep_lock.assert_held();
 
 	/* Decrease rx buffer count. It will be incremented again when reposting */
 	ret = local_ep->decrease_rx_buff_cnt(static_cast<rdma_rx_buff_req *>(rx_buff_req)->rail);
@@ -944,6 +945,7 @@ static int handle_close_msg_recv(nccl_net_ofi_rdma_req *rx_buff_req)
 	rdma_rx_buff_req *rx_buff_data = static_cast<rdma_rx_buff_req *>(rx_buff_req);
 
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+	ep->ep_lock.assert_held();
 	nccl_net_ofi_rdma_device_t *device = ep->rdma_endpoint_get_device();
 
 	nccl_net_ofi_rdma_close_msg_t *close_msg =
@@ -1390,6 +1392,7 @@ void nccl_net_ofi_rdma_req::enqueue_pending(bool push_front)
 {
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)this->comm->ep.get();
+	ep->ep_lock.assert_held();
 
 	if (push_front) {
 		ep->pending_reqs_queue.push_front(this);
@@ -5035,6 +5038,7 @@ static int accept_wait_for_connection(nccl_net_ofi_rdma_domain_t *domain,
 	/* Retrieve and validate endpoint */
 	nccl_net_ofi_rdma_ep_t *l_comm_ep = (nccl_net_ofi_rdma_ep_t *)l_comm->ep.get();
 	assert(l_comm_ep != NULL);
+	l_comm_ep->ep_lock.assert_held();
 	nccl_net_ofi_rdma_ep_t *ep = NULL;
 
 	nccl_net_ofi_rdma_recv_comm *r_comm = nullptr;
@@ -5497,6 +5501,7 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req *rx_buff_req)
 	int ret = 0;
 	rdma_rx_buff_req *rx_buff_data = static_cast<rdma_rx_buff_req *>(rx_buff_req);
 	nccl_net_ofi_rdma_ep_t *ep = rx_buff_data->ep;
+	ep->ep_lock.assert_held();
 
 	nccl_net_ofi_rdma_ep_rail_t *rail = rx_buff_data->rail;
 
