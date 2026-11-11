@@ -6,6 +6,7 @@
 #define NET_OFI_SPINLOCK_H_
 
 #include <atomic>
+#include <cassert>
 
 
 // A BasicLockable spinlock without many features
@@ -44,6 +45,16 @@ public	:
 	void unlock() RELEASE()
 	{
 		val.store(false, std::memory_order_release);
+	}
+
+
+	/* Tell thread safety analysis that the lock is held where it can't
+	   prove it, e.g. when the caller locked it through a different
+	   pointer to the same object. Debug builds check that the lock is
+	   held, though not by whom. */
+	void assert_held() const ASSERT_CAPABILITY(this)
+	{
+		assert(val.load(std::memory_order_relaxed));
 	}
 
 
