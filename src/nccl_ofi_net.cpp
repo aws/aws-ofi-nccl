@@ -366,6 +366,7 @@ int nccl_net_ofi_create_plugin(nccl_net_ofi_plugin_t **plugin_p)
 	/* get the endpoint from the default domain, domain_key = 0 */
 	ep = device->get_ep(0, nccl_net_ofi_gettid());
 	if (ep == nullptr) {
+		NCCL_OFI_WARN("Failed to get endpoint for device %d", device->dev_id);
 		goto exit;
 	}
 	ret = device->get_properties(&properties);
