@@ -430,6 +430,8 @@ public:
 
 /*
  * @brief	RDMA request
+ *
+ * Requests are only accessed with the owning endpoint's ep_lock held.
  */
 class nccl_net_ofi_rdma_req : public nccl_net_ofi_req {
 public:
@@ -453,12 +455,6 @@ public:
 
 	/* Size of completed request */
 	size_t size;
-
-	/*
-	 * Protect updating critical fields such as size and ncompls when
-	 * network xfer happened over multiple rails
-	 */
-	std::mutex req_lock;
 
 	/* State of request */
 	nccl_net_ofi_rdma_req_state_t state;
@@ -497,10 +493,11 @@ public:
 
 	/* Push this request onto the endpoint's pending requests queue.
 	 *
-	 * The queue and its mutex live on the endpoint, but the two
-	 * callers that enqueue are a request method (post_with_pending_retry)
-	 * and an endpoint method (process_pending_reqs).  Centralise the
-	 * lock/push/unlock here so the pattern is not duplicated.
+	 * The queue lives on the endpoint, but the two callers that
+	 * enqueue are a request method (post_with_pending_retry) and an
+	 * endpoint method (process_pending_reqs).  Centralise the push
+	 * here so the pattern is not duplicated.  Caller must hold the
+	 * endpoint's ep_lock.
 	 *
 	 * TODO: The endpoint owns the pending queue and arguably should
 	 * own this method too.  Leaving it on the request for now because
@@ -1476,7 +1473,7 @@ public:
 	size_t local_ep_name_len;
 
 	/*
-	 * Rx buffer management
+	 * Rx buffer management. Protected by the endpoint's ep_lock.
 	 */
 
 	/* Number of rx buffers posted */
@@ -1485,8 +1482,6 @@ public:
 	size_t min_rx_buff_posted;
 	/* Maximum posted rx buffers (see RDMA_MAX_POSTED_BOUNCE_BUFFERS) */
 	size_t max_rx_buff_posted;
-	/* Mutex for rx buffer operations */
-	std::mutex rx_buff_mutex;
 
 	/* True if this rail posts control (ctrl) rx buffers; false for data (eager) */
 	bool is_ctrl = false;
@@ -1763,10 +1758,8 @@ public:
 	/* Array of `num_control_rails` endpoint rails */
 	std::array<nccl_net_ofi_rdma_ep_rail_t, MAX_NUM_RAILS> control_rails = {};
 
-	/* Pending requests queue */
+	/* Pending requests queue. Protected by ep_lock. */
 	std::deque<nccl_net_ofi_rdma_req *> pending_reqs_queue;
-	/* Lock for `pending_reqs_queue` */
-	std::mutex pending_reqs_lock;
 
 	/* Context passed to the freelist MR registration callback for rx buffer freelists.
 	 * In FI_MR_ENDPOINT mode its ep is this endpoint, so newly registered MRs

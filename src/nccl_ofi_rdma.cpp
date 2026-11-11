@@ -477,7 +477,7 @@ static inline void set_request_state_to_error(nccl_net_ofi_rdma_req *req)
  * Note that the request state is only updated if the request state
  * does not track an error already.
  *
- * This function is guarded by the request lock.
+ * Caller must hold the endpoint's ep_lock.
  *
  * To update the state of subrequests, use the subrequest specific
  * update functions.
@@ -500,7 +500,6 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
 {
 	int ret = 0;
 	int ncompls;
-	std::lock_guard<std::mutex> lock(req->req_lock);
 
 	req->size += size;
 	ncompls = ++(req->ncompls);
@@ -525,9 +524,7 @@ static inline int inc_req_completion(nccl_net_ofi_rdma_req *req,
  * all segments arrived, increment completions of parent request
  * (receive request).
  *
- * Modifications of the receive segment request are guarded by the
- * receive segment request's lock.  Modifications of the receive
- * request are guarded by the receive request's lock.
+ * Caller must hold the endpoint's ep_lock.
  *
  * @param	req
  *		Receive request
@@ -545,8 +542,6 @@ static inline int inc_recv_seg_completion(rdma_recv_req *recv_data,
 	bool segms_received;
 	nccl_net_ofi_rdma_req *req = recv_data->recv_segms_req;
 	assert(req->get_type() == NCCL_OFI_RDMA_RECV_SEGMS);
-
-	req->req_lock.lock();
 
 	rdma_recv_segms_req *recv_segms_data = static_cast<rdma_recv_segms_req *>(req);
 
@@ -567,16 +562,8 @@ static inline int inc_recv_seg_completion(rdma_recv_req *recv_data,
 		/* Total number of completions have arrived */
 		req->state = NCCL_OFI_RDMA_REQ_COMPLETED;
 
-		/* Release lock of receive segment request before
-		 * receive request is set to completed to avoid
-		 * unlocking receive segment request after it has been
-		 * freed in `test()` */
-		req->req_lock.unlock();
-		
 		/* Add completion to parent request */
 		ret = inc_req_completion(recv_req, req->size, recv_data->total_num_compls);
-	} else {
-		req->req_lock.unlock();
 	}
 
 	return ret;
@@ -626,14 +613,12 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 	entry->entry_used = 1;
 
 	/* If recv buffer is smaller than send buffer, we reduce the size of the send req */
-	req->req_lock.lock();
 	if (send_data->remote_len < send_data->buff_len) {
 		NCCL_OFI_TRACE(NCCL_NET, "Remote recv buffer (%zu) smaller than send buffer (%zu)",
 			       send_data->remote_len, send_data->buff_len);
 		req->size = send_data->remote_len;
 		send_data->buff_len = send_data->remote_len;
 	}
-	req->req_lock.unlock();
 
 	send_data->schedule = scheduler.get_schedule(send_data->buff_len, device->num_rails);
 	if (OFI_UNLIKELY(send_data->schedule == NULL)) {
@@ -654,8 +639,6 @@ static inline int update_send_data_from_remote(nccl_net_ofi_rdma_send_comm *s_co
 
 int nccl_net_ofi_rdma_ep_t::check_post_rx_buffers_rail(nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	/* Not taking lock here since we are only reading a value.
-	   If needed, post_rx_buffs_on_rail will take the lock. */
 	if (rail->num_rx_buff_posted < rail->min_rx_buff_posted) {
 		return this->post_rx_buffs_on_rail(rail);
 	}
@@ -683,12 +666,8 @@ int nccl_net_ofi_rdma_ep_t::repost_rx_buff(nccl_net_ofi_rdma_req *rx_buff_req)
 
 int nccl_net_ofi_rdma_ep_t::decrease_rx_buff_cnt(nccl_net_ofi_rdma_ep_rail_t *rail)
 {
-	{
-		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
-
-		assert(rail->num_rx_buff_posted > 0);
-		rail->num_rx_buff_posted--;
-	}
+	assert(rail->num_rx_buff_posted > 0);
+	rail->num_rx_buff_posted--;
 
 	return this->check_post_rx_buffers_rail(rail);
 }
@@ -1399,9 +1378,9 @@ int nccl_net_ofi_rdma_req::post_with_pending_retry()
 /*
  * @brief	Push this request onto the endpoint's pending queue.
  *
- * Centralises the lock/push/unlock sequence used by both the initial
- * failure path (post_with_pending_retry) and the retry loop
- * (process_pending_reqs).
+ * Centralises the push used by both the initial failure path
+ * (post_with_pending_retry) and the retry loop (process_pending_reqs).
+ * Caller must hold the endpoint's ep_lock.
  *
  * @param push_front	true  => push to the front (retry loop keeps the
  *			         same request at the head for the next call)
@@ -1412,13 +1391,10 @@ void nccl_net_ofi_rdma_req::enqueue_pending(bool push_front)
 	nccl_net_ofi_rdma_ep_t *ep =
 		(nccl_net_ofi_rdma_ep_t *)this->comm->ep.get();
 
-	{
-		std::lock_guard pending_lock(ep->pending_reqs_lock);
-		if (push_front) {
-			ep->pending_reqs_queue.push_front(this);
-		} else {
-			ep->pending_reqs_queue.push_back(this);
-		}
+	if (push_front) {
+		ep->pending_reqs_queue.push_front(this);
+	} else {
+		ep->pending_reqs_queue.push_back(this);
 	}
 
 	/* Only trace fresh enqueues (push_back), not retry re-enqueues
@@ -1435,15 +1411,11 @@ int nccl_net_ofi_rdma_ep_t::process_pending_reqs()
 	int rc = 0;
 
 	while (true) {
-		nccl_net_ofi_rdma_req *req = NULL;
-		{
-			std::lock_guard pending_lock(this->pending_reqs_lock);
-			if (!this->pending_reqs_queue.empty()) {
-				req = this->pending_reqs_queue.front();
-				this->pending_reqs_queue.pop_front();
-			}
+		if (this->pending_reqs_queue.empty()) {
+			break;
 		}
-		if (req == NULL) { break; }
+		nccl_net_ofi_rdma_req *req = this->pending_reqs_queue.front();
+		this->pending_reqs_queue.pop_front();
 
 		/* Every postable subclass overrides post(); unpostable types
 		 * (RECV_SEGMS, SEND_CLOSE if somehow queued) fall through to
@@ -1866,18 +1838,11 @@ int nccl_net_ofi_rdma_ep_t::handle_rx_eagain(nccl_net_ofi_rdma_ep_rail_t *rail,
 					     size_t num_buffs_failed)
 {
 	/* Add to pending reqs queue */
-	{
-		std::lock_guard pending_lock(this->pending_reqs_lock);
-		this->pending_reqs_queue.push_back(req);
-	}
+	this->pending_reqs_queue.push_back(req);
 	NCCL_OFI_TRACE_PENDING_INSERT(req);
 
-	{
-		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
-
-		assert(rail->num_rx_buff_posted >= num_buffs_failed);
-		rail->num_rx_buff_posted -= num_buffs_failed;
-	}
+	assert(rail->num_rx_buff_posted >= num_buffs_failed);
+	rail->num_rx_buff_posted -= num_buffs_failed;
 
 	return 0;
 }
@@ -1887,13 +1852,8 @@ int nccl_net_ofi_rdma_ep_t::post_rx_buffs_on_rail(nccl_net_ofi_rdma_ep_rail_t *r
 {
 	int ret = 0;
 
-	size_t buffers_needed;
-	{
-		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
-
-		buffers_needed = rail->max_rx_buff_posted - rail->num_rx_buff_posted;
-		rail->num_rx_buff_posted = rail->max_rx_buff_posted;
-	}
+	size_t buffers_needed = rail->max_rx_buff_posted - rail->num_rx_buff_posted;
+	rail->num_rx_buff_posted = rail->max_rx_buff_posted;
 
 	/* Post all the rx buffers we need */
 	for (size_t i = 0; i < buffers_needed; ++i) {
@@ -2298,9 +2258,7 @@ int nccl_net_ofi_rdma_req::test(int *done, int *size_p)
 			if (this->get_type() == NCCL_OFI_RDMA_RECV) {
 				static_cast<rdma_recv_req *>(this)->write_completion_size(size_p);
 			} else {
-				this->req_lock.lock();
 				*size_p = this->size;
-				this->req_lock.unlock();
 			}
 		}
 		/* Mark as done */
@@ -2349,9 +2307,7 @@ bool rdma_flush_req::check_if_already_complete(int *size_p)
  * single receives report the total size into *size_p. */
 void rdma_recv_req::write_completion_size(int *size_p)
 {
-	this->req_lock.lock();
 	size_t req_size = this->size;
-	this->req_lock.unlock();
 
 	if (this->num_recvs > 1) {
 		for (int i = 0; i < this->num_recvs; i++) {
@@ -2848,10 +2804,6 @@ int rdma_send_close_req::handle_completion([[maybe_unused]] uint64_t comp_flags,
  * Control write for receive request is completed, so increment
  * completions.
  *
- * Modifications of the send control request are guarded by the send
- * control request's lock.  Modifications of the receive request are
- * guarded by the receive request's lock.
- *
  * @return	0, on success
  *		non-zero, on error
  */
@@ -2939,10 +2891,6 @@ int rdma_flush_req::handle_completion([[maybe_unused]] uint64_t comp_flags, [[ma
  * Set eager copy ctrl request to completed.  Furthermore, increment
  * completions of parent request (receive request).
  *
- * Modifications of the eager copy request are guarded by the eager
- * copy req's lock.  Modifications of the receive request are guarded
- * by the receive request's lock.
- *
  * @return	0, on success
  *		non-zero, on error
  */
@@ -2953,13 +2901,9 @@ int rdma_eager_copy_req::handle_completion([[maybe_unused]] uint64_t comp_flags,
 	nccl_net_ofi_rdma_req *recv_req_ptr = this->recv_req;
 	rdma_recv_req *parent_recv_data = static_cast<rdma_recv_req *>(recv_req_ptr);
 
-	this->req_lock.lock();
-
 	/* Set send ctrl request completed */
 	this->ncompls = 1;
 	this->state = NCCL_OFI_RDMA_REQ_COMPLETED;
-
-	this->req_lock.unlock();
 
 	/* Get size of received data */
 	rdma_rx_buff_req *rx_data = static_cast<rdma_rx_buff_req *>(this->eager_rx_buff_req);
@@ -3531,21 +3475,12 @@ static inline int insert_rdma_recv_req_into_msgbuff(nccl_net_ofi_rdma_recv_comm 
 int nccl_net_ofi_rdma_ep_t::process_cq_if_pending()
 {
 	/* Process the CQ if there are any pending requests */
-	bool is_deque_empty;
-	{
-		std::lock_guard pending_lock(this->pending_reqs_lock);
-		is_deque_empty = this->pending_reqs_queue.empty();
-	}
-	if (!is_deque_empty) {
+	if (!this->pending_reqs_queue.empty()) {
 		int ret = this->ofi_process_cq();
 		if (ret < 0) {
 			return ret;
 		}
-		{
-			std::lock_guard pending_lock(this->pending_reqs_lock);
-			is_deque_empty = this->pending_reqs_queue.empty();
-		}
-		if (!is_deque_empty) {
+		if (!this->pending_reqs_queue.empty()) {
 			/* Network is still busy. */
 			return -EAGAIN;
 		}
@@ -4126,9 +4061,7 @@ static inline int progress_closing_recv_comm(nccl_net_ofi_rdma_recv_comm *r_comm
 	} else /* (r_comm->send_close_req != NULL) */ {
 
 		/* Waiting for close message delivery */
-		r_comm->send_close_req->req_lock.lock();
 		nccl_net_ofi_rdma_req_state_t state = r_comm->send_close_req->state;
-		r_comm->send_close_req->req_lock.unlock();
 
 		if (state == NCCL_OFI_RDMA_REQ_ERROR) {
 			NCCL_OFI_WARN("Send close message complete with error");
@@ -4544,10 +4477,7 @@ int nccl_net_ofi_rdma_recv_comm::flush(int n, void **buffers,
 		}
 	} else {
 		/* Add to pending reqs queue */
-		{
-			std::lock_guard pending_lock(endpoint->pending_reqs_lock);
-			endpoint->pending_reqs_queue.push_back(req);
-		}
+		endpoint->pending_reqs_queue.push_back(req);
 		ret = 0;
 		NCCL_OFI_TRACE_PENDING_INSERT(req);
 	}
@@ -5571,13 +5501,9 @@ static inline int check_post_rx_buff_req(nccl_net_ofi_rdma_req *rx_buff_req)
 	nccl_net_ofi_rdma_ep_rail_t *rail = rx_buff_data->rail;
 
 	bool need_post = false;
-	{
-		std::lock_guard rx_buff_lock(rail->rx_buff_mutex);
-
-		if (rail->num_rx_buff_posted < rail->max_rx_buff_posted) {
-			++(rail->num_rx_buff_posted);
-			need_post = true;
-		}
+	if (rail->num_rx_buff_posted < rail->max_rx_buff_posted) {
+		++(rail->num_rx_buff_posted);
+		need_post = true;
 	}
 
 	if (need_post) {

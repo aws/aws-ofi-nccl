@@ -6,7 +6,6 @@
 #define NCCL_OFI_MSGBUFF_H_
 
 #include <cstdint>
-#include <mutex>
 #include <vector>
 
 /**
@@ -36,6 +35,9 @@
  *
  * The buffer for in-flight messages stores void* elements: the user of the buffer is
  * responsible for managing the memory of buffer elements.
+ *
+ * The msgbuff is not thread-safe: the user must serialize calls (the RDMA transport holds
+ * the endpoint's ep_lock).
  */
 
 /* Enumeration to keep track of different msg statuses. */
@@ -163,7 +165,6 @@ private:
 	uint16_t field_mask;
 	uint16_t msg_last_incomplete;
 	uint16_t msg_next;
-	std::mutex lock;
 };
 
 #endif // End NCCL_OFI_MSGBUFF_H_
