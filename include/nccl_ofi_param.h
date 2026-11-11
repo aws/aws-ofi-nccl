@@ -317,6 +317,32 @@ OFI_NCCL_PARAM(bool, use_low_lat_tc, "USE_LOW_LATENCY_TC", true);
 OFI_NCCL_PARAM(size_t, force_num_rails, "FORCE_NUM_RAILS", 0);
 
 /*
+ * Enable multi-rail (multi-NIC-per-GPU) support for the SENDRECV transport.
+ * Off by default; when off, SENDRECV uses a single rail. Every mode exchanges
+ * the same connect message, and both peers must select the same mode.
+ */
+OFI_NCCL_PARAM(bool, sendrecv_multirail, "SENDRECV_MULTIRAIL", false);
+
+/*
+ * Enable message striping for the SENDRECV multi-rail transport. Has no effect
+ * unless OFI_NCCL_SENDRECV_MULTIRAIL is also enabled. Off by default.
+ */
+OFI_NCCL_PARAM(bool, sendrecv_striping, "SENDRECV_STRIPING", false);
+
+/*
+ * Milliseconds a multi-rail SENDRECV close or memory deregistration waits for
+ * posted operations to drain without any progress before it invalidates the
+ * endpoint. 0 disables this limit.
+ */
+OFI_NCCL_PARAM(size_t, sendrecv_drain_stall_ms, "SENDRECV_DRAIN_STALL_MS", 5000);
+
+/*
+ * Milliseconds a multi-rail SENDRECV close or memory deregistration waits in
+ * total for posted operations to drain. 0 disables this limit.
+ */
+OFI_NCCL_PARAM(size_t, sendrecv_drain_timeout_ms, "SENDRECV_DRAIN_TIMEOUT_MS", 30000);
+
+/*
  * Should we enable early completion in the rdma transport? The rdma transport
  * will change the default to follow the data progress model, given that early
  * completion feature is contigent on FI_PROGRESS_AUTO data progress model

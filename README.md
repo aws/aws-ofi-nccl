@@ -20,6 +20,9 @@ connection-less reliable interface. This allows NCCL applications to take
 benefit of libfabric's transport layer services like reliable message support
 and operating system bypass.
 
+The SENDRECV protocol can optionally spread traffic across several NICs per
+GPU; see [doc/sendrecv-multirail.md](doc/sendrecv-multirail.md).
+
 ## Getting Started
 
 The best way to build the plugin is to start with the latest [release
