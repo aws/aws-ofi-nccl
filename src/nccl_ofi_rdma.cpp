@@ -5794,6 +5794,8 @@ int nccl_net_ofi_rdma_send_comm::send(void *data, size_t size, int tag,
 	/* Check if the control message for the next message is present */
 	if (!have_ctrl) {
 		if (!eager) {
+			NCCL_OFI_TRACE_SEND_NO_BUFF(s_comm->dev_id, size, s_comm,
+						    msg_seq_num, tag);
 			*base_req = NULL;
 			ret = 0;
 			goto error;
