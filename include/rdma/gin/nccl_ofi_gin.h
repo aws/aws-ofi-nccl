@@ -136,6 +136,13 @@ struct nccl_ofi_gin_peer_rank_info {
 	 * (compared against incoming msg_seq_num bitfield).
 	 */
 	uint16_t next_delivered_signal_seq_num = 0;
+
+	/* A hand-off for this peer is waiting for space in the
+	 * gdrcopy work ring. While set, drain_gdrcopy_done_queue skips the
+	 * retire for this peer, so no later signal of the peer reaches the
+	 * worker ahead of the waiting one.
+	 */
+	bool handoff_spinning = false;
 };
 
 /* Helpers for the cursor ring. Cursors are uint32_t in memory but we
