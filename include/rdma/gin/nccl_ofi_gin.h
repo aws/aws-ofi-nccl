@@ -396,8 +396,9 @@ private:
 
 	/* Consumer-side same-slot fold (see apply_and_complete). A signal slot is
 	   identified by (gdr_handle, base, offset, type); entries sharing a slot in
-	   one batch coalesce into a single PCIe r-m-w. The map + scratch vectors are
-	   members reused across drains (cleared each call) so the fold does not
+	   one batch coalesce into a single PCIe r-m-w, as long as the fold keeps
+	   each peer's entries in order (fold_peer_last). The map + scratch vectors
+	   are members reused across drains (cleared each call) so the fold does not
 	   allocate on the worker's hot path. Worker-thread-only, no locking. */
 	struct fold_slot_key {
 		/* The worker is process-wide and a batch mixes entries from different
@@ -431,6 +432,22 @@ private:
 		}
 	};
 	std::unordered_map<fold_slot_key, size_t, fold_slot_hash> fold_index;
+	struct fold_peer_key {
+		nccl_ofi_rdma_gin_put_comm *comm;
+		uint32_t peer_rank;
+		bool operator==(const fold_peer_key &o) const
+		{
+			return comm == o.comm && peer_rank == o.peer_rank;
+		}
+	};
+	struct fold_peer_hash {
+		size_t operator()(const fold_peer_key &k) const
+		{
+			return reinterpret_cast<uintptr_t>(k.comm) * 31 + k.peer_rank;
+		}
+	};
+	/* (comm, peer) -> batch index of the newest lead holding one of the peer's entries. */
+	std::unordered_map<fold_peer_key, size_t, fold_peer_hash> fold_peer_last;
 	std::vector<size_t> fold_lead;
 	std::vector<int> fold_status;
 };
