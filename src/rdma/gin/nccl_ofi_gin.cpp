@@ -1394,18 +1394,25 @@ int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
 	outstanding_gdrcopy.fetch_add(1, std::memory_order_release);
 
 	auto &worker = nccl_ofi_gin_gdrcopy_worker::get();
+	/* While `work` waits for ring space, a drain must not retire this peer:
+	   the cursor is already past this run, so a retire would hand the
+	   peer's next signal to the worker ahead of `work`. The gate's own done
+	   entry re-runs retire for the peer once `work` has been applied. */
+	rank_comms[peer_rank].handoff_spinning = true;
 	while (!worker.enqueue(work)) {
 		int drain_ret = drain_gdrcopy_done_queue();
 		if (OFI_UNLIKELY(drain_ret != 0)) {
 			/* Roll back the count for the entry we never enqueued. */
 			outstanding_gdrcopy.fetch_sub(1, std::memory_order_acq_rel);
 			gate_req->gdrcopy_in_flight = false;
+			rank_comms[peer_rank].handoff_spinning = false;
 			return drain_ret;
 		}
 		/* drain_gdrcopy_done_queue() and worker.enqueue() both perform atomic
 		   ring operations, which are themselves compiler barriers, so the loop
 		   re-reads ring state each iteration without an explicit barrier. */
 	}
+	rank_comms[peer_rank].handoff_spinning = false;
 	return 0;
 }
 
@@ -1457,6 +1464,14 @@ int nccl_ofi_rdma_gin_put_comm::drain_gdrcopy_done_queue()
 		if (req->gdrcopy_pool_return_deferred) {
 			req->gdrcopy_pool_return_deferred = false;
 			this->get_resources().return_req_to_pool(req);
+		}
+
+		/* A hand-off for this peer is still waiting for ring space in
+		   hand_off_signal_work. Retiring now would post the peer's next
+		   run ahead of it. The done entry of that run re-runs the retire
+		   once the worker has applied it. */
+		if (rank_comms[done.peer_rank].handoff_spinning) {
+			continue;
 		}
 
 		int retire_ret = retire_completed_peer_iput_ops(done.peer_rank);
