@@ -1514,11 +1514,14 @@ nccl_ofi_gin_gdrcopy_worker::~nccl_ofi_gin_gdrcopy_worker()
  * each req's gdrcopy_in_flight clears individually and retire advances in seq
  * order.
  *
- * O(n) single pass: a hash map on the slot key assigns each entry to the first
- * entry that hit its slot ("lead"); duplicates fold their value into the lead.
- * Each lead is then applied once and every entry's done is delivered with its
- * lead's status. The map and scratch vectors are reused members, cleared here
- * rather than reallocated, so steady state does no heap work. */
+ * O(n) single pass: a hash map on the slot key assigns each entry to the
+ * newest entry leading its slot ("lead"); duplicates fold their value into the
+ * lead, unless one of the same peer's entries for another slot lies between
+ * them, in which case the entry starts a new lead for its slot so the peer's signals
+ * stay in order. Each lead is then applied once and every entry's
+ * done is delivered with its lead's status. The maps and scratch vectors are
+ * reused members, cleared here rather than reallocated, so steady state does
+ * no heap work. */
 void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batch, size_t n)
 {
 	/* Fast path for the common low-pressure case: a single work item has
@@ -1538,21 +1541,36 @@ void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batc
 	}
 
 	fold_index.clear();
+	fold_peer_last.clear();
 	fold_lead.resize(n);
 	fold_status.resize(n);
 
-	/* Pass 1: map each entry to its slot lead, summing duplicates into it. */
+	/* Pass 1: map each entry to its slot lead, summing duplicates into it.
+	   Leads are applied in batch order, and the batch holds each peer's
+	   entries in the order the proxy handed them off, so an entry may only
+	   join a lead that is still the newest lead holding one of its peer's
+	   entries. Joining an older lead would make the entry visible ahead of
+	   the peer's entries in between, which target other slots. Such an entry
+	   starts a new lead for its slot instead. */
 	for (size_t i = 0; i < n; ++i) {
 		const gin_signal_work_entry &e = batch[i];
 		fold_slot_key key{e.comm, e.gdr_handle, e.signal_base_address, e.signal_offset, e.type};
-		auto it = fold_index.find(key);
-		if (it == fold_index.end()) {
-			fold_index.emplace(key, i);
-			fold_lead[i] = i;
-		} else {
-			size_t lead = it->second;
+		fold_peer_key peer{e.comm, e.peer_rank};
+		auto slot_it = fold_index.find(key);
+		auto peer_it = fold_peer_last.find(peer);
+		bool join = slot_it != fold_index.end() &&
+			    (peer_it == fold_peer_last.end() || peer_it->second == slot_it->second);
+		if (join) {
+			size_t lead = slot_it->second;
 			fold_lead[i] = lead;
 			batch[lead].signal_value += e.signal_value;
+			if (peer_it == fold_peer_last.end()) {
+				fold_peer_last.emplace(peer, lead);
+			}
+		} else {
+			fold_index[key] = i;
+			fold_peer_last[peer] = i;
+			fold_lead[i] = i;
 		}
 	}
 
