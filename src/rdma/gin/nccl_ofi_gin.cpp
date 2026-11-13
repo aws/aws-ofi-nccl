@@ -402,11 +402,21 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 		       data_ptr, size, type, mr_handle);
 
 	/**
-	 * Local registration with the endpoint. reg_mr() logs a failure once;
-	 * it is not logged again here.
+	 * Local registration with the endpoint
+	 *
+	 * NCCL's GIN proxy treats a rejected explicit DMA-BUF registration as a
+	 * probe and retries with a different CUDA mapping, so log that failure
+	 * at INFO. reg_mr() logs the failure once; it is not logged again here.
 	 */
+	nccl_ofi_mr_reg_log_level log_level = nccl_ofi_mr_reg_log_level::WARN;
+#if HAVE_DECL_FI_MR_DMABUF
+	if (ckey->type == NCCL_OFI_MR_CKEY_DMABUF) {
+		log_level = nccl_ofi_mr_reg_log_level::INFO;
+	}
+#endif
+
 	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle,
-				gin_mr_flags_to_fi(mrFlags), nccl_ofi_mr_reg_log_level::WARN);
+				gin_mr_flags_to_fi(mrFlags), log_level);
 	if (ret != 0) {
 		delete mr_handle;
 		return ret;
