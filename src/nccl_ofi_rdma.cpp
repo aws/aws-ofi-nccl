@@ -3075,10 +3075,9 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 
 		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
 							      &mr_attr,
-							      regattr_flags);
+							      regattr_flags,
+							      nccl_ofi_mr_reg_log_level::WARN);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
-			NCCL_OFI_WARN("Could not register memory on data rail %u with flag %lu",
-				      rail_id, regattr_flags);
 			ret = mr_result.error_code;
 			goto error;
 		}
@@ -3101,10 +3100,9 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 
 			auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
 								      &mr_attr,
-								      regattr_flags);
+								      regattr_flags,
+								      nccl_ofi_mr_reg_log_level::WARN);
 			if (OFI_UNLIKELY(mr_result.is_failure())) {
-				NCCL_OFI_WARN("Could not register memory on ctrl rail %u with flag %lu",
-					      rail_id, regattr_flags);
 				ret = mr_result.error_code;
 				goto error;
 			}

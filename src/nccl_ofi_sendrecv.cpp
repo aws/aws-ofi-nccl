@@ -583,10 +583,9 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 
 	mr_result = nccl_ofi_ofiutils_mr_regattr(domain->domain,
 						 &mr_attr,
-						 regattr_flags);
+						 regattr_flags,
+						 nccl_ofi_mr_reg_log_level::WARN);
 	if (OFI_UNLIKELY(mr_result.is_failure())) {
-		NCCL_OFI_WARN("Unable to register memory (type = %d) for device %d. RC: %d, Error: %s",
-			type, dev_id, mr_result.error_code, fi_strerror(-mr_result.error_code));
 		ret = mr_result.error_code;
 		goto exit;
 	}
