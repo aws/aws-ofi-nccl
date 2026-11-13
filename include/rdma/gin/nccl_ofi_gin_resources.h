@@ -18,6 +18,7 @@
 #include "rdma/gin/nccl_ofi_gin_types.h"
 #include "nccl_ofi_gin_base.h"
 #include "nccl_ofi_freelist.h"
+#include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_scheduler.h"
 #include "nccl_ofi_tsa.h"
 
@@ -99,9 +100,11 @@ public:
 	 *		    them (filter_mr_flags()). 0 means none. Currently the only such flag
 	 *		    is OFI_NCCL_EFA_MR_RELAXED_ORDERING (PCIe relaxed ordering); new
 	 *		    flags are enabled via nccl_ofi_ofiutils_mr_flag_mask().
+	 * @param log_level: level at which the libfabric registration failure is logged.
+	 *		    The failure is logged once there; this function does not log it again.
 	 */
 	int reg_mr(nccl_ofi_mr_ckey_ref ckey, int type, nccl_ofi_gin_mr_handle_t **mhandle,
-		   uint64_t opt_mr_flags);
+		   uint64_t opt_mr_flags, nccl_ofi_mr_reg_log_level log_level);
 
 	void dereg_mr(nccl_ofi_gin_mr_handle_t *handle_ptr);
 
