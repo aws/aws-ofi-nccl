@@ -402,12 +402,12 @@ int nccl_ofi_rdma_gin_put_comm::regMrSymLocal(nccl_ofi_mr_ckey_ref ckey, void *d
 		       data_ptr, size, type, mr_handle);
 
 	/**
-	 * Local registration with the endpoint
+	 * Local registration with the endpoint. reg_mr() logs a failure once;
+	 * it is not logged again here.
 	 */
 	int ret = gin_ep.reg_mr(ckey, type, &mr_handle->local_handle,
-				gin_mr_flags_to_fi(mrFlags));
+				gin_mr_flags_to_fi(mrFlags), nccl_ofi_mr_reg_log_level::WARN);
 	if (ret != 0) {
-		NCCL_OFI_WARN("Local endpoint memory registration failed: %d", ret);
 		delete mr_handle;
 		return ret;
 	}
