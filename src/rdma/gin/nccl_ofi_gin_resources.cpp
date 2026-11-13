@@ -246,7 +246,8 @@ static int set_mr_req_attr(uint64_t mr_key, nccl_ofi_mr_ckey_ref ckey, uint64_t 
 }
 
 int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
-			      nccl_ofi_gin_mr_handle_t **mhandle, uint64_t opt_mr_flags)
+			      nccl_ofi_gin_mr_handle_t **mhandle, uint64_t opt_mr_flags,
+			      nccl_ofi_mr_reg_log_level log_level)
 {
 	int ret = 0;
 
@@ -282,13 +283,12 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 		return ret;
 	}
 
-	/* Register memory on each rail */
+	/* Register memory on each rail. nccl_ofi_ofiutils_mr_regattr() logs a
+	 * failure once, at the caller's log_level, so it is not logged again here. */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain.get_ofi_domain(rail_id),
-							      &mr_attr, regattr_flags);
+							      &mr_attr, regattr_flags, log_level);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
-			NCCL_OFI_WARN("Could not register memory on rail %u with flag %lu", rail_id,
-				      regattr_flags);
 			return mr_result.error_code;
 		}
 		ret_handle->set_mr(rail_id, mr_result.resource);
@@ -314,7 +314,8 @@ int nccl_ofi_rdma_gin_ep_t::freelist_regmr_fn(void *ep_ptr, void *data, size_t s
 	/* Setting ep to nullptr for the cache key -- we don't use the MR cache for GIN */
 	auto ckey = nccl_ofi_mr_ckey_mk_vec(data, size, nullptr);
 	return ep->reg_mr(&ckey, NCCL_PTR_HOST,
-			  reinterpret_cast<nccl_ofi_gin_mr_handle_t **>(mhandle), 0);
+			  reinterpret_cast<nccl_ofi_gin_mr_handle_t **>(mhandle), 0,
+			  nccl_ofi_mr_reg_log_level::WARN);
 }
 
 int nccl_ofi_rdma_gin_ep_t::freelist_deregmr_fn(void *handle)
@@ -544,7 +545,8 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 
 	try {
 		auto ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle, 0) != 0) {
+		if (gin_ep.reg_mr(&ckey, NCCL_PTR_HOST, &flush_buff_mr_handle, 0,
+				  nccl_ofi_mr_reg_log_level::WARN) != 0) {
 			throw std::runtime_error("Failed to register flush buffer");
 		}
 
@@ -553,7 +555,8 @@ void nccl_ofi_gin_resources::init_flush_buffers(uint16_t num_rails)
 		}
 
 		auto gpu_ckey = nccl_ofi_mr_ckey_mk_vec(flush_buff_gpu, flush_buff_size, nullptr);
-		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle, 0) != 0) {
+		if (gin_ep.reg_mr(&gpu_ckey, NCCL_PTR_CUDA, &flush_buff_gpu_mr_handle, 0,
+				  nccl_ofi_mr_reg_log_level::WARN) != 0) {
 			throw std::runtime_error("Failed to register GPU flush buffer");
 		}
 

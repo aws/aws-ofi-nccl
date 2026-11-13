@@ -115,16 +115,29 @@ ofi_av_result nccl_ofi_ofiutils_av_create(ofi_domain_ptr &domain);
 ofi_cq_result nccl_ofi_ofiutils_cq_create(ofi_domain_ptr &domain, struct fi_cq_attr *cq_attr);
 
 /**
+ * @brief	Log level for a failed nccl_ofi_ofiutils_mr_regattr() call
+ *
+ * nccl_ofi_ofiutils_mr_regattr() is the only layer that logs a registration
+ * failure; callers propagate the error code without logging it again. The
+ * caller picks the level because only it knows whether the failure is fatal
+ * (WARN) or an expected probe that NCCL will retry with a different mapping
+ * (INFO).
+ */
+enum class nccl_ofi_mr_reg_log_level { WARN, INFO };
+
+/**
  * @brief	Register memory region with libfabric using fi_mr_regattr
  *
  * @param domain:	Domain handle
  * @param mr_attr:	Memory region attributes structure
  * @param flags:	Registration flags
+ * @param log_level:	Level at which to log a registration failure
  * @return		Result containing error code and memory region pointer
  */
-ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain, 
-					   struct fi_mr_attr *mr_attr, 
-					   uint64_t flags);
+ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
+					   struct fi_mr_attr *mr_attr,
+					   uint64_t flags,
+					   nccl_ofi_mr_reg_log_level log_level);
 
 /*
  * @brief	Free libfabric NIC info list.

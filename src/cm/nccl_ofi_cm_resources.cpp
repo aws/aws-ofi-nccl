@@ -237,10 +237,9 @@ int endpoint::reg_mr(void *ep_ptr, void *data, size_t size, void **mr_handle)
 		mr_attr.requested_key = ret_handle->mr_key;
 	}
 
-	mr_result = nccl_ofi_ofiutils_mr_regattr(*(ep->ofi_domain), &mr_attr, regattr_flags);
+	mr_result = nccl_ofi_ofiutils_mr_regattr(*(ep->ofi_domain), &mr_attr, regattr_flags,
+						 nccl_ofi_mr_reg_log_level::WARN);
 	if (OFI_UNLIKELY(mr_result.is_failure())) {
-		NCCL_OFI_WARN("CM: Unable to register memory. RC: %d, Error: %s",
-			      mr_result.error_code, fi_strerror(-mr_result.error_code));
 		ret = mr_result.error_code;
 		goto error;
 	}
