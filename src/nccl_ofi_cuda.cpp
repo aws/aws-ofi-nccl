@@ -626,6 +626,43 @@ int nccl_net_ofi_get_gpu_device_for_addr(void *ptr, int *dev_id)
 	return 0;
 }
 
+static int nccl_net_ofi_gpu_device_is_coherent(CUdevice device, bool &is_coherent)
+{
+	is_coherent = false;
+
+	int coherent = 0;
+	CUresult result = pfn_cuDeviceGetAttribute(
+		&coherent,
+		CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
+		device);
+	if (result != CUDA_SUCCESS) {
+		NCCL_OFI_WARN("Unable to query coherence for GPU %d: %s", device,
+			      nccl_net_ofi_cuda_error_string(result));
+		return -EINVAL;
+	}
+
+	is_coherent = coherent != 0;
+	return 0;
+}
+
+int nccl_net_ofi_gpu_is_coherent(bool &is_coherent)
+{
+	is_coherent = false;
+	if (pfn_cuCtxGetDevice == nullptr || pfn_cuDeviceGetAttribute == nullptr) {
+		return -ENOTSUP;
+	}
+
+	CUdevice device;
+	CUresult result = pfn_cuCtxGetDevice(&device);
+	if (result != CUDA_SUCCESS) {
+		/* No current device. Not logged here: the caller reports it once, in
+		 * context, as the other current-device capability probes do. */
+		return -EINVAL;
+	}
+
+	return nccl_net_ofi_gpu_device_is_coherent(device, is_coherent);
+}
+
 int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent)
 {
 	is_coherent = false;
@@ -645,19 +682,7 @@ int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent)
 		return -EINVAL;
 	}
 
-	int coherent = 0;
-	result = pfn_cuDeviceGetAttribute(
-		&coherent,
-		CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
-		device);
-	if (result != CUDA_SUCCESS) {
-		NCCL_OFI_WARN("Unable to query coherence for GPU %d: %s", device_ordinal,
-			      nccl_net_ofi_cuda_error_string(result));
-		return -EINVAL;
-	}
-
-	is_coherent = coherent != 0;
-	return 0;
+	return nccl_net_ofi_gpu_device_is_coherent(device, is_coherent);
 }
 
 bool nccl_net_ofi_gpu_have_gdr_support_attr(void)
