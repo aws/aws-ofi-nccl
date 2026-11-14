@@ -17,9 +17,9 @@
 
 /*
  * Single compile-time constant for the EFA PCIe relaxed-ordering MR flag.
- * Equals FI_EFA_MR_RELAXED_ORDERING when libfabric defines it, else 0,
- * so call sites can OR it into the fi_mr_regattr() flags argument
- * unconditionally (a harmless no-op on older libfabric).
+ * Equals FI_EFA_MR_RELAXED_ORDERING when the libfabric headers used to build
+ * the plugin define it, else 0, so call sites can OR it into the fi_mr_regattr()
+ * flags argument unconditionally. This is a build-time check only.
  */
 #if HAVE_DECL_FI_EFA_MR_RELAXED_ORDERING
 #define OFI_NCCL_EFA_MR_RELAXED_ORDERING FI_EFA_MR_RELAXED_ORDERING
@@ -127,6 +127,12 @@ enum class nccl_ofi_mr_reg_log_level { WARN, INFO };
 
 /**
  * @brief	Register memory region with libfabric using fi_mr_regattr
+ *
+ * A -FI_EBADFLAGS failure of a registration that requests
+ * OFI_NCCL_EFA_MR_RELAXED_ORDERING is only traced, whatever log_level is: a
+ * libfabric older than the headers the plugin was built against rejects the
+ * flag, and nccl_net_ofi_domain_t::mr_regattr() retries without it and
+ * reports it.
  *
  * @param domain:	Domain handle
  * @param mr_attr:	Memory region attributes structure
