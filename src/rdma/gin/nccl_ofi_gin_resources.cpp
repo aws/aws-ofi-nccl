@@ -286,8 +286,8 @@ int nccl_ofi_rdma_gin_ep_t::reg_mr(nccl_ofi_mr_ckey_ref ckey, int type,
 	/* Register memory on each rail. nccl_ofi_ofiutils_mr_regattr() logs a
 	 * failure once, at the caller's log_level, so it is not logged again here. */
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
-		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain.get_ofi_domain(rail_id),
-							      &mr_attr, regattr_flags, log_level);
+		auto mr_result = domain.mr_regattr(domain.get_ofi_domain(rail_id),
+						   &mr_attr, regattr_flags, log_level);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
 			return mr_result.error_code;
 		}

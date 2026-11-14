@@ -476,7 +476,12 @@ ofi_mr_result nccl_ofi_ofiutils_mr_regattr(ofi_domain_ptr &domain,
 
 	ret = fi_mr_regattr(domain.get(), mr_attr, flags, &raw_mr);
 	if (OFI_UNLIKELY(ret != 0)) {
-		if (log_level == nccl_ofi_mr_reg_log_level::INFO) {
+		if (ret == -FI_EBADFLAGS && (flags & OFI_NCCL_EFA_MR_RELAXED_ORDERING) != 0) {
+			/* Expected with an older libfabric; the caller retries without the flag */
+			NCCL_OFI_TRACE(NCCL_NET,
+				       "Couldn't register memory region with regattr. RC: %d, ERROR: %s",
+				       ret, fi_strerror(-ret));
+		} else if (log_level == nccl_ofi_mr_reg_log_level::INFO) {
 			NCCL_OFI_INFO(NCCL_NET,
 				      "Couldn't register memory region with regattr. RC: %d, ERROR: %s",
 				      ret, fi_strerror(-ret));
