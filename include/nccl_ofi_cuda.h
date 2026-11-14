@@ -24,6 +24,21 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
+ * @brief Query whether the current GPU uses the host page tables for pageable
+ *        memory access.
+ *
+ * The current GPU is the one bound to the calling thread's CUDA context, so a
+ * context must already exist. This does not create one.
+ *
+ * @param is_coherent Set to true when the current GPU is coherent.
+ *
+ * @return 0 on success
+ *         -ENOTSUP if the CUDA driver entry points are unavailable
+ *         -EINVAL if there is no current GPU or the attribute query fails
+ */
+int nccl_net_ofi_gpu_is_coherent(bool &is_coherent);
+
+/*
  * @brief Query whether the GPU associated with a device pointer uses the
  *        host page tables for pageable memory access.
  *

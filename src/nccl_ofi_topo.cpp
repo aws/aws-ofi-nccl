@@ -19,6 +19,9 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 
 #if HAVE_CUDA
 static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
@@ -1743,6 +1746,29 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 		while (group_size > 1 && 2 * width <= gpu_width) {
 			width *= 2;
 			group_size /= 2;
+		}
+
+		/* The GPU's PCI link cannot represent the whole group. A coherent
+		 * GPU does not reach its NICs over that link, so its capabilities
+		 * do not bound what the group can carry. Represent the second
+		 * member of a two-NIC group by doubling the leader NIC's synthetic
+		 * link width. */
+		if (group_size > 1) {
+			bool is_coherent = false;
+#if HAVE_CUDA
+			int coherence_ret = nccl_net_ofi_gpu_is_coherent(is_coherent);
+			if (coherence_ret != 0) {
+				NCCL_OFI_INFO(NCCL_INIT,
+					      "Unable to determine GPU coherence (%d)", coherence_ret);
+			}
+#endif
+			if (is_coherent && group_size == 2) {
+				NCCL_OFI_TRACE(NCCL_INIT,
+					       "Coherent GPU: doubling synthetic NIC link width \"%zu\"",
+					       width);
+				width *= 2;
+				group_size = 1;
+			}
 		}
 
 		/* Still have multiple NICs in the group despite maxing out the link speed
