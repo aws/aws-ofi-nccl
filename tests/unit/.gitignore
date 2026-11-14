@@ -16,6 +16,7 @@ dlopen_c_test
 param
 platform_manager
 gdrcopy
+gdrcopy_failure
 spinlock
 spsc_ring
 ctrl_msg
