@@ -7,6 +7,7 @@
 #include "functional_test.h"
 
 #include <assert.h>
+#include <atomic>
 #include <deque>
 #include <vector>
 
@@ -274,6 +275,77 @@ int main(int argc, char *argv[])
 	NCCL_OFI_INFO(NCCL_NET, "=== Verifying iput/iputSignal result ===");
 	OFINCCLCHECK(verify_buff(rank, put_buff, send_val));
 	OFINCCLCHECK(verify_buff(rank, put_signal_buff, send_val));
+
+	/*
+	 * iputSignal order test: rank 0 sends rank 1 ROUNDS INCs to host slot A
+	 * and ROUNDS to host slot B, alternating, each after an INC to a device
+	 * slot. A device INC costs the gdrcopy worker a PCIe read and write, so
+	 * the worker falls behind the proxy and its work ring fills up. There are
+	 * LOAD_SLOTS device slots, one per entry of a worker batch, so no device
+	 * INC in a batch hits a slot the batch has already read. Rank 1 reads A,
+	 * B, A between progress calls and verifies a1 - 1 <= b <= a2. This
+	 * ensures the proxy applies one peer's signals in the order they were
+	 * sent (A >= B >= A - 1), also while the ring is full.
+	 */
+	const uint64_t ROUNDS = 65536, LOAD_SLOTS = 512;
+	void *probe_buff = nullptr, *probe_mhandle = nullptr;
+	void *load_buff = nullptr, *load_mhandle = nullptr;
+	OFINCCLCHECK(alloc_and_reg_buff(extRma, collComm, 2 * sizeof(uint64_t), NCCL_PTR_HOST, 0,
+					&probe_buff, &probe_mhandle));
+	OFINCCLCHECK(alloc_and_reg_buff(extRma, collComm, LOAD_SLOTS * sizeof(uint64_t),
+					buffer_type, 0, &load_buff, &load_mhandle));
+	if (rank == 0) {
+		std::deque<void *> request_deque;
+		auto send_inc = [&](void *mhandle, uint64_t slot) -> ncclResult_t {
+			void *request = nullptr;
+			OFINCCLCHECK(extRma->iputSignal(rmaCtx, 0, 0, nullptr, 0, 0, nullptr, 1,
+							slot * sizeof(uint64_t), mhandle, 1,
+							NCCL_NET_SIGNAL_OP_INC, true, 0, &request));
+			request_deque.push_back(request);
+			while (request_deque.size() >= NUM_REQUESTS) {
+				OFINCCLCHECK(poll_request_completion(extRma, request_deque,
+								    collComm, rmaCtx));
+			}
+			return ncclSuccess;
+		};
+		for (uint64_t i = 0; i < 2 * ROUNDS; ++i) {
+			OFINCCLCHECK(send_inc(load_mhandle, i % LOAD_SLOTS));
+			OFINCCLCHECK(send_inc(probe_mhandle, i % 2));
+		}
+		while (!request_deque.empty()) {
+			OFINCCLCHECK(poll_request_completion(extRma, request_deque, collComm,
+							    rmaCtx));
+		}
+	} else if (rank == 1) {
+		auto *probe = static_cast<uint64_t *>(probe_buff);
+		auto read = [probe](size_t s) {
+			return std::atomic_ref<uint64_t>(probe[s]).load(std::memory_order_acquire);
+		};
+		uint64_t b = 0;
+		while (b < ROUNDS) {
+			OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
+			uint64_t a1 = read(0);
+			b = read(1);
+			uint64_t a2 = read(0);
+			if (b + 1 < a1 || b > a2) {
+				NCCL_OFI_WARN("Test failed: signals out of order A=%lu B=%lu A=%lu",
+					      a1, b, a2);
+				/* A plain return can hang at exit with signals in flight. */
+				fflush(stdout);
+				MPI_Abort(MPI_COMM_WORLD, ncclSystemError);
+			}
+		}
+	}
+	MPI_Ibarrier(MPI_COMM_WORLD, &barrier_req);
+	barrier_done = 0;
+	while (!barrier_done) {
+		OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
+		MPI_Test(&barrier_req, &barrier_done, MPI_STATUS_IGNORE);
+	}
+	OFINCCLCHECK(extRma->deregMrSym(collComm, load_mhandle));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, probe_mhandle));
+	OFINCCLCHECK(deallocate_buffer(load_buff, buffer_type));
+	OFINCCLCHECK(deallocate_buffer(probe_buff, NCCL_PTR_HOST));
 
 	/*
 	 * iget test: rank 0 registers a buffer filled with a distinct value
