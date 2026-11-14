@@ -136,13 +136,6 @@ struct nccl_ofi_gin_peer_rank_info {
 	 * (compared against incoming msg_seq_num bitfield).
 	 */
 	uint16_t next_delivered_signal_seq_num = 0;
-
-	/* A hand-off for this peer is waiting for space in the
-	 * gdrcopy work ring. While set, drain_gdrcopy_done_queue skips the
-	 * retire for this peer, so no later signal of the peer reaches the
-	 * worker ahead of the waiting one.
-	 */
-	bool handoff_spinning = false;
 };
 
 /* Helpers for the cursor ring. Cursors are uint32_t in memory but we
@@ -345,7 +338,8 @@ public:
 
 	/* Enqueue one signal-delivery work item. Multi-producer: any comm's
 	   proxy thread may call concurrently. Returns false when the shared
-	   ring is full, leaving the caller to drain its done queue and retry. */
+	   ring is full. The worker frees slots without help from the caller,
+	   so the caller only needs to retry. */
 	bool enqueue(const gin_signal_work_entry &work)
 	{
 		return work_queue.push(work);
