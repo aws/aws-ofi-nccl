@@ -64,7 +64,8 @@ def download_all_testing_packages() {
         ['samwise-test-runner', '/tmp/SamwiseTestRunner'],
         ['samwise-test-schema', '/tmp/SamwiseTestSchema'],
         ['nccl-latency-tests', '/tmp/NcclLatencyTests'],
-        ['deepep-efa-setup-script', '/tmp/DeepEPEFASetupScript']
+        ['deepep-efa-setup-script', '/tmp/DeepEPEFASetupScript'],
+        ['nccl-extensions', '/tmp/NCCLExtensions']
     ]
     packages.each { pkg ->
         download_testing_package(pkg[0], pkg[1])
