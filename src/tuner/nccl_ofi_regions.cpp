@@ -1695,15 +1695,16 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 					}},
 					{.algorithm = NCCL_ALGO_TREE,
 					.protocol = NCCL_PROTO_LL128,
-					.num_vertices = 10,
+					.num_vertices = 11,
 					.vertices = {
 							{65536, TUNER_MAX_RANKS},
 							{65536, 64},
 							{65536, 2},
 							{294912, 2},
-							{720896, 4},
-							{1179648, 8},
-							{1441792, 16},
+							{3145728, 4},
+							{12582912, 8},
+							{50331648, 16},
+							{1441792, 32},
 							{1441792, 128},
 							{1441792, 256},
 							extended_tree_ll128
@@ -1781,12 +1782,13 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 			const nccl_ofi_tuner_region_t regions[] = {
 					{.algorithm = NCCL_ALGO_RING,
 					.protocol = NCCL_PROTO_LL,
-					.num_vertices = 10,
+					.num_vertices = 11,
 					.vertices = {
 							{0, 2},
 							{147456, 2},
-							{131072, 12},
-							{106496, 8},
+							{137182, 6},
+							{121474, 7},
+							{96987, 7},
 							{65536, 4},
 							{57344, 8},
 							{36864, 4},
@@ -1796,7 +1798,7 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 					}},
 					{.algorithm = NCCL_ALGO_PAT,
 					.protocol = NCCL_PROTO_SIMPLE,
-					.num_vertices = 18,
+					.num_vertices = 20,
 					.vertices = {
 							{0, TUNER_MAX_RANKS},
 							{0, 8},
@@ -1805,11 +1807,13 @@ static ncclResult_t region_init_internal_p6_b300(nccl_ofi_tuner_region_context_t
 							{36864, 4},
 							{57344, 8},
 							{65536, 4},
-							{106496, 8},
-							{131072, 12},
+							{96987, 7},
+							{121474, 7},
+							{137182, 6},
 							{147456, 2},
 							{294912, 4},
-							{4718592, 8},
+							{25165824, 8},
+							{75497472, 16},
 							{9437184, 16},
 							{75497472, 32},
 							{218103808, 64},
@@ -2389,6 +2393,14 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 				size_t low_factor = region_ctx->log2_nnodes < 4 ? 1 : 2;
 				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes, region_ctx->log2_nnodes, high_factor,
 					mid_factor, low_factor);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6_B300 &&
+				   region_ctx->log2_nnodes >= 2 && region_ctx->log2_nnodes <= 4) {
+				size_t high_factor = 0;
+				size_t mid_factor = 0;
+				size_t low_factor = 0;
+				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes,
+					region_ctx->log2_nnodes, high_factor, mid_factor,
+					low_factor);
 			}
 		}
 		if (collType == ncclFuncAllGather && algo == NCCL_ALGO_PAT &&
@@ -2408,6 +2420,14 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 					*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
 						T1, T2, T3, low_factor);
 				}
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6_B300 && nNodes >= 4 &&
+				   nNodes <= 16) {
+				T1 = region_ctx->log2_nnodes >= 4 ? 16 : 8;
+				T2 = region_ctx->log2_nnodes >= 4 ? 16 : 8;
+				T3 = region_ctx->log2_nnodes >= 4 ? 8 : 0;
+				size_t low_factor = 0;
+				*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
+					T1, T2, T3, low_factor);
 			}
 		}
 	}

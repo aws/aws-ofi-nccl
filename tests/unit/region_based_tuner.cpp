@@ -723,6 +723,330 @@ static int test_p6_chunk_size_all_gather_0x7(void)
     return ret;
 }
 
+/* ---- P6-B300 common helpers (AllReduce commit) ---- */
+
+/*
+ * P6-B300 Chunk-Size Tuning Unit Tests
+ * ------------------------------------
+ * Decisions go through the same path as the P6-B200 tests above
+ * (region_init_internal() + region_get_coll_info_internal_v3()), with platform
+ * NCCL_OFI_TUNER_P6_B300.
+ *
+ * Chunk sizes are checked by calling region_get_chunk_size_internal() directly
+ * with an explicit *per-channel* byte count (NCCL hands the chunk size tuner
+ * message size / number of channels). The B300 branches only depend on the
+ * per-channel bytes and the node count, and there is no benchmark-derived B300
+ * default channel count, so no decision step is run first.
+ *
+ * "Not tuned" is detected by seeding the chunk size with B300_CHUNK_UNTOUCHED:
+ * the tuner only writes *chunkSize when it tunes, so the sentinel must come back.
+ *
+ * Expected values were obtained by running the real tuner code (a scratch probe
+ * linked against libinternal_plugin), not computed by hand from the formulas.
+ */
+static const size_t B300_CHUNK_UNTOUCHED = 12345;
+
+/* Same as p6_region_decision(), but for P6-B300 and with an explicit nRanks.
+ * Writes -1/-1 when the tuner makes no selection (NCCL fallback), -2/-2 if the
+ * region context could not be initialized. */
+static void b300_region_decision(size_t nRanks, size_t nNodes, ncclFunc_t collType, size_t nBytes,
+				 int *out_algo, int *out_proto)
+{
+	nccl_ofi_tuner_context_t ctx;
+	memset(&ctx, 0, sizeof(ctx));
+
+	if (region_init_internal(&ctx, NCCL_OFI_TUNER_P6_B300, nRanks, nNodes) != ncclSuccess) {
+		*out_algo = -2;
+		*out_proto = -2;
+		return;
+	}
+
+	/* Sentinel so no region is skipped and the chosen cell is the one set to 0.0 */
+	float table[NCCL_NUM_ALGORITHMS][NCCL_NUM_PROTOCOLS];
+	for (int a = 0; a < NCCL_NUM_ALGORITHMS; a++) {
+		for (int p = 0; p < NCCL_NUM_PROTOCOLS; p++) {
+			table[a][p] = 1337.0f;
+		}
+	}
+
+	int nChannels = 0;
+	region_get_coll_info_internal_v3(&ctx, collType, nBytes, 1, (float **)table,
+					 NCCL_NUM_ALGORITHMS, NCCL_NUM_PROTOCOLS, &nChannels);
+	find_selected_algo_proto(table, out_algo, out_proto);
+
+	region_destroy_internal(&ctx);
+}
+
+/* Check the P6-B300 algo/proto decision for a 1-rank-per-node (0x7) cluster. */
+static int check_b300_decision(size_t nNodes, ncclFunc_t collType, size_t nBytes,
+			       int exp_algo, int exp_proto, const char *label)
+{
+	int algo = -1, proto = -1;
+	b300_region_decision(nNodes, nNodes, collType, nBytes, &algo, &proto);
+	if (algo != exp_algo || proto != exp_proto) {
+		printf("FAIL [B300 %s]: nNodes=%zu nBytes=%zu -> algo/proto %d/%d,"
+		       " expected %d/%d\n",
+		       label, nNodes, nBytes, algo, proto, exp_algo, exp_proto);
+		return -1;
+	}
+	return 0;
+}
+
+/* Check the P6-B300 chunk size for a per-channel byte count. expected ==
+ * B300_CHUNK_UNTOUCHED means the tuner must leave the chunk size alone. */
+static int check_b300_chunk(size_t nRanks, size_t nNodes, ncclFunc_t collType, int algo,
+			    int proto, size_t per_ch_bytes, size_t expected, const char *label)
+{
+	nccl_ofi_tuner_context_t ctx;
+	memset(&ctx, 0, sizeof(ctx));
+
+	if (region_init_internal(&ctx, NCCL_OFI_TUNER_P6_B300, nRanks, nNodes) != ncclSuccess) {
+		printf("FAIL [B300 %s]: region_init_internal failed for %zu ranks, %zu nodes\n",
+		       label, nRanks, nNodes);
+		return -1;
+	}
+
+	int ret = 0;
+	size_t chunk = B300_CHUNK_UNTOUCHED;
+	/* nChannels (4) is not used by the B300 branches. */
+	if (region_get_chunk_size_internal(&ctx, collType, per_ch_bytes, algo, proto, 4,
+					   &chunk) != ncclSuccess) {
+		printf("FAIL [B300 %s]: region_get_chunk_size_internal failed, per-channel %zu\n",
+		       label, per_ch_bytes);
+		ret = -1;
+	} else if (chunk != expected) {
+		printf("FAIL [B300 %s]: nRanks=%zu nNodes=%zu algo/proto %d/%d per-channel %zu ->"
+		       " chunk=%zu expected=%zu\n",
+		       label, nRanks, nNodes, algo, proto, per_ch_bytes, chunk, expected);
+		ret = -1;
+	}
+
+	region_destroy_internal(&ctx);
+	return ret;
+}
+
+/* ---- end P6-B300 common helpers ---- */
+
+/* ---- P6-B300 AllReduce tests ---- */
+
+/* AllReduce 0x7 decisions. Changed cells moved into the extended TREE/LL128
+ * region (previous selection in the comment); unchanged cells pin the region
+ * boundary. Polygon vertices themselves are avoided. */
+static int test_p6_b300_ar_decisions(void)
+{
+	const size_t M = 1024 * 1024;
+	const int T = NCCL_ALGO_TREE, R = NCCL_ALGO_RING;
+	const int LL128 = NCCL_PROTO_LL128, SIMPLE = NCCL_PROTO_SIMPLE;
+	int ret = 0;
+
+	/* --- Changed: now TREE/LL128 --- */
+	/* 4 nodes (was RING/LL128) */
+	ret |= check_b300_decision(4, ncclFuncAllReduce, 1 * M, T, LL128, "AR n4 1M");
+	ret |= check_b300_decision(4, ncclFuncAllReduce, 3 * M / 2, T, LL128, "AR n4 1.5M");
+	ret |= check_b300_decision(4, ncclFuncAllReduce, 2 * M, T, LL128, "AR n4 2M");
+	/* 8 nodes (2M was TREE/SIMPLE, 3M-8M was RING/LL128) */
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 2 * M, T, LL128, "AR n8 2M");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 3 * M, T, LL128, "AR n8 3M");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 4 * M, T, LL128, "AR n8 4M");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 6 * M, T, LL128, "AR n8 6M");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 8 * M, T, LL128, "AR n8 8M");
+	/* 16 nodes (2M, 4M were TREE/SIMPLE, 8M-32M was RING/LL128) */
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 2 * M, T, LL128, "AR n16 2M");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 4 * M, T, LL128, "AR n16 4M");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 8 * M, T, LL128, "AR n16 8M");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 16 * M, T, LL128, "AR n16 16M");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 24 * M, T, LL128, "AR n16 24M");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 32 * M, T, LL128, "AR n16 32M");
+
+	/* --- Unchanged (same selection as before the change) --- */
+	ret |= check_b300_decision(4, ncclFuncAllReduce, 128 * 1024, T, LL128,
+				   "AR n4 128K (unchanged)");
+	ret |= check_b300_decision(4, ncclFuncAllReduce, 4 * M, R, LL128, "AR n4 4M (unchanged)");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 16 * M, R, LL128,
+				   "AR n8 16M (unchanged)");
+	ret |= check_b300_decision(8, ncclFuncAllReduce, 1024 * M, R, SIMPLE,
+				   "AR n8 1G (unchanged)");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 64 * M, R, LL128,
+				   "AR n16 64M (unchanged)");
+	ret |= check_b300_decision(16, ncclFuncAllReduce, 1024 * M, R, SIMPLE,
+				   "AR n16 1G (unchanged)");
+	ret |= check_b300_decision(32, ncclFuncAllReduce, 2 * M, T, SIMPLE,
+				   "AR n32 2M (unchanged)");
+	ret |= check_b300_decision(32, ncclFuncAllReduce, 8 * M, T, SIMPLE,
+				   "AR n32 8M (unchanged)");
+	/* 2 nodes: no region selection, NCCL fallback */
+	ret |= check_b300_decision(2, ncclFuncAllReduce, 2 * M, -1, -1, "AR n2 2M (fallback)");
+
+	if (ret == 0) {
+		printf("P6-B300 AllReduce: all decision checks passed\n");
+	}
+	return ret;
+}
+
+/* AllReduce 0x7 Tree/LL128 chunk size, per-channel nBytes on each step of the
+ * 18000/36000/72000/144000/288000 ladder. Tuned at 4-31 nodes, 1 rank/node. */
+static int test_p6_b300_ar_chunk_size(void)
+{
+	const ncclFunc_t AR = ncclFuncAllReduce;
+	const int T = NCCL_ALGO_TREE, R = NCCL_ALGO_RING;
+	const int LL128 = NCCL_PROTO_LL128, SIMPLE = NCCL_PROTO_SIMPLE;
+	const size_t U = B300_CHUNK_UNTOUCHED;
+	int ret = 0;
+
+	/* --- Tuned: 4 nodes --- */
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 65536, 18000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 144000, 36000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 288000, 72000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 576000, 144000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 4608000, 144000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 6000000, 288000, "AR n4 Tree/LL128");
+	ret |= check_b300_chunk(4, 4, AR, T, LL128, 8388608, 288000, "AR n4 Tree/LL128");
+
+	/* --- Tuned: 8 nodes --- */
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 131072, 18000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 262144, 36000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 576000, 72000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 1000000, 144000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 8388608, 144000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 9216000, 288000, "AR n8 Tree/LL128");
+	ret |= check_b300_chunk(8, 8, AR, T, LL128, 16777216, 288000, "AR n8 Tree/LL128");
+
+	/* --- Tuned: 16 nodes --- */
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 144000, 18000, "AR n16 Tree/LL128");
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 200000, 36000, "AR n16 Tree/LL128");
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 1000000, 72000, "AR n16 Tree/LL128");
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 1152000, 144000, "AR n16 Tree/LL128");
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 9216000, 144000, "AR n16 Tree/LL128");
+	ret |= check_b300_chunk(16, 16, AR, T, LL128, 16000000, 288000, "AR n16 Tree/LL128");
+
+	/* --- Tuned: 17-31 nodes share the 16-node ladder (log2_nnodes == 4) --- */
+	ret |= check_b300_chunk(24, 24, AR, T, LL128, 144000, 18000, "AR n24 Tree/LL128");
+	ret |= check_b300_chunk(24, 24, AR, T, LL128, 200000, 36000, "AR n24 Tree/LL128");
+	ret |= check_b300_chunk(24, 24, AR, T, LL128, 1000000, 72000, "AR n24 Tree/LL128");
+	ret |= check_b300_chunk(24, 24, AR, T, LL128, 1152000, 144000, "AR n24 Tree/LL128");
+	ret |= check_b300_chunk(24, 24, AR, T, LL128, 16000000, 288000, "AR n24 Tree/LL128");
+	ret |= check_b300_chunk(31, 31, AR, T, LL128, 1152000, 144000, "AR n31 Tree/LL128");
+
+	/* --- Not tuned: chunk size left to NCCL --- */
+	ret |= check_b300_chunk(2, 2, AR, T, LL128, 1048576, U, "AR n2 Tree/LL128 (not tuned)");
+	ret |= check_b300_chunk(32, 32, AR, T, LL128, 1048576, U, "AR n32 Tree/LL128 (not tuned)");
+	ret |= check_b300_chunk(128, 16, AR, T, LL128, 1048576, U,
+				"AR n16 8 ranks/node Tree/LL128 (not tuned)");
+	ret |= check_b300_chunk(8, 8, AR, R, LL128, 1048576, U, "AR n8 Ring/LL128 (not tuned)");
+	ret |= check_b300_chunk(16, 16, AR, T, SIMPLE, 1048576, U,
+				"AR n16 Tree/Simple (not tuned)");
+
+	if (ret == 0) {
+		printf("P6-B300 AllReduce Tree/LL128 chunk size: all checks passed\n");
+	}
+	return ret;
+}
+
+/* ---- end P6-B300 AllReduce tests ---- */
+
+/* ---- P6-B300 AllGather tests ---- */
+
+/* AllGather 0x7 decisions. Changed cells moved into the extended PAT/SIMPLE
+ * region (previous selection in the comment); unchanged cells pin the region
+ * boundary. */
+static int test_p6_b300_ag_decisions(void)
+{
+	const size_t M = 1024 * 1024;
+	const int P = NCCL_ALGO_PAT, R = NCCL_ALGO_RING;
+	const int LL = NCCL_PROTO_LL, LL128 = NCCL_PROTO_LL128, SIMPLE = NCCL_PROTO_SIMPLE;
+	int ret = 0;
+
+	/* --- Changed: now PAT/SIMPLE --- */
+	/* 8 nodes (128K was RING/LL, 8M-24M was RING/LL128) */
+	ret |= check_b300_decision(8, ncclFuncAllGather, 128 * 1024, P, SIMPLE, "AG n8 128K");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 8 * M, P, SIMPLE, "AG n8 8M");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 12 * M, P, SIMPLE, "AG n8 12M");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 16 * M, P, SIMPLE, "AG n8 16M");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 24 * M, P, SIMPLE, "AG n8 24M");
+	/* 16 nodes (was RING/LL128) */
+	ret |= check_b300_decision(16, ncclFuncAllGather, 16 * M, P, SIMPLE, "AG n16 16M");
+	ret |= check_b300_decision(16, ncclFuncAllGather, 32 * M, P, SIMPLE, "AG n16 32M");
+	ret |= check_b300_decision(16, ncclFuncAllGather, 40 * M, P, SIMPLE, "AG n16 40M");
+	ret |= check_b300_decision(16, ncclFuncAllGather, 64 * M, P, SIMPLE, "AG n16 64M");
+
+	/* --- Unchanged (same selection as before the change) --- */
+	ret |= check_b300_decision(4, ncclFuncAllGather, 96 * 1024, R, LL, "AG n4 96K (unchanged)");
+	ret |= check_b300_decision(4, ncclFuncAllGather, 128 * 1024, R, LL,
+				   "AG n4 128K (unchanged)");
+	ret |= check_b300_decision(4, ncclFuncAllGather, 256 * 1024, P, SIMPLE,
+				   "AG n4 256K (unchanged)");
+	ret |= check_b300_decision(4, ncclFuncAllGather, 1 * M, R, LL128, "AG n4 1M (unchanged)");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 4 * M, P, SIMPLE, "AG n8 4M (unchanged)");
+	ret |= check_b300_decision(8, ncclFuncAllGather, 32 * M, R, LL128,
+				   "AG n8 32M (unchanged)");
+	ret |= check_b300_decision(16, ncclFuncAllGather, 8 * M, P, SIMPLE,
+				   "AG n16 8M (unchanged)");
+	ret |= check_b300_decision(16, ncclFuncAllGather, 128 * M, R, SIMPLE,
+				   "AG n16 128M (unchanged)");
+	ret |= check_b300_decision(32, ncclFuncAllGather, 16 * M, P, SIMPLE,
+				   "AG n32 16M (unchanged)");
+	/* 2 nodes: no region selection, NCCL fallback */
+	ret |= check_b300_decision(2, ncclFuncAllGather, 1 * M, -1, -1, "AG n2 1M (fallback)");
+
+	if (ret == 0) {
+		printf("P6-B300 AllGather: all decision checks passed\n");
+	}
+	return ret;
+}
+
+/* AllGather 0x7 PAT/Simple chunk size, per-channel nBytes. Tuned at 4-16
+ * nodes, 1 rank/node; floor 32K (64K at 4 nodes), ceiling 1M (512K at 16 nodes). */
+static int test_p6_b300_ag_chunk_size(void)
+{
+	const ncclFunc_t AG = ncclFuncAllGather;
+	const int P = NCCL_ALGO_PAT, R = NCCL_ALGO_RING;
+	const int LL = NCCL_PROTO_LL, SIMPLE = NCCL_PROTO_SIMPLE;
+	const size_t U = B300_CHUNK_UNTOUCHED;
+	int ret = 0;
+
+	/* --- Tuned: 4 nodes --- */
+	ret |= check_b300_chunk(4, 4, AG, P, SIMPLE, 1024, 65536, "AG n4 PAT/Simple");
+	ret |= check_b300_chunk(4, 4, AG, P, SIMPLE, 1048576, 131072, "AG n4 PAT/Simple");
+	ret |= check_b300_chunk(4, 4, AG, P, SIMPLE, 2304000, 262144, "AG n4 PAT/Simple");
+	ret |= check_b300_chunk(4, 4, AG, P, SIMPLE, 4608000, 524288, "AG n4 PAT/Simple");
+	ret |= check_b300_chunk(4, 4, AG, P, SIMPLE, 9216000, 1048576, "AG n4 PAT/Simple");
+
+	/* --- Tuned: 8 nodes --- */
+	ret |= check_b300_chunk(8, 8, AG, P, SIMPLE, 1000000, 65536, "AG n8 PAT/Simple");
+	ret |= check_b300_chunk(8, 8, AG, P, SIMPLE, 1152000, 131072, "AG n8 PAT/Simple");
+	ret |= check_b300_chunk(8, 8, AG, P, SIMPLE, 2097152, 262144, "AG n8 PAT/Simple");
+	ret |= check_b300_chunk(8, 8, AG, P, SIMPLE, 8000000, 524288, "AG n8 PAT/Simple");
+	ret |= check_b300_chunk(8, 8, AG, P, SIMPLE, 9216000, 1048576, "AG n8 PAT/Simple");
+
+	/* --- Tuned: 16 nodes --- */
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 1024, 32768, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 400000, 32768, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 576000, 65536, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 2000000, 65536, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 2304000, 131072, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 4194304, 262144, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 8388608, 524288, "AG n16 PAT/Simple");
+	ret |= check_b300_chunk(16, 16, AG, P, SIMPLE, 33554432, 524288, "AG n16 PAT/Simple");
+
+	/* --- Not tuned: chunk size left to NCCL --- */
+	ret |= check_b300_chunk(2, 2, AG, P, SIMPLE, 1048576, U, "AG n2 PAT/Simple (not tuned)");
+	ret |= check_b300_chunk(32, 32, AG, P, SIMPLE, 1048576, U,
+				"AG n32 PAT/Simple (not tuned)");
+	ret |= check_b300_chunk(64, 8, AG, P, SIMPLE, 1048576, U,
+				"AG n8 8 ranks/node PAT/Simple (not tuned)");
+	ret |= check_b300_chunk(8, 8, AG, R, SIMPLE, 1048576, U, "AG n8 Ring/Simple (not tuned)");
+	ret |= check_b300_chunk(8, 8, AG, P, LL, 1048576, U, "AG n8 PAT/LL (not tuned)");
+	ret |= check_b300_chunk(8, 8, ncclFuncReduceScatter, P, SIMPLE, 1048576, U,
+				"RS n8 PAT/Simple (not tuned)");
+
+	if (ret == 0) {
+		printf("P6-B300 AllGather PAT/Simple chunk size: all checks passed\n");
+	}
+	return ret;
+}
+
+/* ---- end P6-B300 AllGather tests ---- */
+
 int main(int argc, const char **argv) {
     int ret = 0;
 
@@ -748,6 +1072,28 @@ int main(int argc, const char **argv) {
 
     if ((r = test_p6_chunk_size_all_gather_0x7()) < 0) {
         printf("P6 AllGather 0x7 chunk size test failed\n");
+    }
+    ret |= r;
+
+    /* P6-B300 AllReduce */
+    if ((r = test_p6_b300_ar_decisions()) < 0) {
+        printf("P6-B300 AllReduce decision test failed\n");
+    }
+    ret |= r;
+
+    if ((r = test_p6_b300_ar_chunk_size()) < 0) {
+        printf("P6-B300 AllReduce Tree/LL128 chunk size test failed\n");
+    }
+    ret |= r;
+
+    /* P6-B300 AllGather */
+    if ((r = test_p6_b300_ag_decisions()) < 0) {
+        printf("P6-B300 AllGather decision test failed\n");
+    }
+    ret |= r;
+
+    if ((r = test_p6_b300_ag_chunk_size()) < 0) {
+        printf("P6-B300 AllGather PAT/Simple chunk size test failed\n");
     }
     ret |= r;
 
