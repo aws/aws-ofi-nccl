@@ -838,6 +838,41 @@ std::shared_ptr<nccl_net_ofi_ep_t> nccl_net_ofi_domain_t::get_ep(long endpoint_k
 }
 
 
+ofi_mr_result nccl_net_ofi_domain_t::mr_regattr(ofi_domain_ptr &ofi_domain,
+						struct fi_mr_attr *mr_attr, uint64_t flags,
+						nccl_ofi_mr_reg_log_level log_level)
+{
+	const uint64_t ro = OFI_NCCL_EFA_MR_RELAXED_ORDERING;
+
+	/* Another rail or thread may have dropped the flag since the caller filtered its flags */
+	if ((flags & ro) != 0 && (mr_flag_mask.load(std::memory_order_relaxed) & ro) == 0) {
+		flags &= ~ro;
+	}
+	if ((flags & ro) == 0) {
+		return nccl_ofi_ofiutils_mr_regattr(ofi_domain, mr_attr, flags, log_level);
+	}
+
+	/* nccl_ofi_ofiutils_mr_regattr() only traces -FI_EBADFLAGS when the flag is requested;
+	 * every other failure is logged at the caller's level and returned as is. */
+	ofi_mr_result result = nccl_ofi_ofiutils_mr_regattr(ofi_domain, mr_attr, flags, log_level);
+	if (result.is_success() || result.error_code != -FI_EBADFLAGS) {
+		return result;
+	}
+	result = nccl_ofi_ofiutils_mr_regattr(ofi_domain, mr_attr, flags & ~ro, log_level);
+
+	/* Drop the flag only if the registration works without it, so that -FI_EBADFLAGS caused
+	 * by another flag does not turn it off. Only the thread that clears it logs. */
+	if (result.is_success() && (mr_flag_mask.fetch_and(~ro) & ro) != 0) {
+		NCCL_OFI_INFO(NCCL_INIT | NCCL_NET,
+			      "Libfabric rejected FI_EFA_MR_RELAXED_ORDERING (0x%" PRIx64 "); "
+			      "registering memory without it. "
+			      "Set OFI_NCCL_PCI_RELAXED_ORDERING=0 to skip this check.",
+			      ro);
+	}
+	return result;
+}
+
+
 nccl_net_ofi_domain_t::nccl_net_ofi_domain_t(nccl_net_ofi_device_t *device_arg,
 					     unsigned int domain_key_arg)
 	: mr_cache(ofi_nccl_mr_cache_disable() ? 0 : NCCL_OFI_MR_CACHE_INIT_SIZE,

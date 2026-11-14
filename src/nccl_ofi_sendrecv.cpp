@@ -581,10 +581,10 @@ static int sendrecv_mr_buffers_register(nccl_net_ofi_sendrecv_domain_t *domain,
 	 */
 	regattr_flags |= domain->filter_mr_flags(opt_mr_flags);
 
-	mr_result = nccl_ofi_ofiutils_mr_regattr(domain->domain,
-						 &mr_attr,
-						 regattr_flags,
-						 nccl_ofi_mr_reg_log_level::WARN);
+	mr_result = domain->mr_regattr(domain->domain,
+				       &mr_attr,
+				       regattr_flags,
+				       nccl_ofi_mr_reg_log_level::WARN);
 	if (OFI_UNLIKELY(mr_result.is_failure())) {
 		ret = mr_result.error_code;
 		goto exit;

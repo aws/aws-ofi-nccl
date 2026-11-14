@@ -3073,10 +3073,10 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 	for (uint16_t rail_id = 0; rail_id != num_rails; ++rail_id) {
 		nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
-		auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
-							      &mr_attr,
-							      regattr_flags,
-							      nccl_ofi_mr_reg_log_level::WARN);
+		auto mr_result = this->mr_regattr(domain_rail->domain,
+						  &mr_attr,
+						  regattr_flags,
+						  nccl_ofi_mr_reg_log_level::WARN);
 		if (OFI_UNLIKELY(mr_result.is_failure())) {
 			ret = mr_result.error_code;
 			goto error;
@@ -3098,10 +3098,10 @@ int nccl_net_ofi_rdma_domain_t::reg_mr_on_device(nccl_ofi_mr_ckey_ref ckey,
 		for (uint16_t rail_id = 0; rail_id != nctrl; ++rail_id) {
 			nccl_net_ofi_rdma_domain_rail_t *domain_rail = this->rdma_domain_get_rail(rail_id);
 
-			auto mr_result = nccl_ofi_ofiutils_mr_regattr(domain_rail->domain,
-								      &mr_attr,
-								      regattr_flags,
-								      nccl_ofi_mr_reg_log_level::WARN);
+			auto mr_result = this->mr_regattr(domain_rail->domain,
+							  &mr_attr,
+							  regattr_flags,
+							  nccl_ofi_mr_reg_log_level::WARN);
 			if (OFI_UNLIKELY(mr_result.is_failure())) {
 				ret = mr_result.error_code;
 				goto error;

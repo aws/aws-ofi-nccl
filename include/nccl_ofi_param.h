@@ -123,11 +123,10 @@ OFI_NCCL_PARAM(PROTOCOL, protocol, "PROTOCOL", PROTOCOL::SENDRECV);
 /*
  * PCIe relaxed ordering (RO) master switch for EFA data memory registrations,
  * mirroring NCCL IB's NCCL_IB_PCI_RELAXED_ORDERING.  false (default) never
- * requests RO; true requests it on data MRs whose buffer role permits. EFA has
- * no queryable RO capability and silently ignores the flag where unsupported,
- * so requesting it is always API-safe. This switch is combined with the
- * compile-time support and EFA-provider checks once per domain, in
- * nccl_ofi_ofiutils_mr_flag_mask().
+ * requests RO; true requests it on data MRs whose buffer role permits. This
+ * switch is combined with the compile-time support and EFA-provider checks
+ * once per domain, in nccl_ofi_ofiutils_mr_flag_mask(); the domain then drops
+ * the flag if the loaded libfabric rejects it (mr_regattr()).
  */
 OFI_NCCL_PARAM(bool, pci_relaxed_ordering, "PCI_RELAXED_ORDERING", false);
 

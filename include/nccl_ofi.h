@@ -7,6 +7,7 @@
 
 #include <unordered_map>
 #include <memory>
+#include <atomic>
 #include <rdma/fabric.h>
 #include <rdma/fi_errno.h>
 #include <rdma/fi_domain.h>
@@ -21,6 +22,7 @@
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_idpool.h"
 #include "nccl_ofi_mr.h"
+#include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_spinlock.h"
 #include "ofi/resource_wrapper.h"
 
@@ -492,8 +494,27 @@ public:
 	 */
 	inline uint64_t filter_mr_flags(uint64_t opt_mr_flags) const
 	{
-		return opt_mr_flags & mr_flag_mask;
+		return opt_mr_flags & mr_flag_mask.load(std::memory_order_relaxed);
 	}
+
+	/**
+	 * @brief	Register memory on one of this domain's libfabric domains.
+	 *
+	 * Same as nccl_ofi_ofiutils_mr_regattr(), except for the EFA PCIe relaxed
+	 * ordering flag: a libfabric older than the headers the plugin was built
+	 * against rejects it with -FI_EBADFLAGS. Such a registration is retried
+	 * once without the flag, and if that succeeds, the flag is dropped from
+	 * this domain's mask, so later registrations do not request it. Any other
+	 * failure is returned unchanged.
+	 *
+	 * @param ofi_domain:	Libfabric domain (one rail) to register on
+	 * @param mr_attr:	Memory region attributes
+	 * @param flags:	Registration flags, usually including filter_mr_flags()
+	 * @param log_level:	Level at which a failed registration is logged
+	 * @return		Result containing error code and memory region pointer
+	 */
+	ofi_mr_result mr_regattr(ofi_domain_ptr &ofi_domain, struct fi_mr_attr *mr_attr,
+				 uint64_t flags, nccl_ofi_mr_reg_log_level log_level);
 
 	/**
 	 * @brief       Erase all ep_table elements matching the provided ep
@@ -516,10 +537,11 @@ protected:
 	const unsigned int domain_key;
 
 	/* Libfabric MR registration flags this domain may use (e.g. the EFA
-	 * relaxed-ordering bit). Fixed at construction from the build, the
-	 * parameters and the provider; 0 for providers that accept none. Applied
-	 * through filter_mr_flags(). */
-	const uint64_t mr_flag_mask;
+	 * relaxed-ordering bit). Set at construction from the build, the
+	 * parameters and the provider (0 for providers that accept none).
+	 * mr_regattr() drops a flag the loaded libfabric rejects, hence atomic.
+	 * Applied through filter_mr_flags(). */
+	std::atomic<uint64_t> mr_flag_mask;
 
 	/**
 	 * Release all endpoints by clearing the ep_table.
