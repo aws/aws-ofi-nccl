@@ -24,6 +24,22 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
+ * @brief Query whether the GPU at a PCI bus ID uses the host page tables for
+ *        pageable memory access.
+ *
+ * This resolves the GPU from its PCI address, so it does not depend on the
+ * calling thread's CUDA context. The CUDA driver must be initialized.
+ *
+ * @param pci_bus_id	PCI bus ID in the form "domain:bus:device.function".
+ *
+ * @return true if the GPU is coherent. false if it is not, or if the CUDA
+ *         driver entry points are unavailable.
+ *
+ * @throws std::runtime_error if the GPU cannot be resolved or queried.
+ */
+bool nccl_net_ofi_gpu_is_coherent_for_pci_bus_id(const char *pci_bus_id);
+
+/*
  * @brief Query whether the GPU associated with a device pointer uses the
  *        host page tables for pageable memory access.
  *
