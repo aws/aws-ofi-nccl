@@ -9,6 +9,8 @@
 #include <stdio.h>
 #include <dlfcn.h>
 #include <memory>
+#include <stdexcept>
+#include <string>
 #include <cudaTypedefs.h>
 #include <cuda_runtime_api.h>
 
@@ -93,6 +95,7 @@ DECLARE_CUDA_FUNCTION(cuDriverGetVersion, 2020);
 DECLARE_CUDA_FUNCTION(cuGetErrorString, 6000);
 DECLARE_CUDA_FUNCTION(cuGetErrorName, 6000);
 DECLARE_CUDA_FUNCTION(cuDeviceGet, 2000);
+DECLARE_CUDA_FUNCTION(cuDeviceGetCount, 2000);
 DECLARE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 DECLARE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
 DECLARE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
@@ -227,6 +230,7 @@ int nccl_net_ofi_gpu_init(void)
 	RESOLVE_CUDA_FUNCTION(cuGetErrorString, 6000);
 	RESOLVE_CUDA_FUNCTION(cuGetErrorName, 6000);
 	RESOLVE_CUDA_FUNCTION(cuDeviceGet, 2000);
+	RESOLVE_CUDA_FUNCTION(cuDeviceGetCount, 2000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetDevice, 2000);
 	RESOLVE_CUDA_FUNCTION(cuCtxSetCurrent, 4000);
 	RESOLVE_CUDA_FUNCTION(cuCtxGetCurrent, 4000);
@@ -626,6 +630,56 @@ int nccl_net_ofi_get_gpu_device_for_addr(void *ptr, int *dev_id)
 	return 0;
 }
 
+static CUresult nccl_net_ofi_gpu_device_is_coherent(CUdevice device, bool &is_coherent)
+{
+	is_coherent = false;
+
+	int coherent = 0;
+	CUresult result = pfn_cuDeviceGetAttribute(
+		&coherent,
+		CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
+		device);
+	if (result == CUDA_SUCCESS) {
+		is_coherent = coherent != 0;
+	}
+
+	return result;
+}
+
+bool nccl_net_ofi_visible_gpu_is_coherent()
+{
+	if (pfn_cuDeviceGetCount == nullptr || pfn_cuDeviceGet == nullptr ||
+	    pfn_cuDeviceGetAttribute == nullptr) {
+		return false;
+	}
+
+	int device_count = 0;
+	CUresult result = pfn_cuDeviceGetCount(&device_count);
+	if (result != CUDA_SUCCESS) {
+		throw std::runtime_error(std::string("Unable to enumerate CUDA-visible GPUs: ") +
+					 nccl_net_ofi_cuda_error_string(result));
+	}
+	if (device_count == 0) {
+		return false;
+	}
+
+	CUdevice device;
+	result = pfn_cuDeviceGet(&device, 0);
+	if (result != CUDA_SUCCESS) {
+		throw std::runtime_error(std::string("Unable to resolve a CUDA-visible GPU: ") +
+					 nccl_net_ofi_cuda_error_string(result));
+	}
+
+	bool is_coherent;
+	result = nccl_net_ofi_gpu_device_is_coherent(device, is_coherent);
+	if (result != CUDA_SUCCESS) {
+		throw std::runtime_error(std::string("Unable to query coherence for a CUDA-visible GPU: ") +
+					 nccl_net_ofi_cuda_error_string(result));
+	}
+
+	return is_coherent;
+}
+
 int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent)
 {
 	is_coherent = false;
@@ -645,18 +699,13 @@ int nccl_net_ofi_gpu_is_coherent_for_addr(void *device_ptr, bool &is_coherent)
 		return -EINVAL;
 	}
 
-	int coherent = 0;
-	result = pfn_cuDeviceGetAttribute(
-		&coherent,
-		CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES,
-		device);
+	result = nccl_net_ofi_gpu_device_is_coherent(device, is_coherent);
 	if (result != CUDA_SUCCESS) {
 		NCCL_OFI_WARN("Unable to query coherence for GPU %d: %s", device_ordinal,
 			      nccl_net_ofi_cuda_error_string(result));
 		return -EINVAL;
 	}
 
-	is_coherent = coherent != 0;
 	return 0;
 }
 
