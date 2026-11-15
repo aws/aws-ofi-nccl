@@ -24,6 +24,24 @@ int nccl_net_ofi_gpu_init(void);
 int nccl_net_ofi_get_gpu_device_for_addr(void *data, int *dev_id);
 
 /*
+ * @brief Query whether a CUDA-visible GPU uses the host page tables for
+ *        pageable memory access.
+ *
+ * CUDA device enumeration honors CUDA_VISIBLE_DEVICES and does not depend on
+ * the calling thread's current context. The first visible GPU represents the
+ * platform, whose GPUs are expected to have uniform coherence properties.
+ * The CUDA driver must be initialized.
+ *
+ * @return true if at least one GPU is visible and the first visible GPU is
+ *         coherent. false if no GPU is visible or the required CUDA driver
+ *         entry points are unavailable.
+ *
+ * @throws std::runtime_error if the visible GPU cannot be enumerated or
+ *         queried.
+ */
+bool nccl_net_ofi_visible_gpu_is_coherent();
+
+/*
  * @brief Query whether the GPU associated with a device pointer uses the
  *        host page tables for pageable memory access.
  *
