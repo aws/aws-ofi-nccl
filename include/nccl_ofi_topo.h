@@ -326,6 +326,23 @@ struct fi_info *nccl_ofi_topo_next_info_list(nccl_ofi_topo_data_iterator_t *iter
 bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
 
 /*
+ * @brief	Scale a NIC group for a coherent GPU
+ *
+ * A coherent GPU does not reach its NICs over PCI, so its PCI link does not
+ * limit what the group can carry. Double the leader NIC's synthetic link
+ * width for each halving of the group size, until every NIC in the group is
+ * represented. A non-coherent GPU leaves the group unchanged.
+ *
+ * @param	is_coherent
+ *		Whether the GPU is coherent
+ * @param	group_size
+ *		In/out: number of NICs in the group not yet represented
+ * @param	width
+ *		In/out: synthetic link width of the leader NIC
+ */
+void nccl_ofi_topo_scale_coherent_group(bool is_coherent, int &group_size, size_t &width);
+
+/*
  * @brief	Test whether a NIC reaches its closest GPU through a PCIe switch
  *
  * Uses the GPU that NIC grouping already associated with the NIC's group.

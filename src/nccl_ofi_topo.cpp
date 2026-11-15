@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <cinttypes>
+#include <exception>
 
 #include "nccl_ofi.h"
 #include "nccl_ofi_log.h"
@@ -19,6 +20,9 @@
 #include "nccl_ofi_math.h"
 #include "nccl_ofi_ofiutils.h"
 #include "nccl_ofi_platform.h"
+#if HAVE_CUDA
+#include "nccl_ofi_cuda.h"
+#endif
 
 #if HAVE_CUDA
 static const uint8_t target_class_ids[] = { 0x03 };           /* Display controller class */
@@ -1683,6 +1687,20 @@ static int write_pci_tag(FILE *file, int indent,
 	return 0;
 }
 
+void nccl_ofi_topo_scale_coherent_group(bool is_coherent, int &group_size, size_t &width)
+{
+	/* A NIC group's synthetic link is scaled up to the GPU's PCI link and
+	 * no further. That can leave NICs unrepresented, for example when the
+	 * leader NIC's link already equals the GPU's. A coherent GPU does not
+	 * reach its NICs over PCI, so that cap does not apply to it. Double the
+	 * leader NIC's synthetic link width, halving the group size each time,
+	 * until every NIC in the group is represented. */
+	while (is_coherent && group_size > 1) {
+		width *= 2;
+		group_size /= 2;
+	}
+}
+
 /*
  * @brief	Write NIC pci tag to NCCL topology file
  *
@@ -1745,11 +1763,30 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 			group_size /= 2;
 		}
 
-		/* Still have multiple NICs in the group despite maxing out the link speed
-		 * and width to match the GPU max. Not reporting the full network capabilities
-		 * of the NICs in the group */
+		const char *coherence = "not checked";
 		if (group_size > 1) {
-			NCCL_OFI_INFO(NCCL_INIT, "still have NIC group size %d after matching GPU max link speed and width", group_size);
+#if HAVE_CUDA
+			char gpu_bus_id[32];
+			snprintf(gpu_bus_id, sizeof(gpu_bus_id), "%04x:%02x:%02x.%01x",
+				 gpu->attr->pcidev.domain, gpu->attr->pcidev.bus,
+				 gpu->attr->pcidev.dev, gpu->attr->pcidev.func);
+			try {
+				bool is_coherent = nccl_net_ofi_gpu_is_coherent_for_pci_bus_id(gpu_bus_id);
+				coherence = is_coherent ? "coherent" : "not coherent";
+				NCCL_OFI_TRACE(NCCL_INIT, "GPU %s is %s", gpu_bus_id, coherence);
+				nccl_ofi_topo_scale_coherent_group(is_coherent, group_size, width);
+			} catch (const std::exception &e) {
+				coherence = "unknown";
+				NCCL_OFI_INFO(NCCL_INIT, "Unable to determine GPU coherence: %s", e.what());
+			}
+#endif
+		}
+
+		/* Still have multiple NICs in the group despite maxing out the link speed
+		 * and width to match the GPU max, and any coherent scaling above. Not
+		 * reporting the full network capabilities of the NICs in the group */
+		if (group_size > 1) {
+			NCCL_OFI_INFO(NCCL_INIT, "still have NIC group size %d after matching GPU max link speed and width (GPU coherence: %s)", group_size, coherence);
 		}
 	}
 

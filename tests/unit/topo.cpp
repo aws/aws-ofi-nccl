@@ -41,6 +41,68 @@ static bool check(const char *name, bool actual, bool expected)
 	return true;
 }
 
+/*
+ * Scale a NIC group and compare the result with what is expected.
+ *
+ * group_size is the number of NICs in the group that the scaling to the
+ * GPU's PCI link has not yet represented. width is the synthetic link width
+ * of the leader NIC, in PCI lanes. 16 is a typical x16 link.
+ */
+static bool check_scaled(const char *name, bool is_coherent, int group_size, size_t width,
+			 int expected_group_size, size_t expected_width)
+{
+	int actual_group_size = group_size;
+	size_t actual_width = width;
+
+	nccl_ofi_topo_scale_coherent_group(is_coherent, actual_group_size, actual_width);
+
+	if (actual_group_size != expected_group_size || actual_width != expected_width) {
+		fprintf(stderr, "%s: got group size %d, width %zu; expected %d, %zu\n", name,
+			actual_group_size, actual_width, expected_group_size, expected_width);
+		return false;
+	}
+	return true;
+}
+
+static bool test_scale_coherent_group()
+{
+	/* Coherent GPU, two NICs, x16 leader: the second NIC is represented by
+	 * doubling the width to x32, which leaves no NIC unrepresented. */
+	if (!check_scaled("coherent two-NIC group", true, 2, 16, 1, 32)) {
+		return false;
+	}
+
+	/* Non-coherent GPU: its PCI link still bounds the group, so nothing
+	 * changes and both NICs stay unrepresented. */
+	if (!check_scaled("non-coherent two-NIC group", false, 2, 16, 2, 16)) {
+		return false;
+	}
+
+	/* Coherent GPU, four NICs: two doublings represent all four, so the
+	 * width goes x16 -> x32 -> x64. */
+	if (!check_scaled("coherent four-NIC group", true, 4, 16, 1, 64)) {
+		return false;
+	}
+
+	/* Coherent GPU, eight NICs: three doublings, x16 -> x128. */
+	if (!check_scaled("coherent eight-NIC group", true, 8, 16, 1, 128)) {
+		return false;
+	}
+
+	/* Non-coherent GPU, four NICs: nothing changes for any group size. */
+	if (!check_scaled("non-coherent four-NIC group", false, 4, 16, 4, 16)) {
+		return false;
+	}
+
+	/* Coherent GPU, one NIC: nothing is left to represent, so the width
+	 * must not be doubled. */
+	if (!check_scaled("coherent single NIC", true, 1, 16, 1, 16)) {
+		return false;
+	}
+
+	return true;
+}
+
 int main()
 {
 	unit_test_init();
@@ -99,6 +161,10 @@ int main()
 		return 1;
 	}
 
-	printf("Topology PCIe switch tests completed successfully!\n");
+	if (!test_scale_coherent_group()) {
+		return 1;
+	}
+
+	printf("Topology tests completed successfully!\n");
 	return 0;
 }
