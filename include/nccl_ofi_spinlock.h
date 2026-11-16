@@ -9,6 +9,16 @@
 #include <cassert>
 
 
+/* Spin-wait hint for busy-wait loops */
+static inline void nccl_ofi_cpu_relax()
+{
+#if defined(__x86_64__)
+	asm volatile("pause" : : : );
+#elif defined(__aarch64__)
+	asm volatile("isb" : : : );
+#endif
+}
+
 // A BasicLockable spinlock without many features
 class CAPABILITY("mutex") nccl_ofi_spinlock {
 public	:
@@ -32,11 +42,7 @@ public	:
 	{
 		while (!this->trylock()) {
 			while (val.load()) {
-#if defined(__x86_64__)
-				asm volatile("pause" : : : );
-#elif defined(__aarch64__)
-				asm volatile("isb" : : : );
-#endif
+				nccl_ofi_cpu_relax();
 			}
 		}
 	}
