@@ -1366,7 +1366,7 @@ int nccl_ofi_rdma_gin_put_comm::do_gin_signal_and_trace(uint32_t peer_rank,
  * reaches this branch the worker provably holds no entry for this comm (and
  * `closing` stops new entries reaching it), making the proxy the sole writer of
  * the counter. Otherwise mark gate_req in-flight, account the hand-off, and spin
- * enqueueing to the worker, draining our done queue to make room. */
+ * until the worker takes it. */
 int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
 	gin_signal_work_entry &work, nccl_net_ofi_gin_iputsignal_recv_req *gate_req,
 	uint32_t peer_rank)
@@ -1395,16 +1395,6 @@ int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
 
 	auto &worker = nccl_ofi_gin_gdrcopy_worker::get();
 	while (!worker.enqueue(work)) {
-		int drain_ret = drain_gdrcopy_done_queue();
-		if (OFI_UNLIKELY(drain_ret != 0)) {
-			/* Roll back the count for the entry we never enqueued. */
-			outstanding_gdrcopy.fetch_sub(1, std::memory_order_acq_rel);
-			gate_req->gdrcopy_in_flight = false;
-			return drain_ret;
-		}
-		/* drain_gdrcopy_done_queue() and worker.enqueue() both perform atomic
-		   ring operations, which are themselves compiler barriers, so the loop
-		   re-reads ring state each iteration without an explicit barrier. */
 	}
 	return 0;
 }
@@ -1420,8 +1410,7 @@ int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
  * On a full work ring the proxy must not run the gdrcopy itself in steady
  * state: the worker is the sole owner of that read-modify-write, and two
  * concurrent r-m-w against a PCIe-mapped counter can lose increments. We spin
- * instead, draining our done queue while we wait so the worker keeps making
- * room.
+ * instead until the worker makes room, which it does without our help.
  *
  * The req is marked in_flight before enqueue so retire_completed_peer_iput_ops
  * will not advance past it, return it to the pool, or stash an ACK while the
@@ -1795,9 +1784,7 @@ int nccl_ofi_rdma_gin_put_comm::retire_completed_peer_iput_ops(uint32_t peer_ran
 		   the same reason the per-signal path could recycle an in-flight
 		   req: the worker captured the folded work by value, so the done
 		   entry's req pointer is never dereferenced (status travels by
-		   value). Cursor + map are fully advanced before we post, so the
-		   drain-spin inside hand_off_signal_work can re-enter retire
-		   without reprocessing this run. */
+		   value). */
 		gin_signal_work_entry folded {};
 		ret = build_signal_work(req->metadata, folded);
 		if (OFI_UNLIKELY(ret != 0)) {
