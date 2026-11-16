@@ -1395,6 +1395,7 @@ int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
 
 	auto &worker = nccl_ofi_gin_gdrcopy_worker::get();
 	while (!worker.enqueue(work)) {
+		nccl_ofi_cpu_relax();
 	}
 	return 0;
 }
