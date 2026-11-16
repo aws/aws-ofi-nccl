@@ -338,7 +338,8 @@ public:
 
 	/* Enqueue one signal-delivery work item. Multi-producer: any comm's
 	   proxy thread may call concurrently. Returns false when the shared
-	   ring is full, leaving the caller to drain its done queue and retry. */
+	   ring is full. The worker frees slots without help from the caller,
+	   so the caller only needs to retry. */
 	bool enqueue(const gin_signal_work_entry &work)
 	{
 		return work_queue.push(work);
