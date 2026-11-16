@@ -434,10 +434,10 @@ void gdaki_endpoint::populate(int backend_version, struct fi_efa_ops_gda *gda_op
 	sq_buffer.map(sq_attr.buffer,
 		      (size_t)sq_attr.num_entries * sq_attr.entry_size);
 
-	/* rdma-core mmaps the doorbell MMIO region with sysconf(_SC_PAGESIZE)
-	 * (see providers/efa/verbs.c). Use the plugin's cached system_page_size
-	 * so our GPU-side mapping covers the same region rdma-core opened. */
-	sq_doorbell.map(sq_attr.doorbell, system_page_size);
+	/* Register only the doorbell register. This is intentionally not
+	 * rounded up to enclosing page size, so two doorbells sharing a page
+	 * do not cause duplicate registrations. */
+	sq_doorbell.map(sq_attr.doorbell, sizeof(*sq_attr.doorbell));
 
 	gpu_qp.build(backend_version, sq_attr, rq_attr, endpoint.inline_write_size(),
 		     sq_buffer.dev, sq_doorbell.dev);
