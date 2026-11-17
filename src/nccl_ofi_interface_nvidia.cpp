@@ -25,11 +25,13 @@ static void atexit_handler()
 }
 
 
-static ncclResult_t init_v2(ncclDebugLogger_t logFunction)
+static ncclResult_t init_with_net_version(int net_version,
+					  ncclDebugLogger_t logFunction)
 {
 	int rc;
 	ncclResult_t ret;
 
+	nccl_net_ofi_net_api_version = net_version;
 	ret = nccl_net_ofi_init(logFunction);
 	if (OFI_UNLIKELY(ret != ncclSuccess)) {
 		return ret;
@@ -49,11 +51,34 @@ static ncclResult_t init_v2(ncclDebugLogger_t logFunction)
 }
 
 
+static ncclResult_t init_v6(ncclDebugLogger_t logFunction)
+{
+	return init_with_net_version(6, logFunction);
+}
+
+
+static ncclResult_t init_v7(ncclDebugLogger_t logFunction)
+{
+	return init_with_net_version(7, logFunction);
+}
+
+
+static ncclResult_t init_v8(ncclDebugLogger_t logFunction)
+{
+	return init_with_net_version(8, logFunction);
+}
+
+
+static ncclResult_t init_v9(ncclDebugLogger_t logFunction)
+{
+	return init_with_net_version(9, logFunction);
+}
+
 
 static ncclResult_t init_v10(ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
 	// TODO: Implement ncclProfilerCallback_t functionality.
-	return init_v2(logFunction);
+	return init_with_net_version(10, logFunction);
 }
 
 
@@ -61,6 +86,7 @@ static ncclResult_t init_v11(void** ctx, uint64_t commId, ncclNetCommConfig_v11_
 			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
 	std::lock_guard lock(netMutex);
+	nccl_net_ofi_net_api_version = 11;
 	// In ncclNet_v11, the ncclNetCommConfig_t has been moved from connect() to init() to make the config
 	// being passed only once when each communicator is initialized. Before we support per communicator
 	// context, to be compatiable with ncclNet_v10 behavior, we store the config in the context pointer
@@ -598,6 +624,7 @@ static ncclResult_t init_v12(void **ctx, uint64_t commId, ncclNetCommConfig_v12_
 			     ncclDebugLogger_t logFunction, ncclProfilerCallback_t profFunction)
 {
 	std::lock_guard lock(netMutex);
+	nccl_net_ofi_net_api_version = 12;
 	ncclNetCommConfig_v12_t *net_config = (ncclNetCommConfig_v12_t *)malloc(sizeof(ncclNetCommConfig_v12_t));
 	if (net_config == NULL) return ncclSystemError;
 	net_config->trafficClass = config->trafficClass;
@@ -661,7 +688,7 @@ extern "C" {
 /* Net v6 was introduced in NCCL v2.13. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "Libfabric",
-        .init = init_v2,
+        .init = init_v6,
         .devices = devices_v2,
         .getProperties = getProperties_v5,
         .listen = listen_v5,
@@ -682,7 +709,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
 /* Net v7 was introduced in NCCL v2.19. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
         .name = "Libfabric",
-        .init = init_v2,
+        .init = init_v7,
         .devices = devices_v2,
         .getProperties = getProperties_v7,
         .listen = listen_v5,
@@ -705,7 +732,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
 /* Net v8 was introduced in NCCL v2.20. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .name = "Libfabric",
-        .init = init_v2,
+        .init = init_v8,
         .devices = devices_v2,
         .getProperties = getProperties_v8,
         .listen = listen_v5,
@@ -728,7 +755,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
 /* Net v9 was introduced in NCCL v2.24. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .name = "Libfabric",
-        .init = init_v2,
+        .init = init_v9,
         .devices = devices_v2,
         .getProperties = getProperties_v9,
         .listen = listen_v5,
