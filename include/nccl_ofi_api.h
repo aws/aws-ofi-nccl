@@ -20,6 +20,10 @@ struct nccl_ofi_properties;
 nccl_net_ofi_plugin_t *nccl_net_ofi_get_plugin();
 
 
+/* Net API version selected by the calling NCCL or RCCL. */
+extern int nccl_net_ofi_net_api_version;
+
+
 /**
  * Translate an errno (returned by Libfabric and internal plugin functions) to a
  * ncclResult_t (returned to NCCL per net API)

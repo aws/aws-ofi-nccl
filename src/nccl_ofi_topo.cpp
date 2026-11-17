@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <exception>
 #include <map>
+#include <optional>
 #include <set>
 #include <vector>
 #include <string.h>
@@ -18,6 +19,7 @@
 #include <cinttypes>
 
 #include "nccl_ofi.h"
+#include "nccl_ofi_api.h"
 #include "nccl_ofi_log.h"
 #include "nccl_ofi_topo.h"
 #include "nccl_ofi_math.h"
@@ -52,6 +54,37 @@ const char *width_name = "max_link_width";
 
 /* `pcie_gen[i]` defines the speed of a PCIe lane of PCIe generation `i+1` */
 const char *pcie_gen[] = {"2.5", "5.0", "8.0", "16.0", "32.0", "64.0"};
+
+struct net_pcie_capability {
+	int min_net_version;
+	size_t max_speed_idx;
+};
+
+/*
+ * Each entry is {minimum net API version, maximum supported pcie_gen index}.
+ * For the selected API, use the entry with the greatest minimum version that
+ * does not exceed it.
+ */
+static constexpr net_pcie_capability net_pcie_capabilities[] = {
+	{5, 5}, /* PCIe Gen6 */
+};
+
+static std::optional<size_t> get_max_pcie_speed_idx()
+{
+	const net_pcie_capability *match = nullptr;
+
+	for (const auto &capability : net_pcie_capabilities) {
+		if (nccl_net_ofi_net_api_version >= capability.min_net_version &&
+		    (match == nullptr || capability.min_net_version > match->min_net_version)) {
+			match = &capability;
+		}
+	}
+
+	if (match == nullptr) {
+		return std::nullopt;
+	}
+	return match->max_speed_idx;
+}
 
 /*
  * @brief Create vector of nccl_ofi_topo_data_t structs
@@ -1898,6 +1931,22 @@ static int write_pci_tag(FILE *file, int indent,
 	return 0;
 }
 
+void nccl_ofi_topo_scale_group(int &group_size, size_t &speed_idx, size_t &width,
+			       size_t max_speed_idx, size_t max_width)
+{
+	assert(speed_idx < sizeof(pcie_gen) / sizeof(pcie_gen[0]));
+	assert(max_speed_idx < sizeof(pcie_gen) / sizeof(pcie_gen[0]));
+
+	while (group_size > 1 && speed_idx < max_speed_idx) {
+		++speed_idx;
+		group_size /= 2;
+	}
+	while (group_size > 1 && width <= max_width / 2) {
+		width *= 2;
+		group_size /= 2;
+	}
+}
+
 /*
  * @brief	Write NIC pci tag to NCCL topology file
  *
@@ -1925,46 +1974,46 @@ static int write_nic(hwloc_obj_t node, FILE *file, int indent)
 	}
 
 	NCCL_OFI_TRACE(NCCL_INIT, "Starting NIC information: group size \"%d\", NIC speed \"%s\",  width \"%zu\"", group_size, pcie_gen[speed_idx], width);
-	/* Scale NIC speed and width up to the speed of the GPU. Since
-	 * NICs are grouped, GPU topology node is attached to the NIC
-	 * topology node. */
+	/* Scale the leader NIC's synthetic link to represent every NIC in the
+	 * group. Use the caller's PCI speed capability when it is known;
+	 * otherwise retain the GPU-based limit. */
 	if (group_size > 1) {
+		size_t max_speed_idx;
+		size_t max_width;
+
 		if (!NCCL_OFI_IS_POWER_OF_TWO(group_size)) {
 			group_size = NCCL_OFI_ROUND_UP_TO_POWER_OF_TWO(group_size);
 		}
-		hwloc_obj_t gpu = userdata->gpu_group_node;
-		size_t gpu_width;
-		size_t gpu_speed_idx;
-		assert(gpu);
 
-		/* Retrieve link speed and width of GPU */
-		if ((ret = get_pci_device_speed(gpu, false, &gpu_speed_idx, &gpu_width))) {
-			NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
-			return ret;
+		if (auto max_supported_speed_idx = get_max_pcie_speed_idx()) {
+			max_speed_idx = max_supported_speed_idx.value();
+			max_width = SIZE_MAX;
+			NCCL_OFI_TRACE(NCCL_INIT,
+				       "Caller permits NIC scaling through PCI speed \"%s\"",
+				       pcie_gen[max_speed_idx]);
+		} else {
+			/* Keep the GPU's link as a conservative limit when the caller's
+			 * PCI speed capability is unavailable. */
+			hwloc_obj_t gpu = userdata->gpu_group_node;
+			assert(gpu);
+
+			if ((ret = get_pci_device_speed(gpu, false, &max_speed_idx, &max_width))) {
+				NCCL_OFI_WARN("Failed to retrieve PCI speed and width of GPU associated to NIC");
+				return ret;
+			}
+
+			NCCL_OFI_TRACE(NCCL_INIT,
+				       "GPU information: GPU speed \"%s\",  width \"%zu\"",
+				       pcie_gen[max_speed_idx], max_width);
 		}
 
-		NCCL_OFI_TRACE(NCCL_INIT, "GPU information: GPU speed \"%s\",  width \"%zu\"", pcie_gen[gpu_speed_idx], gpu_width);
+		nccl_ofi_topo_scale_group(group_size, speed_idx, width,
+					  max_speed_idx, max_width);
 
-		/* In case we have multiple NICs in the group,
-		 * increase link speed if possible and decrease NIC
-		 * group size */
-		while (group_size > 1 && speed_idx < gpu_speed_idx) {
-			++speed_idx;
-			group_size /= 2;
-		}
-
-		/* In case we still have multiple NICs in the group,
-		 * increase link width if possible */
-		while (group_size > 1 && 2 * width <= gpu_width) {
-			width *= 2;
-			group_size /= 2;
-		}
-
-		/* Still have multiple NICs in the group despite maxing out the link speed
-		 * and width to match the GPU max. Not reporting the full network capabilities
-		 * of the NICs in the group */
 		if (group_size > 1) {
-			NCCL_OFI_INFO(NCCL_INIT, "still have NIC group size %d after matching GPU max link speed and width", group_size);
+			NCCL_OFI_INFO(NCCL_INIT,
+				      "still have NIC group size %d after scaling link speed and width",
+				      group_size);
 		}
 	}
 
