@@ -444,6 +444,10 @@ private:
 	std::unordered_map<fold_peer_key, size_t, fold_peer_hash> fold_peer_last;
 	std::vector<size_t> fold_lead;
 	std::vector<int> fold_status;
+
+	/* Values the current batch wrote to resettable signal slots, by signal
+	   VA (see apply_signal_work). Cleared per batch. */
+	std::unordered_map<uintptr_t, uint64_t> written_values;
 };
 
 /**
@@ -773,8 +777,10 @@ private:
 
 	/* Apply one signal read-modify-write directly from captured work-entry
 	   fields (no mr_handle_map lookup). Used by the worker, and by the
-	   proxy itself during closeColl teardown when the worker is quiesced. */
-	static int apply_signal_work(const gin_signal_work_entry &work);
+	   proxy itself during closeColl teardown when the worker is quiesced.
+	   `written` holds the values the current batch wrote, by signal VA. */
+	static int apply_signal_work(const gin_signal_work_entry &work,
+				     std::unordered_map<uintptr_t, uint64_t> &written);
 
 	/* Hand a signal-delivery work item to the single process-wide gdrcopy
 	   worker. `gate_req` is the req that carries the in-flight gate (for a

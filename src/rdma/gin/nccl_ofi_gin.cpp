@@ -1272,7 +1272,8 @@ int nccl_ofi_rdma_gin_put_comm::build_signal_work(
  * Static: it needs no comm state (the segment gdr handle and offsets are all
  * in the entry), which is what lets the shared worker run it without touching
  * any comm's mr_handle_map or calling ensure_signal_seg. */
-int nccl_ofi_rdma_gin_put_comm::apply_signal_work(const gin_signal_work_entry &work)
+int nccl_ofi_rdma_gin_put_comm::apply_signal_work(const gin_signal_work_entry &work,
+						  std::unordered_map<uintptr_t, uint64_t> &written)
 {
 	uint64_t add_value = work.signal_value;
 
@@ -1303,15 +1304,23 @@ int nccl_ofi_rdma_gin_put_comm::apply_signal_work(const gin_signal_work_entry &w
 		} else {
 			/* Slow path: the signal may have been reset out from under
 			   us (e.g. VA signals), so read the current value back from
-			   the device before adding. */
+			   the device before adding. A slot this batch already wrote
+			   still holds that value, because a reset must not race with
+			   signal updates and every entry of the batch is one. */
 			uint64_t old_value;
+			auto it = written.find(work.host_signal_va);
 
-			ret = get_device_copy().copy_from_device(*work.gdr_handle,
-								 work.signal_offset, &old_value,
-								 sizeof(old_value));
-			if (OFI_UNLIKELY(ret != 0)) {
-				NCCL_OFI_WARN("Failed to read current signal value");
-				return -ret;
+			if (it != written.end()) {
+				old_value = it->second;
+			} else {
+				ret = get_device_copy().copy_from_device(*work.gdr_handle,
+									 work.signal_offset,
+									 &old_value,
+									 sizeof(old_value));
+				if (OFI_UNLIKELY(ret != 0)) {
+					NCCL_OFI_WARN("Failed to read current signal value");
+					return -ret;
+				}
 			}
 
 			new_value = old_value + add_value;
@@ -1323,6 +1332,10 @@ int nccl_ofi_rdma_gin_put_comm::apply_signal_work(const gin_signal_work_entry &w
 		if (OFI_UNLIKELY(ret != 0)) {
 			NCCL_OFI_WARN("Failed to update signal value");
 			return -ret;
+		}
+
+		if (!work.signal_never_reset) {
+			written[work.host_signal_va] = new_value;
 		}
 
 	} else {
@@ -1377,7 +1390,8 @@ int nccl_ofi_rdma_gin_put_comm::hand_off_signal_work(
 	work.seq_num = gate_req->metadata.header.seq_num;
 
 	if (OFI_UNLIKELY(closing.load(std::memory_order_acquire))) {
-		gate_req->gdrcopy_status = apply_signal_work(work);
+		std::unordered_map<uintptr_t, uint64_t> batch_of_one;
+		gate_req->gdrcopy_status = apply_signal_work(work, batch_of_one);
 		gate_req->gdrcopy_in_flight = false;
 		NCCL_OFI_TRACE_GIN_SIGNAL_DELIVERY_END(dev, this, work.peer_rank, work.seq_num,
 						       gate_req);
@@ -1499,12 +1513,13 @@ nccl_ofi_gin_gdrcopy_worker::~nccl_ofi_gin_gdrcopy_worker()
  * no heap work. */
 void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batch, size_t n)
 {
+	written_values.clear();
 	/* Fast path for the common low-pressure case: a single work item has
 	 * nothing to coalesce with, so skip the map machinery and apply it
 	 * directly. */
 	if (n == 1) {
 		gin_signal_work_entry &w = batch[0];
-		int status = nccl_ofi_rdma_gin_put_comm::apply_signal_work(w);
+		int status = nccl_ofi_rdma_gin_put_comm::apply_signal_work(w, written_values);
 
 		gin_signal_done_entry done;
 		done.req = w.req;
@@ -1549,10 +1564,11 @@ void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batc
 		}
 	}
 
-	/* Pass 2: apply each lead's combined value with one PCIe r-m-w. */
+	/* Pass 2: apply each lead's combined value. A slot is read only for its first lead. */
 	for (size_t i = 0; i < n; ++i) {
 		if (fold_lead[i] == i) {
-			fold_status[i] = nccl_ofi_rdma_gin_put_comm::apply_signal_work(batch[i]);
+			fold_status[i] = nccl_ofi_rdma_gin_put_comm::apply_signal_work(
+				batch[i], written_values);
 		}
 	}
 
