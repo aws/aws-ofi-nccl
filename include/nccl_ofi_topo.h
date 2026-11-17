@@ -378,6 +378,21 @@ bool nccl_ofi_topo_get_accel_matching_nic_bridge_depth(
 bool nccl_ofi_topo_share_pcie_switch(hwloc_obj_t first, hwloc_obj_t second);
 
 /*
+ * @brief Scale a synthetic PCI link to represent a NIC group
+ *
+ * Raise the link speed and then its width without exceeding the supplied
+ * limits. Each increase represents twice as many NICs.
+ *
+ * @param group_size In/out: number of NICs not yet represented
+ * @param speed_idx In/out: index in the PCI generation table
+ * @param width In/out: synthetic link width
+ * @param max_speed_idx Maximum permitted index in the PCI generation table
+ * @param max_width Maximum permitted synthetic link width
+ */
+void nccl_ofi_topo_scale_group(int &group_size, size_t &speed_idx, size_t &width,
+			       size_t max_speed_idx, size_t max_width);
+
+/*
  * @brief	Test whether a NIC reaches its closest GPU through a PCIe switch
  *
  * Uses the GPU that NIC grouping already associated with the NIC's group.
