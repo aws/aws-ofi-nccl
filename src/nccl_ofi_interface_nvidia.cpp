@@ -658,6 +658,7 @@ static ncclResult_t connect_v12(void *ctx, int dev, void *handle,
 
 extern "C" {
 
+/* Net v6 was introduced in NCCL v2.13. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .name = "Libfabric",
         .init = init_v2,
@@ -678,6 +679,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v6_t ncclNetPlugin_v6 = {
         .closeListen = closeListen_v2,
 };
 
+/* Net v7 was introduced in NCCL v2.19. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
         .name = "Libfabric",
         .init = init_v2,
@@ -700,6 +702,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v7_t ncclNetPlugin_v7 = {
 	.irecvConsumed = NULL,
 };
 
+/* Net v8 was introduced in NCCL v2.20. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .name = "Libfabric",
         .init = init_v2,
@@ -722,6 +725,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v8_t ncclNetPlugin_v8 = {
         .irecvConsumed = NULL,
 };
 
+/* Net v9 was introduced in NCCL v2.24. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .name = "Libfabric",
         .init = init_v2,
@@ -745,6 +749,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v9_t ncclNetPlugin_v9 = {
         .makeVDevice = NULL,
 };
 
+/* Net v10 was introduced in NCCL v2.26. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
         .name = "Libfabric",
         .init = init_v10,
@@ -768,6 +773,7 @@ NCCL_OFI_EXPORT_SYMBOL ncclNet_v10_t ncclNetPlugin_v10 = {
         .makeVDevice = NULL,
 };
 
+/* Net v11 was introduced in NCCL v2.28. */
 NCCL_OFI_EXPORT_SYMBOL ncclNet_v11_t ncclNetPlugin_v11 = {
         .name = "Libfabric",
         .init = init_v11,
