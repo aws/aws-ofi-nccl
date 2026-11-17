@@ -2389,6 +2389,14 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 				size_t low_factor = region_ctx->log2_nnodes < 4 ? 1 : 2;
 				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes, region_ctx->log2_nnodes, high_factor,
 					mid_factor, low_factor);
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6_B300 &&
+				   region_ctx->log2_nnodes >= 2 && region_ctx->log2_nnodes <= 4) {
+				size_t high_factor = 0;
+				size_t mid_factor = 0;
+				size_t low_factor = 0;
+				*chunkSize = chunkSizeTuningAllReduceTreeLL128(nBytes,
+					region_ctx->log2_nnodes, high_factor, mid_factor,
+					low_factor);
 			}
 		}
 		if (collType == ncclFuncAllGather && algo == NCCL_ALGO_PAT &&
@@ -2408,6 +2416,14 @@ ncclResult_t region_get_chunk_size_internal(nccl_ofi_tuner_context_t *ctx,
 					*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
 						T1, T2, T3, low_factor);
 				}
+			} else if (region_ctx->platform == NCCL_OFI_TUNER_P6_B300 && nNodes >= 4 &&
+				   nNodes <= 16) {
+				T1 = region_ctx->log2_nnodes >= 4 ? 16 : 8;
+				T2 = region_ctx->log2_nnodes >= 4 ? 16 : 8;
+				T3 = region_ctx->log2_nnodes >= 4 ? 8 : 0;
+				size_t low_factor = 0;
+				*chunkSize = chunkSizeTuningAllGatherPatSimple(nBytes, nNodes,
+					T1, T2, T3, low_factor);
 			}
 		}
 	}
