@@ -25,6 +25,7 @@ static_assert(NCCL_NET_MAX_REQUESTS <= NCCL_OFI_MAX_REQUESTS,
 bool abort_on_error = false;
 nccl_net_ofi_plugin_t *plugin = NULL;
 nccl_ofi_logger_t ofi_log_function = NULL;
+int nccl_net_ofi_net_api_version = 0;
 
 
 /* Check return will be more helpful if the function printed from

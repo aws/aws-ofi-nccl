@@ -5,6 +5,7 @@
 #include "config.h"
 
 #include <stdio.h>
+#include <stdint.h>
 
 #include "unit_test.h"
 #include "nccl_ofi_topo.h"
@@ -38,6 +39,64 @@ static bool check(const char *name, bool actual, bool expected)
 		fprintf(stderr, "%s: expected %s\n", name, expected ? "true" : "false");
 		return false;
 	}
+	return true;
+}
+
+static bool check_group_scaling(const char *name, int group_size,
+				size_t speed_idx, size_t width,
+				size_t max_speed_idx, size_t max_width,
+				int expected_group_size,
+				size_t expected_speed_idx,
+				size_t expected_width)
+{
+	nccl_ofi_topo_scale_group(group_size, speed_idx, width,
+				  max_speed_idx, max_width);
+	if (group_size != expected_group_size || speed_idx != expected_speed_idx ||
+	    width != expected_width) {
+		fprintf(stderr,
+			"%s: got group %d, speed index %zu, width %zu; "
+			"expected %d, %zu, %zu\n",
+			name, group_size, speed_idx, width, expected_group_size,
+			expected_speed_idx, expected_width);
+		return false;
+	}
+	return true;
+}
+
+static bool test_group_scaling()
+{
+	/* A two-NIC group already at the maximum speed uses width to
+	 * represent its second NIC. */
+	if (!check_group_scaling("maximum speed", 2, 5, 16, 5, SIZE_MAX,
+				 1, 5, 32)) {
+		return false;
+	}
+
+	/* A four-NIC group uses one speed increase and one width increase. */
+	if (!check_group_scaling("speed and width", 4, 4, 16, 5, SIZE_MAX,
+				 1, 5, 32)) {
+		return false;
+	}
+
+	/* An eight-NIC group reaches the speed limit through three increases. */
+	if (!check_group_scaling("speed only", 8, 2, 16, 5, SIZE_MAX,
+				 1, 5, 16)) {
+		return false;
+	}
+
+	/* A finite width limit can leave part of the group unrepresented. */
+	if (!check_group_scaling("limited width", 8, 4, 16, 5, 32,
+				 2, 5, 32)) {
+		return false;
+	}
+
+	/* The width guard must not overflow when no further doubling fits. */
+	constexpr size_t large_width = SIZE_MAX / 2 + 1;
+	if (!check_group_scaling("width overflow", 2, 5, large_width, 5, SIZE_MAX,
+				 2, 5, large_width)) {
+		return false;
+	}
+
 	return true;
 }
 
@@ -143,6 +202,10 @@ int main()
 		    accel_depths, 4, nonmatching_nic_depths, 2,
 		    &matching_nic_depth)) {
 		fprintf(stderr, "ambiguous package depth selection must fail open\n");
+		return 1;
+	}
+
+	if (!test_group_scaling()) {
 		return 1;
 	}
 
