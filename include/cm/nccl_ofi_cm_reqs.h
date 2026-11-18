@@ -44,6 +44,12 @@ public:
 	virtual int handle_completion() = 0;
 
 	/**
+	 * To be called when the request completes with an error. Libfabric
+	 * does not use the request after this.
+	 */
+	virtual void handle_error() { }
+
+	/**
 	 * Post the Libfabric operation encapsulated by the request
 	 *
 	 * @return the error from the underlying Libfabric operation, including:
@@ -162,6 +168,14 @@ public:
 	 */
 	virtual int handle_completion();
 
+	virtual void handle_error();
+
+	/* True when the send completion is processed. */
+	bool is_complete() const
+	{
+		return completed;
+	}
+
 	/**
 	 * Post the send operation
 	 */
@@ -177,6 +191,8 @@ private:
 	nccl_ofi_freelist::fl_entry &send_elem;
 	fi_addr_t dest_addr;
 	std::function<void()> done_callback;
+
+	bool completed = false;
 };
 
 }
