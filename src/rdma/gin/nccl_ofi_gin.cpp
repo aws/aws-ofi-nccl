@@ -20,7 +20,7 @@
 #include <system_error>
 #include <vector>
 
-/* Max signal work items the gdrcopy worker drains and folds per pass. */
+/* Max signal work items the gdrcopy worker drains per pass. */
 #define OFI_NCCL_MAX_GDR_COPY_BATCH 512
 
 struct gin_connect_handle {
@@ -1495,91 +1495,26 @@ nccl_ofi_gin_gdrcopy_worker::~nccl_ofi_gin_gdrcopy_worker()
 	thread.join();
 }
 
-/* Apply a batch of work items, coalescing entries that target the same signal
- * slot into a single read-modify-write. Signal ops are pure additions, which
- * commute, so summing the add-values of N entries hitting one slot and applying
- * them as one r-m-w yields the same counter value as N separate r-m-w -- while
- * saving N-1 PCIe round trips. One done entry is still pushed per request, so
- * each req's gdrcopy_in_flight clears individually and retire advances in seq
- * order.
- *
- * O(n) single pass: a hash map on the slot key assigns each entry to the
- * newest entry leading its slot ("lead"); duplicates fold their value into the
- * lead, unless one of the same peer's entries for another slot lies between
- * them, in which case the entry starts a new lead for its slot so the peer's signals
- * stay in order. Each lead is then applied once and every entry's
- * done is delivered with its lead's status. The maps and scratch vectors are
- * reused members, cleared here rather than reallocated, so steady state does
- * no heap work. */
+/* Apply a batch of work items in ring order. The ring holds each comm's
+ * entries in the order its proxy handed them off, so applying in order keeps
+ * each peer's signals in order. One done entry is pushed per request, after
+ * the whole batch is applied. */
 void nccl_ofi_gin_gdrcopy_worker::apply_and_complete(gin_signal_work_entry *batch, size_t n)
 {
 	written_values.clear();
-	/* Fast path for the common low-pressure case: a single work item has
-	 * nothing to coalesce with, so skip the map machinery and apply it
-	 * directly. */
-	if (n == 1) {
-		gin_signal_work_entry &w = batch[0];
-		int status = nccl_ofi_rdma_gin_put_comm::apply_signal_work(w, written_values);
-
-		gin_signal_done_entry done;
-		done.req = w.req;
-		done.peer_rank = w.peer_rank;
-		done.seq_num = w.seq_num;
-		done.status = status;
-		deliver_done(w.comm, done);
-		return;
-	}
-
-	fold_index.clear();
-	fold_peer_last.clear();
-	fold_lead.resize(n);
 	fold_status.resize(n);
 
-	/* Pass 1: map each entry to its slot lead, summing duplicates into it.
-	   Leads are applied in batch order, and the batch holds each peer's
-	   entries in the order the proxy handed them off, so an entry may only
-	   join a lead that is still the newest lead holding one of its peer's
-	   entries. Joining an older lead would make the entry visible ahead of
-	   the peer's entries in between, which target other slots. Such an entry
-	   starts a new lead for its slot instead. */
 	for (size_t i = 0; i < n; ++i) {
-		const gin_signal_work_entry &e = batch[i];
-		fold_slot_key key{e.comm, e.gdr_handle, e.signal_base_address, e.signal_offset, e.type};
-		fold_peer_key peer{e.comm, e.peer_rank};
-		auto slot_it = fold_index.find(key);
-		auto peer_it = fold_peer_last.find(peer);
-		bool join = slot_it != fold_index.end() &&
-			    (peer_it == fold_peer_last.end() || peer_it->second == slot_it->second);
-		if (join) {
-			size_t lead = slot_it->second;
-			fold_lead[i] = lead;
-			batch[lead].signal_value += e.signal_value;
-			if (peer_it == fold_peer_last.end()) {
-				fold_peer_last.emplace(peer, lead);
-			}
-		} else {
-			fold_index[key] = i;
-			fold_peer_last[peer] = i;
-			fold_lead[i] = i;
-		}
+		fold_status[i] = nccl_ofi_rdma_gin_put_comm::apply_signal_work(batch[i], written_values);
 	}
 
-	/* Pass 2: apply each lead's combined value. A slot is read only for its first lead. */
-	for (size_t i = 0; i < n; ++i) {
-		if (fold_lead[i] == i) {
-			fold_status[i] = nccl_ofi_rdma_gin_put_comm::apply_signal_work(
-				batch[i], written_values);
-		}
-	}
-
-	/* Pass 3: deliver one done per request, carrying its lead's status. */
 	for (size_t i = 0; i < n; ++i) {
 		gin_signal_work_entry &member = batch[i];
 		gin_signal_done_entry done;
 		done.req = member.req;
 		done.peer_rank = member.peer_rank;
 		done.seq_num = member.seq_num;
-		done.status = fold_status[fold_lead[i]];
+		done.status = fold_status[i];
 		deliver_done(member.comm, done);
 	}
 }
@@ -1645,12 +1580,8 @@ void nccl_ofi_gin_gdrcopy_worker::flush_done_entries()
 void nccl_ofi_gin_gdrcopy_worker::run_loop()
 {
 	/* Drain up to OFI_NCCL_MAX_GDR_COPY_BATCH work items each iteration and hand
-	 * them to apply_and_complete, which coalesces the same-slot entries within
-	 * the batch. A deeper batch lets more same-slot entries land together and
-	 * collapse into one PCIe r-m-w; too shallow a batch splits a burst across
-	 * iterations and re-issues a write per slot per batch. static (not on the
-	 * stack) because the buffer is large and the worker is the sole thread
-	 * touching it. */
+	 * them to apply_and_complete. static (not on the stack) because the buffer
+	 * is large and the worker is the sole thread touching it. */
 	static gin_signal_work_entry batch[OFI_NCCL_MAX_GDR_COPY_BATCH];
 
 	while (true) {

@@ -259,8 +259,8 @@ struct gin_signal_work_entry {
 	   atomic via host_signal_va in that case. */
 	nccl_ofi_device_copy::RegHandle *gdr_handle;
 
-	/* MR-level base address used for the consumer-side fold key (same-slot
-	   identification across entries). Not used by apply_signal_work. */
+	/* MR-level base address, used by the proxy's run fold to compare slots.
+	   Not used by apply_signal_work. */
 	uint64_t signal_base_address;
 
 	/* Segment-relative offset for GDRCopy read-modify-write.
@@ -316,9 +316,8 @@ static_assert(std::is_trivially_copyable<gin_signal_done_entry>::value,
  * With GIN_NCONNECTIONS proxy threads, running one gdrcopy worker per put-comm
  * is one gdrcopy thread per connection; this collapses them to one thread for
  * the whole process. The worker pops signal work from a shared MPSC ring fed
- * by every comm's proxy thread, coalesces entries that target the same signal
- * slot into a single PCIe read-modify-write, and pushes one done entry per
- * request back into the owning comm's per-comm SPSC done queue.
+ * by every comm's proxy thread, applies each entry in ring order, and pushes one
+ * done entry per request back into the owning comm's per-comm SPSC done queue.
  *
  * Lifetime: spawned on the first comm that needs it; runs until process
  * teardown. There is no per-comm join — comm teardown instead quiesces via
@@ -351,9 +350,8 @@ private:
 
 	void run_loop();
 
-	/* Apply one batch of work, coalescing same-slot entries into a single
-	   read-modify-write, and complete each request into its comm's done
-	   queue. */
+	/* Apply one batch of work in order and complete each request into its
+	   comm's done queue. */
 	void apply_and_complete(gin_signal_work_entry *batch, size_t n);
 
 	/* Route one completed signal to its comm's done queue. On a full done
@@ -368,9 +366,7 @@ private:
 	void flush_done_entries();
 
 	/* Back-pressure buffer between the producer proxy threads and the single
-	   consumer. The consumer drains up to MAX_BATCH per pass (see run_loop),
-	   so a burst deeper than MAX_BATCH is coalesced across successive drains
-	   rather than all at once. */
+	   consumer. The consumer drains up to MAX_BATCH per pass (see run_loop). */
 	nccl_ofi_mpsc_ring<gin_signal_work_entry> work_queue;
 	std::thread thread;
 	std::atomic<int> stop{0};
@@ -387,62 +383,9 @@ private:
 	/* Scratch reused by flush_done_entries to mark comms blocked this pass. */
 	std::vector<nccl_ofi_rdma_gin_put_comm *> blocked_comms;
 
-
-	/* Consumer-side same-slot fold (see apply_and_complete). A signal slot is
-	   identified by (gdr_handle, base, offset, type); entries sharing a slot in
-	   one batch coalesce into a single PCIe r-m-w, as long as the fold keeps
-	   each peer's entries in order (fold_peer_last). The map + scratch vectors
-	   are members reused across drains (cleared each call) so the fold does not
-	   allocate on the worker's hot path. Worker-thread-only, no locking. */
-	struct fold_slot_key {
-		/* The worker is process-wide and a batch mixes entries from different
-		   comms, so the slot identity must include the comm: two comms can share
-		   a (base, offset) and the host path leaves gdr_handle null for all
-		   entries. Without comm here, cross-comm entries would wrongly fold into
-		   one r-m-w against the wrong comm's counter. */
-		nccl_ofi_rdma_gin_put_comm *comm;
-		nccl_ofi_device_copy::RegHandle *gdr_handle;
-		uint64_t signal_base_address;
-		uint64_t signal_offset;
-		int type;
-		bool operator==(const fold_slot_key &o) const
-		{
-			return comm == o.comm &&
-			       gdr_handle == o.gdr_handle &&
-			       signal_base_address == o.signal_base_address &&
-			       signal_offset == o.signal_offset &&
-			       type == o.type;
-		}
-	};
-	struct fold_slot_hash {
-		size_t operator()(const fold_slot_key &k) const
-		{
-			size_t h = reinterpret_cast<uintptr_t>(k.comm);
-			h = h * 31 + reinterpret_cast<uintptr_t>(k.gdr_handle);
-			h = h * 31 + k.signal_base_address;
-			h = h * 31 + k.signal_offset;
-			h = h * 31 + static_cast<size_t>(k.type);
-			return h;
-		}
-	};
-	std::unordered_map<fold_slot_key, size_t, fold_slot_hash> fold_index;
-	struct fold_peer_key {
-		nccl_ofi_rdma_gin_put_comm *comm;
-		uint32_t peer_rank;
-		bool operator==(const fold_peer_key &o) const
-		{
-			return comm == o.comm && peer_rank == o.peer_rank;
-		}
-	};
-	struct fold_peer_hash {
-		size_t operator()(const fold_peer_key &k) const
-		{
-			return reinterpret_cast<uintptr_t>(k.comm) * 31 + k.peer_rank;
-		}
-	};
-	/* (comm, peer) -> batch index of the newest lead holding one of the peer's entries. */
-	std::unordered_map<fold_peer_key, size_t, fold_peer_hash> fold_peer_last;
-	std::vector<size_t> fold_lead;
+	/* Per-entry status of the batch being applied (see apply_and_complete),
+	   reused across drains so the worker does not allocate on its hot path.
+	   Worker-thread-only, no locking. */
 	std::vector<int> fold_status;
 
 	/* Values the current batch wrote to resettable signal slots, by signal
