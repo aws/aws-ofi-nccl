@@ -316,8 +316,9 @@ static_assert(std::is_trivially_copyable<gin_signal_done_entry>::value,
  * With GIN_NCONNECTIONS proxy threads, running one gdrcopy worker per put-comm
  * is one gdrcopy thread per connection; this collapses them to one thread for
  * the whole process. The worker pops signal work from a shared MPSC ring fed
- * by every comm's proxy thread, applies each entry in ring order, and pushes one
- * done entry per request back into the owning comm's per-comm SPSC done queue.
+ * by every comm's proxy thread, coalesces adjacent entries that target the
+ * same signal slot into a single PCIe read-modify-write, and pushes one done
+ * entry per request back into the owning comm's per-comm SPSC done queue.
  *
  * Lifetime: spawned on the first comm that needs it; runs until process
  * teardown. There is no per-comm join — comm teardown instead quiesces via
@@ -350,8 +351,9 @@ private:
 
 	void run_loop();
 
-	/* Apply one batch of work in order and complete each request into its
-	   comm's done queue. */
+	/* Apply one batch of work, coalescing adjacent same-slot entries into a
+	   single read-modify-write, and complete each request into its comm's
+	   done queue. */
 	void apply_and_complete(gin_signal_work_entry *batch, size_t n);
 
 	/* Route one completed signal to its comm's done queue. On a full done
@@ -366,7 +368,10 @@ private:
 	void flush_done_entries();
 
 	/* Back-pressure buffer between the producer proxy threads and the single
-	   consumer. The consumer drains up to MAX_BATCH per pass (see run_loop). */
+	   consumer. The consumer drains up to MAX_BATCH per pass (see run_loop),
+	   so a burst deeper than MAX_BATCH is applied over successive drains.
+	   Folding and the read cache (written_values) work within one batch
+	   only. */
 	nccl_ofi_mpsc_ring<gin_signal_work_entry> work_queue;
 	std::thread thread;
 	std::atomic<int> stop{0};
