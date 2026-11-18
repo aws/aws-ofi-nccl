@@ -17,6 +17,7 @@
 
 #include <fstream>
 #include <cstdint>
+#include <exception>
 #include <system_error>
 #include <map>
 #include <mutex>
@@ -29,6 +30,9 @@
 #include <dlfcn.h>
 
 #include "nccl_ofi.h"
+#if HAVE_CUDA && HAVE_GDAKI
+#include "nccl_ofi_cuda.h"
+#endif
 #include "nccl_ofi_platform.h"
 #include "platform-aws.h"
 #include "nccl_ofi_environ.h"
@@ -407,14 +411,18 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 /*
  * On AWS, GDAKI support is decided per platform, from whether the platform
  * is declared to have the EFA hardware completion counter that the GDAKI
- * data path requires (opened on the domain via cntr_open_ext).
+ * data path requires (opened on the domain via cntr_open_ext). GDAKI is
+ * refused before this decision when a CUDA-visible GPU reports coherent host
+ * page-table access. A failed coherence query leaves the hardware-counter
+ * policy in control.
  *
  * This knob only controls whether config_gdaki_domain authorizes GDAKI to
  * proceed; it does not enable or provide the counter. Turning it on does
  * NOT make the feature work on hardware that lacks the counter: if the
  * counter cannot be opened at runtime, GDAKI context creation still fails
  * later (surfaced as ncclSystemError). It is a development / bring-up
- * override, not a general enable switch. The decision is made per platform:
+ * override, not a general enable switch. The override cannot enable GDAKI on
+ * a coherent AWS GPU. The hardware-counter decision is made per platform:
  *
  *   OFI_NCCL_GDAKI_EFA_HW_COUNTER=on/off  explicit override: on authorizes
  *                                     this hook regardless of the platform
@@ -432,6 +440,19 @@ const PlatformAWS::ec2_platform_data *PlatformAWS::get_platform_data()
 int PlatformAWS::config_gdaki_domain([[maybe_unused]] struct fid_domain *domain,
 				     [[maybe_unused]] struct fi_info *info)
 {
+#if HAVE_CUDA && HAVE_GDAKI
+	try {
+		if (nccl_net_ofi_visible_gpu_is_coherent()) {
+			NCCL_OFI_WARN("GDAKI is not supported on AWS GPUs that use host page "
+				      "tables for pageable memory");
+			return -FI_ENOSYS;
+		}
+	} catch (const std::exception &e) {
+		NCCL_OFI_WARN("Unable to determine GPU coherence on AWS; using the "
+			      "hardware-counter support policy: %s", e.what());
+	}
+#endif
+
 	GDAKI_EFA_HW_COUNTER mode = ofi_nccl_gdaki_efa_hw_counter.get();
 	bool supported;
 
