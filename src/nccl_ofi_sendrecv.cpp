@@ -453,6 +453,8 @@ int nccl_net_ofi_sendrecv_req::test(int *done, int *size_p)
 		return -EINVAL;
 	}
 
+	ESP_RECORD_TEST(base_comm);
+
 	std::lock_guard eplock(ep->ep_lock);
 
 	CHECK_ENDPOINT_ACTIVE(ep, "sendrecv_req_test");
@@ -931,6 +933,8 @@ int nccl_net_ofi_sendrecv_recv_comm::recv(int n, void **buffers,
 		NCCL_OFI_WARN("Invalid endpoint provided");
 		return -EINVAL;
 	}
+
+	ESP_RECORD_IRECV(this);
 
 	std::lock_guard eplock(endpoint->ep_lock);
 

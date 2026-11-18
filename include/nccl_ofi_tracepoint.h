@@ -9,6 +9,7 @@
 #include "config.h"
 #include "tracing_impl/nvtx.h"
 #include "tracing_impl/lttng.h"
+#include "tracing_impl/nccl_ofi_profiling.h"
 
 /***** SENDRECV PROTOCOL *****/
 #define NCCL_OFI_TRACE_SEND_SENDRECV(dev, size, comm, msg_seq_num, request, nccl_req) do { \
@@ -34,62 +35,74 @@
 			     comm->get_data_rail(0)->remote_addr, \
 			     msg_seq_num, request, nccl_req, tag, recv_idx); \
 	NCCL_OFI_TRACE_SEND_NVTX(dev, size, comm, msg_seq_num, request, nccl_req); \
+	ESP_RECORD_SEND(eager, size, comm, msg_seq_num, request, nccl_req, tag); \
 } while(0)
 
 #define NCCL_OFI_TRACE_SEND_END(dev, comm, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, SendEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_SEND_END_NVTX(request); \
+	ESP_RECORD_SEND_END(request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_SEND_START(dev, rail_id, size, comm, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send_eager_start, dev, rail_id, size, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_EAGER_SEND_START_NVTX(dev, rail_id, size, comm, msg_seq_num, request); \
+	ESP_RECORD_EAGER_SEND_START(dev, rail_id, size, comm, msg_seq_num, request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_SEND_COMPLETE(dev, rail_id, comm, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send_eager_complete, dev, rail_id, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
+	ESP_RECORD_EAGER_SEND_COMPLETE(dev, rail_id, comm, msg_seq_num, request); \
 } while (0)
 
 #define NCCL_OFI_TRACE_WRITE_CTRL_START(dev, rail_id, comm, req, msg_seq_num) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Write_ctrl_start, dev, rail_id, comm, req, msg_seq_num); \
 	NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num); \
+	ESP_RECORD_FI_WRITE_CTRL_START(req, rail_id); \
 } while (0);
 
 #define NCCL_OFI_TRACE_WRITE_CTRL_END(dev, rail_id, comm, req, msg_seq_num) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Write_ctrl_end, dev, rail_id, comm, req, msg_seq_num); \
 	NCCL_OFI_TRACE_WRITE_CTRL_END_NVTX(dev, rail_id, comm, req, msg_seq_num); \
+	ESP_RECORD_FI_WRITE_CTRL_COMPLETE(req, rail_id); \
 } while (0);
 
 #define NCCL_OFI_TRACE_SEND_WRITE_SEG_START(dev, rail_id, size, comm, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send_write_segment_start, dev, rail_id, size, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_SEND_WRITE_SEG_START_NVTX(dev, rail_id, size, comm, msg_seq_num, request); \
+	ESP_RECORD_SEND_WRITE_SEG_START(request, rail_id, size); \
 } while(0)
 
 #define NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE(dev, rail_id, comm, msg_seq_num, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Send_write_segment_complete, dev, rail_id, comm, msg_seq_num, request); \
 	NCCL_OFI_TRACE_SEND_WRITE_SEG_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
+	ESP_RECORD_SEND_WRITE_SEG_COMPLETE(request, rail_id); \
 } while(0)
 
 #define NCCL_OFI_TRACE_RECV(dev, comm, size, request, nccl_req, num_recvs) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Recv, dev, comm, \
 			     comm->get_data_rail(0)->remote_addr, size, request, nccl_req, num_recvs); \
 	NCCL_OFI_TRACE_RECV_NVTX(dev, comm, size, request, nccl_req); \
+	ESP_RECORD_RECV(comm, size, request, nccl_req, num_recvs); \
 } while(0)
 
 #define NCCL_OFI_TRACE_RECV_END(dev, comm, request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, RecvEnd, dev, comm, request); \
 	NCCL_OFI_TRACE_RECV_END_NVTX(request); \
+	ESP_RECORD_RECV_END(request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE(dev, rail_id, comm, size, request, msg_seq_num, recv_idx) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Recv_segment_complete, dev, rail_id, comm, size, request, msg_seq_num, recv_idx); \
 	NCCL_OFI_TRACE_RECV_SEGMENT_COMPLETE_NVTX(dev, rail_id, size, request, msg_seq_num); \
+	ESP_RECORD_RECV_SEGMENT_COMPLETE(request, rail_id, size, recv_idx); \
 } while(0)
 
 #define NCCL_OFI_TRACE_EAGER_RECV(dev, rail_id, comm, msg_seq_num, tag) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Eager_recv, dev, rail_id, comm, msg_seq_num, tag); \
 	NCCL_OFI_TRACE_EAGER_RECV_NVTX(dev, rail_id, comm, msg_seq_num); \
+	ESP_RECORD_EAGER_RECV(new_entry, dev, rail_id, comm, msg_seq_num, tag); \
 } while(0)
 
 #define NCCL_OFI_TRACE_COMPLETIONS(dev,req_type,request,ctx) do { \
@@ -99,26 +112,31 @@
 #define NCCL_OFI_TRACE_FLUSH(request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Flush, request, nccl_req); \
 	NCCL_OFI_TRACE_FLUSH_NVTX(request, nccl_req); \
+	ESP_RECORD_FLUSH(request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_READ(request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Read, request, nccl_req); \
 	NCCL_OFI_TRACE_READ_NVTX(request, nccl_req); \
+	ESP_RECORD_READ(request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_WRITE(request, nccl_req) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Write, request, nccl_req); \
 	NCCL_OFI_TRACE_WRITE_NVTX(request, nccl_req); \
+	ESP_RECORD_WRITE(request, nccl_req); \
 } while(0)
 
 #define NCCL_OFI_TRACE_PENDING_INSERT(request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_insert, request); \
 	NCCL_OFI_TRACE_PENDING_INSERT_NVTX(request); \
+	ESP_RECORD_PENDING_INSERT(request); \
 } while(0)
 
 #define NCCL_OFI_TRACE_PENDING_REMOVE(request) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Pending_queue_remove, request); \
 	NCCL_OFI_TRACE_PENDING_REMOVE_NVTX(request); \
+	ESP_RECORD_PENDING_REMOVE(request); \
 } while(0)
 
 /***** GIN PROTOCOL *****/

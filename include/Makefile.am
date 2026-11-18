@@ -63,6 +63,7 @@ noinst_HEADERS = \
 	stats/histogram_def.h \
 	stats/histogram_formatter.h \
 	stats/histogram_formatter_impl.h \
+	tracing_impl/nccl_ofi_profiling.h \
 	tracing_impl/lttng.h \
 	tracing_impl/nvtx.h \
 	tuner/nccl_ofi_tuner_common.h \
