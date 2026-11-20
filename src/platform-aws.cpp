@@ -1075,7 +1075,17 @@ uint64_t PlatformAWS::device_get_guid(struct fi_info *info, int dev_id)
 	    strcmp("0xefa1", info->nic->device_attr->device_id) == 0 ||
 	    strcmp("0xefa2", info->nic->device_attr->device_id) == 0) {
 
-		guid = (static_cast<uint64_t>(node_id) << 32) | dev_id;
+		/* p3dn has one EFA NIC shared by all its GPUs, and the provider
+		 * reports that single NIC as several devices.  Keying the GUID on
+		 * dev_id gives each of them a different GUID, which fails on
+		 * NCCL >= 2.32.6.  Use the Libfabric domain name so one NIC yields
+		 * one GUID. */
+		const char *domain_name =
+			(info->domain_attr != nullptr) ? info->domain_attr->name : nullptr;
+		guid = (static_cast<uint64_t>(node_id) << 32) |
+		       (domain_name != nullptr
+				? static_cast<uint32_t>(std::hash<std::string>{}(domain_name))
+				: static_cast<uint32_t>(dev_id));
 	} else {
 		guid = (static_cast<uint64_t>(node_id) << 32) |
 			       (fields->per_card_pci_domain << 8) |
