@@ -19,7 +19,9 @@ public:
 	 * Implementations will inheret from this struct and provide
 	 * implementation-specific data
 	 */
-	struct RegHandle { };
+	struct RegHandle {
+		virtual ~RegHandle() = default;
+	};
 
 	virtual ~nccl_ofi_device_copy() = default;
 
