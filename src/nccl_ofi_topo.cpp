@@ -2097,6 +2097,28 @@ static int write_pci_closing_tag(FILE *file, int indent)
 }
 
 /*
+ * @brief	Return `node`s first NUMA memory child holding memory, else NULL
+ *
+ *  Since HWLOC 2.0 NUMA nodes hang off the memory children list. Nodes that
+ *  hold no memory are skipped. GB200 inside a container exposes 28 such
+ *  phantom NUMA nodes hanging off Machine; hwloc does not prune them because
+ *  it sees a non-zero cpuset for them, so cpuset is NOT a usable filter here
+ *  (measured: all 30 report cpuset [0-143]). local_memory is.
+ */
+static hwloc_obj_t numa_mem_child(hwloc_obj_t node)
+{
+	for (hwloc_obj_t child = node->memory_first_child; child != NULL;
+	     child = child->next_sibling) {
+		if (child->type == HWLOC_OBJ_NUMANODE &&
+		    child->attr->numanode.local_memory > 0) {
+			return child;
+		}
+	}
+
+	return NULL;
+}
+
+/*
  * @brief	Helper function to write NCCL topology file recursively based on NCCL OFI topology
  *
  * @param	topo
@@ -2119,6 +2141,7 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 	int indent_offset = 2;
 	bool close_numanode = false;
 	bool close_bridge = false;
+	hwloc_obj_t numa_child = NULL;
 	hwloc_obj_t child = NULL;
 	nccl_ofi_topo_data_t *topo_data = (nccl_ofi_topo_data_t *)node->userdata;
 
@@ -2155,10 +2178,18 @@ static int write_nccl_topo_rec(hwloc_topology_t topo, hwloc_obj_t node, FILE *fi
 			}
 			indent += indent_offset;
 #if HWLOC_API_VERSION >= 0x00020000
-	/* HWLOC 2.x: For Package node, only call `cpu_opening_tag()` if its closest_numa_node is set.
-	 * This means, the Package node object is connected with a NUMA node, marked via `mark_nccl_cpuid()`. */
-	} else if (node->type == HWLOC_OBJ_PACKAGE && topo_data->closest_numa_node) {
-		if ((ret = write_cpu_opening_tag(topo_data->closest_numa_node, file, indent))) {
+	/* HWLOC 2.x: emit one <cpu> per NUMA node, at the object that owns it.
+	 * Covers Package -> NUMANode          (NPS=1: p5, p5en) and
+	 *        Package -> Group -> NUMANode (NPS=2: p5e).
+	 * Emitting at the Package instead collapses every NUMA node under a
+	 * socket into one <cpu>, which is the p5e wrong-affinity regression.
+	 *
+	 * numa_mem_child() skips NUMA nodes holding no memory, and that is what
+	 * keeps NCCLOFI-1315 fixed: GB200 inside a container exposes 28 phantom
+	 * NUMA nodes on Machine, and emitting a <cpu> for one of them wraps the
+	 * real ones in an extra nesting layer that breaks NCCL topo merging. */
+	} else if ((numa_child = numa_mem_child(node)) != NULL) {
+		if ((ret = write_cpu_opening_tag(numa_child, file, indent))) {
 			return ret;
 		}
 		close_numanode = true;
