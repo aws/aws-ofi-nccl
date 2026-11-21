@@ -51,6 +51,11 @@
 	NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(dev, rail_id, comm, msg_seq_num, request); \
 } while (0)
 
+#define NCCL_OFI_TRACE_SEND_NO_BUFF(dev, size, comm, msg_seq_num, tag) do { \
+	lttng_ust_tracepoint(nccl_ofi_plugin, SendNoBuff, dev, size, comm, msg_seq_num, tag); \
+	NCCL_OFI_TRACE_SEND_NO_BUFF_NVTX(comm, msg_seq_num); \
+} while(0)
+
 #define NCCL_OFI_TRACE_WRITE_CTRL_START(dev, rail_id, comm, req, msg_seq_num) do { \
 	lttng_ust_tracepoint(nccl_ofi_plugin, Write_ctrl_start, dev, rail_id, comm, req, msg_seq_num); \
 	NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(dev, rail_id, comm, req, msg_seq_num); \

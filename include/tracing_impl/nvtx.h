@@ -68,6 +68,14 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 	} \
 } while(0)
 
+#define NCCL_OFI_TRACE_SEND_NO_BUFF_NVTX(comm, msg_seq_num) do { \
+	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
+		nvtxDomainHandle_t handle = ((nccl_net_ofi_rdma_send_comm*)comm) \
+			->nvtx_domain[msg_seq_num % NCCL_OFI_N_NVTX_DOMAIN_PER_COMM]; \
+		nvtx_mark_domain(handle, "SendNoBuff", 0xFF0000); \
+	} \
+} while(0)
+
 #define NCCL_OFI_TRACE_EAGER_SEND_START_NVTX(dev, rail_id, size, comm, msg_seq_num, request) do { \
 	nvtxDomainHandle_t handle; \
 	if (ofi_nccl_nvtx_trace_dimension() == NVTX_TRACE_DIMENSION::PER_COMM) { \
@@ -317,6 +325,7 @@ static inline void nvtx_end(nvtxRangeId_t id) {
 
 #define NCCL_OFI_TRACE_SEND_NVTX(...)
 #define NCCL_OFI_TRACE_SEND_END_NVTX(...)
+#define NCCL_OFI_TRACE_SEND_NO_BUFF_NVTX(...)
 #define NCCL_OFI_TRACE_EAGER_SEND_START_NVTX(...)
 #define NCCL_OFI_TRACE_EAGER_SEND_COMPLETE_NVTX(...)
 #define NCCL_OFI_TRACE_WRITE_CTRL_START_NVTX(...)
