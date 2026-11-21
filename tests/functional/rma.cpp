@@ -7,7 +7,11 @@
 #include "functional_test.h"
 
 #include <assert.h>
+#include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <deque>
+#include <thread>
 #include <vector>
 
 static inline ncclResult_t
@@ -55,6 +59,12 @@ static inline ncclResult_t verify_buff(int rank, void *buff, int send_val)
 	return ncclSuccess;
 }
 
+/* The probe slots are host memory that the plugin's gdrcopy worker updates
+ * with CPU atomics, so read them the same way. */
+static inline uint64_t read_probe_slot(uint64_t *probe, size_t slot)
+{
+	return std::atomic_ref<uint64_t>(probe[slot]).load(std::memory_order_acquire);
+}
 
 struct proc_handle {
 	char handle[NCCL_NET_HANDLE_MAXSIZE];
@@ -274,6 +284,165 @@ int main(int argc, char *argv[])
 	NCCL_OFI_INFO(NCCL_NET, "=== Verifying iput/iputSignal result ===");
 	OFINCCLCHECK(verify_buff(rank, put_buff, send_val));
 	OFINCCLCHECK(verify_buff(rank, put_signal_buff, send_val));
+
+	/*
+	 * Signal order test for the host proxy:
+	 * 1. Rank 0 sends rank 1 rounds of one INC per probe slot, slot 0 first,
+	 *    with two INC signals to device-memory load slots before each probe
+	 * 2. Every ORDER_PAUSE_ROUNDS rounds rank 1 stops polling for
+	 *    ORDER_PAUSE_MS. A sender at 100k signals/s queues 2000 signals in
+	 *    that time, twice the work ring. When rank 1 resumes, the proxy hands
+	 *    them to the gdrcopy worker at CPU speed while each costs the worker
+	 *    a PCIe read round trip, so the ring fills whatever the NIC speed
+	 * 3. Rank 1 reads the host-memory probe slots between progress calls and
+	 *    checks c0 >= c1 >= ... >= c(N-1) >= c0 - 1
+	 *
+	 * This proves one peer's signals land in the order they were sent while
+	 * the work ring is full, the condition under which the receive path used
+	 * to reorder them.
+	 */
+	const size_t ORDER_SLOTS = 4;
+	const size_t ORDER_ROUNDS = 32768;
+	const size_t ORDER_LOAD_SLOTS = 512;
+	const size_t ORDER_LOAD_PER_PROBE = 2;
+	const size_t ORDER_SIGNALS = ORDER_ROUNDS * ORDER_SLOTS * (ORDER_LOAD_PER_PROBE + 1);
+	const size_t ORDER_MAX_OUTSTANDING = 256;
+	const uint64_t ORDER_PAUSE_ROUNDS = 1024;
+	const int ORDER_PAUSE_MS = 20;
+	const int ORDER_TIMEOUT_SECONDS = 60;
+	void *order_probe_buff = nullptr;
+	void *order_probe_mhandle = nullptr;
+	OFINCCLCHECK(alloc_and_reg_buff(extRma, collComm, ORDER_SLOTS * sizeof(uint64_t),
+					NCCL_PTR_HOST, 0, &order_probe_buff, &order_probe_mhandle));
+	void *order_load_buff = nullptr;
+	void *order_load_mhandle = nullptr;
+	OFINCCLCHECK(alloc_and_reg_buff(extRma, collComm, ORDER_LOAD_SLOTS * sizeof(uint64_t),
+					buffer_type, 0, &order_load_buff, &order_load_mhandle));
+	int order_broken = 0;
+
+	MPI_Barrier(MPI_COMM_WORLD);
+
+	if (rank == 0) {
+		std::deque<void *> request_deque;
+		for (size_t n = 0, load = 0; n < ORDER_SIGNALS; ++n) {
+			bool probe = n % (ORDER_LOAD_PER_PROBE + 1) == ORDER_LOAD_PER_PROBE;
+			void *mhandle = probe ? order_probe_mhandle : order_load_mhandle;
+			uint64_t off = (probe ? n / (ORDER_LOAD_PER_PROBE + 1) % ORDER_SLOTS
+					      : load++ % ORDER_LOAD_SLOTS) * sizeof(uint64_t);
+			void *request = nullptr;
+			OFINCCLCHECK(extRma->iputSignal(rmaCtx, 0, 0, nullptr, 0, 0, nullptr, 1,
+							off, mhandle, 1, NCCL_NET_SIGNAL_OP_INC,
+							true, 0, &request));
+			assert(request != nullptr);
+			request_deque.push_back(request);
+			while (request_deque.size() >= ORDER_MAX_OUTSTANDING) {
+				OFINCCLCHECK(poll_request_completion(extRma, request_deque,
+								    collComm, rmaCtx));
+			}
+		}
+		while (!request_deque.empty()) {
+			OFINCCLCHECK(poll_request_completion(extRma, request_deque, collComm,
+							    rmaCtx));
+		}
+	} else if (rank == 1) {
+		auto *probe = static_cast<uint64_t *>(order_probe_buff);
+		std::vector<uint64_t> loads(ORDER_LOAD_SLOTS);
+		uint64_t landed = 0, sweep = 0, bad_c0 = 0, bad_value = 0, bad_bound = 0;
+		size_t bad_slot = 0;
+		bool probes_done = false;
+		bool timed_out = false;
+		uint64_t next_pause = ORDER_PAUSE_ROUNDS;
+		auto deadline = std::chrono::steady_clock::now() +
+				std::chrono::seconds(ORDER_TIMEOUT_SECONDS);
+
+		/*
+		 * Between progress calls, read slot 0, then every slot from the top
+		 * down, slot 0 last. A value read from a slot bounds every lower slot
+		 * from below (that round's earlier signals landed before it), and slot
+		 * 0's first value bounds every slot to one round less, so an in-order
+		 * peer never fails the check whatever the reader's timing. A reorder
+		 * stays visible for at least one PCIe read-modify-write of the worker.
+		 */
+		while (landed != ORDER_SIGNALS && !timed_out) {
+			OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
+			if (!probes_done && !order_broken) {
+				++sweep;
+				uint64_t c0 = read_probe_slot(probe, 0);
+				uint64_t bound = c0 > 0 ? c0 - 1 : 0;
+				for (size_t s = ORDER_SLOTS; s-- > 0;) {
+					uint64_t c = read_probe_slot(probe, s);
+					/* A store that reaches us late settles in a few reads. */
+					for (int i = 0; i < 4 && c < bound; ++i) {
+						c = read_probe_slot(probe, s);
+					}
+					if (c < bound) {
+						bad_c0 = c0;
+						bad_slot = s;
+						bad_value = c;
+						bad_bound = bound;
+						order_broken = 1;
+						break;
+					}
+					bound = std::max(bound, c);
+				}
+				/* The top slot fills last, so the probes are through when it is. */
+				probes_done =
+					read_probe_slot(probe, ORDER_SLOTS - 1) == ORDER_ROUNDS;
+				if (c0 >= next_pause) {
+					std::this_thread::sleep_for(
+						std::chrono::milliseconds(ORDER_PAUSE_MS));
+					next_pause += ORDER_PAUSE_ROUNDS;
+				}
+			}
+			/*
+			 * Then wait for the loads too: the sender's completions do not
+			 * wait for the worker.
+			 */
+			if (probes_done || order_broken) {
+				CUDACHECK(cudaMemcpy(loads.data(), order_load_buff,
+						     ORDER_LOAD_SLOTS * sizeof(uint64_t),
+						     cudaMemcpyDefault));
+				landed = 0;
+				for (uint64_t v : loads) {
+					landed += v;
+				}
+				for (size_t s = 0; s < ORDER_SLOTS; ++s) {
+					landed += read_probe_slot(probe, s);
+				}
+			}
+			timed_out = std::chrono::steady_clock::now() > deadline;
+		}
+		if (order_broken) {
+			NCCL_OFI_WARN("Signal order broken in sweep %lu: slot %zu holds %lu, "
+				      "slot 0 held %lu first and the slots read before it "
+				      "require at least %lu",
+				      (unsigned long)sweep, bad_slot, (unsigned long)bad_value,
+				      (unsigned long)bad_c0, (unsigned long)bad_bound);
+		} else if (timed_out) {
+			NCCL_OFI_WARN("Signal order check timed out after %d s with %lu of %zu "
+				      "signals landed",
+				      ORDER_TIMEOUT_SECONDS, (unsigned long)landed, ORDER_SIGNALS);
+			order_broken = 1;
+		}
+	}
+
+	MPI_Ibarrier(MPI_COMM_WORLD, &barrier_req);
+	barrier_done = 0;
+	while (!barrier_done) {
+		OFINCCLCHECK(extRma->rmaProgress(rmaCtx));
+		MPI_Test(&barrier_req, &barrier_done, MPI_STATUS_IGNORE);
+	}
+	MPI_Allreduce(MPI_IN_PLACE, &order_broken, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+	if (order_broken) {
+		MPI_Finalize();
+		return ncclSystemError;
+	}
+	NCCL_OFI_INFO(NCCL_NET, "=== Verified order of %zu signals ===", ORDER_SIGNALS);
+
+	OFINCCLCHECK(extRma->deregMrSym(collComm, order_load_mhandle));
+	OFINCCLCHECK(extRma->deregMrSym(collComm, order_probe_mhandle));
+	OFINCCLCHECK(deallocate_buffer(order_load_buff, buffer_type));
+	OFINCCLCHECK(deallocate_buffer(order_probe_buff, NCCL_PTR_HOST));
 
 	/*
 	 * iget test: rank 0 registers a buffer filled with a distinct value
