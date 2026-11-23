@@ -44,6 +44,12 @@ if !ENABLE_NEURON
   noinst_PROGRAMS += gdrcopy
   gdrcopy_SOURCES = $(base_sources) gdrcopy.cpp
   gdrcopy_LDADD = $(LDADD) $(CUDA_RUNTIME_LIBS)
+  check_PROGRAMS = gdrcopy_failure
+  gdrcopy_failure_SOURCES = $(base_sources) gdrcopy_failure.cpp
+  gdrcopy_failure_LDADD = $(LDADD) $(CUDA_RUNTIME_LIBS)
+  check_LTLIBRARIES = libgdrapi.la
+  libgdrapi_la_SOURCES = gdrapi_mock.c
+  libgdrapi_la_LDFLAGS = -module -avoid-version -rpath $(abs_builddir)/.libs
   noinst_PROGRAMS += ctrl_msg
   ctrl_msg_SOURCES = $(base_sources) ctrl_msg.cpp
 if WANT_PLATFORM_AWS
@@ -73,4 +79,9 @@ spsc_ring_SOURCES = $(base_sources) spsc_ring.cpp
 mpsc_ring_SOURCES = $(base_sources) mpsc_ring.cpp
 
 TESTS = $(noinst_PROGRAMS)
+if !ENABLE_NEURON
+TESTS += gdrcopy_failure.sh
 endif
+endif
+
+EXTRA_DIST = gdrcopy_failure.sh
