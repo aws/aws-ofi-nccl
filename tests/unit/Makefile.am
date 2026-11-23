@@ -15,6 +15,7 @@ noinst_HEADERS = unit_test.h
 
 noinst_PROGRAMS = \
 	assert \
+	device_copy \
 	dlist \
 	environ \
 	freelist \
@@ -53,6 +54,7 @@ endif
 endif
 
 assert_SOURCES = $(base_sources) assert.cpp
+device_copy_SOURCES = $(base_sources) device_copy.cpp
 dlist_SOURCES = $(base_sources) dlist.cpp
 environ_SOURCES = $(base_sources) environ.cpp
 idpool_SOURCES = $(base_sources) idpool.cpp

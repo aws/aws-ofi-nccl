@@ -1,4 +1,5 @@
 assert
+device_copy
 aws_platform_mapper
 dlist
 environ
