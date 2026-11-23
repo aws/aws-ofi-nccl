@@ -108,6 +108,20 @@ public:
 	virtual int handle_cq_entry(struct fi_cq_entry *cq_entry_base, fi_addr_t src_addr,
 				    uint16_t rail_id) = 0;
 
+	/**
+	 * Handle completion-with-error of the request. Called once, after the
+	 * error has been logged, for every error completion other than
+	 * FI_ECANCELED. The error is still returned to the caller of
+	 * progress().
+	 *
+	 * The default does nothing. A request type that releases itself in
+	 * handle_cq_entry() can override this to do the same here, because no
+	 * other completion will arrive for the request.
+	 */
+	virtual void handle_error_completion()
+	{
+	}
+
 #if HAVE_NVTX_TRACING || HAVE_LIBLTTNG_UST
 	/**
 	 * Set the trace information for LTTNG and NVTX
@@ -174,8 +188,8 @@ private:
  * returns itself to the request pool upon completion.
  *
  * Note: This request must be allocated from gin_comm->resources request pool.
- * It remains allocated until the callback (handle_cq_entry) is invoked, at
- * which point it
+ * It remains allocated until the callback (handle_cq_entry, or
+ * handle_error_completion if the send failed) is invoked, at which point it
  * 1) updates gin_comm->outstanding_ack_counter
  * 2) deletes itself (returns to request pool)
  */
@@ -183,6 +197,8 @@ class nccl_net_ofi_gin_sendack_req_t : public nccl_net_ofi_gin_op_req_t {
 public:
 	int handle_cq_entry(struct fi_cq_entry * /*cq_entry_base*/, fi_addr_t /*src_addr*/,
 			    uint16_t /*rail_id*/) override;
+
+	void handle_error_completion() override;
 
 	nccl_net_ofi_gin_sendack_req_t(nccl_ofi_rdma_gin_put_comm &gin_comm_arg, fid_ep *ep_arg,
 					int rail_id_arg,
@@ -200,6 +216,13 @@ public:
 	virtual ~nccl_net_ofi_gin_sendack_req_t() override;
 
 private:
+	/**
+	 * Release a finished ACK send, whether it succeeded or failed: take it
+	 * off gin_comm's outstanding_ack_counter and return the request to the
+	 * pool. The request must not be used afterwards.
+	 */
+	void release();
+
 	nccl_ofi_rdma_gin_put_comm &gin_comm;
 	struct fid_ep *ep;
 	int rail_id;

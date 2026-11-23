@@ -52,6 +52,11 @@ if WANT_PLATFORM_AWS
 endif
 endif
 
+if HAVE_CUDA
+  noinst_PROGRAMS += gin_req_error
+  gin_req_error_SOURCES = $(base_sources) gin_req_error.cpp
+endif
+
 assert_SOURCES = $(base_sources) assert.cpp
 dlist_SOURCES = $(base_sources) dlist.cpp
 environ_SOURCES = $(base_sources) environ.cpp
