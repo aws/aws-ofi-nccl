@@ -46,6 +46,13 @@ public:
 
 	bool supports_forced_pcie_copy() override;
 
+	/**
+	 * Whether GDRCopy maps GPU memory through the CUDA driver's DMA-BUF
+	 * export instead of the gdrdrv kernel module (GDRCopy 2.6+). Decided
+	 * once, when the context is created.
+	 */
+	bool uses_dmabuf_backend() const;
+
 	int deregister_region(RegHandle *handle) override;
 
 private:
@@ -79,11 +86,6 @@ private:
 #if HAVE_GDRCOPY
 	impl *pimpl;
 #endif
-
-	/**
-	 * Get minimum of driver and runtime versions
-	 */
-	int get_version(uint32_t *major, uint32_t *minor);
 };
 
 #endif  // End NCCL_OFI_GDRCOPY_H_
