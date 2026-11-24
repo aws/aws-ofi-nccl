@@ -21,6 +21,29 @@
 #include <gdrapi.h>
 #include <dlfcn.h>
 
+/*
+ * GDR_ATTR_USING_DMA_BUF_MMAP, added in GDRCopy 2.6. The plugin can be built
+ * against older headers that lack it and still load a 2.6 libgdrapi at run
+ * time, so use the value directly.
+ */
+static constexpr int gdrcopy_attr_using_dma_buf_mmap = 3;
+#if GDR_API_MAJOR_VERSION > 2 || (GDR_API_MAJOR_VERSION == 2 && GDR_API_MINOR_VERSION >= 6)
+static_assert(GDR_ATTR_USING_DMA_BUF_MMAP == gdrcopy_attr_using_dma_buf_mmap,
+	      "GDR_ATTR_USING_DMA_BUF_MMAP changed value");
+#endif
+
+/*
+ * gdr_get_attribute(), added in GDRCopy 2.5. Older headers don't declare it,
+ * so declare a matching type and its attribute argument is the gdr_attr_t enum.
+ */
+#if GDR_API_MAJOR_VERSION > 2 || (GDR_API_MAJOR_VERSION == 2 && GDR_API_MINOR_VERSION >= 5)
+typedef gdr_attr_t gdrcopy_attr;
+typedef decltype(&gdr_get_attribute) gdrcopy_get_attribute_fn;
+#else
+typedef int gdrcopy_attr;
+typedef int (*gdrcopy_get_attribute_fn)(gdr_t g, gdrcopy_attr attr, int *v);
+#endif
+
 struct nccl_ofi_gdrcopy_ctx::impl {
 	void *lib;
 	gdr_t gdr;
@@ -34,13 +57,69 @@ struct nccl_ofi_gdrcopy_ctx::impl {
 	decltype(&gdr_copy_from_mapping) gdr_copy_from_mapping_fn;
 	decltype(&gdr_runtime_get_version) gdr_runtime_get_version_fn;
 	decltype(&gdr_driver_get_version) gdr_driver_get_version_fn;
+	/* Optional: nullptr when libgdrapi is older than 2.5 */
+	gdrcopy_get_attribute_fn gdr_get_attribute_fn;
 #if HAVE_DECL_GDR_PIN_BUFFER_V2
 	decltype(&gdr_pin_buffer_v2) gdr_pin_buffer_v2_fn;
 #endif
 
+	/* True when GDRCopy maps GPU memory through the CUDA driver's DMA-BUF
+	   export instead of the gdrdrv kernel module (GDRCopy 2.6+). There is
+	   no gdrdrv to query in that case. */
+	bool dmabuf_backend;
+
 	~impl() {
 		if (gdr != nullptr) gdr_close_fn(gdr);
 		if (lib != nullptr) dlclose(lib);
+	}
+
+	/*
+	 * Ask GDRCopy which backend gdr_open() picked. Libraries without
+	 * gdr_get_attribute() (2.4 and older) or without this attribute (2.5
+	 * returns EINVAL) only have the gdrdrv backend.
+	 */
+	bool query_dmabuf_backend() const
+	{
+		if (gdr_get_attribute_fn == nullptr) {
+			return false;
+		}
+		int using_dmabuf = 0;
+		auto attr = static_cast<gdrcopy_attr>(gdrcopy_attr_using_dma_buf_mmap);
+		int ret = gdr_get_attribute_fn(gdr, attr, &using_dmabuf);
+		return ret == 0 && using_dmabuf != 0;
+	}
+
+	/*
+	 * The GDRCopy feature version this process can use: the library
+	 * version, capped at the gdrdrv version when gdrdrv is the backend.
+	 * gdr_driver_get_version() only works with gdrdrv, and asserts on a
+	 * DMA-BUF handle, so it is not called on that backend.
+	 */
+	int query_feature_version(uint32_t *major, uint32_t *minor) const
+	{
+		int lib_major = 0, lib_minor = 0;
+		gdr_runtime_get_version_fn(&lib_major, &lib_minor);
+
+		if (dmabuf_backend) {
+			*major = lib_major;
+			*minor = lib_minor;
+			return 0;
+		}
+
+		int drv_major = 0, drv_minor = 0;
+		int ret = gdr_driver_get_version_fn(gdr, &drv_major, &drv_minor);
+		if (ret != 0) {
+			return ret;
+		}
+
+		if (lib_major < drv_major || (lib_major == drv_major && lib_minor < drv_minor)) {
+			*major = lib_major;
+			*minor = lib_minor;
+		} else {
+			*major = drv_major;
+			*minor = drv_minor;
+		}
+		return 0;
 	}
 };
 
@@ -84,13 +163,23 @@ nccl_ofi_gdrcopy_ctx::nccl_ofi_gdrcopy_ctx()
 		throw std::runtime_error("Failed to open gdr handle");
 	}
 
+	pimpl->gdr_get_attribute_fn = reinterpret_cast<gdrcopy_get_attribute_fn>
+		(dlsym(pimpl->lib, "gdr_get_attribute"));
+	/* The symbol is optional; clear the error a missing one leaves behind. */
+	(void)dlerror();
+	pimpl->dmabuf_backend = pimpl->query_dmabuf_backend();
+
 #if HAVE_DECL_GDR_PIN_BUFFER_V2
 	/* If supported, define the _v2 functions, which were introduced in
 	   GDRCopy 2.5. These are needed to set the GDR_PIN_FLAG_FORCE_PCIE flag
 	   on systems with a C2C interconnect. */
 	pimpl->gdr_pin_buffer_v2_fn = nullptr;
-	uint32_t major, minor;
-	if (get_version(&major, &minor) == 0 && (major > 2 || (major == 2 && minor >= 5))) {
+	uint32_t major = 0, minor = 0;
+	int ret = pimpl->query_feature_version(&major, &minor);
+	if (ret != 0) {
+		NCCL_OFI_WARN("Unable to query the GDRCopy driver version: %d. "
+			      "Forced PCIe copies are unavailable.", ret);
+	} else if (major > 2 || (major == 2 && minor >= 5)) {
 		pimpl->gdr_pin_buffer_v2_fn = reinterpret_cast<decltype(pimpl->gdr_pin_buffer_v2_fn)>
 			(dlsym(pimpl->lib, "gdr_pin_buffer_v2"));
 		if (pimpl->gdr_pin_buffer_v2_fn == nullptr) {
@@ -101,6 +190,10 @@ nccl_ofi_gdrcopy_ctx::nccl_ofi_gdrcopy_ctx()
 		}
 	}
 #endif
+
+	NCCL_OFI_INFO(NCCL_INIT | NCCL_NET, "gdrcopy: using the %s backend, forced PCIe copy %s",
+		      uses_dmabuf_backend() ? "dma-buf" : "gdrdrv",
+		      supports_forced_pcie_copy() ? "supported" : "not supported");
 }
 
 nccl_ofi_gdrcopy_ctx::~nccl_ofi_gdrcopy_ctx()
@@ -205,33 +298,6 @@ int nccl_ofi_gdrcopy_ctx::copy_from_device(const RegHandle &handle, size_t offse
 	return pimpl->gdr_copy_from_mapping_fn(mh, host_ptr, map_d_ptr, size);
 }
 
-int nccl_ofi_gdrcopy_ctx::get_version(uint32_t *major, uint32_t *minor)
-{
-	struct {
-		int major;
-		int minor;
-	} runtime_version, driver_version;
-
-	pimpl->gdr_runtime_get_version_fn(&runtime_version.major, &runtime_version.minor);
-
-	int ret = pimpl->gdr_driver_get_version_fn(pimpl->gdr, &driver_version.major,
-						   &driver_version.minor);
-	if (ret != 0) {
-		return ret;
-	}
-
-	if (runtime_version.major < driver_version.major ||
-	    (runtime_version.major == driver_version.major &&
-	     runtime_version.minor < driver_version.minor)) {
-		*major = runtime_version.major;
-		*minor = runtime_version.minor;
-	} else {
-		*major = driver_version.major;
-		*minor = driver_version.minor;
-	}
-	return 0;
-}
-
 bool nccl_ofi_gdrcopy_ctx::supports_forced_pcie_copy()
 {
 #if HAVE_DECL_GDR_PIN_BUFFER_V2
@@ -239,6 +305,11 @@ bool nccl_ofi_gdrcopy_ctx::supports_forced_pcie_copy()
 #else
 	return false;
 #endif
+}
+
+bool nccl_ofi_gdrcopy_ctx::uses_dmabuf_backend() const
+{
+	return pimpl->dmabuf_backend;
 }
 
 int nccl_ofi_gdrcopy_ctx::deregister_region(RegHandle *handle)
@@ -305,9 +376,9 @@ bool nccl_ofi_gdrcopy_ctx::supports_forced_pcie_copy()
 	return false;
 }
 
-int nccl_ofi_gdrcopy_ctx::get_version(uint32_t *major, uint32_t *minor)
+bool nccl_ofi_gdrcopy_ctx::uses_dmabuf_backend() const
 {
-	return -ENOTSUP;
+	return false;
 }
 
 int nccl_ofi_gdrcopy_ctx::deregister_region(RegHandle *handle)
