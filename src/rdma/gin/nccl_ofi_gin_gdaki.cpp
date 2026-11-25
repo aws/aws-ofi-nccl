@@ -1035,6 +1035,29 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSymDmaBuf(void *collComm, void *data
 }
 
 /*
+ * Undo a failed GDAKI regMrSym, freeing non-null arguments and deregister mr_handle.
+ */
+static void nccl_ofi_gin_gdaki_regMrSym_cleanup(void *collComm, void *mr_handle,
+						 void *host_block, void *dev_block)
+{
+	if (dev_block != nullptr) {
+		nccl_net_ofi_gpu_mem_free(dev_block);
+	}
+	if (host_block != nullptr) {
+		free(host_block);
+	}
+	if (mr_handle != nullptr) {
+		/* mr_handle must be deregistered: its rkeys were already all-gathered to
+		 * every peer, so leaving it registered keeps the window remotely writable. */
+		ncclResult_t dret = nccl_ofi_gin_deregMrSym(collComm, mr_handle);
+		if (dret != ncclSuccess) {
+			NCCL_OFI_WARN("gin GDAKI: failed to clean up symmetric registration "
+				      "after regMrSym error: %d", dret);
+		}
+	}
+}
+
+/*
  * GDAKI regMrSym:
  *
  *   1. Call the shared proxy regMrSym. Because createContext opens the
@@ -1111,6 +1134,8 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	const size_t header_size = (size_t)num_rails * sizeof(nccl_ofi_gin_gdaki_mr_handle *);
 	const size_t window_size = header_size + (size_t)num_rails * handle_size;
 
+	void *dev_block = nullptr;
+
 	/* Host staging copy of the block; the device-resident copy is
 	 * allocated below and the returned ginHandle points at THAT. The
 	 * staging block holds the pointer-array header with DEVICE addresses
@@ -1118,6 +1143,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	auto *block = static_cast<uint8_t *>(calloc(1, window_size));
 	if (block == nullptr) {
 		NCCL_OFI_WARN("gin GDAKI: calloc for mr_handle array block failed");
+		nccl_ofi_gin_gdaki_regMrSym_cleanup(collComm, *mhandle, nullptr, nullptr);
+		*mhandle = nullptr;
+		*ginHandle = nullptr;
 		return ncclSystemError;
 	}
 	auto *rail_handles = reinterpret_cast<nccl_ofi_gin_gdaki_mr_handle **>(block);
@@ -1126,10 +1154,11 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	 * GPU-dereferenced by the Put kernel, so it must live in GPU memory.
 	 * The pointer-array header inside `block` is filled with addresses
 	 * relative to dev_block so the GPU can follow rail_handles[r]. */
-	void *dev_block = nullptr;
 	if (nccl_net_ofi_gpu_mem_alloc(&dev_block, window_size) != 0) {
 		NCCL_OFI_WARN("gin GDAKI: gpu_mem_alloc for mr_handle array block failed");
-		free(block);
+		nccl_ofi_gin_gdaki_regMrSym_cleanup(collComm, *mhandle, block, nullptr);
+		*mhandle = nullptr;
+		*ginHandle = nullptr;
 		return ncclSystemError;
 	}
 
@@ -1143,8 +1172,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 		struct fid_domain *dom_r = domain.get_ofi_domain(r).get();
 		if (dom_r == nullptr) {
 			NCCL_OFI_WARN("gin GDAKI: regMrSym rail %u domain is null", r);
-			nccl_net_ofi_gpu_mem_free(dev_block);
-			free(block);
+			nccl_ofi_gin_gdaki_regMrSym_cleanup(collComm, *mhandle, block, dev_block);
+			*mhandle = nullptr;
+			*ginHandle = nullptr;
 			return ncclSystemError;
 		}
 		struct fi_efa_ops_gda *gda_ops = nullptr;
@@ -1153,8 +1183,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 		if (ret != 0 || gda_ops == nullptr) {
 			NCCL_OFI_WARN("gin GDAKI: fi_open_ops FI_EFA_GDA_OPS on rail %u failed: %s",
 				      r, ret ? fi_strerror(-ret) : "no ops table");
-			nccl_net_ofi_gpu_mem_free(dev_block);
-			free(block);
+			nccl_ofi_gin_gdaki_regMrSym_cleanup(collComm, *mhandle, block, dev_block);
+			*mhandle = nullptr;
+			*ginHandle = nullptr;
 			return ncclSystemError;
 		}
 
@@ -1190,8 +1221,9 @@ static ncclResult_t nccl_ofi_gin_gdaki_regMrSym(void *collComm, void *data, size
 	if (nccl_net_ofi_gpu_mem_copy_host_to_device(dev_block, block,
 						     window_size) != 0) {
 		NCCL_OFI_WARN("gin GDAKI: h2d copy of mr_handle array block failed");
-		nccl_net_ofi_gpu_mem_free(dev_block);
-		free(block);
+		nccl_ofi_gin_gdaki_regMrSym_cleanup(collComm, *mhandle, block, dev_block);
+		*mhandle = nullptr;
+		*ginHandle = nullptr;
 		return ncclSystemError;
 	}
 
