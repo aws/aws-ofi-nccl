@@ -50,6 +50,10 @@ int nccl_net_ofi_gin_op_req_t::op_req_ctx::handle_error_entry(struct fid_cq *cq,
 	 * However, any special-handling for prov_errno should be handled here.
 	 */
 	ret = -(err_entry->err);
+
+	/* The request may release itself here; do not use req afterwards. */
+	req->handle_error_completion();
+
 	return ret;
 }
 
@@ -166,11 +170,24 @@ int nccl_net_ofi_gin_sendack_req_t::handle_cq_entry(struct fi_cq_entry * /*cq_en
 						     fi_addr_t /*src_addr*/,
 						     uint16_t /*rail_id_arg*/)
 {
+	release();
+
+	return 0;
+}
+
+void nccl_net_ofi_gin_sendack_req_t::handle_error_completion()
+{
+	/* A failed ACK send is as finished as a successful one. Release it
+	   the same way, or closeColl would wait forever for a completion
+	   that has already been consumed. */
+	release();
+}
+
+void nccl_net_ofi_gin_sendack_req_t::release()
+{
 	gin_comm.decrement_outstanding_ack_counter();
 
 	gin_comm.get_resources().return_req_to_pool(this);
-
-	return 0;
 }
 
 int nccl_net_ofi_gin_sendack_req_t::post()

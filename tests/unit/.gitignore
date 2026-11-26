@@ -4,6 +4,7 @@ dlist
 environ
 ep_addr_list
 freelist
+gin_req_error
 idpool
 mr
 topo
